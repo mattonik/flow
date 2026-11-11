@@ -82,7 +82,7 @@ ShellRoot {
     function spaceAction(action, id) {
         if (recoveryProcess.running) return
         if (spacesProcess.running) {
-            if (action !== "refresh") { spacesError = "Please try again"; deskOpen = true }
+            if (action !== "refresh") { spacesError = "Please try again"; if (!switcherOpen) deskOpen = true }
             return
         }
         spacesProcess.command = id ? ["flow-spaces", action, id] : ["flow-spaces", action]
@@ -96,7 +96,7 @@ ShellRoot {
                     const result = JSON.parse(this.text)
                     if (result.error) {
                         root.spacesError = result.error
-                        if (spacesProcess.command[1] !== "refresh") root.deskOpen = true
+                        if (spacesProcess.command[1] !== "refresh" && !root.switcherOpen) root.deskOpen = true
                     } else {
                         if (JSON.stringify(root.windows) !== JSON.stringify(result.windows)) root.windows = result.windows
                         if (JSON.stringify(root.pins) !== JSON.stringify(result.pins)) root.pins = result.pins
@@ -317,7 +317,7 @@ ShellRoot {
     PanelWindow {
         visible: root.switcherOpen
         anchors { bottom: true; left: true; right: true }
-        implicitHeight: 175; color: "#101a18"; exclusionMode: ExclusionMode.Ignore
+        implicitHeight: 220; color: "#101a18"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
         FocusScope {
@@ -329,6 +329,12 @@ ShellRoot {
                     spacing: 12
                     Text { text: "OPEN WINDOWS"; color: "#b8ddcb"; font.bold: true; font.pixelSize: 13 }
                     Text { text: "Select a window · Esc to close"; color: "#91a59d"; font.pixelSize: 13 }
+                }
+                Row {
+                    spacing: 8
+                    FlowButton { width: 160; implicitHeight: 38; text: "Stack with next"; onClicked: root.spaceAction("stack") }
+                    FlowButton { width: 160; implicitHeight: 38; text: "Separate stack"; onClicked: root.spaceAction("unstack") }
+                    Text { text: root.spacesError; color: "#f1baaa"; anchors.verticalCenter: parent.verticalCenter }
                 }
                 Text { visible: root.windows.length === 0; text: "No open windows"; color: "#91a59d" }
                 Flickable {

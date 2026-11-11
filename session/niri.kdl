@@ -27,6 +27,8 @@ binds {
     Super+L { spawn "@lock@"; }
     Super+Left { focus-column-left; }
     Super+Right { focus-column-right; }
+    Super+Up { focus-window-up; }
+    Super+Down { focus-window-down; }
     Super+Shift+Left { move-column-left; }
     Super+Shift+Right { move-column-right; }
     Super+Q { close-window; }

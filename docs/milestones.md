@@ -44,3 +44,7 @@ Super+K and the Desk search use one picker for installed applications, available
 ## Performance check (2026-11-11)
 
 A lightweight UTM guest sample is recorded in [performance observations](performance.md). Focused-app identity no longer eagerly traverses accessibility menus: the measured identity request took 41–55 ms instead of roughly 0.9 seconds for a full menu traversal. Reading the full menu is still on demand and remains slow. Frame pacing and physical device performance have not been measured.
+
+## Two-window stacking (2026-11-11)
+
+The bottom switcher can combine the focused window and the next window into a Niri column, and separate a two-window column again. It rejects pinned, floating or ambiguous windows and supports Super+Up/Down for switching focus within the column. In the ARM64 guest, KWrite and Kate formed a two-window column and were separated back into their original columns. Fourteen Python tests passed. This is a reversible portrait-style building block, not yet a named, persistent or orientation-adaptive Flow Group; pins, session recovery and multi-display Groups remain unsupported.

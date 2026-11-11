@@ -36,6 +36,26 @@ class SpacesTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             spaces.run([], "focus-window", "999", self.ws, self.windows, "session")
 
+    @patch.object(spaces, "command")
+    def test_stack_and_separate_two_unpinned_windows(self, command):
+        self.ws["active_window_id"] = 1
+        spaces.run([], "stack", None, self.ws, self.windows, "session")
+        command.assert_called_once_with("action", "consume-window-into-column")
+        command.reset_mock()
+        self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        spaces.run([], "unstack", None, self.ws, self.windows, "session")
+        command.assert_called_once_with("action", "expel-window-from-column")
+
+    @patch.object(spaces, "command")
+    def test_stack_rejects_pinned_or_missing_neighbor(self, command):
+        self.ws["active_window_id"] = 1
+        with self.assertRaises(ValueError):
+            spaces.run([{"app_id": "files"}], "stack", None, self.ws, self.windows, "session")
+        self.ws["active_window_id"] = 2
+        with self.assertRaises(ValueError):
+            spaces.run([], "stack", None, self.ws, self.windows, "session")
+        command.assert_not_called()
+
     def test_restart_never_guesses_between_duplicate_windows(self):
         pin = {"app_id": "terminal", "window_id": 1, "session": "old"}
         self.assertEqual(spaces.resolve(pin, self.windows, "new")["id"], 1)

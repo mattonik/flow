@@ -87,6 +87,23 @@ def run(pins, op, arg, workspace, windows, socket):
             target = index + (-1 if op == "left" else 1)
             if 0 <= target < len(pins):
                 pins[index], pins[target] = pins[target], pins[index]
+    elif op in ("stack", "unstack"):
+        active = next((w for w in windows if w["id"] == workspace.get("active_window_id")), None)
+        pos = active and active.get("layout", {}).get("pos_in_scrolling_layout")
+        if not pos or active.get("is_floating") or active.get("workspace_id") != workspace["id"]:
+            raise ValueError("Select a tiled window first")
+        def column(index):
+            return [w for w in windows if w.get("workspace_id") == workspace["id"] and not w.get("is_floating")
+                    and (w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0] == index]
+        current = column(pos[0])
+        pair = current + column(pos[0] + 1) if op == "stack" else current
+        if op == "stack" and (len(current) != 1 or len(pair) != 2):
+            raise ValueError("Select a single window with one single window to its right")
+        if op == "unstack" and len(pair) != 2:
+            raise ValueError("Select a stack containing exactly two windows")
+        if any(w.get("app_id") == pin.get("app_id") for pin in pins for w in pair):
+            raise ValueError("Unpin these windows before stacking or separating")
+        command("action", "consume-window-into-column" if op == "stack" else "expel-window-from-column")
     elif op == "focus-window":
         window = next((w for w in windows if str(w["id"]) == arg and w["workspace_id"] == workspace["id"]), None)
         if not window:
@@ -94,7 +111,7 @@ def run(pins, op, arg, workspace, windows, socket):
         command("action", "focus-window", "--id", window["id"])
     elif op != "refresh":
         raise ValueError("Unknown action")
-    if op not in ("focus", "focus-window"):
+    if op not in ("focus", "focus-window", "stack", "unstack"):
         reconcile(pins, workspace, windows, socket)
     return [{"id": p["id"], "label": p["label"],
              "available": eligible(resolve(p, windows, socket), workspace, windows)} for p in pins]
