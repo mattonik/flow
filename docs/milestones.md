@@ -78,3 +78,7 @@ The system capsule's quick settings expose NetworkManager's connectivity status 
 ## Quick settings interaction (2026-11-11)
 
 In the ARM64 guest, keyboard navigation increased the real output volume from 40% to 45%, then returned it to 40%; Escape closed the panel. Quick settings now closes competing Flow overlays when opened, and is dismissed when opening the Desk, switcher, launcher or app menu.
+
+## Lock integration (2026-11-11)
+
+The VM's Super+L shortcut locked the session; a wrong password left it locked, and the correct password restored the open apps. Previously, a logind lock request did not lock Flow. Niri now starts swayidle to handle system lock and before-sleep requests, and Super+L remains available if the locker crashes. A running instance handled a logind lock request and unlocked successfully. The generated Niri configuration validated. Suspend/resume, locker crash recovery and logout have not been exercised. The previous failed warm reboot's journal reached system shutdown, without identifying the cause of the failure after that point.

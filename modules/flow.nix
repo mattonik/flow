@@ -30,6 +30,7 @@ let
   niriConfig = pkgs.replaceVars ../session/niri.kdl {
     terminal = lib.getExe pkgs.foot;
     lock = lib.getExe pkgs.swaylock;
+    idle = lib.getExe pkgs.swayidle;
     shell = lib.getExe pkgs.quickshell;
     shellConfig = ../session/shell.qml;
   };

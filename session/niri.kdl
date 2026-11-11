@@ -9,6 +9,7 @@ layout {
     background-color "#0b1015"
 }
 spawn-at-startup "@shell@" "-p" "@shellConfig@"
+spawn-at-startup "@idle@" "-C" "/dev/null" "-w" "lock" "@lock@ -f -c 0b1015" "before-sleep" "@lock@ -f -c 0b1015"
 
 binds {
     Super+I { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "quick"; }
@@ -25,7 +26,7 @@ binds {
     Super+8 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "focus" "8"; }
     Super+9 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "focus" "9"; }
     Super+Return { spawn "@terminal@"; }
-    Super+L { spawn "@lock@"; }
+    Super+L allow-when-locked=true { spawn "@lock@" "-c" "0b1015"; }
     Super+Left { focus-column-left; }
     Super+Right { focus-column-right; }
     Super+Up { focus-window-up; }
