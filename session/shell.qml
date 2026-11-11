@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtCore as Core
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -7,6 +8,72 @@ import Quickshell.Wayland
 ShellRoot {
     id: root
     property bool deskOpen: false
+    property bool settingsOpen: false
+    property bool appMenuOpen: false
+    property bool overviewOpen: false
+    property var appMenu: null
+    property string appMenuError: ""
+    property bool openMenuWhenReady: false
+    function requestAppMenu() {
+        if (!menuPreferences.appMenuEnabled || root.deskOpen || root.overviewOpen || appMenuProcess.running) return
+        root.openMenuWhenReady = true
+        appMenuProcess.command = ["flow-appmenu"]
+        appMenuProcess.running = true
+    }
+    Core.Settings {
+        id: menuPreferences
+        location: "file://" + (Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config") + "/flow-settings.ini"
+        property bool appMenuEnabled: false
+    }
+    property var appMenuPath: []
+    function currentAppItems() {
+        let items = root.appMenu ? root.appMenu.menus : []
+        for (const index of root.appMenuPath) items = (items[index] && items[index].children) || []
+        return items
+    }
+    Process {
+        id: appMenuProcess
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const result = JSON.parse(this.text)
+                    if (result && result.error) { root.appMenu = null; root.openMenuWhenReady = false; root.appMenuError = result.error; return }
+                    root.appMenu = result
+                    root.appMenuError = ""
+                    if (root.openMenuWhenReady && result) { root.appMenuPath = []; root.appMenuOpen = true }
+                    root.openMenuWhenReady = false
+                    if (appMenuProcess.command[1] === "activate") root.appMenuOpen = false
+                } catch (e) { root.appMenuError = "App menu unavailable" }
+            }
+        }
+    }
+    Timer {
+        interval: 1500; running: menuPreferences.appMenuEnabled; repeat: true; triggeredOnStart: true
+        onTriggered: if (!appMenuProcess.running && !root.appMenu && !root.appMenuOpen && !root.deskOpen && !root.overviewOpen) {
+            appMenuProcess.command = ["flow-appmenu"]
+            appMenuProcess.running = true
+        }
+    }
+    Process {
+        id: niriEvents
+        command: ["niri", "msg", "-j", "event-stream"]
+        running: menuPreferences.appMenuEnabled
+        stdout: SplitParser {
+            onRead: data => {
+                try {
+                    const event = JSON.parse(data)
+                    if (event.WindowFocusChanged && event.WindowFocusChanged.id !== null && root.appMenu && root.appMenu.id !== event.WindowFocusChanged.id) {
+                        root.appMenu = null
+                        root.appMenuOpen = false
+                    }
+                    if (event.OverviewOpenedOrClosed) {
+                        root.overviewOpen = event.OverviewOpenedOrClosed.is_open
+                        if (root.overviewOpen) root.appMenuOpen = false
+                    }
+                } catch (e) {}
+            }
+        }
+    }
     property var pins: []
     property string spacesError: ""
     function spaceAction(action, id) {
@@ -66,6 +133,12 @@ ShellRoot {
 
     IpcHandler {
         target: "desk"
+        function menu(): void {
+            if (menuPreferences.appMenuEnabled && root.appMenu && !root.deskOpen && !root.overviewOpen) {
+                if (root.appMenuOpen) root.appMenuOpen = false
+                else root.requestAppMenu()
+            }
+        }
         function apps(): void { root.openApps() }
         function pin(): void { root.spaceAction("pin") }
         function focus(index: int): void {
@@ -134,6 +207,21 @@ ShellRoot {
                         text: "⌕   Search installed apps   ·   Super K"
                         onClicked: root.openApps()
                     }
+                    FlowButton {
+                        width: 150; text: root.settingsOpen ? "Close settings" : "Settings"
+                        onClicked: root.settingsOpen = !root.settingsOpen
+                    }
+                    Row {
+                        visible: root.settingsOpen
+                        spacing: 12
+                        Switch {
+                            id: menuSwitch
+                            checked: menuPreferences.appMenuEnabled
+                            Accessible.name: "Experimental application menu"
+                            onToggled: { menuPreferences.appMenuEnabled = checked; menuPreferences.sync(); root.appMenuOpen = false }
+                        }
+                        Text { anchors.verticalCenter: parent.verticalCenter; text: "Experimental application menu"; color: "#d7e5df"; font.pixelSize: 14 }
+                    }
                     Text { text: "PINNED SPACES"; color: "#91a59d"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
                     Text { visible: root.pins.length === 0; text: "Pin the current app to keep its place"; color: "#80948b"; font.pixelSize: 14 }
                     Flow {
@@ -180,6 +268,72 @@ ShellRoot {
                         }
                     }
                     Text { text: "Tab to navigate · Esc or Super H to return"; color: "#788d84"; font.pixelSize: 12 }
+                }
+            }
+        }
+    }
+    // shortcut: only published accessibility menus are shown; add toolkit-specific bridges when verified.
+    PanelWindow {
+        visible: menuPreferences.appMenuEnabled && !root.deskOpen && !root.overviewOpen && root.appMenu && !root.appMenuOpen
+        anchors { top: true; left: true }
+        implicitWidth: 220; implicitHeight: 44; margins.top: 8; margins.left: 8
+        color: "transparent"; exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Overlay
+        FlowButton {
+            anchors.fill: parent
+            text: root.appMenu ? root.appMenu.name + "  ▾" : "Application"
+            onClicked: root.requestAppMenu()
+        }
+    }
+    PanelWindow {
+        visible: menuPreferences.appMenuEnabled && root.appMenuOpen && !root.deskOpen && !root.overviewOpen
+        anchors { top: true; bottom: true; left: true; right: true }
+        color: "transparent"; exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+        MouseArea { anchors.fill: parent; onClicked: root.appMenuOpen = false }
+        FocusScope {
+            anchors.fill: parent; focus: true
+            Keys.onEscapePressed: root.appMenuOpen = false
+            Rectangle {
+                x: 8; y: 8; width: Math.min(390, parent.width - 16); height: Math.min(menuColumn.implicitHeight + 32, parent.height - 16)
+                radius: 16; color: "#17201e"; border.color: "#3a4d45"
+                Flickable {
+                    anchors.fill: parent; anchors.margins: 16
+                    contentWidth: width; contentHeight: menuColumn.implicitHeight; clip: true
+                    Column {
+                        id: menuColumn; width: parent.width; spacing: 8
+                        Text { text: root.appMenu ? root.appMenu.name : "Application"; color: "#edf5f0"; font.bold: true; font.pixelSize: 18 }
+                        Text { visible: root.appMenuError !== ""; text: root.appMenuError; color: "#f1baaa"; width: parent.width; wrapMode: Text.Wrap }
+                        Text {
+                            visible: !root.appMenu || root.currentAppItems().length === 0
+                            text: "No exposed app commands. Use the application's own menu."
+                            color: "#a3b5ad"; width: parent.width; wrapMode: Text.Wrap
+                        }
+                        FlowButton {
+                            visible: root.appMenuPath.length > 0
+                            width: menuColumn.width; text: "‹ Back"
+                            onClicked: root.appMenuPath = root.appMenuPath.slice(0, -1)
+                        }
+                        Repeater {
+                            model: root.currentAppItems()
+                            FlowButton {
+                                required property var modelData
+                                required property int index
+                                width: menuColumn.width
+                                text: modelData.label + (modelData.children ? "   ›" : "")
+                                enabled: modelData.enabled && !appMenuProcess.running
+                                onClicked: {
+                                    if (modelData.children) root.appMenuPath = root.appMenuPath.concat([index])
+                                    else {
+                                        appMenuProcess.command = ["flow-appmenu", "activate", String(root.appMenu.id), JSON.stringify(modelData.path), modelData.label]
+                                        appMenuProcess.running = true
+                                    }
+                                }
+                            }
+                        }
+                        FlowButton { width: menuColumn.width; text: "Close menu"; onClicked: root.appMenuOpen = false }
+                    }
                 }
             }
         }

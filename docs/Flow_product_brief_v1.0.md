@@ -1,0 +1,626 @@
+# Flow — Product vision, experience and platform requirements
+
+**Version:** 0.9  
+**Updated:** 11 November 2026  
+**Status:** Concept + interactive browser prototype. Not a shipping Linux distribution.  
+**Working stack:** NixOS · Niri (Wayland compositor) · Quickshell-based system shell  
+**Document goal:** Consolidate every idea agreed so far, including Magnetic Flow and the Desk / Overview spatial model, while distinguishing requirements from browser simulation.
+
+---
+
+## 1. Product idea
+
+**Flow is a dark-native, fullscreen-first desktop environment that treats applications as a continuous horizontal spatial workspace.** Apps feel immediate and immersive, as on a tablet, but remain fully capable Linux desktop windows. Multitasking is progressively revealed instead of being the default burden.
+
+**Product promise:** A consistent computing environment across a tablet, laptop and desktop, with a single spatial model, predictable app locations, an always-accessible system layer, and reliable multi-monitor workflows.
+
+Flow is **not** intended to be a new kernel, a wholesale rewrite of Linux applications, or an arbitrary theme. The differentiator is the interaction model, compositor integration, persistent workspace metadata and cross-device experience.
+
+### Primary experiences
+
+- **Tablet:** one app occupies the screen; swipe through Flow, briefly reveal a Layer, or form an adaptive Group. Small floating system control; intuitive touch/pen behavior.
+- **Laptop:** same app/space model with touchpad, keyboard and mouse. Camera notch, if present, becomes the physical anchor for compact global controls instead of another black island below it.
+- **Desktop:** fullscreen/maximized-first apps, numbered pinned spaces, rapid keyboard navigation, independent Flows on connected monitors and dock-aware restoration.
+- **Shared device:** secure lock and user switching with per-person files, pins, preferences and workspaces.
+
+### Experience principles
+
+**New in v0.9:** Work, Overview and the clear Desk are three presentations of one persistent spatial environment. They must transition with spatial continuity, not appear as disconnected apps or screens. Navigation is magnetic and adapts to the input method.
+
+
+1. **Content owns the display.** No permanent large taskbar, app switcher, header or dashboard on top of the work.
+2. **Fullscreen is the default, not a restriction.** The user can still compose Groups and Layers without switching into a complicated window-management mode.
+3. **Spatial memory beats searching.** Core workspaces keep predictable positions and keyboard addresses.
+4. **System is always reachable.** Essential controls must not depend on a particular app/window being responsive.
+5. **One concept, multiple inputs.** Touch, pen, trackpad, mouse and keyboard should manipulate the same underlying layout, not separate device-mode workspaces.
+6. **Dark is native and default.** Editorial typography, deep graphite surfaces, quiet separators and disciplined accents inspired by the restrained IceBear visual language.
+7. **Normal apps first.** Existing Linux software remains the core ecosystem. App integrations are requirements to document and research, not a reason to make simulated bespoke apps now.
+8. **Reproducible, modular, user-controlled.** Favor NixOS configuration, replaceable components, local-first privacy and open protocols where viable.
+
+---
+
+## 2. Four core building blocks
+
+| Concept | Product behavior | Likely implementation |
+|---|---|---|
+| **Flow** | A horizontal, scrollable sequence of app spaces; usually one immersive app per space | Niri scrolling columns, compositor IPC, Flow metadata service |
+| **Groups** | Two or more apps share one persistent space; arrangements remain recognizable after rotation or monitor moves | Niri layout primitives + stored proportional constraints and grouping metadata |
+| **Layers** | Temporary utility/app above current work; hides without changing the underlying space | Compositor-managed floating windows for actual apps; layer-shell for appropriate *system* surfaces |
+| **System** | Global notifications, search/launcher, settings, status, activities, Home, lock | Quickshell, D-Bus, portals, system services and compositor cooperation |
+
+### Flow
+
+- The primary experience is **horizontal movement between app spaces**, without treating each as an isolated conventional virtual desktop.
+- A normal space is *fullscreen-looking*: keep enough compositor control for overlays and gestures rather than relying on exclusive fullscreen wherever that would obstruct System.
+- Support both pinned spaces (anchored) and dynamic/temporary spaces. Dynamic spaces follow anchors and can be closed or rearranged.
+- Visual motion should feel continuous and spatial, with clear orientation and efficient keyboard shortcuts.
+- Keep apps running when out of view (subject to ordinary OS resource management); returning should preserve their current session where possible.
+- Implement a revealable overview/switcher, not a permanent bottom dock. A small bottom-edge handle or gesture is acceptable.
+- App-specific horizontal scroll must not be stolen accidentally by global Flow navigation. Prefer multi-finger or edge gestures and explicit touch gesture arbitration.
+
+### Groups
+
+- A space can contain several normal application windows; grouping should be reversible and discoverable.
+- Landscape: side-by-side as the typical default, with user-adjustable proportions and layouts.
+- Narrow portrait: stacked top/bottom by default, keeping both content areas useful. Users should be able to maximize one and return to the Group.
+- A Group has its own identity, label, saved membership and adaptable layout; it behaves like **one addressable space** in Flow.
+- Drag-to-group, remove-from-group, split/merge, resize and reorder are future interactions to prototype and test.
+- Moving a Group to another display must preserve membership even if proportions or orientation change.
+- Distinguish reopening the *applications* from exact restoration of an app's internal document/session; the latter requires app cooperation.
+
+### Layers
+
+- Temporary notes, chat, utility, media control, file preview or another app can appear above the current space.
+- Dismissing a Layer restores the underlying arrangement **without displacing** the app/group.
+- Tablet portrait: default to a bottom sheet; landscape/desktop: a small, movable or dockable overlay when suitable.
+- A Layer may be promoted into a persistent Group or Flow space in a later interaction design.
+- **Security and architecture:** regular app windows should remain compositor-managed. Wayland layer-shell is appropriate for trusted system UI surfaces, not a general bypass for arbitrary third-party apps.
+
+### System layer
+
+- Notifications, quick settings, search, launcher, system status, running activities and lock remain available from **every** Flow location.
+- This is conceptually outside the active workspace; System is not a pinned app and does not consume a dedicated Flow position.
+- Must stay reachable from true fullscreen apps, crashed apps and unusual display arrangements, with reliable fallback shortcuts.
+
+---
+
+## 3. The adaptive island / notch controls
+
+### Tablet: floating island
+
+- Small capsule floating **on top of app content** at top center. It must not reserve a full-width bar or reduce available app height.
+- Suggested gestures (to be usability tested): **swipe left → notifications**, **swipe right → quick settings**, **swipe down → Home**. Tap → a compact action menu.
+- Top-center live area can show a *current activity* (timer/focus session, music, transfer/progress, ongoing call, battery/charging), expanding only when meaningful.
+- Touch targets and screen-reader descriptions matter more than making the capsule visually large.
+- Safe-area insets respected; no content trapped behind cameras/rounded corners. Gesture conflicts with app drawing/scrolling must be resolved deliberately.
+
+### MacBook with notch / future camera-pill laptop
+
+- The system UI should **visually absorb the hardware cutout**, leaving the camera area black and placing a few actions **to either side**, not painting a large second blob below it.
+- Compact desktop baseline: notifications (left), Home (left), settings (right), and an optional unobtrusive activity status.
+- Expand only when requested or during a live activity. Don't permanently reserve more screen height than the cutout itself requires.
+- The hardware notch's geometry may require per-device calibration or display APIs. Browser CSS cannot discover exact cutout dimensions reliably; simulator presets are illustrative only.
+- Do not paint a faux notch on an external monitor without a cutout.
+
+### Desktop without a cutout
+
+- Show just **three compact global controls** or an equally quiet command/status affordance. Search and the launcher remain reachable by shortcut.
+- Do not introduce an always-visible large strip to imitate a tablet's island.
+
+### Status and notification behavior
+
+- Status is ambient, not an excuse to expand the control constantly.
+- Critical alerts and permission prompts should remain accessible while preserving focus and input safety.
+- Prefer unobtrusive badges, a concise transient expanded state and a full searchable notification history.
+
+---
+
+## 4. Home, Discover and launcher
+
+**Home should feel calm and purposeful, not like a settings dashboard.**
+
+Suggested hierarchy:
+
+1. Small person/profile indicator and secure lock/switch control.
+2. **Universal search** as the primary action.
+3. **Pinned main-display spaces** as the most important content, followed by compact readouts for external-display anchors.
+4. Small **pinned apps** shortcut row.
+5. All apps and advanced settings/diagnostics progressively disclosed.
+
+### Universal search
+
+- One global palette across applications, files, spaces, actions, settings, notifications (optional later), and relevant device commands.
+- Keyboard shortcut: `Super + K`; accessible via System/Island and Home search.
+- Launch an app into Flow, open or focus a space, open a file with its handler, change settings, execute scoped actions.
+- Support keyboard-first navigation as well as touch, localization, ranking, and permission-aware results.
+- Search results from other users' private files must never appear.
+- Implement using `.desktop` entries, a permission-aware file index and system actions; a custom application store isn't essential.
+
+### App drawer
+
+- On-demand full app library, with pin/unpin and filtering. Never take permanent space at the bottom.
+- **Pinned apps** are shortcuts to open/focus an app, not fixed positions in a Flow.
+- The launcher shows normal installed Linux applications, including those available through Flatpak and XWayland, when relevant.
+
+---
+
+## 5. Pinned spaces: fixed spatial addresses
+
+**A pinned space means “this application or Group always belongs at this position on this display.”**
+
+- All pinned spaces **must occupy the beginning (leftmost positions) of each display's horizontal Flow**, in a stable user-defined order.
+- **Dynamic/unpinned spaces follow pinned spaces**; they must never permanently push or interleave between the anchors.
+- Each monitor maintains its **own sequence**, starting at pinned space 1. Pins are independent of pinning app shortcuts.
+- A pinned space stores: unique ID, label, preferred display identity, local order/index, app/Group membership, adaptable layout constraints, optional launch-on-login policy, and restoration metadata.
+- Actions: pin active app/group as a space, unpin, reorder, change preferred display, rename, and optionally keep a placeholder if the application is unavailable.
+- Pinned spaces are **per user**. Guest profiles have no access to another person's stored pinned layout.
+- Space creation and management should not require modifying NixOS configuration manually; dynamic state belongs in per-user settings.
+
+### Example arrangement
+
+| Display | Pinned position 1 | Pinned position 2 | Dynamic spaces |
+|---|---|---|---|
+| **Main** | Mail | Studio + Notes | Browser, temporary tasks |
+| **External 1** | Terminal | Files | Documentation, tools |
+| **External 2** | Writing | — | Additional temporary windows |
+
+**Example persistence model (conceptual, not final storage format):**
+
+```json
+{
+  "userId": "local-user-id",
+  "displayId": "preferred-physical-display-id",
+  "spaceId": "studio-notes",
+  "label": "Studio + Notes",
+  "pinnedIndex": 2,
+  "apps": ["studio.desktop", "notes.desktop"],
+  "layout": { "landscape": "horizontal-split", "portrait": "vertical-split", "ratio": 0.72 },
+  "launchOnLogin": true,
+  "restorePolicy": "best-effort"
+}
+```
+
+### Restoration and display changes
+
+- On login, reserve anchored slots immediately; load the app/group as configured. Missing applications receive a repairable placeholder.
+- If a monitor disconnects, its pinned spaces must **not disappear or be forgotten**. Show them temporarily on a remaining display, preserving original display identity and home ordering for reconnection.
+- On reconnect, offer or automatically apply a saved return-to-display policy; never silently discard user modifications made while undocked.
+- The display number is not the physical identity: monitor numbering can be chosen for keyboard navigation, but the persisted preference should attach to a stable hardware/profile identity.
+
+---
+
+## 6. Keyboard navigation: agreed default mapping
+
+**Navigation and movement are intentionally separate operations.**
+
+| Shortcut | Meaning | Status |
+|---|---|---|
+| `Super + 1` … `Super + 9` | Open pinned space N on **main** display | Agreed; simulated in v0.8 |
+| Hold `Super + Alt`, press `1`, then `1` | **External display 1**, pinned **space 1** | Agreed sequence; simulated |
+| Hold `Super + Alt`, press `1`, then `2` | External display 1, pinned space 2 | Agreed sequence; simulated |
+| Hold `Super + Alt`, press `2`, then `1` | External display 2, pinned space 1 | Agreed sequence; simulated |
+| `Super + K` | Universal search | Agreed; simulated (`Ctrl + K` fallback) |
+| `Super + Shift + …` | **Move** active app or Group to a target location (instead of switching focus) | Modifier family reserved; exact numbers/semantics TBD |
+| Left / right spatial navigation | Previous / next space on the active display | Prototype keyboard arrows; final chord/gesture TBD |
+| Lock | System-level secure lock shortcut | Needs a conflict-free mapping and native authentication integration |
+
+### Shortcut design rules
+
+- **No prefix ambiguity:** `Super + 1` must activate main space 1 immediately. External navigation requires the extra `Alt` modifier.
+- Hold `Super + Alt` and enter **display digit, space digit**. On the first digit, show a subtle “External 1 → choose pinned space” overlay, with no distracting intermediate display jump. Only activate the destination after the second digit.
+- Preserve focus: after a successful jump, keyboard input should go to the selected space's previously focused application/window, without a mouse click.
+- If the requested display or space is missing, offer concise feedback, don't silently jump elsewhere.
+- Display numbers should stay stable across sleep/wake, dock unplug/replug and monitor reordering. The UI should allow mapping numbers to display identities.
+- Numbering is **per display**, starting from 1 and corresponding to pinned positions, not arbitrary workspace indexes or application launch order.
+- Shortcuts should be discoverable in the overview, space cards and a lightweight `?` help reference, but not permanently overlay app content.
+- Native implementation must capture chords at the compositor/system level, handle key repeat/timeouts, detect OS and application conflicts, work with international layouts, and offer remapping/accessibility alternatives.
+- **Prototype caveat:** browsers or host operating systems may intercept `Super`-key shortcuts. v0.8 also recognizes the equivalent `Ctrl` shortcuts when key events reach the page. It does not register global OS hotkeys.
+
+### Moving apps/Groups (future)
+
+Reserve `Super + Shift` for moving rather than focusing. Specific proposals to validate:
+
+- `Super + Shift + N`: send current app/Group to pinned location N on main display (with clear replacement/swap confirmation, not silent overwrite).
+- `Super + Shift + Alt`, then display N / space N: move to another screen's target space.
+- Provide a non-keyboard alternative: drag space in overview to a monitor and position.
+
+These **move** shortcuts are not yet finalized and should not be treated as shipping behavior.
+
+---
+
+## 7. External monitors and DisplayLink
+
+### Native monitors — must-have
+
+- Multiple connected displays, including HDMI, DisplayPort and USB-C DP Alt Mode where the kernel/device supports them.
+- Each physical display has its **own active Flow, ordered pinned spaces and dynamic spaces**.
+- Move individual app windows or entire Groups between displays and adapt layout to each destination's size, orientation and density.
+- Display settings: detect/identify, arrangement, primary, extend/mirror, scale, resolution, refresh rate, rotation, brightness where supported, relative position and focus behavior.
+- Connect/disconnect (hotplug), sleep/wake, lid open/closed, docking, tablet-with-external-monitor modes, and saved per-dock/per-display profiles.
+- Touch/pen input mapping to the correct physical display, including when rotated or scaled.
+- **Disconnect contract:** maintain app data and Group structure; provide a clear temporary landing location and restore preferences on reconnect.
+- Cross-display copy/paste, drag/drop and keyboard focus must work predictably.
+
+### DisplayLink Manager — integrated system feature
+
+- Expose USB graphics docks/adapters as a distinct backend in **Displays & Docks**, not as a permanent launcher app.
+- Inspect driver status and compatibility (DisplayLink userspace driver, EVDI module, kernel version), USB capacity, connected screens and restart/recovery suggestions.
+- Provide clear install/enable guidance for platforms that require proprietary packages; check driver license and NixOS configuration constraints.
+- Validate monitor enumeration, mixed native/DisplayLink outputs, scaling, cursor/animation performance, video latency, suspend/resume and unplug/replug.
+- Niri 25.11 announced DisplayLink output support; **that is not a guarantee** that a particular dock and GPU combination works. Test actual hardware before promising support.
+
+### Multi-display preview constraints
+
+The HTML prototype can simulate navigating between separate display Flows in **one browser viewport**. It cannot open real per-monitor Wayland sessions, configure monitor outputs, install EVDI or manage DisplayLink hardware.
+
+---
+
+## 8. Orientation, touch, pen and accessibility
+
+- iPad/tablet **portrait and landscape** are first-class, not desktop layouts scaled down.
+- Groups reflow based on screen shape. An app/space should not be recreated just because the tablet rotated.
+- On-screen keyboard appears when needed, with sensible resize/pan behavior that avoids obscuring text and the system island.
+- Touch gestures: edge swipes for system, horizontal navigation in app Flow (while respecting app gestures), upward reveal of launcher/overview. Exact gesture thresholds, number of fingers and arbitration need a dedicated design test.
+- The same user can attach/detach keyboard/trackpad without switching to a different workspace model or losing location.
+- Pencil/pen input, hover where supported, right-click equivalence, external mouse, scrolling and keyboard-only navigation.
+- Proper focus order, keyboard remapping, reduced motion, high-contrast options, screen readers, large text and variable touch-target scaling.
+- Good behavior with hardware camera cutouts and platform safe areas, including future device shapes where applicable.
+
+---
+
+## 9. Users, security and lock screen
+
+- **Multiple real user accounts** on tablets, laptops and desktops; each has private home directory, app preferences, pinned spaces, saved Groups, sync identity and display profiles.
+- Secure login/unlock/fast user switching with Linux PAM and supported login/session-management infrastructure. No simulated login mechanism should be shipped as authentication.
+- Lock screen offers person selection where appropriate; switching to another user should keep the prior user's session separated and subject to resource/security policy.
+- Guest account with explicit privacy, cleanup and sharing rules. Shared folders are opt-in and visible.
+- Credential handling, screen capture permissions, clipboard sharing, session restoration and sync encryption must be reviewed for cross-user leaks.
+- Lock screen visual language should remain minimal and dark-native, with useful charging/network state without exposing another user's content.
+
+---
+
+## 10. Apps: compatibility and file manager (research tracks)
+
+**Do not design or implement a complete new app suite as an early milestone.** The prototype's Mail, Studio, Files, Terminal and Notes are interaction stand-ins.
+
+### Existing Linux apps (baseline)
+
+- Native Wayland, GTK and Qt applications, Electron applications, Flatpak packages and legacy X11 applications through XWayland when compatible.
+- Existing apps do **not** automatically inherit Flow's visual design; window behavior and shell UI are what become consistent.
+- Portal integration for file pickers, permissions, screen capture/recording, screen sharing, notifications and desktop app launch.
+- NixOS packaging and Flatpak interoperability; consider mutable app data and updates separately from immutable/reproducible system configuration.
+
+### File manager
+
+- A capable file manager is a core requirement, but initially use an existing Linux file manager rather than building a new filesystem engine.
+- Flow-native presentation: fullscreen browser, reliable touch selection, keyboard shortcuts, quick preview as a Layer, open side-by-side as a Group, drag files across spaces and monitors.
+- Local drives, network shares (SMB/NFS/WebDAV where supported), removable storage, recent files, search, tags, permissions, safe delete/undo and file operation progress/status via System.
+- File previews and progress notifications must behave cleanly in fullscreen-first workflows.
+- Per-user ownership, mounted volumes, external-disk permissions and offline sync states must be explicit.
+
+### Windows applications
+
+- Explore **Wine/Proton/Bottles** for directly compatible Windows applications.
+- For apps needing a complete Windows environment, explore Windows VM integration where guest app windows are presented as ordinary Wayland/XWayland windows (e.g., WinBoat/WinApps-style approaches).
+- Licensing, CPU architecture, GPU acceleration, input, file sharing, security and responsiveness are important constraints.
+- The goal is app-window participation in Flow, **not a promise that every Windows program works**.
+
+### macOS applications
+
+- Explore **Darling** as a research track; mainstream graphical macOS app compatibility is still not dependable.
+- Remote access to a real Mac may be a more reliable bridge for specific proprietary apps than claiming local compatibility.
+- macOS GUI frameworks, binary architecture, graphics integration, distribution/licensing and proprietary app requirements can be major blockers.
+- Mark this as **experimental / long-term**, not a release dependency.
+
+---
+
+## 11. Flow Sync: one workspace across devices
+
+A feature inspired by the **idea** of Luma Sync; not necessarily compatible with the Luma service or dependent on its account infrastructure.
+
+### Three independently synchronized layers
+
+1. **Files:** normal file sync/share through an established foundation such as Syncthing or Nextcloud, with selective sync, offline handling, conflicts and storage quotas.
+2. **Settings and identity:** per-user pins, named spaces, shortcuts, themes, launcher favorites, saved Groups, input and display preferences where sensible.
+3. **Workspace intention:** semantic restore of app/group membership, relative layout, target display and last-opened context, adapting to screen geometry instead of copying pixels.
+
+### Expected behavior
+
+- Users can sign into multiple Flow devices. Device registration and revocation are essential.
+- Device types are allowed to differ: for example, a dual-monitor desktop's Group may become a portrait stack on a tablet.
+- Offline-first and explicit conflict handling. A synchronization failure should not corrupt local space layout.
+- App-state restoration is **best effort**. Exact unsaved document state cannot be reconstructed without participating apps.
+- Private data should be encrypted in transit and, where appropriate, at rest; define device trust and account recovery mechanisms early.
+- Prefer a self-hostable sync coordinator, potentially hosted on an always-on Raspberry Pi, while keeping clients functional if the server is offline.
+- Never sync one user's workspace into a different local user's profile without explicit sharing.
+- Document which metadata is portable, device-specific, or never synchronized (e.g., physical monitor serials vs logical role).
+
+---
+
+## 12. Technical foundation and feasibility
+
+### Proposed architecture
+
+```text
+Hardware: tablet / laptop / desktop, display, touch, GPU, dock
+  ↓
+Linux kernel, DRM/KMS, graphics/input/audio/network drivers
+  ↓
+NixOS configuration, login/PAM, systemd, PipeWire, NetworkManager
+  ↓
+Niri Wayland compositor (scrolling columns, multi-output, IPC)
+  ├── Flow session service (spaces, pinning, groups, focus, restore)
+  ├── Display service (native outputs, DisplayLink, dock profiles)
+  └── Quickshell UI (System, Island/notch, Home, Discover, overview)
+       ├── XDG portals, app launcher and permissions
+       ├── Linux apps / XWayland / Flatpak
+       └── Optional integration bridges: Windows / macOS / Flow Sync
+```
+
+The architecture is a **starting hypothesis**, not a proof that Niri already implements every desired Group, touchscreen gesture, input capture or restoration behavior. Audit Niri's current IPC, layout and output features before committing to compositor modifications.
+
+### Important engineering boundaries
+
+- **Wayland is a protocol**, Niri is the compositor, Quickshell provides shell/system surfaces, and NixOS provides packages, services and reproducible configuration.
+- Compositor IPC and policy services are required to maintain anchored per-display spaces. User-defined pinning should not be faked as ordinary virtual desktop order alone.
+- Global keyboard shortcuts should be implemented through the compositor/session service, not trapped by an app-specific browser window.
+- Secure lock/login and system UI permission boundaries should be designed early, even if initial prototypes only simulate them.
+- Avoid making Flow dependent on Fedora, Luma OS, the Pond distribution or a custom Linux kernel.
+
+### Linux-on-iPad dependency
+
+- Flow can be developed and tested on ordinary NixOS desktop hardware **before** Linux is bootable on the target iPad.
+- An A12X/A12Z iPad Pro requires a working boot path, relevant kernel/device support, functional graphics/display and input drivers before a compositor can provide a usable experience.
+- Neither Wayland, Niri nor Luma solves missing hardware enablement; treat iPad boot/kernel bring-up as a separate research stream.
+- ARM64 packaging for shell components and third-party applications needs explicit testing.
+
+---
+
+## 13. Visual design guidance
+
+**Default:** refined dark-native UI with a restrained IceBear-inspired aesthetic. This is a direction, not a copy/paste of a specific existing brand token set.
+
+- Backgrounds: near-black `#0B1015`, card `#131B21`, secondary graphite `#172128`.
+- Text: cool white `#ECF2F0`, secondary desaturated slate `#91A6A7`.
+- Accents: sparingly used mint/ice green `#B8DDCB`, darker green for positive/active controls; avoid oversized luminous gradients.
+- Typography: strong, quietly editorial hierarchy; medium-weight large titles; compact uppercase labels where useful.
+- UI density: spacious where the content is primary, compact for utility controls. Reduce cards/lines/labels before adding decorative effects.
+- Borders/shadows: subtle; avoid heavy glassmorphism, conspicuous gradient wallpapers and permanent chrome.
+- Motion: short, meaningful movement indicating where a space came from and where it went; support reduced motion.
+- Design tokens must cover focus, selected, alert, warning, disabled and secure/pending states beyond accent decoration.
+
+---
+
+## 14. Implementation sequence
+
+### Stage A — validate the interaction model (current)
+
+- [x] Horizontal Flow navigation, immersive sample apps
+- [x] Simple Group and Layer demonstrations
+- [x] Floating island; system panels, notifications and Home
+- [x] Notch-aware desktop controls and future camera-pill preset
+- [x] Tablet portrait and landscape adaptive layout
+- [x] Universal search and app drawer, pinned app shortcuts
+- [x] Simplified dark-native Home
+- [x] Simulated multiple profiles and lock screen
+- [x] Simulated Displays/DisplayLink settings
+- [x] Pinned spaces first on main display
+- [x] **v0.8:** separate simulated per-display pinned sequences and numbered direct navigation
+- [x] **v0.8:** `Super/Ctrl + N`, `Super/Ctrl + Alt`, display digit then space digit; contextual shortcut reference
+- [ ] Usability validation: touch gesture conflicts, efficient grouping, focus restoration, pinch/pen and screen reader behavior
+- [ ] True two-window/multi-display visual simulation with drag Group between displays and unplug/return lifecycle
+
+### Stage B — working Linux desktop MVP
+
+- [ ] NixOS flake/module, Niri session, Quickshell shell service
+- [ ] Basic Home, search, island and settings driven by actual OS data
+- [ ] Normal Linux and Flatpak app launching; XWayland compatibility
+- [ ] Real pinned space metadata, per-display ordering and session restore
+- [ ] Global keyboard shortcuts with reliable focus behavior
+- [ ] System notifications, quick controls and overview
+- [ ] Real authentication, locking and user separation
+- [ ] Basic portrait/tablet and desktop input without losing workspace state
+
+### Stage C — device and display maturity
+
+- [ ] Monitor hotplug/arrangement and per-display Flow lifecycle
+- [ ] Move Groups between displays; dock and lid-state behavior
+- [ ] DisplayLink tested on named docks / GPUs / kernels
+- [ ] Touch gesture driver and conflict arbitration; on-screen keyboard
+- [ ] Battery/power, suspend/resume, rotation, high DPI, accessibility
+- [ ] File manager integration and reliable document opening/previews
+
+### Stage D — continuity and extended compatibility
+
+- [ ] Per-user Flow Sync identity, encrypted settings and layout sync
+- [ ] File sync, sharing and conflicts
+- [ ] Cross-device Group/space reconstruction
+- [ ] Windows app integrations under declared compatibility tiers
+- [ ] Experimental macOS app bridge (not a blocking requirement)
+- [ ] ARM64 device packaging and iPad hardware bring-up as a separate track
+
+---
+
+## 15. Acceptance checks and non-goals
+
+### Example MVP checks
+
+1. A user pins Mail in **Main/1** and Studio+Notes in **Main/2**; both remain first and in that order after session restart.
+2. Pressing `Super + 1` focuses Mail immediately. Pressing `Super + Alt`, then `1`, `2` navigates to External 1/2 without an intermediate hop.
+3. After disconnecting an external display, its Group remains accessible. Reconnecting restores a coherent arrangement without lost content.
+4. Rotating a tablet moves a Group from side-by-side to stacked without closing either app.
+5. Notifications/settings/Home can be reached above a busy immersive app; screen reader and keyboard-only alternatives exist.
+6. Switching local users prevents access to each other's private files, pins and live sessions.
+7. An arbitrary installed Linux app can participate in Flow without being rewritten for Flow.
+8. A File operation initiated in Files keeps reporting status when the user moves to another space.
+
+### Do not promise in an MVP
+
+- Native Windows or macOS app compatibility for every title.
+- Exact restoration of every third-party app's unsaved internal state.
+- Guaranteed DisplayLink support for every dock without hardware testing.
+- Full iPad A12X/Linux hardware support merely because the shell runs on ARM64.
+- Luma Sync protocol/account compatibility unless independently verified.
+- Secure OS login, persistent native sync or multi-monitor control from the browser-only prototype.
+
+---
+
+## 16. Prototype v0.8: what you can actually try
+
+**Artifact:** `Flow_v0.8_interactive.html` (one self-contained, offline-capable HTML file, no external UI dependencies).
+
+- Fullscreen-responsive dark shell with Home, basic search, app library, a little bottom switcher, island/notch presets and portrait Group adaptation.
+- Main display: Mail pinned 1, Studio (with Notes Group) pinned 2.
+- External 1: Terminal pinned 1, Files pinned 2. External 2: Writing pinned 1.
+- The Home external-display rows are compact so the main screen remains calm.
+- Browser keyboard demo: `Ctrl + 1` or `Meta/Command + 1` (when not intercepted); hold `Ctrl + Alt`, press `1` then `2` for External 1 / Files. Also `Ctrl/Command + K` to search. Press `?` for shortcut help.
+- On touch: use island taps/swipes, bottom switcher, horizontal navigation and portrait orientation.
+- Account switching is **simulated**; files, app activity, display settings, Sync and compatibility are demo-only.
+- Display 1/2 **navigation is previewed in one browser window**, not implemented with real output capture or multiple browser windows.
+
+Save the HTML locally to keep an offline copy. A downloadable chat link is not a permanent hosting service. iPad Safari may limit immersive fullscreen for local files; hosting over HTTPS and adding it to the Home Screen can provide a more app-like presentation.
+
+---
+
+## 17. Open decisions (remaining)
+
+- Is a Group fundamentally a Niri column containing stacked windows, or should Flow maintain a separate semantic Group object that can rearrange any window configuration?
+- Should all pinned spaces auto-launch on login or only reserve slots until accessed? Consider battery, memory and network impacts.
+- Can an overlay be pinned temporarily to an app space or promoted to a Group? What are the default dismissal rules?
+- Confirm final gesture grammar on tablets: edge vs multi-finger swipe, how to avoid horizontal content gestures, and discoverability.
+- Define move-shortcut grammar under `Super + Shift`, especially what happens if destination pinned slot already contains an app.
+- How are monitor shortcut numbers assigned and retained when display IDs, docks and OS output enumeration change?
+- Should a user have named **workspace profiles** (work/personal/travel), beyond separate OS accounts and per-display pinned spaces?
+- What are acceptable startup, memory and battery budgets for an always-running Quickshell-based System layer?
+- Which NixOS release, Niri version and GPU target form the first reproducible baseline?
+
+---
+
+## 18. Research links and technical references
+
+These are starting points for implementation validation, not claims that Flow's target features are already fully supported.
+
+- [Niri scrolling Wayland compositor](https://github.com/niri-wm/niri)
+- [Niri output configuration](https://niri-wm.github.io/niri/Configuration%3A-Outputs.html)
+- [Quickshell](https://quickshell.org/)
+- [NixOS](https://nixos.org/)
+- [Niri v25.11 / DisplayLink release discussion](https://github.com/niri-wm/niri/discussions/2917)
+- [NixOS DisplayLink documentation](https://wiki.nixos.org/wiki/Displaylink)
+- [DisplayLink EVDI](https://github.com/DisplayLink/evdi)
+- [Wayland protocol](https://wayland.freedesktop.org/)
+- [XDG Desktop Portals](https://flatpak.github.io/xdg-desktop-portal/)
+- [Syncthing](https://syncthing.net/) · [Nextcloud](https://nextcloud.com/)
+- [Wine](https://www.winehq.org/) · [Bottles](https://usebottles.com/) · [Darling](https://www.darlinghq.org/)
+- [Pond (Butterfly)](https://www.butterfly.so/pond) · [Luma](https://simplyluma.com/)
+
+---
+
+*Maintained as a product and engineering brief. The HTML prototype is a design simulation; native NixOS and hardware work are separate future deliverables.*
+
+
+## 19. v0.9 Design decision — The Desk is the foundation
+
+**User metaphor:** You are working with stacks of papers on a desk. Pushing the work away reveals the clean desk and its essential tools. You can bring any stack back without recreating it. This is a spatial relationship, **not** a destructive close/minimize-all operation.
+
+### Three perspectives of one environment
+
+1. **Work / Flow**: an immersive active app or Group. Its position within the horizontal sequence is preserved. System controls float above the application and are always available.
+2. **Overview / Organized desk**: the same app surfaces scale down into their real horizontal order. Users can see, choose, rearrange, group, pin and eventually move spaces between displays. Selected pinned spaces remain at the beginning.
+3. **Desk / Clear desk**: app surfaces move out of the way while remaining alive and unchanged. Home is calm: universal search, concise pinned spaces and a small list of tools. It is not a widget-heavy dashboard.
+
+The transitions should share object identity and spatial anchors, rather than crossfading between unrelated static screenshots. **Zoom out to organize, sweep aside to begin, and return exactly where you left off.**
+
+### First proposed gestures
+
+| Input | Work → Overview | Overview → Desk | Return |
+|---|---|---|---|
+| Tablet touch | Swipe up / pause on a reserved system gesture | Continue upward / swipe up again | Swipe down in stages, or select a space |
+| Desktop touchpad | Upward system gesture or shortcut | Continue upward | Reverse gesture / Escape |
+| Keyboard | `Super + Tab` (proposal) | `Super + H` (proposal) | Escape or select numbered pinned space |
+| HTML demo | Swipe up, tap bottom handle, or `O` | Swipe up again, `H`, or Overview button | Swipe down, Escape, or tap an app |
+
+The final native gesture grammar needs compatibility tests with application scrolling, system-wide swipes and tablet OS reserved gestures. Prototype shortcuts `O` and `H` are not proposed as required native OS defaults.
+
+### Transition choreography
+
+- Work → Overview: the current app **physically shrinks to its location in the horizontal collection**, and its neighbors appear around it; no loss of application state.
+- Overview → Desk: the scaled app surfaces **move aside together**, making the clean desk underneath visible. The Desk does not launch or replace another window.
+- Desk → Overview → Work: the motion reverses, reconnecting the currently selected space to its original fullscreen position.
+- Avoid disorienting jumps or a different layout after returning. Keep the currently focused app or Group address unchanged until deliberately changed.
+- Respect reduced-motion preferences. Motion must clarify spatial relationships, not become obligatory decoration.
+
+### Home's contents, in order
+
+1. One universal search entry point.
+2. A compact representation of **pinned spaces**, their numbers and app/Group identity.
+3. A small set of tools (Apps, Files, Search, Settings). No permanent oversized dock.
+4. Optional understated status. Do not force dashboards, productivity reports, news widgets or decorative content.
+
+### Overview interactions to develop
+
+- Select a space and return to it.
+- Rearrange spaces within the pinned or unpinned region, but **never** allow temporary spaces to precede pinned ones.
+- Pin/unpin, update stable numbering for pinned spaces, and restore it across login/sync.
+- Drag one app onto another to form a Group; pull an app out to separate it. This is a future interaction to prototype and validate.
+- Manage multiple displays as separate ordered strips without losing space identity or stable display addresses.
+
+## 20. v0.9 Design decision — Magnetic Flow
+
+**One continuous horizontal space model; different navigation response based on input.**
+
+| Input | Proposed response |
+|---|---|
+| Touch | Strong snapping to a single app/Group, with clean fullscreen alignment |
+| Trackpad | Continuous movement while scrolling, then gentle magnetic alignment when movement settles |
+| Mouse | Predictable steps by default; optionally fine-grained movement |
+| Keyboard | Precise direct jumps to numbered pinned spaces, with focus applied immediately |
+| Ultrawide | May align columns to left/center/right or show multiple columns; never force one giant app width |
+
+A **Group is one navigation destination** even if it contains two or more windows. Connecting a keyboard, rotating a tablet or moving a space between displays must not arbitrarily change the semantic workspace grouping. The input method modifies navigation physics, not the workspace model.
+
+The native implementation should first leverage Niri's existing scrolling/column focus commands. More sophisticated touchscreen physics and composited transitions may require extending the compositor or cooperating more deeply through its IPC layer; the browser animation alone does not establish native feasibility.
+
+## 21. v0.9 Interactive prototype: capabilities and limits
+
+**Artifact:** `Flow_v0.9_Desk_Transition.html`. A self-contained offline HTML experiment with no external dependencies.
+
+What can be tried:
+
+- Animated progression between Work, Overview and Desk, preserving the selected space.
+- Horizontal navigation between five simulated applications, including a Studio + Notes Group.
+- Overview selection, temporary/pinned ordering, pin/unpin and simple rearrangement.
+- Pinned spaces opening from the clear Desk.
+- Floating system hub, notifications/settings mockups, search, pill/notch display previews.
+- Browser-scale desktop/iPad portrait/landscape adaptations, gesture input and keyboard fallbacks.
+
+Not implemented: real Wayland surfaces, native Niri integration, full application lifecycle, real file operations, NixOS login/authentication, app session restoration, physical touch hardware, multi-monitor backends, DisplayLink, macOS/Windows application runtimes or cross-device sync. Those remain engineering tracks from earlier sections.
+
+**Native development milestone:** On the ARM64 NixOS VM, demonstrate the same three-perspective relationship with Niri-managed real app windows and a Quickshell Desk. Validate realistic compositor APIs before committing to detailed transition physics or launch UI arrangements.
+
+
+---
+
+## UX iteration 1.0 — Contextual application menus (11 November 2026)
+
+**Status:** Interactive browser hypothesis; not yet implemented natively on NixOS.
+
+### Interaction principles
+
+- The **System Island** is reserved for system-level actions: notifications, quick settings, universal navigation, and ongoing activities. It must not host the application's File/Edit/View menu.
+- **Desktop with a MacBook-style notch:** A shallow, optional global app menu runs along the top-left edge. It shows the currently focused application's name plus contextual File, Edit, View, Window and Help headings (only where relevant). The notch and Island blend into a center black cutout, with system indicators to its right.
+- **Tablet:** No always-visible traditional menu headings. An unobtrusive floating app-name control at top left opens a large, touch-friendly menu; the central floating Island stays independent.
+- **Group focus:** Only the actively focused application supplies the menu. In Studio + Notes, tapping either app or its Group selector changes the menu context immediately.
+- **Universal search:** Search can expose an application's discoverable menu actions alongside apps, files, spaces, and system actions. Availability and execution must be capability-aware; do not fabricate actions for unsupported apps.
+- **Third-party compatibility:** Preserve native app header bars, built-in menus, and keyboard shortcuts. Some Qt/GTK apps can expose menus, others cannot; never hide an existing menu unless the Flow replacement is functionally equivalent and tested.
+- **Fullscreen-first:** Menu UI overlays rather than permanently shrinking the application. Hide app menus on Home and Overview; preserve the app and focused Group state when moving between views.
+- **Portrait:** Groups adapt into stacked vertical subwindows, without changing which space they belong to.
+- **Accessibility:** Keyboard navigation, meaningful labels, outside-click and Escape dismissal; touch targets ~44 CSS px and focus indication.
+- **Device modes:** Adapt menu presentation to touch/pointer and display geometry, while allowing a manual mode override for testing. No rearrangement of pinned spaces.
+
+### Prototype coverage
+
+Flow v1.0 provides simulated menus for Mail, Studio, Notes, Browser, Terminal and Files; action examples include composing a demo message, inserting a demo note, creating a sample folder and copying sample paths. These are **not** native application integrations. Flow's underlying v0.9 Desk/Overview animation and pinned-space structure remain in place.
+
+### Native engineering discovery
+
+Before building a global menu exporter, survey Niri IPC for window focus events and test protocol/toolkit exposure (Qt DBusMenu, AT-SPI, GTK and Electron variability). Use Quickshell for menu surfaces and retain embedded menus for unsupported applications. Implement real menu action invocation only when the app publishes a reliable action endpoint.

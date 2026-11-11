@@ -4,6 +4,10 @@ let
   spaces = pkgs.writeShellScriptBin "flow-spaces" ''
     exec ${pkgs.python3}/bin/python3 ${../session/spaces.py} "$@"
   '';
+  appmenu = pkgs.writeShellScriptBin "flow-appmenu" ''
+    export GI_TYPELIB_PATH="${pkgs.at-spi2-core}/lib/girepository-1.0:${pkgs.glib}/lib/girepository-1.0:${pkgs.gobject-introspection}/lib/girepository-1.0''${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
+    exec ${pkgs.python3.withPackages (p: [ p.pyatspi p.pygobject3 ])}/bin/python3 ${../session/appmenu.py} "$@"
+  '';
   launcher = pkgs.writeShellScriptBin "flow-apps" ''
     user_name="$(${pkgs.coreutils}/bin/id -un)"
     export XDG_DATA_DIRS="''${XDG_DATA_DIRS:+$XDG_DATA_DIRS:}$HOME/.nix-profile/share:$HOME/.local/state/nix/profile/share:/etc/profiles/per-user/$user_name/share:/nix/var/nix/profiles/default/share:/run/current-system/sw/share:/usr/local/share:/usr/share"
@@ -23,7 +27,7 @@ in {
     hardware.graphics.enable = true;
     security.polkit.enable = true;
     environment.systemPackages = with pkgs; [
-      foot fuzzel quickshell swaylock firefox nautilus spaces launcher
+      foot fuzzel quickshell swaylock firefox nautilus spaces launcher appmenu
       xwayland-satellite mesa-demos wayland-utils
     ];
     environment.etc."niri/config.kdl".source = niriConfig;

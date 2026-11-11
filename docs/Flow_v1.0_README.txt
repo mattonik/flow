@@ -1,0 +1,32 @@
+FLOW 1.0 — CONTEXTUAL APPLICATION MENUS
+========================================
+
+Open Flow_v1.0_Contextual_Menus.html in a modern browser. The file is standalone;
+no server, dependencies or network are required.
+
+KEY EXPERIENCES
+• Desktop: File / Edit / View / Window / Help appear to the left of the
+  simulated MacBook camera notch. The System Island stays independent.
+• Tablet: Tap the focused app name at the top left for touch-friendly commands.
+• Studio + Notes: Tap either side of the Group or its Studio/Notes toggle.
+  The app menu updates to the focused application's commands.
+• Universal search: Ctrl/Cmd + K, then search "export", "checklist", "new note".
+• Spatial navigation: swipe up from Work to Overview; again to your Desk.
+  Swipe down to return without closing your existing space.
+
+KEYBOARD
+O                    Overview
+H                    Desk
+Escape               Close menu / go back one level
+Left / Right          Change the active space
+Ctrl/Cmd + K         Universal search and app commands
+M                    Toggle Desktop / Tablet layout for testing
+Ctrl/Cmd + 1/2       Jump to pinned Mail / Studio space (browser permitting)
+
+DISCLAIMERS
+This is a browser-based UX simulation, NOT a native Niri/Quickshell build.
+App commands are mocked and do not control real Linux applications. Browser
+security/keyboard shortcuts can interfere with some interactions. Actual macOS
+notch geometry cannot be detected or filled by a webpage.
+
+Includes an updated consolidated Flow product brief.
