@@ -2,7 +2,7 @@
 
 Flow is an experimental, multiplatform Linux session. The authoritative requirements are in [the unmodified v0.8 product brief](docs/Flow_product_brief_v0.8.txt); [the HTML prototype](docs/Flow_v0.8_interactive.html) is a design reference, not a native implementation. iPad enablement is a separate project.
 
-**Status: foundation only, not a working MVP.** The first graphics validation has not been run: this development host has no discovered UTM installation or accessible ARM64 Linux guest. The NixOS module, Niri configuration and Quickshell island have not yet been exercised in a Linux session. Pinned spaces and the remaining MVP requirements are not implemented. See [milestones](docs/milestones.md).
+**Status: foundation only, not a working MVP.** A single-display ARM64 UTM guest has run the Niri session, Quickshell island, app launcher and two terminal windows; see [graphics validation](docs/graphics-validation.md). Pinned spaces and the remaining MVP requirements are not implemented. See [milestones](docs/milestones.md).
 
 ## First: validate the graphics path
 
@@ -14,7 +14,7 @@ Before installing Flow, enable `programs.niri.enable = true;` and `hardware.grap
 
 Add this repository as a flake input to the guest's existing NixOS flake, then add `inputs.flow.nixosModules.default` to the target system's `modules` list and set `services.flow.enable = true;` in that system's configuration. Keep the guest's existing boot, filesystems, networking, account, display-manager and hardware configuration. When combining Niri with Plasma, set `services.displayManager.defaultSession = "plasma";` (or `"niri"`) explicitly to resolve their competing defaults. `nixos-rebuild build --flake .#HOST` first; then `sudo nixos-rebuild switch --flake .#HOST` and select Niri at login. Back up configuration and know how to select the previous NixOS generation before switching. This module installs a system-wide `/etc/niri/config.kdl`; a user's existing `~/.config/niri/config.kdl` takes precedence. It also installs a Fuzzel default. Review both before enabling it on an existing machine.
 
-The initial session uses Niri's horizontal columns and real Linux apps. `Super+Left/Right` navigates, `Super+Return` opens a terminal, `Super+K` opens the installed-app launcher, `Super+O` opens Niri overview, `Super+L` locks, and `Super+Shift+/` shows shortcuts. `Super+Shift+E` quits the session. The capsule launches the app picker and shows the local clock. This is not yet the product's Home or universal search. The app launcher discovers installed desktop entries; it is not a file or action search. Fullscreen, input and lock behavior need guest verification.
+The initial session uses Niri's horizontal columns and real Linux apps. `Super+Left/Right` navigates, `Super+Return` opens a terminal, `Super+K` opens the installed-app launcher, `Super+O` opens Niri overview, `Super+L` locks, and `Super+Shift+/` shows shortcuts. `Super+Shift+E` quits the session. The capsule shows an app-picker control and the local clock; the launcher has been verified through Niri IPC, but the capsule click still needs verification. This is not yet the product's Home or universal search. The app launcher discovers installed desktop entries; it is not a file or action search. Fullscreen, input and lock behavior need guest verification.
 
 ## Check and build
 
