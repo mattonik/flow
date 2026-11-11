@@ -82,3 +82,7 @@ In the ARM64 guest, keyboard navigation increased the real output volume from 40
 ## Lock integration (2026-11-11)
 
 The VM's Super+L shortcut locked the session; a wrong password left it locked, and the correct password restored the open apps. Previously, a logind lock request did not lock Flow. Niri now starts swayidle to handle system lock and before-sleep requests, and Super+L remains available if the locker crashes. A running instance handled a logind lock request and unlocked successfully. The generated Niri configuration validated. Suspend/resume, locker crash recovery and logout have not been exercised. The previous failed warm reboot's journal reached system shutdown, without identifying the cause of the failure after that point.
+
+## Shell identity across updates (2026-11-11)
+
+After a NixOS rebuild, shortcuts targeted the new shell store path while the running shell still used the previous path. The NixOS module now installs the shell at a stable `/etc/flow/shell.qml` path for both startup and IPC. The guest built and activated the change; after restarting only the shell, Super+H opened the Desk. IPC remained available when the symlink was temporarily pointed at a different file. A full second rebuild was blocked by inode exhaustion, despite available disk capacity; garbage collection recovered unused store paths but left the filesystem at 99% inode use. No rollback generations were removed.

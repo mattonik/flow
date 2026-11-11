@@ -32,7 +32,7 @@ let
     lock = lib.getExe pkgs.swaylock;
     idle = lib.getExe pkgs.swayidle;
     shell = lib.getExe pkgs.quickshell;
-    shellConfig = ../session/shell.qml;
+    shellConfig = "/etc/flow/shell.qml";
   };
 in {
   options.services.flow.enable = lib.mkEnableOption "the experimental Flow session";
@@ -46,6 +46,7 @@ in {
       xwayland-satellite mesa-demos wayland-utils recovery search wireplumber networkmanager
     ];
     environment.etc."niri/config.kdl".source = niriConfig;
+    environment.etc."flow/shell.qml".source = ../session/shell.qml;
     environment.etc."xdg/fuzzel/fuzzel.ini".text = ''
       [main]
       font=sans:size=12
