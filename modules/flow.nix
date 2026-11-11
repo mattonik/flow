@@ -1,6 +1,9 @@
 { config, lib, pkgs, ... }:
 let
   cfg = config.services.flow;
+  spaces = pkgs.writeShellScriptBin "flow-spaces" ''
+    exec ${pkgs.python3}/bin/python3 ${../session/spaces.py} "$@"
+  '';
   niriConfig = pkgs.replaceVars ../session/niri.kdl {
     terminal = lib.getExe pkgs.foot;
     lock = lib.getExe pkgs.swaylock;
@@ -15,7 +18,7 @@ in {
     hardware.graphics.enable = true;
     security.polkit.enable = true;
     environment.systemPackages = with pkgs; [
-      foot fuzzel quickshell swaylock firefox nautilus
+      foot fuzzel quickshell swaylock firefox nautilus spaces
       xwayland-satellite mesa-demos wayland-utils
     ];
     environment.etc."niri/config.kdl".source = niriConfig;

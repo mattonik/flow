@@ -7,6 +7,36 @@ import Quickshell.Wayland
 ShellRoot {
     id: root
     property bool deskOpen: false
+    property var pins: []
+    property string spacesError: ""
+    function spaceAction(action, id) {
+        if (spacesProcess.running) {
+            if (action !== "refresh") { spacesError = "Please try again"; deskOpen = true }
+            return
+        }
+        spacesProcess.command = id ? ["flow-spaces", action, id] : ["flow-spaces", action]
+        spacesProcess.running = true
+    }
+    Process {
+        id: spacesProcess
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const result = JSON.parse(this.text)
+                    if (result.error) {
+                        root.spacesError = result.error
+                        if (spacesProcess.command[1] !== "refresh") root.deskOpen = true
+                    } else {
+                        if (JSON.stringify(root.pins) !== JSON.stringify(result.pins)) root.pins = result.pins
+                        if (result.action !== "refresh") root.spacesError = ""
+                        if (result.action === "focus") root.deskOpen = false
+                        else if (result.action === "pin") root.deskOpen = true
+                    }
+                } catch (e) { root.spacesError = "Could not read pinned spaces" }
+            }
+        }
+    }
+    Timer { interval: 3000; running: true; repeat: true; triggeredOnStart: true; onTriggered: root.spaceAction("refresh") }
     function toggleDesk() {
         if (!deskOpen) Quickshell.execDetached(["niri", "msg", "action", "close-overview"])
         deskOpen = !deskOpen
@@ -37,6 +67,11 @@ ShellRoot {
     IpcHandler {
         target: "desk"
         function apps(): void { root.openApps() }
+        function pin(): void { root.spaceAction("pin") }
+        function focus(index: int): void {
+            if (index > 0 && index <= root.pins.length) root.spaceAction("focus", root.pins[index - 1].id)
+            else { root.spacesError = "No pinned space at that position"; root.deskOpen = true }
+        }
         function toggle(): void { root.toggleDesk() }
         function overview(): void {
             const action = root.deskOpen ? "open-overview" : "toggle-overview"
@@ -100,7 +135,30 @@ ShellRoot {
                         onClicked: root.openApps()
                     }
                     Text { text: "PINNED SPACES"; color: "#91a59d"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
-                    Text { text: "Pinned spaces are coming soon"; color: "#80948b"; font.pixelSize: 14 }
+                    Text { visible: root.pins.length === 0; text: "Pin the current app to keep its place"; color: "#80948b"; font.pixelSize: 14 }
+                    Flow {
+                        width: parent.width
+                        spacing: 8
+                        Repeater {
+                            model: root.pins
+                            Row {
+                                required property var modelData
+                                required property int index
+                                spacing: 3
+                                FlowButton {
+                                    width: 180; text: (index + 1) + "  " + (modelData.label.length > 18 ? modelData.label.slice(0, 18) + "…" : modelData.label)
+                                    enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"
+                                    opacity: modelData.available ? 1 : 0.6
+                                    onClicked: root.spaceAction("focus", modelData.id)
+                                }
+                                FlowButton { width: 42; text: "‹"; Accessible.name: "Move " + modelData.label + " left"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("left", modelData.id) }
+                                FlowButton { width: 42; text: "›"; Accessible.name: "Move " + modelData.label + " right"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("right", modelData.id) }
+                                FlowButton { width: 42; text: "×"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; Accessible.name: "Unpin " + modelData.label; onClicked: root.spaceAction("unpin", modelData.id) }
+                            }
+                        }
+                    }
+                    FlowButton { width: 200; text: "Pin current app · Super P"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("pin") }
+                    Text { visible: root.spacesError !== ""; text: root.spacesError; color: "#f1baaa"; wrapMode: Text.Wrap; width: parent.width; font.pixelSize: 14 }
                     Flow {
                         width: parent.width
                         spacing: 12

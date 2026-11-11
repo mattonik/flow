@@ -12,6 +12,16 @@ spawn-at-startup "@shell@" "-p" "@shellConfig@"
 
 binds {
     Super+K { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "apps"; }
+    Super+P { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "pin"; }
+    Super+1 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "focus" "1"; }
+    Super+2 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "focus" "2"; }
+    Super+3 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "focus" "3"; }
+    Super+4 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "focus" "4"; }
+    Super+5 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "focus" "5"; }
+    Super+6 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "focus" "6"; }
+    Super+7 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "focus" "7"; }
+    Super+8 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "focus" "8"; }
+    Super+9 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "focus" "9"; }
     Super+Return { spawn "@terminal@"; }
     Super+L { spawn "@lock@"; }
     Super+Left { focus-column-left; }
