@@ -4,6 +4,11 @@ let
   spaces = pkgs.writeShellScriptBin "flow-spaces" ''
     exec ${pkgs.python3}/bin/python3 ${../session/spaces.py} "$@"
   '';
+  launcher = pkgs.writeShellScriptBin "flow-apps" ''
+    user_name="$(${pkgs.coreutils}/bin/id -un)"
+    export XDG_DATA_DIRS="''${XDG_DATA_DIRS:+$XDG_DATA_DIRS:}$HOME/.nix-profile/share:$HOME/.local/state/nix/profile/share:/etc/profiles/per-user/$user_name/share:/nix/var/nix/profiles/default/share:/run/current-system/sw/share:/usr/local/share:/usr/share"
+    exec ${lib.getExe pkgs.fuzzel} "$@"
+  '';
   niriConfig = pkgs.replaceVars ../session/niri.kdl {
     terminal = lib.getExe pkgs.foot;
     lock = lib.getExe pkgs.swaylock;
@@ -18,20 +23,23 @@ in {
     hardware.graphics.enable = true;
     security.polkit.enable = true;
     environment.systemPackages = with pkgs; [
-      foot fuzzel quickshell swaylock firefox nautilus spaces
+      foot fuzzel quickshell swaylock firefox nautilus spaces launcher
       xwayland-satellite mesa-demos wayland-utils
     ];
     environment.etc."niri/config.kdl".source = niriConfig;
     environment.etc."xdg/fuzzel/fuzzel.ini".text = ''
       [main]
       font=sans:size=12
-      prompt=Search apps:
+      prompt="Search apps: "
       [colors]
       background=0b1015f2
       text=ecf2f0ff
+      prompt=b8ddcbff
+      input=ecf2f0ff
       match=b8ddcbff
       selection=172128ff
       selection-text=ecf2f0ff
+      selection-match=b8ddcbff
       border=b8ddcbff
       [border]
       radius=12

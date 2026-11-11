@@ -44,7 +44,7 @@ ShellRoot {
 
     function openApps() {
         deskOpen = false
-        Quickshell.execDetached(["fuzzel"])
+        Quickshell.execDetached(["flow-apps"])
     }
 
     component FlowButton: Button {

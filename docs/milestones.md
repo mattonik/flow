@@ -20,3 +20,7 @@ In the UTM guest, Tab showed the focus ring on a Desk control and Enter activate
 ## Pinned-space VM check (2026-11-11)
 
 On the ARM64 guest, pinned a Nautilus window and a Foot window, reordered both using the service, and checked Niri window positions and retained focus. The Desk displayed saved pins, and its numbered focus IPC returned from Desk to Nautilus. The guest rebuilt successfully and the Nix test check passed. Automated tests cover single-window eligibility, duplicate-app ambiguity, ordering and unpin behavior. `Super+1` also focused the first pinned terminal through the guest keyboard. Full compositor restart, lock-screen interactions, other physical shortcuts, multiple displays and touch remain unverified.
+
+## App launcher recovery (2026-11-11)
+
+A manually restarted shell inherited an incomplete `XDG_DATA_DIRS`, leaving Fuzzel's application list empty. The shell was restarted using the graphical user manager's environment, and the launcher now adds the standard NixOS profile paths while preserving any supplied data paths. In the VM, Fuzzel displayed installed apps even with an intentionally invalid inherited data path; typing `firefox` and pressing Enter launched Firefox. Prompt and input colors were also set explicitly for legibility against the dark background.
