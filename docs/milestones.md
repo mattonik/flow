@@ -48,3 +48,7 @@ A lightweight UTM guest sample is recorded in [performance observations](perform
 ## Two-window stacking (2026-11-11)
 
 The bottom switcher can combine the focused window and the next window into a Niri column, and separate a two-window column again. It rejects pinned, floating or ambiguous windows and supports Super+Up/Down for switching focus within the column. In the ARM64 guest, KWrite and Kate formed a two-window column and were separated back into their original columns. Fourteen Python tests passed. This is a reversible portrait-style building block, not yet a named, persistent or orientation-adaptive Flow Group; pins, session recovery and multi-display Groups remain unsupported.
+
+## Group-aware switcher (2026-11-11)
+
+The switcher now displays each Niri column as a single space, with individual focus controls for members of a stacked column. In the ARM64 guest, the stacked KWrite and Kate windows appeared together in one card. Search continues to find individual windows. Group naming, persistence, side-by-side layout and adaptive orientation are still future work.

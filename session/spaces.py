@@ -117,6 +117,26 @@ def run(pins, op, arg, workspace, windows, socket):
              "available": eligible(resolve(p, windows, socket), workspace, windows)} for p in pins]
 
 
+def display_spaces(workspace, windows):
+    """Represent each tiled column once; floating windows remain separate."""
+    current = [w for w in windows if w.get("workspace_id") == workspace["id"]]
+    current.sort(key=lambda w: w.get("layout", {}).get("pos_in_scrolling_layout") or [99999, 0])
+    columns = []
+    for w in current:
+        pos = w.get("layout", {}).get("pos_in_scrolling_layout")
+        key = ("column", pos[0]) if pos and not w.get("is_floating") else ("window", w["id"])
+        if not columns or columns[-1][0] != key:
+            columns.append((key, []))
+        columns[-1][1].append({"id": w["id"], "label": w.get("title") or w.get("app_id") or "Application",
+                              "app_id": w.get("app_id") or "", "active": w["id"] == workspace.get("active_window_id")})
+    result = []
+    for _, members in columns:
+        selected = next((w for w in members if w["active"]), members[0])
+        result.append({"id": selected["id"], "label": " + ".join(w["label"] for w in members),
+                       "active": any(w["active"] for w in members), "members": members})
+    return result
+
+
 def main():
     state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "flow"
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -152,7 +172,7 @@ def main():
         visible = [{"id": w["id"], "label": w.get("title") or w.get("app_id") or "Application",
                     "app_id": w.get("app_id") or "", "active": w["id"] == workspace.get("active_window_id")}
                    for w in ordered]
-        print(json.dumps({"pins": result, "windows": visible, "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
+        print(json.dumps({"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows), "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
 
 
 if __name__ == "__main__":

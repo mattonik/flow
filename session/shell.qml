@@ -77,6 +77,7 @@ ShellRoot {
     property string recoveryMessage: ""
     property bool switcherOpen: false
     property var windows: []
+    property var displaySpaces: []
     property var pins: []
     property string spacesError: ""
     function spaceAction(action, id) {
@@ -99,6 +100,7 @@ ShellRoot {
                         if (spacesProcess.command[1] !== "refresh" && !root.switcherOpen) root.deskOpen = true
                     } else {
                         if (JSON.stringify(root.windows) !== JSON.stringify(result.windows)) root.windows = result.windows
+                        if (JSON.stringify(root.displaySpaces) !== JSON.stringify(result.spaces)) root.displaySpaces = result.spaces
                         if (JSON.stringify(root.pins) !== JSON.stringify(result.pins)) root.pins = result.pins
                         if (result.action !== "refresh") root.spacesError = ""
                         if (result.action === "focus" || result.action === "focus-window") { root.deskOpen = false; root.switcherOpen = false }
@@ -143,7 +145,7 @@ ShellRoot {
         Keys.onEnterPressed: control.clicked()
         implicitHeight: 58
         contentItem: Text {
-            text: control.text; color: "#d7e5df"; font.pixelSize: 14
+            text: control.text; color: "#d7e5df"; font.pixelSize: 14; elide: Text.ElideRight
             horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
         }
         background: Rectangle {
@@ -327,8 +329,8 @@ ShellRoot {
                 anchors.fill: parent; anchors.margins: 12; spacing: 8
                 Row {
                     spacing: 12
-                    Text { text: "OPEN WINDOWS"; color: "#b8ddcb"; font.bold: true; font.pixelSize: 13 }
-                    Text { text: "Select a window · Esc to close"; color: "#91a59d"; font.pixelSize: 13 }
+                    Text { text: "OPEN SPACES"; color: "#b8ddcb"; font.bold: true; font.pixelSize: 13 }
+                    Text { text: "Select a space or app · Esc to close"; color: "#91a59d"; font.pixelSize: 13 }
                 }
                 Row {
                     spacing: 8
@@ -336,20 +338,37 @@ ShellRoot {
                     FlowButton { width: 160; implicitHeight: 38; text: "Separate stack"; onClicked: root.spaceAction("unstack") }
                     Text { text: root.spacesError; color: "#f1baaa"; anchors.verticalCenter: parent.verticalCenter }
                 }
-                Text { visible: root.windows.length === 0; text: "No open windows"; color: "#91a59d" }
+                Text { visible: root.displaySpaces.length === 0; text: "No open spaces"; color: "#91a59d" }
                 Flickable {
                     width: parent.width; height: 110; contentWidth: windowRow.width; contentHeight: height
                     boundsBehavior: Flickable.StopAtBounds; clip: true
                     Row {
                         id: windowRow; spacing: 8
                         Repeater {
-                            model: root.windows
-                            FlowButton {
+                            model: root.displaySpaces
+                            Column {
                                 required property var modelData
-                                width: 200; height: 90
-                                text: (modelData.active ? "●  " : "") + modelData.label.slice(0, 28) + "\n" + modelData.app_id.slice(0, 28)
-                                Accessible.name: "Switch to " + modelData.label
-                                onClicked: root.spaceAction("focus-window", String(modelData.id))
+                                width: modelData.members.length > 1 ? modelData.members.length * 136 - 4 : 200
+                                spacing: 4
+                                FlowButton {
+                                    width: parent.width; height: modelData.members.length > 1 ? 50 : 90
+                                    text: (modelData.active ? "●  " : "") + modelData.label.slice(0, 35) + (modelData.members.length > 1 ? "  ·  Group" : "")
+                                    Accessible.name: "Switch to " + modelData.label
+                                    onClicked: root.spaceAction("focus-window", String(modelData.id))
+                                }
+                                Row {
+                                    visible: modelData.members.length > 1; spacing: 4
+                                    Repeater {
+                                        model: parent.parent.modelData.members
+                                        FlowButton {
+                                            required property var modelData
+                                            width: 132; implicitHeight: 36
+                                            text: (modelData.active ? "● " : "") + modelData.label.slice(0, 14)
+                                            Accessible.name: "Focus " + modelData.label + " in group"
+                                            onClicked: root.spaceAction("focus-window", String(modelData.id))
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

@@ -36,6 +36,15 @@ class SpacesTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             spaces.run([], "focus-window", "999", self.ws, self.windows, "session")
 
+    def test_stacked_windows_are_one_space_with_individual_focus_targets(self):
+        self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        result = spaces.display_spaces(self.ws, self.windows)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["id"], 2)
+        self.assertEqual([member["id"] for member in result[0]["members"]], [1, 2])
+        self.windows[1]["is_floating"] = True
+        self.assertEqual(len(spaces.display_spaces(self.ws, self.windows)), 2)
+
     @patch.object(spaces, "command")
     def test_stack_and_separate_two_unpinned_windows(self, command):
         self.ws["active_window_id"] = 1
