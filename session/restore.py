@@ -52,6 +52,33 @@ def save(path, workspace, windows, session=None):
                 "column": ((w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0]
                            if not w.get("is_floating") else None)} for w in current]
     previous = spaces.saved_groups(path)
+    old = json.loads(path.read_text()) if previous else {}
+    live_counts = Counter(w.get("app_id") for w in windows)
+    for group in previous:
+        apps = group["members"]
+        if any(live_counts[app] > 1 or live_counts[app] != sum(e["app_id"] == app for e in entries) for app in apps):
+            raise ValueError("Saved Group members are ambiguous or on another workspace; session was not replaced")
+        if all(live_counts[app] == 1 for app in apps):
+            continue
+        present = [e for e in entries if e["app_id"] in apps]
+        if present:
+            column = present[0]["column"]
+            if column is None or sum(e["column"] == column for e in entries) != 1:
+                raise ValueError("A saved Group member is in another stack; session was not replaced")
+        else:
+            column = max((e["column"] for e in entries if e["column"] is not None), default=0) + 1
+        old_entries = old.get("windows", [])
+        for app in apps:
+            if any(e["app_id"] == app for e in present):
+                continue
+            matches = [e for e in old_entries if isinstance(e, dict) and e.get("app_id") == app]
+            if len(matches) != 1:
+                raise ValueError("Saved Group membership is ambiguous; session was not replaced")
+            entries.append({**matches[0], "column": column, "window_id": None, "focused": False})
+        # Preserve the saved order so the recovery routine can reconstruct the stack.
+        order = {app: index for index, app in enumerate(apps)}
+        entries.sort(key=lambda e: (e["column"] if e["column"] is not None else 99999,
+                                    order.get(e["app_id"], 0)))
     app_counts = Counter(e["app_id"] for e in entries)
     columns = {}
     for entry in entries:
@@ -66,7 +93,7 @@ def save(path, workspace, windows, session=None):
         groups.append({**matches[0], "members": apps} if len(matches) == 1 else {"id": uuid.uuid4().hex,
                       "label": " + ".join(entry["label"] for entry in members), "members": apps})
     write_snapshot(path, {"version": 1, "session": session, "windows": entries, "groups": groups})
-    return len(entries)
+    return len(current)
 
 
 def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=time.sleep, pinned=(), session=None):

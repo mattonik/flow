@@ -56,6 +56,41 @@ class RecoveryTest(unittest.TestCase):
             restore.save(path, ws, windows)
             self.assertEqual(json.loads(path.read_text())["groups"], [])
 
+    def test_missing_group_members_survive_later_saves(self):
+        ws = {"id": 1, "active_window_id": 1}
+        pair = [window(1, "one", 1), window(2, "two", 1)]
+        pair[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.json"
+            restore.save(path, ws, pair, "first")
+            group = json.loads(path.read_text())["groups"][0]
+            self.assertEqual(restore.save(path, ws, [pair[0]], "second"), 1)
+            saved = json.loads(path.read_text())
+            self.assertEqual(saved["groups"], [group])
+            self.assertEqual([(e["app_id"], e["column"], e["window_id"]) for e in saved["windows"]],
+                             [("one", 1, 1), ("two", 1, None)])
+            restore.save(path, ws, [], "third")
+            saved = json.loads(path.read_text())
+            self.assertEqual(saved["groups"], [group])
+            self.assertEqual([e["app_id"] for e in saved["windows"]], ["one", "two"])
+
+    def test_ambiguous_missing_group_preserves_snapshot(self):
+        ws = {"id": 1}
+        pair = [window(1, "one", 1), window(2, "two", 1)]
+        pair[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.json"
+            restore.save(path, ws, pair)
+            before = path.read_text()
+            with self.assertRaisesRegex(ValueError, "ambiguous"):
+                restore.save(path, ws, [pair[0], window(3, "one", 2)])
+            self.assertEqual(path.read_text(), before)
+            other = window(2, "two", 1)
+            other["workspace_id"] = 2
+            with self.assertRaisesRegex(ValueError, "another workspace"):
+                restore.save(path, ws, [pair[0], other])
+            self.assertEqual(path.read_text(), before)
+
     def test_rename_saved_group_keeps_snapshot_and_rejects_bad_names(self):
         ws = {"id": 1}
         windows = [window(1, "one", 1), window(2, "two", 1)]

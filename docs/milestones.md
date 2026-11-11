@@ -110,3 +110,7 @@ Recovery stops when the focused workspace changes while an app is launching or b
 ## Saved Group identity (2026-11-11)
 
 An explicit session save assigns stable IDs and editable names to unambiguous two-app stacks, retaining them when the same members are saved in the opposite order. The switcher shows and renames the saved Group, and recovery reconstructs its stack using the existing safe matching rules. On the ARM64 guest, a real KWrite/Kate stack was saved, separated and recovered; its ID and name survived another save. Renaming it to Writing through the switcher updated the snapshot. Groups are still tied to the latest explicit snapshot: saving while members are missing drops their Group metadata. Pinned Groups, independent Group persistence and adaptive landscape layouts remain open.
+
+## Preserve missing Group members (2026-11-11)
+
+Later session saves retain missing Group members as recovery entries, including when both members are absent. Ambiguous matches, members on another workspace, or a surviving member in another stack stop the save and leave the previous snapshot intact. Automated tests cover absent and ambiguous members; an isolated ARM64 guest test used real compositor windows to verify that omitting one member retains its identity and recovery entry. Restoring still depends on installed application launchers and does not restore document contents. Adaptive layouts and pinned Groups remain open.
