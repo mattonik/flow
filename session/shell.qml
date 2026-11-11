@@ -125,6 +125,12 @@ ShellRoot {
         deskOpen = !deskOpen
     }
 
+    function openSearch() {
+        deskOpen = false
+        switcherOpen = false
+        Quickshell.execDetached(["flow-search"])
+    }
+
     function openApps() {
         deskOpen = false
         Quickshell.execDetached(["flow-apps"])
@@ -156,6 +162,7 @@ ShellRoot {
             }
         }
         function apps(): void { root.openApps() }
+        function search(): void { root.openSearch() }
         function pin(): void { root.spaceAction("pin") }
         function focus(index: int): void {
             if (index > 0 && index <= root.pins.length) root.spaceAction("focus", root.pins[index - 1].id)
@@ -221,8 +228,8 @@ ShellRoot {
                         id: searchButton
                         onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(searchButton)
                         width: Math.min(parent.width, 590)
-                        text: "⌕   Search installed apps   ·   Super K"
-                        onClicked: root.openApps()
+                        text: "⌕   Search apps and open spaces   ·   Super K"
+                        onClicked: root.openSearch()
                     }
                     FlowButton {
                         width: 150; text: root.settingsOpen ? "Close settings" : "Settings"
