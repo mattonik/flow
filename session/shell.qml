@@ -16,6 +16,7 @@ ShellRoot {
     property bool openMenuWhenReady: false
     function requestAppMenu() {
         if (!menuPreferences.appMenuEnabled || root.deskOpen || root.overviewOpen || appMenuProcess.running) return
+        root.switcherOpen = false
         root.openMenuWhenReady = true
         appMenuProcess.command = ["flow-appmenu"]
         appMenuProcess.running = true
@@ -38,6 +39,10 @@ ShellRoot {
                 try {
                     const result = JSON.parse(this.text)
                     if (result && result.error) { root.appMenu = null; root.openMenuWhenReady = false; root.appMenuError = result.error; return }
+                    if (appMenuProcess.command.length === 1 && (!root.openMenuWhenReady || !root.appMenu || !result || root.appMenu.id !== result.id)) {
+                        root.openMenuWhenReady = false
+                        return
+                    }
                     root.appMenu = result
                     root.appMenuError = ""
                     if (root.openMenuWhenReady && result) { root.appMenuPath = []; root.appMenuOpen = true }
@@ -57,7 +62,7 @@ ShellRoot {
     Process {
         id: niriEvents
         command: ["niri", "msg", "-j", "event-stream"]
-        running: menuPreferences.appMenuEnabled
+        running: true
         stdout: SplitParser {
             onRead: data => {
                 try {
@@ -65,10 +70,11 @@ ShellRoot {
                     if (event.WindowFocusChanged && event.WindowFocusChanged.id !== null && root.appMenu && root.appMenu.id !== event.WindowFocusChanged.id) {
                         root.appMenu = null
                         root.appMenuOpen = false
+                        root.openMenuWhenReady = false
                     }
                     if (event.OverviewOpenedOrClosed) {
                         root.overviewOpen = event.OverviewOpenedOrClosed.is_open
-                        if (root.overviewOpen) root.appMenuOpen = false
+                        if (root.overviewOpen) { root.appMenuOpen = false; root.openMenuWhenReady = false; root.switcherOpen = false }
                     }
                 } catch (e) {}
             }
@@ -80,17 +86,29 @@ ShellRoot {
     property var displaySpaces: []
     property var pins: []
     property string spacesError: ""
+    property var pendingSpaceActions: []
     function spaceAction(action, id) {
-        if (recoveryProcess.running) return
-        if (spacesProcess.running) {
-            if (action !== "refresh") { spacesError = "Please try again"; if (!switcherOpen) deskOpen = true }
+        if (recoveryProcess.running) { if (action !== "refresh") spacesError = "Wait for session recovery to finish"; return }
+        if (spacesProcess.running || pendingSpaceActions.length) {
+            if (action !== "refresh") {
+                if (pendingSpaceActions.length >= 8) spacesError = "Too many pending actions"
+                else pendingSpaceActions = pendingSpaceActions.concat([{action: action, id: id}])
+            }
             return
         }
         spacesProcess.command = id ? ["flow-spaces", action, id] : ["flow-spaces", action]
         spacesProcess.running = true
     }
+    function drainSpaceActions() {
+        if (spacesProcess.running || recoveryProcess.running || !pendingSpaceActions.length) return
+        const next = pendingSpaceActions[0]
+        pendingSpaceActions = pendingSpaceActions.slice(1)
+        spacesProcess.command = next.id ? ["flow-spaces", next.action, next.id] : ["flow-spaces", next.action]
+        spacesProcess.running = true
+    }
     Process {
         id: spacesProcess
+        onRunningChanged: if (!running && root.pendingSpaceActions.length) Qt.callLater(root.drainSpaceActions)
         stdout: StdioCollector {
             onStreamFinished: {
                 try {
@@ -123,19 +141,37 @@ ShellRoot {
     }
     Timer { interval: 3000; running: true; repeat: true; triggeredOnStart: true; onTriggered: root.spaceAction("refresh") }
     function toggleDesk() {
+        switcherOpen = false
+        appMenuOpen = false
+        openMenuWhenReady = false
         if (!deskOpen) Quickshell.execDetached(["niri", "msg", "action", "close-overview"])
         deskOpen = !deskOpen
     }
 
     function openSearch() {
+        openMenuWhenReady = false
+        appMenuOpen = false
         deskOpen = false
         switcherOpen = false
         Quickshell.execDetached(["flow-search"])
     }
 
     function openApps() {
+        openMenuWhenReady = false
+        appMenuOpen = false
+        switcherOpen = false
         deskOpen = false
         Quickshell.execDetached(["flow-apps"])
+    }
+
+    function toggleSwitcher() {
+        if (switcherOpen) { switcherOpen = false; return }
+        deskOpen = false
+        appMenuOpen = false
+        openMenuWhenReady = false
+        if (overviewOpen) Quickshell.execDetached(["niri", "msg", "action", "close-overview"])
+        switcherOpen = true
+        spaceAction("refresh")
     }
 
     component FlowButton: Button {
@@ -171,10 +207,11 @@ ShellRoot {
             else { root.spacesError = "No pinned space at that position"; root.deskOpen = true }
         }
         function toggle(): void { root.toggleDesk() }
-        function switcher(): void { root.deskOpen = false; root.switcherOpen = !root.switcherOpen; root.spaceAction("refresh") }
+        function switcher(): void { root.toggleSwitcher() }
         function overview(): void {
             const action = root.deskOpen ? "open-overview" : "toggle-overview"
             root.deskOpen = false
+            root.switcherOpen = false
             Quickshell.execDetached(["niri", "msg", "action", action])
         }
     }
@@ -308,13 +345,13 @@ ShellRoot {
     }
     // shortcut: window titles stand in for live previews until compositor capture is available.
     PanelWindow {
-        visible: !root.deskOpen && !root.switcherOpen && !root.appMenuOpen
+        visible: !root.deskOpen && !root.switcherOpen && !root.appMenuOpen && !root.overviewOpen
         anchors.bottom: true
         implicitWidth: 100; implicitHeight: 28
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         Rectangle { anchors.centerIn: parent; width: 64; height: 5; radius: 3; color: "#b8ddcb" }
-        MouseArea { anchors.fill: parent; onClicked: { root.switcherOpen = true; root.spaceAction("refresh") } }
+        MouseArea { anchors.fill: parent; onClicked: root.toggleSwitcher() }
     }
     PanelWindow {
         visible: root.switcherOpen

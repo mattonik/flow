@@ -52,3 +52,7 @@ The bottom switcher can combine the focused window and the next window into a Ni
 ## Group-aware switcher (2026-11-11)
 
 The switcher now displays each Niri column as a single space, with individual focus controls for members of a stacked column. In the ARM64 guest, the stacked KWrite and Kate windows appeared together in one card. Search continues to find individual windows. Group naming, persistence, side-by-side layout and adaptive orientation are still future work.
+
+## Navigation reliability (2026-11-11)
+
+The switcher, Desk and Niri overview now close competing Flow surfaces when switching views. User actions arriving during a spaces refresh are queued, and pending app-menu requests are discarded after a focus or view change. On the ARM64 guest, keyboard navigation focused Kate within a stack, Desk opened without the switcher, and Kate's app menu opened after returning. The queue has not been stress-tested under prolonged compositor delays.
