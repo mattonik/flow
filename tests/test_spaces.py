@@ -72,6 +72,12 @@ class SpacesTest(unittest.TestCase):
         self.assertIsNone(spaces.resolve(pin, self.windows, "new"))
         self.assertEqual(spaces.resolve(pin, self.windows, "old")["id"], 1)
 
+    def test_reopened_pin_resolves_only_an_unambiguous_window(self):
+        pin = {"app_id": "terminal", "window_id": 9, "session": "session"}
+        self.assertEqual(spaces.resolve(pin, self.windows, "session")["id"], 1)
+        self.windows.append(window(3, "terminal", 3))
+        self.assertIsNone(spaces.resolve(pin, self.windows, "session"))
+
     def test_refuses_stacked_or_floating_windows(self):
         self.windows.append(window(3, "notes", 2))
         self.assertFalse(spaces.eligible(self.windows[1], self.ws, self.windows))

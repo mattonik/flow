@@ -65,6 +65,10 @@ Session snapshots record the tiled column of each window. Recovery preserves an 
 
 After saving five windows, an attempted warm reboot hung in UTM; a forced stop and cold boot reached Niri. Recovery relaunched Nautilus, KWrite and Kate and re-created the KWrite/Kate stack with the saved focus. The two terminal windows shared an app ID and were reported for manual recovery. Recovery now also moves uniquely identified, unpinned stack members together when they start in different positions, verifying the result before stacking; this ordering change is covered by unit tests, not yet tested in the guest. Adaptive landscape/portrait Groups, complete app state, automatic restore and a reliable warm reboot remain open work.
 
+## Reopened pins and stack ordering (2026-11-11)
+
+A pinned app that closes and reopens now rebinds to its single matching window in the same session; several matches remain unavailable until resolved. On the ARM64 guest, an isolated pin state reattached to Nautilus, and recovery rearranged a reversed Kate/KWrite pair and rebuilt its stack. The fixes were installed in a new NixOS generation, and the guest's Flow input lock was updated. Nineteen Python tests pass. Automatic app relaunch from a missing pin and adaptive Groups remain future work.
+
 The system capsule's quick settings expose NetworkManager's connectivity status and WirePlumber's default-output volume and mute controls, when those services are available.
 
 ## Quick settings interaction (2026-11-11)

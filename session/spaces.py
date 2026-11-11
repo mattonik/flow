@@ -29,7 +29,9 @@ def snapshot():
 def resolve(pin, windows, socket):
     """Never guess which of several same-app windows is the saved space."""
     if pin.get("session") == socket:
-        return next((w for w in windows if w["id"] == pin.get("window_id") and w["app_id"] == pin["app_id"]), None)
+        match = next((w for w in windows if w["id"] == pin.get("window_id") and w["app_id"] == pin["app_id"]), None)
+        if match:
+            return match
     matches = [w for w in windows if w["app_id"] == pin["app_id"]]
     return matches[0] if len(matches) == 1 else None
 
@@ -152,7 +154,7 @@ def main():
         socket = f"{Path('/proc/sys/kernel/random/boot_id').read_text().strip()}:{os.stat(socket_path).st_ino}"
         for pin in pins:
             window = resolve(pin, windows, socket)
-            if window and pin.get("session") != socket:
+            if window and (pin.get("session") != socket or pin.get("window_id") != window["id"]):
                 pin["session"], pin["window_id"] = socket, window["id"]
         result = run(pins, sys.argv[1] if len(sys.argv) > 1 else "refresh",
                      sys.argv[2] if len(sys.argv) > 2 else None, workspace, windows,
