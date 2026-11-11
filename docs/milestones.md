@@ -56,3 +56,9 @@ The switcher now displays each Niri column as a single space, with individual fo
 ## Navigation reliability (2026-11-11)
 
 The switcher, Desk and Niri overview now close competing Flow surfaces when switching views. User actions arriving during a spaces refresh are queued, and pending app-menu requests are discarded after a focus or view change. On the ARM64 guest, keyboard navigation focused Kate within a stack, Desk opened without the switcher, and Kate's app menu opened after returning. The queue has not been stress-tested under prolonged compositor delays.
+
+## Stack recovery and first OS-backed controls (2026-11-11)
+
+Session snapshots record the tiled column of each window. Recovery preserves an already-matching two-window stack or rejoins a pair only when both are uniquely identified, unpinned and adjacent in the saved order; it reports other cases and preserves current column ordering when stacks are present. In the ARM64 guest, KWrite and Kate were saved as a stack, separated and rejoined by recovery. A full reboot has not yet been tested, and this does not restore unsaved documents or provide named/adaptive Groups.
+
+The system capsule's quick settings expose NetworkManager's connectivity status and WirePlumber's default-output volume and mute controls, when those services are available.
