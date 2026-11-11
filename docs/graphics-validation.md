@@ -1,6 +1,6 @@
 # UTM graphics validation record
 
-Status: **BLOCKED / not run**. On 2026-11-11 the development host reported `aarch64-darwin` and Nix was available, but no UTM application, `utmctl`, QEMU executable, or accessible UTM guest was found by the local checks. No guest renderer or Niri session was inspected. This does not prove that UTM or accelerated Niri cannot work on this Mac.
+Status: **PARTIAL** (2026-11-11). UTM 5.0.8, QEMU ARM64 `virt`, HVF, 8 GiB RAM and `virtio-ramfb-gl`; installed NixOS 26.05 guest. In Plasma, `glxinfo -B` reported Mesa 26.1.8, renderer `virgl`, direct rendering `Yes`, acceleration `yes`, OpenGL ES 3.0. Niri 26.04 launched nested in Plasma and rendered its hotkey overlay; it exited cleanly. The nested run used the winit backend, not the direct DRM/KMS session. No real application, navigation, native console session, or Niri renderer details have been verified yet; this is not a graphics-gate pass. The nested test generated `~/.config/niri/config.kdl`, which takes precedence over the system Flow config and must be moved aside for Flow testing.
 
 Record the following when a disposable guest is available:
 

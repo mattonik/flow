@@ -19,7 +19,7 @@ in {
       foot fuzzel quickshell swaylock firefox nautilus
       xwayland-satellite mesa-demos wayland-utils
     ];
-    environment.etc."xdg/niri/config.kdl".source = niriConfig;
+    environment.etc."niri/config.kdl".source = niriConfig;
     environment.etc."xdg/fuzzel/fuzzel.ini".text = ''
       [main]
       font=sans:size=12
