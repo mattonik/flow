@@ -40,3 +40,7 @@ Desk now offers explicit save and restore of the active workspace's app list, or
 ## Search across apps and open work (2026-11-11)
 
 Super+K and the Desk search use one picker for installed applications, available pinned spaces and open windows on the current workspace. In the ARM64 guest, filtering Kate returned both the app and its existing window, selecting the window focused it, and selecting Ark launched the app. The system build and eleven Python tests passed. Files, app commands, settings, unavailable pins, other workspaces and multiple displays are not searched yet.
+
+## Performance check (2026-11-11)
+
+A lightweight UTM guest sample is recorded in [performance observations](performance.md). Focused-app identity no longer eagerly traverses accessibility menus: the measured identity request took 41–55 ms instead of roughly 0.9 seconds for a full menu traversal. Reading the full menu is still on demand and remains slow. Frame pacing and physical device performance have not been measured.
