@@ -234,6 +234,7 @@ ShellRoot {
                 else root.requestAppMenu()
             }
         }
+        function quick(): void { root.quickSettingsOpen = !root.quickSettingsOpen }
         function apps(): void { root.openApps() }
         function search(): void { root.openSearch() }
         function pin(): void { root.spaceAction("pin") }
