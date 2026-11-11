@@ -50,7 +50,7 @@ ShellRoot {
     Timer {
         interval: 1500; running: menuPreferences.appMenuEnabled; repeat: true; triggeredOnStart: true
         onTriggered: if (!appMenuProcess.running && !root.appMenu && !root.appMenuOpen && !root.deskOpen && !root.overviewOpen) {
-            appMenuProcess.command = ["flow-appmenu"]
+            appMenuProcess.command = ["flow-appmenu", "identity"]
             appMenuProcess.running = true
         }
     }

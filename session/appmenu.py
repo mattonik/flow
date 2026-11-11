@@ -4,26 +4,28 @@ import json
 import subprocess
 import sys
 
-import pyatspi
 
 
 def niri(what):
     return json.loads(subprocess.check_output(["niri", "msg", "-j", what], text=True))
 
 
-def active_window():
+def active_window(identity_only=False):
     workspace = next((w for w in niri("workspaces") if w["is_focused"]), None)
     windows = niri("windows")
     active = next((w for w in windows if workspace and w["id"] == workspace.get("active_window_id")), None)
     if not active:
         return None
+    result = {"id": active["id"], "name": active.get("app_id") or active.get("title") or "Application", "menus": []}
+    if identity_only:
+        return result
+    import pyatspi
     # shortcut: shared-process windows are ambiguous; match the accessible window before supporting them.
     if not active.get("pid") or sum(w.get("pid") == active["pid"] for w in windows) != 1:
-        return {"id": active["id"], "name": active.get("app_id") or active.get("title") or "Application", "menus": []}
+        return result
     desktop = pyatspi.Registry.getDesktop(0)
     app = next((desktop.getChildAtIndex(i) for i in range(desktop.childCount)
                 if (desktop.getChildAtIndex(i).name or "").lower() not in ("quickshell", "niri") and desktop.getChildAtIndex(i).get_process_id() == active["pid"]), None)
-    result = {"id": active["id"], "name": active.get("app_id") or active.get("title") or "Application", "menus": []}
     if not app:
         return result
     seen = 0
@@ -65,11 +67,15 @@ def find_action(items, path, label):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "identity":
+        print(json.dumps(active_window(identity_only=True)))
+        return
     status = subprocess.check_output(["busctl", "--user", "get-property", "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Status", "IsEnabled"], text=True)
     if status.strip() == "b false":
         subprocess.run(["busctl", "--user", "set-property", "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Status", "IsEnabled", "b", "true"], check=True, stdout=subprocess.DEVNULL)
     active = active_window()
     if len(sys.argv) > 1 and sys.argv[1] == "activate":
+        import pyatspi
         if not active or str(active["id"]) != sys.argv[2]:
             raise ValueError("Application focus changed")
         wanted = json.loads(sys.argv[3])
