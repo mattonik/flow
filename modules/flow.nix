@@ -39,7 +39,7 @@ in {
     security.polkit.enable = true;
     environment.systemPackages = with pkgs; [
       foot fuzzel quickshell swaylock firefox nautilus spaces launcher appmenu
-      xwayland-satellite mesa-demos wayland-utils recovery search
+      xwayland-satellite mesa-demos wayland-utils recovery search wireplumber networkmanager
     ];
     environment.etc."niri/config.kdl".source = niriConfig;
     environment.etc."xdg/fuzzel/fuzzel.ini".text = ''

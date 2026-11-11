@@ -9,6 +9,41 @@ ShellRoot {
     id: root
     property bool deskOpen: false
     property bool settingsOpen: false
+    property bool quickSettingsOpen: false
+    property string volumeStatus: "Checking audio…"
+    property string networkStatus: "Checking network…"
+    property string quickError: ""
+    function refreshQuickSettings() {
+        if (!audioStatus.running) audioStatus.running = true
+        if (!networkStatusProcess.running) networkStatusProcess.running = true
+    }
+    Process {
+        id: audioStatus
+        command: ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const match = this.text.match(/Volume:\s*([0-9.]+)/)
+                root.volumeStatus = match ? Math.round(Number(match[1]) * 100) + "%" + (this.text.indexOf("[MUTED]") >= 0 ? " · muted" : "") : "Audio unavailable"
+            }
+        }
+        onExited: (code, status) => { if (code !== 0) root.volumeStatus = "Audio unavailable" }
+    }
+    Process {
+        id: networkStatusProcess
+        command: ["nmcli", "-t", "-f", "CONNECTIVITY", "general"]
+        stdout: StdioCollector { onStreamFinished: { root.networkStatus = this.text.trim() || "Network unavailable" } }
+        onExited: (code, status) => { if (code !== 0) root.networkStatus = "Network unavailable" }
+    }
+    Process {
+        id: audioControl
+        onExited: (code, status) => { root.quickError = code === 0 ? "" : "Audio control unavailable"; root.refreshQuickSettings() }
+    }
+    Timer { interval: 4000; running: root.quickSettingsOpen; repeat: true; triggeredOnStart: true; onTriggered: root.refreshQuickSettings() }
+    function changeVolume(value) {
+        if (audioControl.running) return
+        audioControl.command = value === "mute" ? ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"] : ["wpctl", "set-volume", "--limit", "1.0", "@DEFAULT_AUDIO_SINK@", value]
+        audioControl.running = true
+    }
     property bool appMenuOpen: false
     property bool overviewOpen: false
     property var appMenu: null
@@ -480,8 +515,34 @@ ShellRoot {
         }
     }
     PanelWindow {
+        visible: root.quickSettingsOpen
         anchors.top: true
-        implicitWidth: 230; implicitHeight: 44; margins.top: 8
+        implicitWidth: 320; implicitHeight: 235; margins.top: 60
+        color: "#17201e"; exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+        FocusScope {
+            anchors.fill: parent; focus: true
+            Keys.onEscapePressed: root.quickSettingsOpen = false
+            Column {
+                anchors.fill: parent; anchors.margins: 16; spacing: 10
+                Text { text: "QUICK SETTINGS"; color: "#b8ddcb"; font.bold: true; font.pixelSize: 14 }
+                Text { text: "Network: " + root.networkStatus; color: "#d7e5df"; font.pixelSize: 14 }
+                Text { text: "Output volume: " + root.volumeStatus; color: "#d7e5df"; font.pixelSize: 14 }
+                Row {
+                    spacing: 6
+                    FlowButton { width: 70; implicitHeight: 42; text: "− 5%"; Accessible.name: "Decrease volume"; onClicked: root.changeVolume("5%-") }
+                    FlowButton { width: 70; implicitHeight: 42; text: "+ 5%"; Accessible.name: "Increase volume"; onClicked: root.changeVolume("5%+") }
+                    FlowButton { width: 110; implicitHeight: 42; text: "Mute / unmute"; onClicked: root.changeVolume("mute") }
+                }
+                Text { visible: root.quickError !== ""; text: root.quickError; color: "#f1baaa"; font.pixelSize: 12 }
+                FlowButton { width: 90; implicitHeight: 38; text: "Close"; onClicked: root.quickSettingsOpen = false }
+            }
+        }
+    }
+    PanelWindow {
+        anchors.top: true
+        implicitWidth: 270; implicitHeight: 44; margins.top: 8
         color: "transparent"
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
@@ -494,6 +555,7 @@ ShellRoot {
                 Text { text: "Apps"; color: "#ecf2f0"; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter
                     MouseArea { anchors.fill: parent; onClicked: root.openApps() } }
                 Text { text: Qt.formatTime(clock.date, "hh:mm"); color: "#ecf2f0"; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter }
+                FlowButton { width: 38; implicitHeight: 34; text: "⚙"; Accessible.name: "Quick settings"; onClicked: root.quickSettingsOpen = !root.quickSettingsOpen }
             }
         }
         SystemClock { id: clock; precision: SystemClock.Minutes }
