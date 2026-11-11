@@ -61,6 +61,10 @@ The switcher, Desk and Niri overview now close competing Flow surfaces when swit
 
 Session snapshots record the tiled column of each window. Recovery preserves an already-matching two-window stack or rejoins a pair only when both are uniquely identified, unpinned and adjacent in the saved order; it reports other cases and preserves current column ordering when stacks are present. In the ARM64 guest, KWrite and Kate were saved as a stack, separated and rejoined by recovery. A full reboot has not yet been tested, and this does not restore unsaved documents or provide named/adaptive Groups.
 
+## Cold-boot recovery and stack ordering (2026-11-11)
+
+After saving five windows, an attempted warm reboot hung in UTM; a forced stop and cold boot reached Niri. Recovery relaunched Nautilus, KWrite and Kate and re-created the KWrite/Kate stack with the saved focus. The two terminal windows shared an app ID and were reported for manual recovery. Recovery now also moves uniquely identified, unpinned stack members together when they start in different positions, verifying the result before stacking; this ordering change is covered by unit tests, not yet tested in the guest. Adaptive landscape/portrait Groups, complete app state, automatic restore and a reliable warm reboot remain open work.
+
 The system capsule's quick settings expose NetworkManager's connectivity status and WirePlumber's default-output volume and mute controls, when those services are available.
 
 ## Quick settings interaction (2026-11-11)

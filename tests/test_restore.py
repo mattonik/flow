@@ -44,7 +44,7 @@ class RecoveryTest(unittest.TestCase):
         self.assertEqual(len(report), 3)
         launch.assert_not_called()
 
-    def test_restores_saved_group_only_for_adjacent_unique_windows(self):
+    def test_restores_saved_group_for_adjacent_unique_windows(self):
         ws = {"id": 1, "active_window_id": 2}
         saved = {"version": 1, "windows": [{"app_id": "one", "column": 1},
                                            {"app_id": "two", "column": 1, "focused": True}]}
@@ -54,11 +54,28 @@ class RecoveryTest(unittest.TestCase):
         self.assertEqual((report, count), ([], 2))
         action.assert_any_call("action", "consume-window-into-column")
         action.assert_called_with("action", "focus-window", "--id", 2)
-        action.reset_mock()
-        windows[1]["layout"]["pos_in_scrolling_layout"] = [3, 1]
-        report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), action)
-        self.assertIn("not adjacent", report[0])
-        self.assertNotIn("consume-window-into-column", str(action.call_args_list))
+
+    def test_moves_group_member_next_to_partner_in_either_direction(self):
+        saved = {"version": 1, "windows": [{"app_id": "one", "column": 1}, {"app_id": "two", "column": 1}]}
+        ws = {"id": 1}
+        for order in (("one", "other", "two"), ("two", "other", "one")):
+            windows = [window(i, app, i) for i, app in enumerate(order, 1)]
+            focused = None
+            def action(*args):
+                nonlocal focused
+                if args[1] == "focus-window":
+                    focused = args[3]
+                elif args[1] == "move-column-to-index":
+                    ordered = sorted(windows, key=lambda w: w["layout"]["pos_in_scrolling_layout"][0])
+                    member = next(w for w in ordered if w["id"] == focused)
+                    ordered.remove(member)
+                    ordered.insert(args[2] - 1, member)
+                    for index, w in enumerate(ordered, 1):
+                        w["layout"]["pos_in_scrolling_layout"][0] = index
+            actions = Mock(side_effect=action)
+            report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions)
+            self.assertEqual((report, count), ([], 2))
+            actions.assert_any_call("action", "consume-window-into-column")
 
     def test_existing_group_is_preserved_and_pins_prevent_grouping(self):
         ws = {"id": 1, "active_window_id": 1}

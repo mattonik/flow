@@ -126,9 +126,20 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 if len(members) != 2 or positions[0][1] >= positions[1][1]:
                     report.append("Existing group differs from saved group; check manually")
                 continue
-            if positions[1][0] != positions[0][0] + 1 or not all(spaces.eligible(w, workspace, live) for w in pair):
-                report.append("Group members are not adjacent single windows; group not restored")
+            if not all(spaces.eligible(w, workspace, live) for w in pair):
+                report.append("Group members are not single windows; group not restored")
                 continue
+            if positions[1][0] != positions[0][0] + 1:
+                target = positions[0][0] + (positions[1][0] > positions[0][0])
+                action("action", "focus-window", "--id", pair[1]["id"])
+                action("action", "move-column-to-index", target)
+                workspace, live = get_snapshot()
+                pair = [next((w for w in live if w.get("id") == member["id"]), None) for member in pair]
+                if (not all(spaces.eligible(w, workspace, live) for w in pair)
+                        or pair[1]["layout"]["pos_in_scrolling_layout"][0]
+                        != pair[0]["layout"]["pos_in_scrolling_layout"][0] + 1):
+                    report.append("Group members moved unexpectedly; group not restored")
+                    continue
             action("action", "focus-window", "--id", pair[0]["id"])
             action("action", "consume-window-into-column")
     finally:
