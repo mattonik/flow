@@ -8,6 +8,7 @@ layout {
     focus-ring { width 2; active-color "#b8ddcb"; inactive-color "#172128"; }
     background-color "#0b1015"
 }
+hotkey-overlay { skip-at-startup; }
 spawn-at-startup "@shell@" "-p" "@shellConfig@"
 spawn-at-startup "@idle@" "-C" "/dev/null" "-w" "lock" "@lock@ -f -c 0b1015" "before-sleep" "@lock@ -f -c 0b1015"
 

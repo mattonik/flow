@@ -1,7 +1,7 @@
 # Milestones
 
 - **0 — graphics gate: single-display smoke test passed.** See [graphics validation](graphics-validation.md) for the VirtIO renderer, direct Niri session and remaining performance limitations.
-- **1 — session foundation: partially verified.** Flake and NixOS module, Niri fullscreen-width columns, real app picker and terminal, minimal Quickshell capsule, and an evaluation fixture. Build, login, shell startup, launcher rendering and focus via IPC have been exercised. Verify hardware shortcuts, island click, lock, fullscreen overlay and logout before calling this complete.
+- **1 — session foundation: partially verified.** Flake and NixOS module, Niri fullscreen-width columns, real app picker and terminal, minimal Quickshell capsule, and an evaluation fixture. Build, login, logout, manual and system-requested locking, shell startup, launcher rendering and focus via IPC have been exercised. Verify the remaining hardware shortcuts, island click, suspend/resume and fullscreen overlay before calling this complete.
 - **1a — v0.9 Desk: in progress.** A Quickshell Desk overlays the existing Niri session, with app search, files, overview and return controls. Work and Niri overview remain native compositor views. Confirm keyboard and pointer behavior on the installed guest; spatial transitions and touch gestures remain future work.
 - **2 — pinned spaces: experimental single-display slice.** Per-user metadata and create, unpin, reorder and focus controls exist for single-window apps; Niri IPC maintains open pins at the left of the focused workspace. Test compositor restart and additional physical shortcuts. Absent apps have no reserved compositor position or automatic launch, duplicate app windows cannot be unambiguously restored, and Groups and multiple displays remain unsupported.
 - **3 — minimum system surface: not started.** Replace the capsule's placeholder interactions with accessible Home, useful OS-backed status and controls, and notification handling; integrate secure session services and validate keyboard and touch access.
@@ -94,3 +94,7 @@ The guest had 7.5 GiB free but 99% inode use, mostly in the Nix store. `nix-stor
 ## Event-driven space updates (2026-11-11)
 
 The shell refreshes spaces after relevant Niri events, coalescing bursts and retaining a polling fallback. It retries the event stream after disconnection. The ARM64 guest displayed the open apps and stack, refreshed after focus changed, and restarted its event stream after it was deliberately stopped. See [performance observations](performance.md) for the limited idle-process measurement.
+
+## Logout, sign-in and reboot retest (2026-11-11)
+
+On the ARM64 guest, Niri's logout confirmation returned to SDDM, and signing back in started Flow. Desk recovery reopened Nautilus, KWrite, Kate and Foot, retaining the pinned Nautilus position, KWrite/Kate stack and selected Kate window. A subsequent warm reboot again hung on a black screen with QEMU using high host CPU. After a forced stop and cold start, Desk recovery reopened all four windows again. The previous snapshot was backed up before the test. After installing the startup overlay change, another logout and login started Flow without the hotkey overlay, and Super+Shift+/ opened it on demand. Warm reboot reliability remains unresolved.
