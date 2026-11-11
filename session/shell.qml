@@ -111,10 +111,14 @@ ShellRoot {
         id: niriEvents
         command: ["niri", "msg", "-j", "event-stream"]
         running: true
+        onExited: eventReconnect.restart()
         stdout: SplitParser {
             onRead: data => {
                 try {
                     const event = JSON.parse(data)
+                    if (event.WorkspacesChanged || event.WorkspaceActivated || event.WorkspaceActiveWindowChanged ||
+                        event.WindowsChanged || event.WindowOpenedOrChanged || event.WindowClosed ||
+                        event.WindowFocusChanged || event.WindowLayoutsChanged) refreshAfterEvent.restart()
                     if (event.WindowFocusChanged && event.WindowFocusChanged.id !== null && root.appMenu && root.appMenu.id !== event.WindowFocusChanged.id) {
                         root.appMenu = null
                         root.appMenuOpen = false
@@ -128,6 +132,7 @@ ShellRoot {
             }
         }
     }
+    Timer { id: eventReconnect; interval: 5000; onTriggered: if (!niriEvents.running) niriEvents.running = true }
     property string recoveryMessage: ""
     property bool switcherOpen: false
     property var windows: []
@@ -187,7 +192,15 @@ ShellRoot {
             }
         }
     }
-    Timer { interval: 3000; running: true; repeat: true; triggeredOnStart: true; onTriggered: root.spaceAction("refresh") }
+    Timer {
+        id: refreshAfterEvent
+        interval: 150
+        onTriggered: {
+            if (spacesProcess.running || recoveryProcess.running || root.pendingSpaceActions.length) restart()
+            else root.spaceAction("refresh")
+        }
+    }
+    Timer { interval: niriEvents.running ? 30000 : 3000; running: true; repeat: true; triggeredOnStart: true; onTriggered: root.spaceAction("refresh") }
     function toggleDesk() {
         quickSettingsOpen = false
         switcherOpen = false
@@ -195,6 +208,7 @@ ShellRoot {
         openMenuWhenReady = false
         if (!deskOpen) Quickshell.execDetached(["niri", "msg", "action", "close-overview"])
         deskOpen = !deskOpen
+        if (deskOpen) spaceAction("refresh")
     }
 
     function openSearch() {

@@ -90,3 +90,7 @@ After a NixOS rebuild, shortcuts targeted the new shell store path while the run
 ## VM inode recovery and rebuild check (2026-11-11)
 
 The guest had 7.5 GiB free but 99% inode use, mostly in the Nix store. `nix-store --optimise` deduplicated store files without deleting rollback generations, reducing inode use substantially. A NixOS rebuild with a temporary shell configuration change then succeeded, and the running shell accepted its Desk IPC command after the symlink's store target changed. A second rebuild restored the original configuration and the guest's input lock was updated. This verifies shortcut routing across a rebuild; it does not establish that every QML change is hot-reloaded.
+
+## Event-driven space updates (2026-11-11)
+
+The shell refreshes spaces after relevant Niri events, coalescing bursts and retaining a polling fallback. It retries the event stream after disconnection. The ARM64 guest displayed the open apps and stack, refreshed after focus changed, and restarted its event stream after it was deliberately stopped. See [performance observations](performance.md) for the limited idle-process measurement.
