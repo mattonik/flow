@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 
 
@@ -24,6 +25,14 @@ def snapshot():
     if workspace is None:
         raise ValueError("No active workspace")
     return workspace, windows
+
+
+def desktop_file(app_id, dirs):
+    # Match only an exact desktop ID; never interpret window titles as commands.
+    if not app_id or "/" in app_id or app_id in (".", ".."):
+        return None
+    filename = app_id if app_id.endswith(".desktop") else app_id + ".desktop"
+    return next((p for d in dirs if (p := Path(d) / "applications" / filename).is_file()), None)
 
 
 def resolve(pin, windows, socket):
@@ -80,9 +89,30 @@ def run(pins, op, arg, workspace, windows, socket):
         if op == "unpin":
             pins.pop(index)
         elif op == "focus":
-            window = resolve(pins[index], windows, socket)
+            pin = pins[index]
+            window = resolve(pin, windows, socket)
+            if not window and not any(w.get("app_id") == pin["app_id"] for w in windows):
+                dirs = (os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share"),
+                        *os.environ.get("XDG_DATA_DIRS", "/run/current-system/sw/share:/usr/share").split(":"))
+                desktop = desktop_file(pin["app_id"], dirs)
+                if not desktop:
+                    raise ValueError("No matching installed application for this pin")
+                try:
+                    subprocess.run(["gio", "launch", str(desktop)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except (OSError, subprocess.SubprocessError) as exc:
+                    raise ValueError("Could not open the pinned application") from exc
+                workspace_id = workspace["id"]
+                for _ in range(30):
+                    time.sleep(0.5)
+                    workspace, windows = snapshot()
+                    if workspace["id"] != workspace_id:
+                        raise ValueError("Workspace changed while opening pinned app")
+                    if any(w.get("app_id") == pin["app_id"] for w in windows):
+                        break
+                window = resolve(pin, windows, socket)
             if not eligible(window, workspace, windows):
                 raise ValueError("This pinned app is unavailable or ambiguous")
+            pin["session"], pin["window_id"] = socket, window["id"]
             command("action", "focus-window", "--id", window["id"])
             command("action", "close-overview")
         else:

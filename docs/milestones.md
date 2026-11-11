@@ -69,6 +69,10 @@ After saving five windows, an attempted warm reboot hung in UTM; a forced stop a
 
 A pinned app that closes and reopens now rebinds to its single matching window in the same session; several matches remain unavailable until resolved. On the ARM64 guest, an isolated pin state reattached to Nautilus, and recovery rearranged a reversed Kate/KWrite pair and rebuilt its stack. The fixes were installed in a new NixOS generation, and the guest's Flow input lock was updated. Nineteen Python tests pass. Automatic app relaunch from a missing pin and adaptive Groups remain future work.
 
+## Opening missing pinned apps (2026-11-11)
+
+Selecting a missing pin launches its exact installed desktop entry and focuses the resulting unique window. Existing ambiguous windows, missing desktop entries and windows on other workspaces are reported instead of launching duplicates or moving unrelated windows. In the ARM64 guest, an isolated test pin launched and focused a real Foot terminal. This does not restore documents or app state; adaptive Groups remain future work.
+
 The system capsule's quick settings expose NetworkManager's connectivity status and WirePlumber's default-output volume and mute controls, when those services are available.
 
 ## Quick settings interaction (2026-11-11)

@@ -358,9 +358,9 @@ ShellRoot {
                                 required property int index
                                 spacing: 3
                                 FlowButton {
-                                    width: 180; text: (index + 1) + "  " + (modelData.label.length > 18 ? modelData.label.slice(0, 18) + "…" : modelData.label)
+                                    width: 180; text: (index + 1) + "  " + (modelData.label.length > 15 ? modelData.label.slice(0, 15) + "…" : modelData.label) + (modelData.available ? "" : " · Open")
                                     enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"
-                                    opacity: modelData.available ? 1 : 0.6
+                                    Accessible.name: (modelData.available ? "Focus " : "Open ") + modelData.label
                                     onClicked: root.spaceAction("focus", modelData.id)
                                 }
                                 FlowButton { width: 42; text: "‹"; Accessible.name: "Move " + modelData.label + " left"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("left", modelData.id) }

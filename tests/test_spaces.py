@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -77,6 +78,55 @@ class SpacesTest(unittest.TestCase):
         self.assertEqual(spaces.resolve(pin, self.windows, "session")["id"], 1)
         self.windows.append(window(3, "terminal", 3))
         self.assertIsNone(spaces.resolve(pin, self.windows, "session"))
+
+    @patch.object(spaces, "command")
+    @patch.object(spaces.time, "sleep")
+    @patch.object(spaces.subprocess, "run")
+    def test_missing_pin_launches_exact_desktop_entry_and_focuses(self, launch, sleep, command):
+        pin = {"id": "pin", "app_id": "files", "window_id": 9, "session": "old", "label": "Files"}
+        with tempfile.TemporaryDirectory() as directory:
+            apps = Path(directory) / "applications"
+            apps.mkdir()
+            (apps / "files.desktop").write_text("[Desktop Entry]\n")
+            with patch.dict(spaces.os.environ, {"XDG_DATA_HOME": directory, "XDG_DATA_DIRS": directory}), \
+                 patch.object(spaces, "snapshot", return_value=(self.ws, self.windows)):
+                result = spaces.run([pin], "focus", "pin", self.ws, [self.windows[0]], "session")
+        self.assertTrue(result[0]["available"])
+        self.assertEqual(pin["window_id"], 2)
+        self.assertEqual(launch.call_args.args[0], ["gio", "launch", str(apps / "files.desktop")])
+        command.assert_any_call("action", "focus-window", "--id", 2)
+
+    @patch.object(spaces.subprocess, "run")
+    def test_ambiguous_pin_does_not_launch_another_window(self, launch):
+        pin = {"id": "pin", "app_id": "terminal", "window_id": 9, "session": "old", "label": "Terminal"}
+        windows = self.windows + [window(3, "terminal", 3)]
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            spaces.run([pin], "focus", "pin", self.ws, windows, "session")
+        launch.assert_not_called()
+
+    @patch.object(spaces.subprocess, "run")
+    def test_missing_desktop_entry_is_reported_without_launch(self, launch):
+        pin = {"id": "pin", "app_id": "missing", "window_id": 9, "session": "old", "label": "Missing"}
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.dict(spaces.os.environ, {"XDG_DATA_HOME": directory, "XDG_DATA_DIRS": directory}):
+            with self.assertRaisesRegex(ValueError, "No matching installed application"):
+                spaces.run([pin], "focus", "pin", self.ws, self.windows, "session")
+        launch.assert_not_called()
+
+    @patch.object(spaces, "command")
+    @patch.object(spaces.time, "sleep")
+    @patch.object(spaces.subprocess, "run")
+    def test_changed_workspace_does_not_steal_focus(self, launch, sleep, command):
+        pin = {"id": "pin", "app_id": "files", "window_id": 9, "session": "old", "label": "Files"}
+        with tempfile.TemporaryDirectory() as directory:
+            apps = Path(directory) / "applications"
+            apps.mkdir()
+            (apps / "files.desktop").touch()
+            with patch.dict(spaces.os.environ, {"XDG_DATA_HOME": directory, "XDG_DATA_DIRS": directory}), \
+                 patch.object(spaces, "snapshot", return_value=({"id": 2}, self.windows)):
+                with self.assertRaisesRegex(ValueError, "Workspace changed"):
+                    spaces.run([pin], "focus", "pin", self.ws, [self.windows[0]], "session")
+        command.assert_not_called()
 
     def test_refuses_stacked_or_floating_windows(self):
         self.windows.append(window(3, "notes", 2))

@@ -94,8 +94,8 @@ class RecoveryTest(unittest.TestCase):
             apps = Path(directory) / "applications"
             apps.mkdir()
             (apps / "one.desktop").write_text("[Desktop Entry]\n")
-            self.assertEqual(restore.desktop_file("one", [directory]), apps / "one.desktop")
-            self.assertIsNone(restore.desktop_file("../one", [directory]))
+            self.assertEqual(restore.spaces.desktop_file("one", [directory]), apps / "one.desktop")
+            self.assertIsNone(restore.spaces.desktop_file("../one", [directory]))
             launch = Mock()
             ws = {"id": 1, "active_window_id": None}
             after = [window(7, "one", 1)]

@@ -34,14 +34,6 @@ def save(path, workspace, windows):
     return len(entries)
 
 
-def desktop_file(app_id, dirs):
-    # Match only an exact desktop ID; never interpret window titles as commands.
-    if not app_id or "/" in app_id or app_id in (".", ".."):
-        return None
-    filename = app_id if app_id.endswith(".desktop") else app_id + ".desktop"
-    return next((p for d in dirs if (p := Path(d) / "applications" / filename).is_file()), None)
-
-
 def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=time.sleep, pinned=()):
     if data.get("version") != 1 or not isinstance(data.get("windows"), list):
         raise ValueError("Unsupported or invalid saved session")
@@ -71,7 +63,7 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
             report.append(f"{app_id}: multiple running windows require manual recovery")
             continue
         if not matches:
-            desktop = desktop_file(app_id, dirs)
+            desktop = spaces.desktop_file(app_id, dirs)
             if not desktop:
                 report.append(f"{app_id}: no matching installed application")
                 continue
