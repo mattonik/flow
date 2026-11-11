@@ -28,3 +28,7 @@ A manually restarted shell inherited an incomplete `XDG_DATA_DIRS`, leaving Fuzz
 ## v1.0 experimental application menu (2026-11-11)
 
 The v1.0 brief and prototype are included as references. The opt-in Desk setting persists across shell restarts, and the top-left menu reads the focused application's AT-SPI menu and invokes exposed actions. On the ARM64 UTM guest, Kate's File and Edit menus were displayed and its New command created a document through Flow; the system build and automated checks passed. Applications without compatible menus and multiple windows sharing one process use the fallback. The prototype's desktop category bar, searchable app commands, Groups, touch validation, and full session restoration remain future work.
+
+## Bottom switcher (2026-11-11)
+
+The bottom handle and Super+Tab open a scrollable list of real windows on the active workspace; selecting a window requests focus and Escape dismisses the list. The ARM64 UTM guest displayed its running applications. The list uses titles rather than live previews. Restart restoration, gesture navigation, touch, cross-workspace and multi-display behavior remain unfinished.
