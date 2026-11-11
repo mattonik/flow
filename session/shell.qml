@@ -31,7 +31,10 @@ ShellRoot {
     Process {
         id: networkStatusProcess
         command: ["nmcli", "-t", "-f", "CONNECTIVITY", "general"]
-        stdout: StdioCollector { onStreamFinished: { root.networkStatus = this.text.trim() || "Network unavailable" } }
+        stdout: StdioCollector { onStreamFinished: {
+            const state = this.text.trim()
+            root.networkStatus = ({full: "Connected", limited: "Limited", portal: "Sign-in required", none: "Offline", unknown: "Unknown"})[state] || "Network unavailable"
+        } }
         onExited: (code, status) => { if (code !== 0) root.networkStatus = "Network unavailable" }
     }
     Process {
