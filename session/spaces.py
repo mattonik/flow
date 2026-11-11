@@ -155,7 +155,21 @@ def run(pins, op, arg, workspace, windows, socket):
              "available": eligible(resolve(p, windows, socket), workspace, windows)} for p in pins]
 
 
-def display_spaces(workspace, windows):
+def saved_groups(path):
+    try:
+        data = json.loads(path.read_text())
+        groups = data.get("groups", []) if isinstance(data, dict) else []
+        if not isinstance(groups, list):
+            return []
+        return [g for g in groups if isinstance(g, dict) and isinstance(g.get("id"), str)
+                and isinstance(g.get("label"), str) and isinstance(g.get("members"), list)
+                and len(g["members"]) == 2 and all(isinstance(a, str) and a for a in g["members"])
+                and len(set(g["members"])) == 2]
+    except (OSError, ValueError):
+        return []
+
+
+def display_spaces(workspace, windows, groups=()):
     """Represent each tiled column once; floating windows remain separate."""
     current = [w for w in windows if w.get("workspace_id") == workspace["id"]]
     current.sort(key=lambda w: w.get("layout", {}).get("pos_in_scrolling_layout") or [99999, 0])
@@ -168,9 +182,14 @@ def display_spaces(workspace, windows):
         columns[-1][1].append({"id": w["id"], "label": w.get("title") or w.get("app_id") or "Application",
                               "app_id": w.get("app_id") or "", "active": w["id"] == workspace.get("active_window_id")})
     result = []
+    counts = {app: sum(w.get("app_id") == app for w in windows) for g in groups for app in g["members"]}
     for _, members in columns:
         selected = next((w for w in members if w["active"]), members[0])
-        result.append({"id": selected["id"], "label": " + ".join(w["label"] for w in members),
+        app_ids = [w["app_id"] for w in members]
+        matches = [g for g in groups if g["members"] == app_ids and all(counts.get(a) == 1 for a in app_ids)]
+        group = matches[0] if len(matches) == 1 else None
+        result.append({"id": selected["id"], "label": group["label"] if group else " + ".join(w["label"] for w in members),
+                       "group_id": group["id"] if group else None,
                        "active": any(w["active"] for w in members), "members": members})
     return result
 
@@ -209,7 +228,7 @@ def main():
         visible = [{"id": w["id"], "label": w.get("title") or w.get("app_id") or "Application",
                     "app_id": w.get("app_id") or "", "active": w["id"] == workspace.get("active_window_id")}
                    for w in ordered]
-        print(json.dumps({"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows), "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
+        print(json.dumps({"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows, saved_groups(state / "session.json")), "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
 
 
 if __name__ == "__main__":

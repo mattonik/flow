@@ -106,3 +106,7 @@ New snapshots record window IDs and the compositor session identity. Recovery ca
 ## Recovery workspace safety (2026-11-11)
 
 Recovery stops when the focused workspace changes while an app is launching or before a layout action, without returning focus to the original workspace. Already launched apps are left open. Automated tests cover changes during launch and Group reconstruction; an ARM64 guest test switched workspaces while recovery was waiting and confirmed no recovery actions were sent. Niri IPC calls are separate operations, so a workspace change between individual calls cannot be made atomic by this check.
+
+## Saved Group identity (2026-11-11)
+
+An explicit session save assigns stable IDs and editable names to unambiguous two-app stacks, retaining them when the same members are saved in the opposite order. The switcher shows and renames the saved Group, and recovery reconstructs its stack using the existing safe matching rules. On the ARM64 guest, a real KWrite/Kate stack was saved, separated and recovered; its ID and name survived another save. Renaming it to Writing through the switcher updated the snapshot. Groups are still tied to the latest explicit snapshot: saving while members are missing drops their Group metadata. Pinned Groups, independent Group persistence and adaptive landscape layouts remain open.

@@ -47,6 +47,16 @@ class SpacesTest(unittest.TestCase):
         self.windows[1]["is_floating"] = True
         self.assertEqual(len(spaces.display_spaces(self.ws, self.windows)), 2)
 
+    def test_saved_group_label_requires_unambiguous_matching_members(self):
+        self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        groups = [{"id": "group-1", "label": "Work", "members": ["terminal", "files"]}]
+        shown = spaces.display_spaces(self.ws, self.windows, groups)[0]
+        self.assertEqual((shown["group_id"], shown["label"]), ("group-1", "Work"))
+        self.windows.append(window(3, "terminal", 2))
+        shown = spaces.display_spaces(self.ws, self.windows, groups)[0]
+        self.assertIsNone(shown["group_id"])
+        self.assertNotEqual(shown["label"], "Work")
+
     @patch.object(spaces, "command")
     def test_stack_and_separate_two_unpinned_windows(self, command):
         self.ws["active_window_id"] = 1

@@ -28,6 +28,53 @@ class RecoveryTest(unittest.TestCase):
             self.assertEqual([e["column"] for e in saved["windows"]], [1, 2])
             self.assertEqual((saved["session"], [e["window_id"] for e in saved["windows"]]), ("session", [1, 2]))
 
+    def test_saved_group_keeps_identity_and_label_across_snapshots(self):
+        ws = {"id": 1, "active_window_id": 1}
+        windows = [window(1, "one", 1), window(2, "two", 1)]
+        windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.json"
+            restore.save(path, ws, windows, "first")
+            saved = json.loads(path.read_text())
+            group = saved["groups"][0]
+            group["label"] = "Studio"
+            path.write_text(json.dumps(saved))
+            windows[0]["title"] = "Changed title"
+            restore.save(path, ws, windows, "second")
+            self.assertEqual(json.loads(path.read_text())["groups"], [group])
+            windows[0]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+            windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 1]
+            restore.save(path, ws, windows, "third")
+            self.assertEqual(json.loads(path.read_text())["groups"], [{**group, "members": ["two", "one"]}])
+
+    def test_ambiguous_group_is_not_saved_as_a_persistent_identity(self):
+        ws = {"id": 1}
+        windows = [window(1, "one", 1), window(2, "two", 1), window(3, "one", 2)]
+        windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.json"
+            restore.save(path, ws, windows)
+            self.assertEqual(json.loads(path.read_text())["groups"], [])
+
+    def test_rename_saved_group_keeps_snapshot_and_rejects_bad_names(self):
+        ws = {"id": 1}
+        windows = [window(1, "one", 1), window(2, "two", 1)]
+        windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.json"
+            restore.save(path, ws, windows)
+            before = json.loads(path.read_text())
+            group_id = before["groups"][0]["id"]
+            restore.rename_group(path, group_id, "  Studio  ")
+            after = json.loads(path.read_text())
+            self.assertEqual(after["groups"][0]["label"], "Studio")
+            self.assertEqual(after["windows"], before["windows"])
+            with self.assertRaises(ValueError):
+                restore.rename_group(path, group_id, " ")
+            self.assertEqual(json.loads(path.read_text()), after)
+            with self.assertRaises(ValueError):
+                restore.rename_group(path, "missing", "New name")
+
     def test_existing_window_is_focused_without_relaunch(self):
         launch, action = Mock(), Mock()
         ws = {"id": 1, "active_window_id": 1}

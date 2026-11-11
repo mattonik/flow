@@ -2,17 +2,46 @@
 """Explicit, best-effort recovery of one Flow workspace."""
 import json
 import os
+import fcntl
 from collections import Counter
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import time
+import uuid
 import spaces
 
 
 def state_path():
     return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "flow" / "session.json"
+
+
+def write_snapshot(path, data):
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as tmp:
+        try:
+            json.dump(data, tmp, ensure_ascii=False)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+            os.replace(tmp.name, path)
+        finally:
+            if os.path.exists(tmp.name):
+                os.unlink(tmp.name)
+
+
+def rename_group(path, group_id, label):
+    label = label.strip()
+    if not label or len(label) > 80:
+        raise ValueError("Group name must be between 1 and 80 characters")
+    data = json.loads(path.read_text())
+    if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("windows"), list) or not isinstance(data.get("groups"), list):
+        raise ValueError("Invalid saved session")
+    matches = [g for g in data["groups"] if isinstance(g, dict) and g.get("id") == group_id]
+    if len(matches) != 1:
+        raise ValueError("Saved Group no longer exists or is ambiguous")
+    matches[0]["label"] = label
+    write_snapshot(path, data)
 
 
 def save(path, workspace, windows, session=None):
@@ -22,16 +51,21 @@ def save(path, workspace, windows, session=None):
                 "focused": w["id"] == workspace.get("active_window_id"),
                 "column": ((w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0]
                            if not w.get("is_floating") else None)} for w in current]
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as tmp:
-        try:
-            json.dump({"version": 1, "session": session, "windows": entries}, tmp, ensure_ascii=False)
-            tmp.flush()
-            os.fsync(tmp.fileno())
-            os.replace(tmp.name, path)
-        finally:
-            if os.path.exists(tmp.name):
-                os.unlink(tmp.name)
+    previous = spaces.saved_groups(path)
+    app_counts = Counter(e["app_id"] for e in entries)
+    columns = {}
+    for entry in entries:
+        if entry["column"] is not None:
+            columns.setdefault(entry["column"], []).append(entry)
+    groups = []
+    for members in columns.values():
+        apps = [entry["app_id"] for entry in members]
+        if len(apps) != 2 or not all(isinstance(app, str) and app and app_counts[app] == 1 for app in apps):
+            continue
+        matches = [g for g in previous if set(g["members"]) == set(apps)]
+        groups.append({**matches[0], "members": apps} if len(matches) == 1 else {"id": uuid.uuid4().hex,
+                      "label": " + ".join(entry["label"] for entry in members), "members": apps})
+    write_snapshot(path, {"version": 1, "session": session, "windows": entries, "groups": groups})
     return len(entries)
 
 
@@ -167,11 +201,22 @@ def main():
     if op == "status":
         print(json.dumps({"saved": path.exists()}))
         return
-    workspace, windows = spaces.snapshot()
-    if op == "save":
-        count = save(path, workspace, windows, spaces.session_id())
-        print(json.dumps({"message": f"Saved {count} open windows. Save documents in each app before restarting."}))
-    elif op == "restore":
+    if op in ("save", "rename-group"):
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with (path.parent / "session.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if op == "save":
+                workspace, windows = spaces.snapshot()
+                count = save(path, workspace, windows, spaces.session_id())
+                print(json.dumps({"message": f"Saved {count} open windows. Save documents in each app before restarting."}))
+            else:
+                if len(sys.argv) != 4:
+                    raise ValueError("Group name and ID are required")
+                rename_group(path, sys.argv[2], sys.argv[3])
+                print(json.dumps({"message": "Group renamed"}))
+        return
+    if op == "restore":
+        workspace, windows = spaces.snapshot()
         data = json.loads(path.read_text())
         dirs = (os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share"), *os.environ.get("XDG_DATA_DIRS", "/run/current-system/sw/share:/usr/share").split(":"))
         pins_path = path.parent / "spaces.json"

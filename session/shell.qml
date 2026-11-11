@@ -134,12 +134,18 @@ ShellRoot {
     }
     Timer { id: eventReconnect; interval: 5000; onTriggered: if (!niriEvents.running) niriEvents.running = true }
     property string recoveryMessage: ""
+    property string renameGroupId: ""
     property bool switcherOpen: false
     property var windows: []
     property var displaySpaces: []
     property var pins: []
     property string spacesError: ""
     property var pendingSpaceActions: []
+    function renameGroup(id, label) {
+        if (recoveryProcess.running || spacesProcess.running) { spacesError = "Wait for the current action"; return }
+        recoveryProcess.command = ["flow-recovery", "rename-group", id, label]
+        recoveryProcess.running = true
+    }
     function spaceAction(action, id) {
         if (recoveryProcess.running) { if (action !== "refresh") spacesError = "Wait for session recovery to finish"; return }
         if (spacesProcess.running || pendingSpaceActions.length) {
@@ -188,6 +194,11 @@ ShellRoot {
                 try {
                     const result = JSON.parse(this.text)
                     root.recoveryMessage = result.error || result.message || "Recovery unavailable"
+                    if (recoveryProcess.command[1] === "rename-group") {
+                        root.spacesError = result.error || ""
+                        if (!result.error) root.renameGroupId = ""
+                    }
+                    if (!result.error) refreshAfterEvent.restart()
                 } catch (e) { root.recoveryMessage = "Could not read recovery result" }
             }
         }
@@ -423,7 +434,7 @@ ShellRoot {
     PanelWindow {
         visible: root.switcherOpen
         anchors { bottom: true; left: true; right: true }
-        implicitHeight: 220; color: "#101a18"; exclusionMode: ExclusionMode.Ignore
+        implicitHeight: 290; color: "#101a18"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
         FocusScope {
@@ -444,13 +455,14 @@ ShellRoot {
                 }
                 Text { visible: root.displaySpaces.length === 0; text: "No open spaces"; color: "#91a59d" }
                 Flickable {
-                    width: parent.width; height: 110; contentWidth: windowRow.width; contentHeight: height
+                    width: parent.width; height: 180; contentWidth: windowRow.width; contentHeight: height
                     boundsBehavior: Flickable.StopAtBounds; clip: true
                     Row {
                         id: windowRow; spacing: 8
                         Repeater {
                             model: root.displaySpaces
                             Column {
+                                id: spaceCard
                                 required property var modelData
                                 width: modelData.members.length > 1 ? modelData.members.length * 136 - 4 : 200
                                 spacing: 4
@@ -472,6 +484,24 @@ ShellRoot {
                                             onClicked: root.spaceAction("focus-window", String(modelData.id))
                                         }
                                     }
+                                }
+                                FlowButton {
+                                    visible: !!spaceCard.modelData.group_id
+                                    width: 132; implicitHeight: 32; text: "Rename Group"
+                                    onClicked: { root.renameGroupId = spaceCard.modelData.group_id; groupName.forceActiveFocus() }
+                                }
+                                Row {
+                                    visible: !!spaceCard.modelData.group_id && root.renameGroupId === spaceCard.modelData.group_id
+                                    width: parent.width; spacing: 4
+                                    TextField {
+                                        id: groupName
+                                        width: parent.width - 68; height: 36; maximumLength: 80
+                                        text: spaceCard.modelData.label
+                                        placeholderText: "Group name"
+                                        Accessible.name: "Group name"
+                                        onAccepted: root.renameGroup(spaceCard.modelData.group_id, text)
+                                    }
+                                    FlowButton { width: 64; implicitHeight: 36; text: "Save"; onClicked: root.renameGroup(spaceCard.modelData.group_id, groupName.text) }
                                 }
                             }
                         }
