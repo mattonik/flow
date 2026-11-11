@@ -74,6 +74,8 @@ ShellRoot {
             }
         }
     }
+    property bool switcherOpen: false
+    property var windows: []
     property var pins: []
     property string spacesError: ""
     function spaceAction(action, id) {
@@ -94,9 +96,10 @@ ShellRoot {
                         root.spacesError = result.error
                         if (spacesProcess.command[1] !== "refresh") root.deskOpen = true
                     } else {
+                        if (JSON.stringify(root.windows) !== JSON.stringify(result.windows)) root.windows = result.windows
                         if (JSON.stringify(root.pins) !== JSON.stringify(result.pins)) root.pins = result.pins
                         if (result.action !== "refresh") root.spacesError = ""
-                        if (result.action === "focus") root.deskOpen = false
+                        if (result.action === "focus" || result.action === "focus-window") { root.deskOpen = false; root.switcherOpen = false }
                         else if (result.action === "pin") root.deskOpen = true
                     }
                 } catch (e) { root.spacesError = "Could not read pinned spaces" }
@@ -146,6 +149,7 @@ ShellRoot {
             else { root.spacesError = "No pinned space at that position"; root.deskOpen = true }
         }
         function toggle(): void { root.toggleDesk() }
+        function switcher(): void { root.deskOpen = false; root.switcherOpen = !root.switcherOpen; root.spaceAction("refresh") }
         function overview(): void {
             const action = root.deskOpen ? "open-overview" : "toggle-overview"
             root.deskOpen = false
@@ -268,6 +272,53 @@ ShellRoot {
                         }
                     }
                     Text { text: "Tab to navigate · Esc or Super H to return"; color: "#788d84"; font.pixelSize: 12 }
+                }
+            }
+        }
+    }
+    // shortcut: window titles stand in for live previews until compositor capture is available.
+    PanelWindow {
+        visible: !root.deskOpen && !root.switcherOpen && !root.appMenuOpen
+        anchors.bottom: true
+        implicitWidth: 100; implicitHeight: 28
+        color: "transparent"; exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Overlay
+        Rectangle { anchors.centerIn: parent; width: 64; height: 5; radius: 3; color: "#b8ddcb" }
+        MouseArea { anchors.fill: parent; onClicked: { root.switcherOpen = true; root.spaceAction("refresh") } }
+    }
+    PanelWindow {
+        visible: root.switcherOpen
+        anchors { bottom: true; left: true; right: true }
+        implicitHeight: 175; color: "#101a18"; exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+        FocusScope {
+            anchors.fill: parent; focus: true
+            Keys.onEscapePressed: root.switcherOpen = false
+            Column {
+                anchors.fill: parent; anchors.margins: 12; spacing: 8
+                Row {
+                    spacing: 12
+                    Text { text: "OPEN WINDOWS"; color: "#b8ddcb"; font.bold: true; font.pixelSize: 13 }
+                    Text { text: "Select a window · Esc to close"; color: "#91a59d"; font.pixelSize: 13 }
+                }
+                Text { visible: root.windows.length === 0; text: "No open windows"; color: "#91a59d" }
+                Flickable {
+                    width: parent.width; height: 110; contentWidth: windowRow.width; contentHeight: height
+                    boundsBehavior: Flickable.StopAtBounds; clip: true
+                    Row {
+                        id: windowRow; spacing: 8
+                        Repeater {
+                            model: root.windows
+                            FlowButton {
+                                required property var modelData
+                                width: 200; height: 90
+                                text: (modelData.active ? "●  " : "") + modelData.label.slice(0, 28) + "\n" + modelData.app_id.slice(0, 28)
+                                Accessible.name: "Switch to " + modelData.label
+                                onClicked: root.spaceAction("focus-window", String(modelData.id))
+                            }
+                        }
+                    }
                 }
             }
         }

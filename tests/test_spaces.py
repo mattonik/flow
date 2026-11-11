@@ -29,6 +29,13 @@ class SpacesTest(unittest.TestCase):
         self.assertEqual(self.pins, [])
         self.assertNotIn("close-window", str(command.call_args_list))
 
+    @patch.object(spaces, "command")
+    def test_switcher_only_focuses_current_workspace_windows(self, command):
+        spaces.run([], "focus-window", "2", self.ws, self.windows, "session")
+        command.assert_called_once_with("action", "focus-window", "--id", 2)
+        with self.assertRaises(ValueError):
+            spaces.run([], "focus-window", "999", self.ws, self.windows, "session")
+
     def test_restart_never_guesses_between_duplicate_windows(self):
         pin = {"app_id": "terminal", "window_id": 1, "session": "old"}
         self.assertEqual(spaces.resolve(pin, self.windows, "new")["id"], 1)

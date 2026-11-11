@@ -87,9 +87,14 @@ def run(pins, op, arg, workspace, windows, socket):
             target = index + (-1 if op == "left" else 1)
             if 0 <= target < len(pins):
                 pins[index], pins[target] = pins[target], pins[index]
+    elif op == "focus-window":
+        window = next((w for w in windows if str(w["id"]) == arg and w["workspace_id"] == workspace["id"]), None)
+        if not window:
+            raise ValueError("This window is no longer available")
+        command("action", "focus-window", "--id", window["id"])
     elif op != "refresh":
         raise ValueError("Unknown action")
-    if op != "focus":
+    if op not in ("focus", "focus-window"):
         reconcile(pins, workspace, windows, socket)
     return [{"id": p["id"], "label": p["label"],
              "available": eligible(resolve(p, windows, socket), workspace, windows)} for p in pins]
@@ -125,7 +130,12 @@ def main():
                 finally:
                     if os.path.exists(tmp.name):
                         os.unlink(tmp.name)
-        print(json.dumps({"pins": result, "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
+        ordered = sorted((w for w in windows if w.get("workspace_id") == workspace["id"]),
+                         key=lambda w: (w.get("layout", {}).get("pos_in_scrolling_layout") or [99999, 0]))
+        visible = [{"id": w["id"], "label": w.get("title") or w.get("app_id") or "Application",
+                    "app_id": w.get("app_id") or "", "active": w["id"] == workspace.get("active_window_id")}
+                   for w in ordered]
+        print(json.dumps({"pins": result, "windows": visible, "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
 
 
 if __name__ == "__main__":
