@@ -62,3 +62,7 @@ The switcher, Desk and Niri overview now close competing Flow surfaces when swit
 Session snapshots record the tiled column of each window. Recovery preserves an already-matching two-window stack or rejoins a pair only when both are uniquely identified, unpinned and adjacent in the saved order; it reports other cases and preserves current column ordering when stacks are present. In the ARM64 guest, KWrite and Kate were saved as a stack, separated and rejoined by recovery. A full reboot has not yet been tested, and this does not restore unsaved documents or provide named/adaptive Groups.
 
 The system capsule's quick settings expose NetworkManager's connectivity status and WirePlumber's default-output volume and mute controls, when those services are available.
+
+## Quick settings interaction (2026-11-11)
+
+In the ARM64 guest, keyboard navigation increased the real output volume from 40% to 45%, then returned it to 40%; Escape closed the panel. Quick settings now closes competing Flow overlays when opened, and is dismissed when opening the Desk, switcher, launcher or app menu.

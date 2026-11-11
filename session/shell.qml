@@ -42,6 +42,15 @@ ShellRoot {
         onExited: (code, status) => { root.quickError = code === 0 ? "" : "Audio control unavailable"; root.refreshQuickSettings() }
     }
     Timer { interval: 4000; running: root.quickSettingsOpen; repeat: true; triggeredOnStart: true; onTriggered: root.refreshQuickSettings() }
+    function toggleQuickSettings() {
+        if (!quickSettingsOpen) {
+            appMenuOpen = false
+            openMenuWhenReady = false
+            switcherOpen = false
+            quickError = ""
+        }
+        quickSettingsOpen = !quickSettingsOpen
+    }
     function changeVolume(value) {
         if (audioControl.running) return
         audioControl.command = value === "mute" ? ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"] : ["wpctl", "set-volume", "--limit", "1.0", "@DEFAULT_AUDIO_SINK@", value]
@@ -55,6 +64,7 @@ ShellRoot {
     function requestAppMenu() {
         if (!menuPreferences.appMenuEnabled || root.deskOpen || root.overviewOpen || appMenuProcess.running) return
         root.switcherOpen = false
+        root.quickSettingsOpen = false
         root.openMenuWhenReady = true
         appMenuProcess.command = ["flow-appmenu"]
         appMenuProcess.running = true
@@ -112,7 +122,7 @@ ShellRoot {
                     }
                     if (event.OverviewOpenedOrClosed) {
                         root.overviewOpen = event.OverviewOpenedOrClosed.is_open
-                        if (root.overviewOpen) { root.appMenuOpen = false; root.openMenuWhenReady = false; root.switcherOpen = false }
+                        if (root.overviewOpen) { root.appMenuOpen = false; root.openMenuWhenReady = false; root.switcherOpen = false; root.quickSettingsOpen = false }
                     }
                 } catch (e) {}
             }
@@ -179,6 +189,7 @@ ShellRoot {
     }
     Timer { interval: 3000; running: true; repeat: true; triggeredOnStart: true; onTriggered: root.spaceAction("refresh") }
     function toggleDesk() {
+        quickSettingsOpen = false
         switcherOpen = false
         appMenuOpen = false
         openMenuWhenReady = false
@@ -187,6 +198,7 @@ ShellRoot {
     }
 
     function openSearch() {
+        quickSettingsOpen = false
         openMenuWhenReady = false
         appMenuOpen = false
         deskOpen = false
@@ -195,6 +207,7 @@ ShellRoot {
     }
 
     function openApps() {
+        quickSettingsOpen = false
         openMenuWhenReady = false
         appMenuOpen = false
         switcherOpen = false
@@ -203,6 +216,7 @@ ShellRoot {
     }
 
     function toggleSwitcher() {
+        quickSettingsOpen = false
         if (switcherOpen) { switcherOpen = false; return }
         deskOpen = false
         appMenuOpen = false
@@ -237,7 +251,7 @@ ShellRoot {
                 else root.requestAppMenu()
             }
         }
-        function quick(): void { root.quickSettingsOpen = !root.quickSettingsOpen }
+        function quick(): void { root.toggleQuickSettings() }
         function apps(): void { root.openApps() }
         function search(): void { root.openSearch() }
         function pin(): void { root.spaceAction("pin") }
@@ -559,7 +573,7 @@ ShellRoot {
                 Text { text: "Apps"; color: "#ecf2f0"; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter
                     MouseArea { anchors.fill: parent; onClicked: root.openApps() } }
                 Text { text: Qt.formatTime(clock.date, "hh:mm"); color: "#ecf2f0"; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter }
-                FlowButton { width: 38; implicitHeight: 34; text: "⚙"; Accessible.name: "Quick settings"; onClicked: root.quickSettingsOpen = !root.quickSettingsOpen }
+                FlowButton { width: 38; implicitHeight: 34; text: "⚙"; Accessible.name: "Quick settings"; onClicked: root.toggleQuickSettings() }
             }
         }
         SystemClock { id: clock; precision: SystemClock.Minutes }
