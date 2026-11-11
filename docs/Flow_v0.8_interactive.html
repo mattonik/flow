@@ -1,0 +1,1173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Flow" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#090c11" />
+<title>Flow — v0.8 · Spatial Shortcuts</title>
+<style>
+:root { color-scheme: dark; }
+* { box-sizing:border-box; }
+body { margin:0; background:#080d16; }
+#flow-proto { --ink:#f5f7ff; --muted:#97a5ba; --accent:#abf4d6; font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color:var(--ink); background:radial-gradient(ellipse at 50% -20%, #202b43 0%, #0c1321 50%, #090e17 100%); border:1px solid #24334b; border-radius:22px; padding:20px; width:100%; max-width:1190px; margin:0 auto; overflow:hidden; }
+#flow-proto button, #flow-proto input, #flow-proto textarea { font:inherit; }
+#flow-proto button { cursor:pointer; }
+#flow-proto button:focus-visible, #flow-proto input:focus-visible, #flow-proto textarea:focus-visible { outline:2px solid #8cdebd; outline-offset:3px; }
+#flow-proto .top { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:18px; }
+#flow-proto .brand {display:flex; align-items:center; gap:11px;}
+#flow-proto .brandmark {display:grid; place-items:center; width:37px; height:37px; border-radius:12px; background:linear-gradient(135deg,#adf2d6,#6ca5d8); color:#102236; font-size:24px; font-weight:800; transform:rotate(-7deg);}
+#flow-proto .brandlabel {font-size:16px; font-weight:750; letter-spacing:-.5px;}
+#flow-proto .brandlabel small {display:block; font-size:10px; letter-spacing:1.7px; color:#91a3bd; margin-top:3px; font-weight:550;}
+#flow-proto .mode {display:flex; background:#131d2c; border:1px solid #2a3850; border-radius:12px; padding:3px; gap:2px;}
+#flow-proto .mode button {background:transparent; color:#a6b3c8; border:0; border-radius:9px; padding:9px 13px; font-size:12px; font-weight:680;}
+#flow-proto .mode button.active {background:#36465e; color:white; box-shadow:0 2px 5px #080e182b;}
+#flow-proto .device {position:relative; height:520px; width:100%; max-width:990px; margin:0 auto; border-radius:24px; overflow:hidden; border:1px solid #56677e; background:linear-gradient(120deg,#151e35,#0c2332 48%,#263f4e); box-shadow:0 22px 55px #0008, 0 0 0 5px #0a101b; transition:max-width .3s ease, border-radius .3s ease;}
+#flow-proto[data-mode="tablet"] .device {max-width:790px; border-radius:29px;}
+#flow-proto .device::before {content:""; position:absolute; width:310px; height:300px; border-radius:50%; background:#4fa8ba66; filter:blur(85px); top:-130px; right:4%; pointer-events:none;}
+#flow-proto .wallpaper {position:absolute; inset:0; opacity:.3; pointer-events:none; background-image:linear-gradient(#c7ddeb0b 1px,transparent 1px),linear-gradient(90deg,#c7ddeb0b 1px,transparent 1px); background-size:24px 24px;}
+#flow-proto .system-hub {position:absolute; z-index:50; top:8px; left:50%; transform:translateX(-50%); user-select:none; -webkit-user-select:none; touch-action:none;}
+#flow-proto .island {display:flex; align-items:center; justify-content:center; gap:9px; min-width:94px; max-width:245px; height:32px; padding:0 11px; color:white; background:#06090e; border:1px solid #2c3544; border-radius:50px; box-shadow:0 8px 19px #0008, 0 0 0 1px #ffffff0a; font-size:11px; font-weight:680; white-space:nowrap; transition:all .22s ease;}
+#flow-proto .island .live {height:7px; width:7px; border-radius:50%; background:#b0f4d1; box-shadow:0 0 10px #b0f4d185;}
+#flow-proto .island.activity {background:#05080d; border-color:#5a745c; min-width:190px;}
+#flow-proto .island .island-arrow {color:#8899a9; font-size:10px; letter-spacing:2px;}
+#flow-proto .desktop-hub {display:none; align-items:center; padding:3px; gap:3px; background:#080c13ec; border:1px solid #3b4757; box-shadow:0 6px 16px #0005; border-radius:14px;}
+#flow-proto .desktop-hub button {border:0; color:#f1f7ff; height:31px; min-width:33px; padding:0 9px; border-radius:10px; background:transparent; font-size:15px; display:flex; align-items:center; justify-content:center; gap:8px;}
+#flow-proto .desktop-hub button:hover, #flow-proto .desktop-hub button.active {background:#283a4f;}
+#flow-proto .desktop-hub #desktopStatusText {font-size:10px; color:#9ceacb; display:none;}
+#flow-proto .desktop-hub.has-activity #desktopStatusText {display:inline;}
+#flow-proto[data-mode="desktop"] .island {display:none;}
+#flow-proto[data-mode="desktop"] .desktop-hub {display:flex;}
+#flow-proto .screen-clock {display:none; position:absolute; top:17px; left:20px; color:#d0dbe7; font-size:11px; letter-spacing:.1px; font-weight:650;}
+#flow-proto .screen-status {display:none; position:absolute; top:15px; right:20px; color:#d8e8ed; font-size:12px; display:flex; align-items:center; gap:7px;}
+#flow-proto .app-surface {position:absolute; inset:0; border-radius:inherit; overflow:hidden; background:#f5f7fc; color:#1b2740; box-shadow:0 12px 45px #0005; touch-action:pan-y;}
+#flow-proto .app-layout {height:100%; width:100%; display:flex; background:#f7f9fd;}
+#flow-proto .primary-app {height:100%; flex:1; min-width:0; overflow:hidden; display:flex; flex-direction:column;}
+#flow-proto .app-head {height:43px; flex:none; border-bottom:1px solid #e7ecf2; background:#fff; display:flex; align-items:center; gap:9px; padding:0 15px;}
+#flow-proto .app-dot {width:10px; height:10px; border-radius:4px; background:#5d9ecd;}
+#flow-proto .app-head strong {font-size:12px; letter-spacing:-.15px;}
+#flow-proto .app-head span {font-size:10px; color:#9aa9bb;}
+#flow-proto .app-head .head-end {margin-left:auto; display:flex; gap:7px;}
+#flow-proto .head-end i {width:17px; height:17px; background:#edf1f7; border:1px solid #dfe7f0; border-radius:5px; display:block;}
+#flow-proto .app-body {flex:1; overflow:auto; min-height:0;}
+#flow-proto .research {padding:28px 30px 17px; background:radial-gradient(ellipse at top right,#e1eefc 0,transparent 55%),#f8fafc;}
+#flow-proto .eyebrow {font-size:10px; text-transform:uppercase; letter-spacing:1.6px; font-weight:780; color:#448f84;}
+#flow-proto .research h2 {font-size:clamp(21px,3.3vw,35px); margin:9px 0 8px; font-weight:760; letter-spacing:-1.4px; color:#1b2943;}
+#flow-proto .research p {margin:0 0 21px; font-size:12px; color:#6e7e90; max-width:370px; line-height:1.5;}
+#flow-proto .searchbox {border:1px solid #e0e6ee; background:white; box-shadow:0 7px 17px #1d38520a; padding:12px 14px; border-radius:11px; font-size:12px; color:#8b98a8; max-width:430px; margin-bottom:21px;}
+#flow-proto .research-cards {display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:11px; max-width:520px;}
+#flow-proto .research-card {min-height:100px; border-radius:12px; background:white; border:1px solid #e4ebf4; padding:12px; font-size:22px; box-shadow:0 4px 10px #192d4507;}
+#flow-proto .research-card b {display:block; font-size:11px; margin-top:8px;}
+#flow-proto .research-card small {font-size:9px; color:#8999aa;}
+#flow-proto .studio {display:flex; height:100%; background:#e9eef5;}
+#flow-proto .tools {width:37px; background:#fff; border-right:1px solid #e2e7ef; flex:none; display:flex; flex-direction:column; align-items:center; gap:10px; padding:14px 0; color:#8d9aaf; font-size:15px;}
+#flow-proto .tools .selected {background:#d9eafa; padding:5px; border-radius:7px; color:#467bc0;}
+#flow-proto .canvas {flex:1; min-width:0; display:grid; place-items:center; padding:14px; overflow:hidden;}
+#flow-proto .mock-design {background:#fff; border:1px solid #dfe5ec; width:min(290px,100%); height:280px; border-radius:14px; padding:21px; box-shadow:0 12px 30px #61738a21;}
+#flow-proto .mock-design .design-top {display:flex; align-items:center; justify-content:space-between; color:#24314b; font-size:13px; font-weight:800;}
+#flow-proto .design-top span:last-child {font-size:10px; color:#94a2b3;}
+#flow-proto .design-hero {border-radius:10px; height:90px; margin-top:16px; background:radial-gradient(circle at 70% 45%,#aedbd6 0%,#97a4cf 39%,#494d88 100%); position:relative; overflow:hidden;}
+#flow-proto .design-hero::after {content:"✦";position:absolute; color:white; top:24%; left:47%; font-size:39px; text-shadow:0 8px 20px #21294e5e;}
+#flow-proto .design-line {height:8px; background:#e8edf3; border-radius:5px; margin-top:15px; width:73%;}
+#flow-proto .design-line.small {width:47%; margin-top:8px;}
+#flow-proto .design-pill {height:23px; background:#273e5a; width:78px; border-radius:7px; margin-top:17px; color:white; font-size:9px; display:grid; place-items:center;}
+#flow-proto .terminal {height:100%; background:#111a29; color:#bcd1e1; padding:22px 22px 12px; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px; line-height:1.85; overflow:auto;}
+#flow-proto .terminal .green {color:#9af0c7;} #flow-proto .terminal .blue {color:#95b6ff;} #flow-proto .terminal .dim {color:#8092a9;}
+#flow-proto .terminal-line {display:flex; align-items:center; gap:7px; margin-top:9px;}
+#flow-proto .terminal-line input {background:transparent; border:0; outline:none; color:#d8e8f7; font-family:inherit; min-width:0; flex:1; font-size:12px;}
+#flow-proto .writing {padding:27px 35px; background:#f9fafc; height:100%;}
+#flow-proto .writing .doc {max-width:420px; margin:0 auto; background:white; border:1px solid #e1e6ee; padding:21px 28px; height:100%; box-shadow:0 4px 15px #22334d0a; overflow:auto;}
+#flow-proto .writing h2 {color:#20334e; font-size:20px; letter-spacing:-.5px; margin:0 0 16px;}
+#flow-proto .writing p {font-size:12px; line-height:1.7; color:#5e6d81;}
+#flow-proto .group-panel {width:34%; min-width:165px; background:#fff; border-left:1px solid #e3e8f0; display:flex; flex-direction:column;}
+#flow-proto .group-panel .group-header {display:flex; justify-content:space-between; align-items:center; height:43px; padding:0 13px; border-bottom:1px solid #e9edf2; font-size:11px; font-weight:760;}
+#flow-proto .group-panel .group-note {padding:14px; flex:1; min-height:0; display:flex; flex-direction:column; gap:11px;}
+#flow-proto .note-label {font-size:9px; font-weight:780; color:#6f86a0; letter-spacing:1px; text-transform:uppercase;}
+#flow-proto .group-panel textarea {background:#f7f9fb; border:1px solid #e5ebf3; resize:none; border-radius:9px; color:#32425a; padding:12px; width:100%; flex:1; font-size:11px; line-height:1.5; outline:none;}
+#flow-proto .group-panel .note-tag {font-size:10px; color:#3b8b76; background:#e4f5ee; border-radius:7px; padding:8px;}
+#flow-proto .nav {position:absolute; bottom:24px; left:50%; transform:translate(-50%,calc(100% + 34px)); opacity:0; pointer-events:none; transition:transform .22s ease, opacity .18s ease; display:flex; align-items:center; gap:6px; z-index:54; padding:5px; background:#07101cdd; border:1px solid #46607377; border-radius:18px; box-shadow:0 5px 16px #0005; max-width:96%;}
+#flow-proto .device.nav-visible .nav, #flow-proto .nav:focus-within {transform:translate(-50%,0); opacity:1; pointer-events:auto;}
+#flow-proto .nav-trigger {position:absolute; z-index:55; bottom:0; left:50%; transform:translateX(-50%); width:112px; height:22px; display:flex; justify-content:center; align-items:flex-end; padding:0 0 7px; cursor:pointer; border:0; background:transparent; touch-action:none;}
+#flow-proto .nav-trigger::after {content:""; display:block; height:4px; width:42px; border-radius:99px; background:#1c293bcc; box-shadow:0 1px 6px #ffffff72; border:1px solid #ffffff50; transition:width .2s, background .2s;}
+#flow-proto .nav-trigger:hover::after, #flow-proto .device.nav-visible .nav-trigger::after {width:62px; background:#c1f6df;}
+#flow-proto .app-surface .app-head {padding-right:18px;}
+#flow-proto .nav button {border:0; color:#a9bbcd; background:transparent; border-radius:11px; padding:7px 11px; font-size:11px; white-space:nowrap; font-weight:690;}
+#flow-proto .nav button.current {background:#b7efd6; color:#153448;}
+#flow-proto .nav button:hover:not(.current) {background:#26394e; color:white;}
+#flow-proto .nav .step {border-radius:12px; font-size:16px; padding:3px 8px;}
+#flow-proto .nav .sep {height:18px; width:1px; background:#35516a;}
+#flow-proto .sheet {position:absolute; z-index:43; top:48px; left:50%; transform:translateX(-50%); background:#101925f7; border:1px solid #465b72; box-shadow:0 20px 60px #0009; backdrop-filter:blur(25px); border-radius:20px; width:min(400px,calc(100% - 28px)); color:#eef6ff; padding:16px; display:none; max-height:390px; overflow:auto;}
+#flow-proto .sheet.open {display:block; animation:flowdrop .2s ease-out;}
+@keyframes flowdrop {from{opacity:0; transform:translate(-50%,-7px) scale(.97)}to{opacity:1; transform:translate(-50%,0) scale(1)}}
+#flow-proto .sheet-head {display:flex; justify-content:space-between; align-items:center; margin-bottom:13px;}
+#flow-proto .sheet-head strong {font-size:15px; letter-spacing:-.35px;}
+#flow-proto .sheet-head button {width:28px; height:28px; border:0; border-radius:9px; background:#27384b; color:white; font-size:16px;}
+#flow-proto .sheet-sub {font-size:10px; color:#90a4b9; margin:-7px 0 13px;}
+#flow-proto .notify {display:flex; align-items:flex-start; gap:11px; background:#213044; border:1px solid #33465b; border-radius:12px; padding:12px; margin-top:8px;}
+#flow-proto .notify .n-icon {display:grid; place-items:center; flex:none; width:28px; height:28px; background:#3c596a; border-radius:10px; font-size:13px;}
+#flow-proto .notify b {display:block; font-size:11px; margin:0 0 4px;} #flow-proto .notify p {margin:0; line-height:1.4; color:#b4c5d7; font-size:10px;}
+#flow-proto .setting-grid {display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px;}
+#flow-proto .setting {min-height:74px; display:flex; flex-direction:column; align-items:flex-start; justify-content:center; gap:7px; padding:12px; background:#233248; border:1px solid #364c66; border-radius:13px; color:#d6e5f2; font-size:12px; font-weight:670;}
+#flow-proto .setting span:first-child {font-size:17px;}
+#flow-proto .setting.on {background:#315849; border-color:#669c81; color:#c8f9df;}
+#flow-proto .slider-row {margin-top:15px; font-size:11px; color:#afc2d3; display:flex; align-items:center; gap:10px;}
+#flow-proto .slider-row input {flex:1; accent-color:#b1f1d5;}
+#flow-proto .home-overlay {position:absolute; z-index:39; inset:0; display:none; align-items:center; justify-content:center; background:radial-gradient(ellipse at 50% 25%,#416a78 0%,#111e36e8 57%,#08101eea 100%); backdrop-filter:blur(18px);}
+#flow-proto .home-overlay.open {display:flex; animation:flowfade .2s ease;}
+@keyframes flowfade {from{opacity:0}to{opacity:1}}
+#flow-proto .home-inner {width:min(550px,90%); padding:55px 6px 34px; text-align:center;}
+#flow-proto .home-inner h2 {font-size:28px; letter-spacing:-1px; margin:0 0 4px; font-weight:760;}
+#flow-proto .home-inner p {font-size:12px; color:#b8cedc; margin:0 0 20px;}
+#flow-proto .home-apps {display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:11px;}
+#flow-proto .home-apps button {display:flex; flex-direction:column; align-items:center; justify-content:center; gap:9px; color:white; background:#ffffff12; border:1px solid #ffffff30; backdrop-filter:blur(10px); border-radius:16px; padding:15px 5px; font-size:10px; font-weight:700;}
+#flow-proto .home-apps button:hover {background:#ffffff26;}
+#flow-proto .home-apps .appicon {width:40px; height:40px; border-radius:13px; display:grid; place-items:center; background:linear-gradient(135deg,#d0f6df,#8ab1da); color:#132944; font-size:23px;}
+#flow-proto .layer {position:absolute; z-index:31; right:17px; top:53px; bottom:36px; width:min(284px,70%); display:none; flex-direction:column; background:#fff; color:#20304a; border:1px solid #d4e0ee; border-radius:16px; box-shadow:0 15px 35px #0007; overflow:hidden; animation:layerin .2s ease;}
+#flow-proto .layer.open {display:flex;}
+@keyframes layerin {from{opacity:0; transform:translateX(15px) scale(.98)}to{opacity:1; transform:translateX(0) scale(1)}}
+#flow-proto .layer-head {flex:none; display:flex; justify-content:space-between; align-items:center; padding:12px; border-bottom:1px solid #e5edf3; font-size:12px; font-weight:750;}
+#flow-proto .layer-head button {border:0; background:#eef2f8; border-radius:8px; width:25px; height:25px; color:#53667c;}
+#flow-proto .layer-content {padding:15px; display:flex; flex-direction:column; flex:1; gap:10px; min-height:0;}
+#flow-proto .layer-content small {font-size:10px; line-height:1.5; color:#8392a5;}
+#flow-proto .layer-content textarea {flex:1; min-height:80px; resize:none; border:1px solid #dfe8f0; background:#f8fafc; border-radius:9px; padding:10px; color:#36465e; font-size:12px;}
+#flow-proto .layer-content .layer-save {padding:10px; font-size:11px; background:#234c48; color:white; border:0; border-radius:9px; font-weight:700;}
+#flow-proto .actions {display:flex; align-items:center; justify-content:center; gap:9px; margin-top:20px; flex-wrap:wrap;}
+#flow-proto .actions button {background:#16263a; border:1px solid #35495f; border-radius:11px; padding:11px 14px; color:#edf5ff; font-size:12px; font-weight:690; transition:background .15s;}
+#flow-proto .actions button:hover, #flow-proto .actions button.selected {background:#355a59; border-color:#629d88;}
+#flow-proto .actions .action-hint {font-size:11px; color:#8ca0b6; margin-right:3px;}
+#flow-proto .guide {display:flex; gap:12px; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; margin:17px auto 0; max-width:990px; padding-top:14px; border-top:1px solid #2a3b50; font-size:11px; color:#aebdd0; line-height:1.5;}
+#flow-proto .guide b {color:#e1effa;} #flow-proto .guide > span {max-width:430px;}
+#flow-proto .toast {z-index:99; position:absolute; left:50%; bottom:58px; transform:translateX(-50%); padding:9px 13px; border-radius:11px; background:#142a33; color:#d1f5e5; border:1px solid #4c806f; box-shadow:0 6px 20px #0004; font-size:11px; opacity:0; pointer-events:none; transition:opacity .2s; white-space:nowrap;}
+#flow-proto .toast.show {opacity:1;}
+#flow-proto .empty {font-size:11px; color:#a7b9cd; background:#233248; padding:17px; border-radius:12px; text-align:center;}
+@media(max-width:680px) {
+  #flow-proto {padding:11px; border-radius:14px;}
+  #flow-proto .top {margin-bottom:14px;}
+  #flow-proto .brandlabel {font-size:13px;}
+  #flow-proto .brandlabel small {font-size:8px;}
+  #flow-proto .brandmark {width:30px; height:30px; font-size:20px;}
+  #flow-proto .mode button {padding:8px 9px; font-size:11px;}
+  #flow-proto .device {height:470px;}
+  #flow-proto .research {padding:20px 16px;}
+  #flow-proto .research-cards {gap:5px;}
+  #flow-proto .research-card {padding:8px; min-height:81px; font-size:18px;}
+  #flow-proto .research-card b {font-size:9px;}
+  #flow-proto .research-card small {font-size:8px;}
+  #flow-proto .app-surface {inset:0;}
+  #flow-proto .nav {gap:0;}
+  #flow-proto .nav button {padding:7px 6px; font-size:9px;}
+  #flow-proto .nav .step {padding:3px 7px;}
+  #flow-proto .group-panel {min-width:112px; width:43%;}
+  #flow-proto .group-panel .group-note {padding:7px; gap:6px;}
+  #flow-proto .group-panel textarea {padding:6px; font-size:10px;}
+  #flow-proto .home-apps {gap:5px;}
+  #flow-proto .home-apps button {padding:12px 2px; font-size:9px; border-radius:10px;}
+  #flow-proto .home-apps .appicon {width:30px; height:30px; font-size:19px; border-radius:10px;}
+  #flow-proto .actions {gap:6px;}
+  #flow-proto .actions button {padding:9px 10px; font-size:11px;}
+  #flow-proto .guide {font-size:10px;}
+}
+@media(prefers-reduced-motion:reduce) {#flow-proto *,#flow-proto *::before,#flow-proto *::after {animation-duration:.01ms!important; transition-duration:.01ms!important;}}
+
+/* v0.3: The desktop is the viewport: no simulated device, header, or frame. */
+html, body { width:100%;height:100%;margin:0;overflow:hidden;overscroll-behavior:none;background:#101a2b; }
+#flow-proto {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  width:100%;height:100%;height:100dvh;max-width:none;margin:0;padding:0;
+  border:none;border-radius:0;overflow:clip;background:#101a2b;
+}
+#flow-proto .top {display:none;}
+#flow-proto .device, #flow-proto[data-mode="tablet"] .device {
+  position:absolute;inset:0;width:100%;height:100%;height:100dvh;max-width:none;margin:0;
+  border:0;border-radius:0;box-shadow:none;overflow:clip;transition:none;
+}
+#flow-proto .app-surface {border-radius:0;box-shadow:none;}
+#flow-proto .app-head {height:54px;padding:0 max(17px, env(safe-area-inset-left, 0px));}
+#flow-proto .app-head strong {font-size:13px;}
+#flow-proto .app-head span {font-size:11px;}
+#flow-proto .research {padding:clamp(30px,7vh,84px) clamp(24px,6vw,100px);}
+#flow-proto .research h2 {font-size:clamp(34px,5.5vw,75px);letter-spacing:-.055em;}
+#flow-proto .research p {font-size:clamp(13px,1.5vw,17px);max-width:520px;}
+#flow-proto .searchbox {font-size:14px;max-width:570px;}
+#flow-proto .research-cards {max-width:650px;gap:15px;}
+#flow-proto .research-card {min-height:122px;padding:17px;font-size:27px;}
+#flow-proto .research-card b {font-size:12px;}
+#flow-proto .research-card small {font-size:10px;}
+#flow-proto .system-hub {
+  top:calc(var(--safe-top) + 8px);max-width:calc(100vw - 20px);
+  -webkit-tap-highlight-color:transparent;
+}
+#flow-proto .island {min-width:105px;height:36px;padding:0 14px;font-size:12px;border-radius:100px;}
+#flow-proto .island.activity {min-width:200px;}
+#flow-proto .desktop-hub button {height:35px;min-width:36px;}
+/* MacBook-notch and camera cutout presets physically merge with the system island.
+   In Auto the CSS safe-area insets keep controls clear of real hardware cutouts. */
+#flow-proto[data-cutout="notch"] .system-hub,
+#flow-proto[data-cutout="camera"] .system-hub {top:0;}
+#flow-proto[data-cutout="notch"] .island {
+  min-width:248px;height:auto;min-height:calc(max(var(--safe-top), 34px) + 37px);
+  padding: max(var(--safe-top), 34px) 23px 8px;border-radius:0 0 28px 28px;
+  border-top:0;box-shadow:0 14px 22px #0007,0 0 0 1px #ffffff08;
+}
+#flow-proto[data-cutout="notch"] .island.activity {min-width:285px;}
+#flow-proto[data-cutout="notch"] .desktop-hub {
+  padding: max(var(--safe-top), 32px) 7px 7px;
+  border-top:0;border-radius:0 0 19px 19px;
+  min-width:250px;justify-content:center;
+}
+#flow-proto[data-cutout="camera"] .island {
+  min-width:136px;height:auto;min-height:51px;padding:18px 14px 6px;
+  border-top:0;border-radius:0 0 23px 23px;
+}
+#flow-proto[data-cutout="camera"] .island.activity {min-width:222px;}
+#flow-proto[data-cutout="camera"] .desktop-hub {
+  padding:18px 5px 5px;border-radius:0 0 18px 18px;border-top:0;
+}
+#flow-proto .nav {bottom:calc(var(--safe-bottom) + 31px);width:max-content;max-width:calc(100vw - 24px);overflow-x:auto;scrollbar-width:none;}
+#flow-proto .nav::-webkit-scrollbar {display:none;}
+#flow-proto .nav-trigger {bottom:calc(var(--safe-bottom) + 1px);height:28px;padding-bottom:8px;}
+#flow-proto .sheet {top:calc(var(--safe-top) + 54px);max-height:min(470px, calc(100dvh - var(--safe-top) - var(--safe-bottom) - 75px));}
+#flow-proto[data-cutout="notch"] .sheet {top:calc(max(var(--safe-top), 34px) + 49px);}
+#flow-proto[data-cutout="camera"] .sheet {top:61px;}
+#flow-proto .home-overlay {padding-top:var(--safe-top);padding-bottom:var(--safe-bottom);}
+#flow-proto .home-inner {width:min(630px,calc(100% - 32px));max-height:calc(100dvh - var(--safe-top) - var(--safe-bottom) - 24px);overflow:auto;overscroll-behavior:contain;padding:62px 4px 24px;scrollbar-width:thin;}
+#flow-proto .home-inner h2 {font-size:clamp(29px,5.2vw,45px);letter-spacing:-1.4px;}
+#flow-proto .home-inner p {font-size:13px;}
+#flow-proto .home-apps button {min-height:98px;}
+#flow-proto .home-settings {margin:20px auto 0;text-align:left;padding:18px;border-radius:18px;background:#071222a8;border:1px solid #c7e0f22c;backdrop-filter:blur(24px);}
+#flow-proto .home-settings h3 {font-size:13px;margin:0 0 12px;letter-spacing:-.1px;color:#dbeaff;}
+#flow-proto .home-settings .settings-label {font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:#9bb1c6;margin-bottom:7px;}
+#flow-proto .home-settings .setting-line {display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap;margin-top:12px;}
+#flow-proto .mode {background:#18273a;border-color:#39546b;}
+#flow-proto .mode button {font-size:11px;padding:8px 13px;}
+#flow-proto .cutout-options {display:flex;gap:4px;padding:3px;border-radius:12px;background:#162536;border:1px solid #354a61;}
+#flow-proto .cutout-options button {background:transparent;color:#aabbcf;border:0;border-radius:9px;padding:7px 10px;font-size:11px;min-height:32px;}
+#flow-proto .cutout-options button.active {background:#46627c;color:#fff;}
+#flow-proto .home-settings .actions {margin:18px 0 0;justify-content:flex-start;gap:8px;}
+#flow-proto .home-settings .actions button {padding:9px 12px;font-size:11px;}
+#flow-proto .home-settings .action-hint {display:none;}
+#flow-proto .home-settings .home-hint {text-align:left;line-height:1.55;font-size:11px;color:#a1b8cb;margin:12px 0 0;}
+#flow-proto .home-settings .fullscreen-row {display:flex;gap:8px;align-items:center;margin-top:14px;}
+#flow-proto .home-settings .fullscreen-button {padding:10px 13px;border:1px solid #629b87;background:#b7efd6;color:#142d34;font-size:12px;font-weight:750;border-radius:11px;}
+#flow-proto .home-settings .fullscreen-note {font-size:10px;color:#a9bdcc;line-height:1.45;text-align:left;max-width:350px;}
+#flow-proto .guide {border:0;margin:9px auto 0;padding:0;font-size:10px;gap:8px;}
+#flow-proto .guide span {max-width:100%;}
+#flow-proto .layer {top:calc(var(--safe-top) + 54px);bottom:calc(var(--safe-bottom) + 32px);right:max(14px,env(safe-area-inset-right,0px));}
+#flow-proto .toast {bottom:calc(var(--safe-bottom) + 66px);font-size:12px;}
+@media (max-width:680px) {
+ #flow-proto {padding:0;border-radius:0;}
+ #flow-proto .device {height:100dvh;}
+ #flow-proto .research {padding:clamp(32px,6vh,54px) 20px;}
+ #flow-proto .research h2 {font-size:clamp(31px,7.5vw,46px);}
+ #flow-proto .research-cards {gap:8px;}
+ #flow-proto .research-card {min-height:96px;padding:10px;font-size:22px;}
+ #flow-proto .home-inner {padding-top:60px;}
+ #flow-proto .home-apps {grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;}
+ #flow-proto .home-apps button {min-height:83px;padding:9px 2px;}
+ #flow-proto .home-settings {padding:13px;margin-top:13px;}
+ #flow-proto .home-settings .setting-line {align-items:flex-start;flex-direction:column;gap:7px;}
+ #flow-proto .home-settings .actions {gap:5px;margin-top:12px;}
+ #flow-proto .home-settings .actions button {padding:8px;font-size:10px;}
+ #flow-proto .group-panel {min-width:112px;width:39%;}
+ #flow-proto .nav {bottom:calc(var(--safe-bottom) + 36px);}
+ #flow-proto .layer {right:10px;width:min(285px,calc(100vw - 26px));}
+}
+@media (max-height:580px) {
+ #flow-proto .home-inner {padding-top:45px;}
+ #flow-proto .home-apps button {min-height:64px;}
+ #flow-proto .home-apps .appicon {width:31px;height:31px;font-size:17px;}
+ #flow-proto .home-settings {margin-top:10px;padding:12px;}
+}
+
+
+/* v0.4: compact, camera-aware controls and portrait-first multitasking. */
+#flow-proto {--notch-width:142px;--notch-height:32px;--notch-wing:102px;}
+/* Ordinary desktop mode keeps a tiny three-action chip. */
+#flow-proto .notch-wing {display:contents;}
+#flow-proto .notch-gap {display:none;}
+#flow-proto .desktop-hub #desktopStatusText {display:none;}
+#flow-proto .desktop-hub.has-activity #desktopStatusText {
+  display:inline-flex;white-space:nowrap;color:#b1efd7;font-size:10px;font-weight:720;
+}
+/* MacBook notch: camera area is black and controls are flush at its sides,
+   occupying only the height of the actual camera housing. */
+#flow-proto[data-cutout="notch"] .system-hub {
+  top:0;left:50%;max-width:calc(100vw - 12px);transform:translateX(-50%);
+}
+#flow-proto[data-cutout="notch"] .island {display:none !important;}
+#flow-proto[data-cutout="notch"] .desktop-hub {
+  display:flex !important;align-items:flex-start;justify-content:center;
+  width:calc(var(--notch-width) + var(--notch-wing) * 2);
+  max-width:calc(100vw - 12px);height:var(--notch-height);
+  min-width:0;gap:0;padding:0;margin:0;
+  background:transparent;border:0;border-radius:0;box-shadow:none;
+  filter:drop-shadow(0 3px 9px #0005);
+}
+#flow-proto[data-cutout="notch"] .notch-wing {
+  display:flex;flex:0 0 var(--notch-wing);width:var(--notch-wing);min-width:0;
+  height:var(--notch-height);gap:2px;align-items:center;
+  background:#020304;border:0;color:#fff;
+}
+#flow-proto[data-cutout="notch"] .notch-left {
+  padding:0 7px 2px 6px;justify-content:flex-start;border-radius:0 0 0 15px;
+}
+#flow-proto[data-cutout="notch"] .notch-right {
+  padding:0 5px 2px 6px;justify-content:flex-end;border-radius:0 0 15px 0;
+}
+#flow-proto[data-cutout="notch"] .notch-gap {
+  display:block;flex:0 0 var(--notch-width);width:var(--notch-width);
+  height:var(--notch-height);background:#000;pointer-events:none;
+  border-radius:0 0 12px 12px;
+}
+#flow-proto[data-cutout="notch"] .desktop-hub button {
+  height:29px;min-width:32px;padding:0 6px;border-radius:9px;
+  background:transparent;color:#c0cbd8;font-size:17px;
+}
+#flow-proto[data-cutout="notch"] .desktop-hub button:hover,
+#flow-proto[data-cutout="notch"] .desktop-hub button:focus-visible {background:#24313b;color:#fff;}
+#flow-proto[data-cutout="notch"] #desktopStatusText {font-size:10px;color:#b3f0db;letter-spacing:-.2px;}
+#flow-proto[data-cutout="notch"] .sheet {top:calc(var(--notch-height) + 11px);}
+/* Future phone-style cutout: similar strategy with a floating rounded capsule.
+   The central area is decorative/unavailable; all actions live alongside it. */
+#flow-proto[data-cutout="camera"] .system-hub {
+  top:calc(var(--safe-top) + 5px);
+}
+#flow-proto[data-cutout="camera"] .island {display:none !important;}
+#flow-proto[data-cutout="camera"] .desktop-hub {
+  --notch-wing:90px;
+  display:flex !important;align-items:center;justify-content:center;
+  width:calc(100px + var(--notch-wing) * 2);max-width:calc(100vw - 16px);
+  height:38px;gap:0;padding:0;background:#010305;border:0;border-radius:24px;
+  box-shadow:0 4px 18px #0006;
+}
+#flow-proto[data-cutout="camera"] .notch-wing {
+  display:flex;flex:0 0 var(--notch-wing);height:38px;min-width:0;
+  gap:2px;align-items:center;justify-content:center;
+}
+#flow-proto[data-cutout="camera"] .notch-gap {
+  flex:0 0 100px;display:block;width:100px;height:30px;border-radius:25px;
+  background:#000;box-shadow:inset 0 1px 1px #131923;pointer-events:none;
+}
+#flow-proto[data-cutout="camera"] .desktop-hub button {
+  height:34px;min-width:35px;padding:0 5px;background:transparent;border-radius:50%;
+  color:#d4dfe9;font-size:16px;
+}
+#flow-proto[data-cutout="camera"] .desktop-hub button:hover {background:#263541;}
+#flow-proto[data-cutout="camera"] #desktopStatusText {font-size:10px;color:#b1efd7;}
+#flow-proto[data-cutout="camera"] .sheet {top:calc(var(--safe-top) + 50px);}
+/* Unlike browser safe-area insets, the exact dimensions of a Mac camera notch
+   are not exposed to CSS. The demo allows a calibration width. */
+#flow-proto .notch-calibrate {
+  display:none;flex-direction:column;gap:6px;padding:13px 14px;
+  background:#ffffff0b;border:1px solid #ffffff17;border-radius:12px;margin-top:13px;
+}
+#flow-proto[data-cutout="notch"] .notch-calibrate {display:flex;}
+#flow-proto .notch-calibrate label {display:flex;justify-content:space-between;font-size:11px;color:#e0f1fe;}
+#flow-proto .notch-calibrate output {color:#a5e9cf;font-weight:750;font-variant-numeric:tabular-nums;}
+#flow-proto .notch-calibrate input {width:100%;accent-color:#b1f2d4;cursor:pointer;}
+#flow-proto .notch-calibrate small {font-size:10px;color:#94aabe;line-height:1.5;}
+#flow-proto .orientation-hint {
+  color:#9bbbd1;border-left:2px solid #9cdbc8;background:#ffffff07;
+  font-size:11px;line-height:1.55;padding:9px 10px;margin-top:14px;text-align:left;
+}
+/* Portrait iPad: space is still fullscreen, but a group becomes a vertical pair.
+   This is a different layout, not just a scaled down desktop. */
+@media (orientation:portrait) and (min-width:560px) {
+  #flow-proto .app-layout:has(> .group-panel) {flex-direction:column;}
+  #flow-proto .app-layout:has(> .group-panel) .primary-app {flex:1 1 auto;min-height:0;max-height:none;width:100%;}
+  #flow-proto .app-layout:has(> .group-panel) .group-panel {
+    flex:0 0 clamp(235px,35dvh,400px);height:clamp(235px,35dvh,400px);
+    width:100%;min-width:0;max-height:40%;border-left:0;border-top:2px solid #d7e4ee;
+  }
+  #flow-proto .app-layout:has(> .group-panel) .group-panel .group-header {height:39px;}
+  #flow-proto .app-layout:has(> .group-panel) .group-panel .group-note {padding:12px 18px;gap:8px;}
+  #flow-proto .app-layout:has(> .group-panel) .group-panel textarea {font-size:13px;}
+  #flow-proto .research {padding:clamp(48px,8vh,98px) clamp(32px,7vw,80px);}
+  #flow-proto .research h2 {font-size:clamp(42px,8vw,72px);}
+  #flow-proto .research-cards {grid-template-columns:repeat(2,minmax(0,1fr));max-width:500px;}
+  #flow-proto .home-inner {width:min(520px,calc(100% - 34px));padding-top:64px;}
+  #flow-proto .home-apps {grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
+  #flow-proto .home-apps button {min-height:106px;}
+  #flow-proto .layer {
+    width:auto;left:max(18px,env(safe-area-inset-left,0px));right:max(18px,env(safe-area-inset-right,0px));
+    top:auto;bottom:calc(var(--safe-bottom) + 37px);height:clamp(285px,35dvh,445px);
+    border-radius:23px;
+  }
+  #flow-proto .layer-content textarea {font-size:14px;}
+  #flow-proto .sheet {
+    width:min(510px,calc(100% - 34px));padding:20px;border-radius:24px;
+    max-height:calc(100dvh - var(--safe-top) - 90px);
+  }
+}
+/* Phone portrait gets the same mental model, with a compact vertical group. */
+@media (orientation:portrait) and (max-width:559px) {
+  #flow-proto .app-layout:has(> .group-panel) {flex-direction:column;}
+  #flow-proto .app-layout:has(> .group-panel) .primary-app {flex:1 1 auto;min-height:0;max-height:none;width:100%;}
+  #flow-proto .app-layout:has(> .group-panel) .group-panel {
+    flex:0 0 31%;width:100%;min-width:0;border-left:0;border-top:2px solid #d7e4ee;
+  }
+  #flow-proto .app-layout:has(> .group-panel) .group-panel .group-header {height:34px;}
+  #flow-proto .app-layout:has(> .group-panel) .group-panel .group-note {padding:9px 12px;gap:5px;}
+  #flow-proto .app-layout:has(> .group-panel) .group-panel textarea {font-size:11px;min-height:0;}
+  #flow-proto .home-apps {grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+  #flow-proto .home-apps button {min-height:70px;}
+  #flow-proto .research-cards {grid-template-columns:repeat(2,minmax(0,1fr));}
+  #flow-proto .layer {width:auto;left:12px;right:12px;top:auto;bottom:calc(var(--safe-bottom) + 30px);height:38dvh;}
+}
+
+
+/* v0.5 - discover, people, pins, files. System surfaces remain overlays. */
+#flow-proto .home-inner {width:min(785px,calc(100% - 28px));padding-top:clamp(55px,8dvh,85px);max-height:calc(100dvh - 14px);}
+#flow-proto .home-topline {display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;text-align:left;}
+#flow-proto .home-profile {display:flex;align-items:center;gap:10px;color:#eef8ff;font-size:12px;}
+#flow-proto .avatar {width:34px;height:34px;display:grid;place-items:center;flex:none;border-radius:13px;color:#132d34;background:linear-gradient(145deg,#c9f4df,#82c8db);font-weight:900;}
+#flow-proto .home-profile small {display:block;font-size:10px;color:#93b4c4;margin-top:3px;}
+#flow-proto .home-profile button {background:#ffffff13;border:1px solid #ffffff2b;color:#edf6ff;border-radius:10px;font-size:11px;padding:9px 11px;cursor:pointer;}
+#flow-proto .home-search {width:100%;display:flex;align-items:center;gap:14px;text-align:left;border:1px solid #ffffff40;color:#dceaf5;background:#ffffff16;border-radius:18px;padding:15px 17px;margin:14px 0 18px;font-size:14px;box-shadow:0 12px 28px #0002;backdrop-filter:blur(12px);}
+#flow-proto .home-search kbd {margin-left:auto;border-radius:7px;padding:5px 7px;background:#ffffff17;color:#b3cbdb;font-size:10px;white-space:nowrap;}
+#flow-proto .home-search .mag {font-size:20px;color:#b4f4d4;}
+#flow-proto .launcher-section {margin:0 0 20px;text-align:left;}
+#flow-proto .launcher-heading {display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;letter-spacing:.8px;text-transform:uppercase;font-weight:750;color:#b9cedd;margin-bottom:11px;}
+#flow-proto .launcher-heading span:last-child {font-weight:500;letter-spacing:0;text-transform:none;color:#86a7bb;}
+#flow-proto .pinned-apps {display:flex;gap:9px;overflow-x:auto;scrollbar-width:none;padding-bottom:3px;}
+#flow-proto .pin-tile {background:#ffffff13;color:#edfaff;border:1px solid #ffffff2f;min-width:92px;max-width:106px;flex:0 0 auto;border-radius:15px;padding:13px 8px 10px;display:flex;flex-direction:column;align-items:center;gap:8px;font-size:11px;font-weight:700;}
+#flow-proto .pin-tile .appicon {width:36px;height:36px;font-size:20px;border-radius:12px;background:#bce6e0;color:#12324b;display:grid;place-items:center;}
+#flow-proto .home-apps {grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;}
+#flow-proto .launcher-item {position:relative;min-width:0;}
+#flow-proto .home-apps .launcher-item > button:first-child {width:100%;min-height:88px;padding:15px 4px 11px;border-radius:15px;}
+#flow-proto .launcher-pin {position:absolute;top:6px;right:6px;width:28px;height:28px;border-radius:8px;border:0;background:#ffffff19;color:#d6e4ee;font-size:14px;z-index:1;}
+#flow-proto .launcher-pin.active {color:#b8f6d9;background:#416f61;}
+#flow-proto .home-settings {margin-top:25px;}
+#flow-proto .system-shortcuts {display:flex;gap:8px;flex-wrap:wrap;}
+#flow-proto .system-shortcuts button {background:#ffffff17;border:1px solid #ffffff31;color:#dbe7f0;border-radius:10px;padding:9px 12px;font-size:11px;}
+#flow-proto .search-overlay {display:none;position:absolute;inset:0;z-index:86;background:#08111ce0;backdrop-filter:blur(18px);padding:calc(var(--safe-top) + max(38px,8vh)) 20px 26px;justify-content:center;align-items:flex-start;}
+#flow-proto .search-overlay.open {display:flex;animation:flowfade .14s ease;}
+#flow-proto .search-dialog {width:min(670px,100%);max-height:calc(100dvh - var(--safe-top) - 70px);display:flex;flex-direction:column;overflow:hidden;background:#17263aee;border:1px solid #617e90a0;border-radius:24px;box-shadow:0 30px 100px #0009;color:#f3fbff;}
+#flow-proto .search-dialog-header {display:flex;align-items:center;gap:12px;padding:17px 18px;border-bottom:1px solid #ffffff22;}
+#flow-proto .search-dialog-header .search-glyph {color:#aef1cf;font-size:23px;}
+#flow-proto #universalSearch {flex:1;min-width:0;outline:none;border:0;background:none;color:#fff;font-size:18px;font-weight:550;}
+#flow-proto #universalSearch::placeholder {color:#9cacc0;}
+#flow-proto .dismiss-search {background:#293d50;border:1px solid #ffffff22;border-radius:8px;color:#a9bdce;padding:7px 9px;font-size:10px;}
+#flow-proto .search-results {overflow:auto;padding:10px 12px 16px;min-height:145px;scrollbar-width:thin;}
+#flow-proto .result-section {font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:1.5px;color:#90aaba;margin:13px 10px 8px;}
+#flow-proto .result-item {width:100%;display:flex;align-items:center;text-align:left;gap:12px;color:#eefaff;background:transparent;border:0;border-radius:12px;padding:11px 12px;}
+#flow-proto .result-item:hover,#flow-proto .result-item:focus-visible {background:#324d62;outline:none;}
+#flow-proto .result-icon {background:#38596a;border-radius:11px;display:grid;place-items:center;flex:none;width:35px;height:35px;color:#c5f6e6;font-size:17px;}
+#flow-proto .result-copy {flex:1;min-width:0;}
+#flow-proto .result-copy b {display:block;font-size:12px;font-weight:750;}
+#flow-proto .result-copy small {display:block;font-size:10px;color:#adc0d1;margin-top:4px;}
+#flow-proto .result-hint {font-size:10px;color:#96b1bc;}
+#flow-proto .search-footer {padding:10px 18px;color:#8faab8;font-size:10px;border-top:1px solid #ffffff19;}
+#flow-proto .lock-overlay {display:none;position:absolute;inset:0;z-index:150;background:radial-gradient(circle at 60% 15%,#365f6b 0,#132438 48%,#08121e 100%);color:white;align-items:center;justify-content:center;text-align:center;padding:calc(var(--safe-top) + 25px) 18px calc(var(--safe-bottom) + 20px);}
+#flow-proto .lock-overlay.open {display:flex;}
+#flow-proto .lock-content {width:min(570px,100%);}
+#flow-proto .lock-time {font-size:clamp(55px,10vw,92px);letter-spacing:-.07em;font-weight:770;line-height:1;}
+#flow-proto .lock-day {font-size:13px;color:#b6cad8;margin:10px 0 clamp(36px,8dvh,70px);}
+#flow-proto .lock-title {font-size:13px;color:#d5e8ef;margin-bottom:18px;}
+#flow-proto .account-list {display:flex;justify-content:center;flex-wrap:wrap;gap:14px;}
+#flow-proto .account-choice {display:flex;align-items:center;flex-direction:column;gap:9px;min-width:112px;color:#cfdeeb;font-size:12px;background:#ffffff0b;border:1px solid #ffffff2c;border-radius:18px;padding:19px 16px 15px;}
+#flow-proto .account-choice:hover,#flow-proto .account-choice.selected {background:#ffffff23;border-color:#b2f4d5;color:#fff;}
+#flow-proto .account-choice .avatar {width:51px;height:51px;border-radius:19px;font-size:21px;}
+#flow-proto .unlock-box {margin:23px auto 0;display:flex;align-items:center;flex-direction:column;gap:11px;max-width:380px;}
+#flow-proto .unlock-box button {border:0;border-radius:13px;background:#bdf1d9;color:#1c3848;padding:12px 23px;font-size:12px;font-weight:800;}
+#flow-proto .demo-warning {font-size:11px;color:#91aaba;line-height:1.55;max-width:370px;margin:13px auto 0;}
+#flow-proto .file-app {height:100%;display:flex;background:#f5f8fb;color:#283c56;min-height:0;}
+#flow-proto .file-sidebar {width:176px;flex:none;border-right:1px solid #e1e8f0;background:#fff;padding:20px 12px 12px;display:flex;flex-direction:column;gap:4px;}
+#flow-proto .file-sidebar h4 {font-size:11px;color:#93a1b5;text-transform:uppercase;letter-spacing:1px;margin:0 0 14px 9px;}
+#flow-proto .file-sidebar button {border:0;background:transparent;color:#65778e;border-radius:10px;padding:12px 9px;text-align:left;font-size:12px;display:flex;gap:9px;align-items:center;}
+#flow-proto .file-sidebar button.active {background:#dceee9;color:#224f51;font-weight:800;}
+#flow-proto .files-main {flex:1;min-width:0;padding:22px 26px;overflow:auto;}
+#flow-proto .file-headerline {display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:22px;}
+#flow-proto .file-headerline h2 {font-size:25px;letter-spacing:-.8px;margin:0;}
+#flow-proto .file-headerline button {background:white;border:1px solid #dbe4ec;color:#5c768d;border-radius:10px;padding:9px 10px;font-size:11px;}
+#flow-proto .file-grid {display:grid;grid-template-columns:repeat(auto-fill,minmax(115px,1fr));gap:12px;}
+#flow-proto .file-card {min-height:118px;display:flex;flex-direction:column;text-align:left;gap:9px;padding:16px;background:white;border:1px solid #e5ecf2;border-radius:14px;color:#324761;box-shadow:0 5px 15px #1a32460b;}
+#flow-proto .file-card.selected {border-color:#69acaa;box-shadow:0 0 0 2px #b9eae0;}
+#flow-proto .file-card .file-symbol {font-size:27px;}
+#flow-proto .file-card strong {font-size:11px;overflow-wrap:anywhere;}
+#flow-proto .file-card small {font-size:10px;color:#8b9bad;}
+#flow-proto .file-preview {flex:0 0 27%;min-width:190px;border-left:1px solid #e0e9f0;background:#fff;padding:24px 19px;display:flex;flex-direction:column;gap:10px;}
+#flow-proto .file-preview h3 {margin:8px 0 2px;font-size:15px;overflow-wrap:anywhere;}
+#flow-proto .file-preview small {font-size:11px;line-height:1.6;color:#7f91a6;}
+#flow-proto .file-preview p {font-size:12px;color:#4b6175;line-height:1.65;}
+#flow-proto .file-preview button {border:0;border-radius:10px;color:#174c43;background:#d6f2e6;padding:10px 12px;font-size:11px;font-weight:750;}
+#flow-proto .feature-note {margin-top:10px;border:1px solid #ffffff28;border-radius:13px;padding:13px;background:#ffffff0d;color:#c4d5e5;font-size:11px;line-height:1.6;}
+#flow-proto .feature-note b {color:#cff6e8;}
+@media (orientation:portrait) {
+ #flow-proto .file-app {flex-direction:column;}
+ #flow-proto .file-sidebar {width:100%;height:auto;flex:none;border-right:0;border-bottom:1px solid #dfe7ee;flex-direction:row;align-items:center;gap:4px;padding:5px 10px;overflow-x:auto;}
+ #flow-proto .file-sidebar h4 {display:none;}
+ #flow-proto .file-sidebar button {white-space:nowrap;font-size:11px;padding:10px;}
+ #flow-proto .file-preview {min-width:0;border-left:0;border-top:1px solid #e2e9f1;flex:0 0 auto;max-height:26dvh;overflow:auto;padding:12px 18px;}
+ #flow-proto .files-main {padding:16px;}
+ #flow-proto .file-grid {grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:9px;}
+ #flow-proto .file-headerline {margin-bottom:13px;}
+ #flow-proto .file-headerline h2 {font-size:21px;}
+ #flow-proto .home-apps {grid-template-columns:repeat(3,minmax(0,1fr));}
+}
+@media(max-width:650px) {
+ #flow-proto .home-apps {grid-template-columns:repeat(3,minmax(0,1fr));}
+ #flow-proto .home-inner {width:calc(100% - 24px);}
+ #flow-proto .file-sidebar {width:118px;padding:15px 5px;}
+ #flow-proto .file-sidebar button {padding:9px 6px;font-size:10px;}
+ #flow-proto .file-preview {display:none;}
+ #flow-proto .home-topline {align-items:flex-start;}
+ #flow-proto .home-search {padding:11px 12px;font-size:12px;}
+ #flow-proto .search-overlay {padding-left:10px;padding-right:10px;}
+ #flow-proto .search-dialog {border-radius:17px;}
+}
+
+
+/* v0.5 polish */
+#flow-proto .home-apps .launcher-item .launcher-pin {min-height:0;width:28px;height:28px;padding:0;display:grid;place-items:center;background:#24384a;color:#e6f2fb;border:1px solid #ffffff33;box-shadow:0 1px 8px #0003;border-radius:9px;font-size:15px;font-weight:800;}
+#flow-proto .home-apps .launcher-item .launcher-pin.active {background:#386756;color:#bdf7db;}
+#flow-proto .home-overlay {background:radial-gradient(ellipse at 50% 10%,#315467 0%,#101f32 52%,#08101d 100%);}
+
+
+/* v0.6 — IceBear-influenced dark-native system: graphite, ink, ice highlights, sparse chrome */
+:root {color-scheme:dark}
+html,body,#flow-proto {background:#090b0f!important}
+#flow-proto {
+  --ink:#f1f2f4;--muted:#98a4ad;--accent:#b6d8cd;
+  --f-bg:#090b0f;--f-paper:#10151b;--f-raised:#181f26;--f-line:#2a343d;
+  --f-text:#e9edef;--f-sub:#a0adb6;--f-accent:#b9dacd;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  background:#090b0f!important;color:var(--f-text);
+}
+#flow-proto .device {background:linear-gradient(145deg,#10171e,#090c11 68%)}
+#flow-proto .device::before {background:#466b6a18;filter:blur(95px);width:370px;height:370px;top:-180px}
+#flow-proto .wallpaper {opacity:.08;background-size:40px 40px}
+#flow-proto .system-hub .island {background:#030507;border:1px solid #26373d;box-shadow:0 5px 20px #0008}
+#flow-proto .system-hub .live {background:#b2d7c8;box-shadow:0 0 9px #7debc166}
+#flow-proto .desktop-hub {background:#06090bef;border:1px solid #26343d}
+#flow-proto .desktop-hub button:hover {background:#25343a}
+#flow-proto .app-surface {background:#0d1117;color:var(--f-text)}
+#flow-proto .app-layout {background:#10151b;color:var(--f-text)}
+#flow-proto .app-head {height:50px;background:#0b0e13ed;color:#dbe3e6;border-bottom:1px solid #293038;letter-spacing:.01em}
+#flow-proto .app-head strong {font-size:12px;letter-spacing:.02em;font-weight:660}
+#flow-proto .app-head span {color:#7d8b94}
+#flow-proto .app-dot {width:7px;height:7px;border-radius:50%;background:#a8cfc2}
+#flow-proto .head-end i {width:13px;height:13px;border:1px solid #33404a;background:#161c23}
+#flow-proto .research {background:radial-gradient(ellipse at 80% -25%,#304b4f65,transparent 46%),#0d1218;padding-top:clamp(85px,11vh,130px)}
+#flow-proto .eyebrow {color:#b1d1c9;letter-spacing:.19em;font-size:10px}
+#flow-proto .research h2 {color:#f1f3f4;font-size:clamp(39px,6vw,88px);letter-spacing:-.065em;line-height:1.02;font-weight:620;max-width:740px}
+#flow-proto .research p {color:#98aab4;line-height:1.65;font-size:clamp(13px,1.4vw,16px)}
+#flow-proto .searchbox {background:#141d23;color:#b4c4c9;border:1px solid #3c4b51;box-shadow:none;max-width:560px}
+#flow-proto .research-card {background:#151e23;color:#cfdcdd;border:1px solid #293840;box-shadow:none;border-radius:13px}
+#flow-proto .research-card b {color:#e1ebed}
+#flow-proto .research-card small {color:#8ea1aa}
+#flow-proto .studio {background:#10151a}
+#flow-proto .tools {background:#0a0e14;border-right:1px solid #2b353d;color:#8a9aa3}
+#flow-proto .tools .selected {background:#29413f;color:#bbdacf}
+#flow-proto .canvas {background:radial-gradient(ellipse at 50% 20%,#213039,#11161d 65%)}
+#flow-proto .mock-design {background:#111922;border:1px solid #35414c;box-shadow:0 18px 50px #0008}
+#flow-proto .design-top {color:#e5eded}
+#flow-proto .design-top span:last-child {color:#81929d}
+#flow-proto .design-hero {background:radial-gradient(circle at 73% 35%,#a1bdbd 0%,#62888f 39%,#30435d 100%)}
+#flow-proto .design-line {background:#2d3d46}
+#flow-proto .design-pill {background:#b4d8c9;color:#102426}
+#flow-proto .terminal {background:#0a0f15;color:#c3ccd4}
+#flow-proto .terminal .green {color:#aed8c6}
+#flow-proto .terminal .blue {color:#8eafbd}
+#flow-proto .writing {background:#10151b}
+#flow-proto .writing .doc {background:#151b22;border:1px solid #344048;box-shadow:none;max-width:680px;padding:clamp(26px,6vw,60px)}
+#flow-proto .writing h2 {color:#f0f2f3;font-size:clamp(22px,3vw,36px)}
+#flow-proto .writing p {color:#a5b2b9;font-size:14px;line-height:1.85}
+#flow-proto .group-panel {background:#131a21;border-left:1px solid #35414a;color:#e5edef}
+#flow-proto .group-panel .group-header {border-bottom:1px solid #35414a;color:#c6d9dc}
+#flow-proto .note-label {color:#91a9ae}
+#flow-proto .group-panel textarea {background:#0c1117;color:#cfd9db;border:1px solid #36434b}
+#flow-proto .group-panel .note-tag {background:#233831;color:#bfdccf}
+#flow-proto .layer {background:#131b21;color:#e5edef;border:1px solid #435159;box-shadow:0 24px 90px #000a}
+#flow-proto .layer-head {border-bottom:1px solid #344049}
+#flow-proto .layer-head button {background:#29343c;color:#e0e9eb}
+#flow-proto .layer-content small {color:#a1b4bc}
+#flow-proto .layer-content textarea {background:#0d1319;color:#dce7e9;border-color:#324047}
+#flow-proto .layer-content .layer-save {background:#b6d7c9;color:#122422}
+#flow-proto .file-app {background:#0d1218;color:#e6e9e9}
+#flow-proto .file-sidebar {background:#0b1016;border-color:#29353d}
+#flow-proto .file-sidebar h4 {color:#788b97}
+#flow-proto .file-sidebar button {color:#9fadb8}
+#flow-proto .file-sidebar button.active {background:#233a38;color:#d5eee7}
+#flow-proto .files-main {background:#10161d}
+#flow-proto .file-headerline button {background:#19232b;color:#b5c8cd;border-color:#33444b}
+#flow-proto .file-card {background:#182129;border:1px solid #344049;color:#ecf0f1;box-shadow:none}
+#flow-proto .file-card.selected {border-color:#9bbeb5;box-shadow:0 0 0 1px #86b9a6}
+#flow-proto .file-card small {color:#93a5ae}
+#flow-proto .file-preview {background:#11181f;border-color:#2b3942}
+#flow-proto .file-preview small {color:#8f9fa8}
+#flow-proto .file-preview p {color:#b4c0c5}
+#flow-proto .file-preview button {background:#bddcd1;color:#132722}
+#flow-proto .home-overlay {background:#0b1116!important;backdrop-filter:none}
+#flow-proto .home-inner {width:min(850px,calc(100% - 42px));padding-top:clamp(55px,8dvh,84px)}
+#flow-proto .home-overline {display:flex;align-items:center;gap:9px;color:#9cadb5;font-size:10px;text-transform:uppercase;letter-spacing:.16em;font-weight:670}
+#flow-proto .flow-overline {display:flex;align-items:center;gap:9px;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:#9bafb5;font-weight:700;margin-top:10px;margin-bottom:15px;text-align:left}
+#flow-proto .flow-overline-dot {display:block;width:7px;height:7px;border-radius:50%;background:#b7d9ce;box-shadow:0 0 10px #b7d9ce44}
+#flow-proto .flow-version {margin-left:auto;color:#657a83;letter-spacing:.09em}
+#flow-proto .home-inner h2 {font-size:clamp(40px,6.4vw,68px);letter-spacing:-.064em;font-weight:620;line-height:1.04;text-align:left;margin:0 0 11px}
+#flow-proto .home-inner h2 span {color:#98adb2}
+#flow-proto .home-inner > p {text-align:left;color:#97a9b1;font-size:13px;margin-bottom:21px}
+#flow-proto .home-search {background:#172028a8;border:1px solid #3a4b50;color:#d1dcdf;border-radius:13px;box-shadow:none;padding:16px}
+#flow-proto .home-search:hover {border-color:#8fb5ad;background:#1c2a31}
+#flow-proto .home-search .mag {color:#b0d6ca}
+#flow-proto .home-search kbd {background:#28373e;color:#acbfc6}
+#flow-proto .launcher-heading {color:#a4bac0;font-size:10px;letter-spacing:.15em}
+#flow-proto .launcher-heading span:last-child {color:#738c96}
+#flow-proto .pin-tile {background:#182128;color:#f0f2f3;border:1px solid #34424b;border-radius:12px}
+#flow-proto .pin-tile:hover {background:#223139}
+#flow-proto .pin-tile .appicon {background:#2d4345;color:#d2e9e2;border-radius:10px}
+#flow-proto .home-apps button {background:#151d25;border:1px solid #33424a;color:#dce6e9;border-radius:12px;backdrop-filter:none}
+#flow-proto .home-apps button:hover {background:#23323a;border-color:#6d918d}
+#flow-proto .home-apps .appicon {background:#2a4042;color:#c8e1d9;border-radius:10px}
+#flow-proto .home-apps .launcher-item .launcher-pin {background:#19262e;color:#91a3ac;border:1px solid #41535a}
+#flow-proto .home-apps .launcher-item .launcher-pin.active {background:#324940;color:#c0e1cf}
+#flow-proto .avatar {color:#0a1c1c;background:#b0d4cb;border-radius:10px}
+#flow-proto .home-profile button,#flow-proto .system-shortcuts button {background:#1c262d;border-color:#3a4b54;color:#c8d7dc}
+#flow-proto .system-shortcuts button:hover,#flow-proto .home-profile button:hover {background:#2a3c42}
+#flow-proto .home-settings {background:#0d1219bf;border:1px solid #293a43;border-radius:14px}
+#flow-proto .home-settings h3 {color:#e4ebeb}
+#flow-proto .mode,#flow-proto .cutout-options {background:#141e27;border-color:#32444c}
+#flow-proto .mode button.active,#flow-proto .cutout-options button.active {background:#34474e;color:#eaf0f0}
+#flow-proto .orientation-hint {background:#142221;border-color:#81b6a4;color:#acccbf}
+#flow-proto .home-settings .fullscreen-button {background:#b9d8cd;color:#112620;border-color:transparent}
+#flow-proto .actions button {background:#17232c;border-color:#33444d;color:#d7e4e6}
+#flow-proto .actions button:hover,#flow-proto .actions button.selected {background:#30463e;border-color:#708f83}
+#flow-proto .sheet {background:#10171cf7;border-color:#38484d;border-radius:17px;box-shadow:0 24px 78px #000b}
+#flow-proto .sheet.wide-panel {width:min(525px,calc(100% - 24px));max-height:calc(100dvh - var(--safe-top) - 76px)}
+#flow-proto .sheet-head strong {font-size:17px;font-weight:650}
+#flow-proto .sheet-head button {background:#25323a}
+#flow-proto .notify {background:#19232a;border:1px solid #34454d}
+#flow-proto .notify .n-icon {background:#30464b;color:#bdd8d1}
+#flow-proto .setting {background:#19262d;border:1px solid #35484f;color:#d9e4e8}
+#flow-proto .setting.on {background:#2a443c;border-color:#60897a;color:#cde8dc}
+#flow-proto .settings-displays {display:flex;align-items:center;justify-content:space-between;width:100%;margin-top:16px;padding:12px;border:1px solid #3c5358;border-radius:12px;background:#1c2b31;color:#d9e7e7;font-size:12px;text-align:left}
+#flow-proto .settings-displays span {color:#a8cbc2}
+#flow-proto .search-overlay {background:#070a0ecf}
+#flow-proto .search-dialog {background:#111a21ee;border:1px solid #3e5058}
+#flow-proto .result-icon {background:#294044;color:#bed9d1}
+#flow-proto .result-item:hover,#flow-proto .result-item:focus-visible {background:#283b40}
+#flow-proto .lock-overlay {background:radial-gradient(ellipse at 55% -20%,#2c444a,#0d141b 52%,#070a0f)}
+#flow-proto .lock-time {font-weight:620}
+#flow-proto .account-choice {background:#151e25;border:1px solid #39474c}
+#flow-proto .account-choice:hover,#flow-proto .account-choice.selected {background:#213630;border-color:#a0c9bc}
+#flow-proto .unlock-box button {background:#b8d9c9;color:#112520}
+#flow-proto .nav {background:#0a1116f0;border-color:#3b4a4f}
+#flow-proto .nav button.current {background:#b7d9ce;color:#122824}
+#flow-proto .nav-trigger::after {background:#56706b;border-color:#9dbdb4}
+#flow-proto .nav-trigger:hover::after,#flow-proto .device.nav-visible .nav-trigger::after {background:#b5dacf}
+#flow-proto .toast {background:#1a2d2c;color:#d0ede2;border-color:#456e61}
+#flow-proto .notch-wing {background:#020303!important}
+#flow-proto .notch-gap {background:#000!important}
+@media(orientation:portrait) {
+ #flow-proto .file-sidebar {background:#0d141a;border-bottom-color:#314049}
+ #flow-proto .file-preview {border-top-color:#314049}
+ #flow-proto .app-layout:has(> .group-panel) .group-panel {border-top-color:#36454e}
+}
+@media(max-width:650px) {
+ #flow-proto .home-inner {width:calc(100% - 26px)}
+ #flow-proto .home-inner h2 {font-size:clamp(33px,8.4vw,49px)}
+ #flow-proto .research {padding-top:clamp(80px,11vh,125px)}
+ #flow-proto .research h2 {font-size:clamp(32px,9vw,55px)}
+ #flow-proto .sheet.wide-panel {width:calc(100% - 20px)}
+}
+#flow-proto .display-arrangement.mirrored .display-tile.external {border-style:dashed}
+#flow-proto .display-arrangement.portrait-ext .display-tile.external {width:32%;height:103px}
+/* Monitor-manager: concept-level controls, no connected hardware / driver actions */
+#flow-proto .display-eyebrow {font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:#9eb3b7;display:flex;align-items:center;gap:8px;margin:12px 0 12px}
+#flow-proto .status-bullet {width:6px;height:6px;border-radius:50%;background:#9dcab8}
+#flow-proto .concept-tag {font-size:9px;color:#8da89d;margin-left:auto;letter-spacing:.07em;border:1px solid #3d554d;border-radius:5px;padding:4px 6px}
+#flow-proto .display-arrangement {display:flex;align-items:center;justify-content:center;gap:14px;padding:20px 10px;min-height:130px;background:linear-gradient(130deg,#101a21,#18252b);border:1px solid #30424a;border-radius:13px;margin-bottom:12px}
+#flow-proto .display-arrangement.pos-left {flex-direction:row-reverse}
+#flow-proto .display-tile {position:relative;min-width:0;width:43%;height:91px;border:1.5px solid #61777c;border-radius:8px;padding:13px 10px 8px;background:#0b1117;box-shadow:0 10px 18px #0006;text-align:center;display:flex;flex-direction:column;justify-content:center;gap:4px}
+#flow-proto .display-tile::after {content:'';position:absolute;left:42%;bottom:-9px;width:16%;height:6px;border-bottom:2px solid #607780}
+#flow-proto .display-tile span {position:absolute;top:7px;left:9px;color:#869ca3;font-size:9px}
+#flow-proto .display-tile strong {font-size:13px;font-weight:650;color:#dce7e7}
+#flow-proto .display-tile small {font-size:10px;color:#91a6af}
+#flow-proto .display-tile.primary {border-color:#b9dace;box-shadow:0 0 0 2px #94b9a923}
+#flow-proto .disconnected .external {opacity:.35;border-style:dashed}
+#flow-proto .display-panel-controls {display:flex;flex-direction:column;gap:0}
+#flow-proto .display-row {padding:10px 0;min-height:44px;display:flex;justify-content:space-between;align-items:center;gap:9px;border-bottom:1px solid #27343b;color:#bccbd0;font-size:11px}
+#flow-proto .display-row>span,#flow-proto .display-row>label {flex:1}
+#flow-proto .display-control {background:#1b282d;border:1px solid #3b514d;color:#bddecf;border-radius:8px;padding:8px 11px;font-size:11px}
+#flow-proto .display-control:not(.active) {color:#97a5ad;border-color:#34434a}
+#flow-proto .micro-segment {display:flex;align-items:center;gap:2px;background:#0d161b;border:1px solid #303e45;border-radius:9px;padding:3px}
+#flow-proto .micro-segment button {font-size:10px;color:#96aab3;border:0;background:none;padding:7px 9px;border-radius:7px}
+#flow-proto .micro-segment button.selected {background:#354b49;color:#e0efeb}
+#flow-proto .micro-segment button:disabled {opacity:.35;cursor:not-allowed}
+#flow-proto .display-scale {display:flex;align-items:center;gap:8px}
+#flow-proto .display-scale input {width:116px;accent-color:#aacdbf}
+#flow-proto .display-scale output {font-size:11px;color:#d9e7de;min-width:36px;text-align:right;font-variant-numeric:tabular-nums}
+#flow-proto .display-driver {margin-top:15px;border:1px solid #34504b;border-radius:12px;background:#182725;display:flex;gap:11px;padding:13px}
+#flow-proto .driver-symbol {color:#b4dacb;font-size:21px}
+#flow-proto .display-driver b {font-size:12px;color:#deebe7}
+#flow-proto .display-driver p {color:#afc6c2;font-size:10px;line-height:1.55;margin:7px 0}
+#flow-proto .display-driver small {font-size:9px;color:#8fa8a2}
+#flow-proto .display-footnote {color:#94aeb0;font-size:10px;line-height:1.55;padding:12px 1px}
+@media(max-width:450px) {
+ #flow-proto .display-row {flex-wrap:wrap}
+ #flow-proto .display-tile {height:75px}
+ #flow-proto .display-tile strong {font-size:11px}
+ #flow-proto .display-tile small {font-size:9px}
+ #flow-proto .micro-segment button {padding:7px}
+}
+
+
+#flow-proto .flow-platform-heading {display:flex;justify-content:space-between;align-items:center;gap:9px;margin:2px 0 9px;color:#a3b4b8;font-size:10px;text-transform:uppercase;letter-spacing:.14em;font-weight:710}
+#flow-proto .flow-platform-heading span {font-size:10px;text-transform:none;letter-spacing:0;color:#708890;font-weight:500}
+@media(max-width:480px){#flow-proto .flow-platform-heading {flex-wrap:wrap}#flow-proto .flow-platform-heading span {width:100%}}
+
+
+/* Flow v0.7 — a calm Home centered on persistent space placements. */
+#flow-proto .home-overlay {background:#0b1015!important;}
+#flow-proto .home-inner {width:min(825px,calc(100% - 48px));padding:calc(var(--safe-top) + 60px) 0 max(24px,var(--safe-bottom));max-height:100dvh;text-align:left;}
+#flow-proto .home-topline {margin-bottom:clamp(35px,8vh,90px);}
+#flow-proto .flow-overline {margin:0 0 12px;color:#8b9e9e;font-size:10px;}
+#flow-proto .home-inner h2 {font-size:clamp(32px,5vw,56px);letter-spacing:-.056em;font-weight:590;line-height:1.05;margin:0 0 12px;text-align:left;}
+#flow-proto .home-inner h2 span {color:#9eadaf;}
+#flow-proto .home-search {margin:24px 0 38px;min-height:57px;border-radius:11px;border:1px solid #38484b;background:#141d23;color:#a8b8b9;padding:14px 18px;font-size:13px;}
+#flow-proto .launcher-section {margin-bottom:24px;}
+#flow-proto .launcher-heading {font-size:10px;letter-spacing:.13em;min-height:25px;}
+#flow-proto .launcher-heading button {border:0;background:transparent;color:#aecfc4;font-size:11px;padding:5px 2px;font-weight:500;letter-spacing:0;text-transform:none;}
+#flow-proto .launcher-heading button:hover {color:#e9fff2;}
+#flow-proto .spaces-collection {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;}
+#flow-proto .space-card {position:relative;display:flex;flex-direction:column;align-items:stretch;min-width:0;min-height:174px;background:#131b21;border:1px solid #344148;border-radius:14px;overflow:hidden;transition:border-color .18s,transform .18s;}
+#flow-proto .space-card:hover {border-color:#6e958a;}
+#flow-proto .space-preview {height:88px;margin:12px 12px 0;border-radius:8px;border:1px solid #2c3b43;background:#0e141a;display:flex;gap:5px;padding:10px;align-items:stretch;overflow:hidden;}
+#flow-proto .space-preview-main {flex:1;background:linear-gradient(115deg,#1e3638,#182329);border:1px solid #39504e;border-radius:5px;padding:9px;display:flex;flex-direction:column;gap:6px;}
+#flow-proto .space-preview-line {height:4px;background:#7faaa0;opacity:.55;border-radius:3px;width:55%;}
+#flow-proto .space-preview-line.short {width:31%;opacity:.3;}
+#flow-proto .space-preview-extra {width:30%;border-radius:5px;background:#1d282e;border:1px solid #405053;display:flex;align-items:center;justify-content:center;color:#7e9f99;font-size:15px;}
+#flow-proto .space-card-open {display:flex;flex-direction:column;text-align:left;background:transparent;border:0;color:#ebf1f1;padding:10px 13px 12px;gap:6px;flex:1;cursor:pointer;}
+#flow-proto .space-card-title {display:flex;align-items:center;gap:8px;font-weight:650;font-size:13px;}
+#flow-proto .space-card-title .card-pin {font-size:10px;color:#accabe;}
+#flow-proto .space-card-meta {color:#80949b;font-size:10px;letter-spacing:.02em;}
+#flow-proto .space-card-number {margin-left:auto;font-size:10px;color:#a3b9ad;font-weight:590;}
+#flow-proto .space-edit-tools {display:flex;align-items:center;gap:6px;padding:10px 12px;border-top:1px solid #34434a;background:#172128;}
+#flow-proto .space-edit-tools button {height:30px;min-width:30px;padding:0 7px;background:#27373a;color:#c5dcd1;border:1px solid #425452;border-radius:7px;font-size:11px;}
+#flow-proto .space-edit-tools button:disabled {opacity:.3;cursor:not-allowed;}
+#flow-proto .space-edit-tools select {flex:1;min-width:0;background:#27373a;border:1px solid #425452;border-radius:7px;color:#d4e6e0;font-size:11px;padding:7px;}
+#flow-proto .pin-space-row {display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;}
+#flow-proto .pin-space-row button {border:1px solid #395048;border-radius:8px;background:#172722;color:#b8d6c7;font-size:11px;padding:9px 11px;}
+#flow-proto .pin-space-row span {color:#70828a;font-size:10px;}
+#flow-proto .home-pins-row {display:flex;gap:9px;flex-wrap:wrap;align-items:center;}
+#flow-proto .pinned-apps {gap:8px;flex-wrap:wrap;overflow:visible;}
+#flow-proto .pin-tile {min-width:0;max-width:none;flex:0 0 auto;flex-direction:row;padding:7px 12px 7px 8px;border-radius:10px;gap:8px;font-size:11px;font-weight:540;}
+#flow-proto .pin-tile .appicon {width:26px;height:26px;font-size:14px;border-radius:7px;}
+#flow-proto .home-foot {display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid #25323a;padding:16px 0;margin-top:24px;}
+#flow-proto .home-foot span {color:#70838b;font-size:10px;}
+#flow-proto .home-foot button {border:0;background:transparent;color:#b5cfc5;font-size:11px;padding:8px 0;}
+#flow-proto .home-drawer {padding:20px;border:1px solid #2e4144;border-radius:12px;background:#10191f;margin:16px 0 24px;}
+#flow-proto .home-drawer .home-apps {margin-top:15px;}
+#flow-proto .home-advanced {margin:17px 0 24px;}
+#flow-proto .home-drawer[hidden],#flow-proto .home-advanced[hidden] {display:none!important;}
+#flow-proto .home-profile button {background:transparent;border:1px solid #33464a;font-size:11px;}
+#flow-proto .app-head .space-header-pin {margin-left:auto;border:1px solid #3a5550;background:#1b302b;color:#bfe1d3;border-radius:7px;padding:5px 9px;font-size:11px;white-space:nowrap;}
+#flow-proto .app-head .head-end {margin-left:0;}
+#flow-proto .mail-demo {display:flex;height:100%;background:#0c141a;color:#e2e9e9;overflow:auto;}
+#flow-proto .mail-demo aside {width:170px;flex:none;background:#0e181e;border-right:1px solid #293a40;padding:25px 15px;display:flex;flex-direction:column;gap:16px;color:#8ba4ab;font-size:12px;}
+#flow-proto .mail-demo aside strong {color:#e2edea;font-size:16px;margin-bottom:12px;}
+#flow-proto .mail-demo aside .active {color:#c3e3d6;font-weight:700;}
+#flow-proto .mail-demo main {flex:1;padding:clamp(24px,5vw,55px);overflow:auto;}
+#flow-proto .mail-demo h2 {font-size:clamp(28px,4vw,50px);font-weight:530;letter-spacing:-.06em;margin:0 0 10px;}
+#flow-proto .mail-demo p {font-size:12px;color:#8199a2;margin:0 0 27px;}
+#flow-proto .mail-row {border-top:1px solid #2a373d;padding:17px 0;display:flex;gap:20px;align-items:baseline;}
+#flow-proto .mail-row b {font-size:13px;font-weight:620;width:115px;flex:none;}
+#flow-proto .mail-row span {font-size:12px;color:#91a6ad;}
+@media(max-width:650px){
+ #flow-proto .home-inner {width:calc(100% - 34px);padding-top:calc(var(--safe-top) + 48px);}
+ #flow-proto .home-topline {margin-bottom:26px;}
+ #flow-proto .home-inner h2 {font-size:clamp(29px,7.5vw,44px);}
+ #flow-proto .home-search {margin:21px 0 30px;}
+ #flow-proto .spaces-collection {grid-template-columns:1fr;gap:10px;}
+ #flow-proto .space-card {min-height:123px;display:grid;grid-template-columns:minmax(0,120px) minmax(0,1fr);}
+ #flow-proto .space-preview {margin:9px 0 9px 9px;height:auto;min-height:96px;}
+ #flow-proto .space-card-open {justify-content:center;padding:12px;}
+ #flow-proto .space-edit-tools {grid-column:1/-1;}
+ #flow-proto .mail-demo aside {width:94px;padding:19px 9px;gap:13px;font-size:10px;}
+ #flow-proto .mail-row b {width:80px;font-size:11px;}
+ #flow-proto .mail-row span {font-size:10px;}
+ #flow-proto .mail-demo main {padding:80px 16px 24px;}
+}
+
+
+/* v0.8: extra surfaces are restrained; pinned spaces are addressed per display. */
+#flow-proto .display-context {position:absolute;left:max(18px,env(safe-area-inset-left,0px));bottom:calc(var(--safe-bottom) + 16px);z-index:26;color:#829898;letter-spacing:.13em;text-transform:uppercase;font-size:9px;font-weight:680;pointer-events:none;text-shadow:0 1px 7px #000;}
+#flow-proto .display-context.on-external {color:#c1dfd4;}
+#flow-proto .shortcut-sequence {position:absolute;right:max(18px,env(safe-area-inset-right,0px));bottom:calc(var(--safe-bottom) + 55px);z-index:83;background:#132320ef;border:1px solid #4e8471;border-radius:11px;box-shadow:0 15px 55px #0009;color:#def7e9;padding:12px 17px;font-size:12px;font-weight:650;backdrop-filter:blur(20px);}
+#flow-proto .shortcut-sequence[hidden] {display:none;}
+#flow-proto .display-space-links {display:flex;flex-direction:column;gap:7px;margin-top:11px;}
+#flow-proto .display-space-row {display:flex;align-items:center;gap:14px;padding:9px 12px;background:#10171c;border:1px solid #27373c;border-radius:9px;min-height:42px;}
+#flow-proto .display-space-name {display:flex;align-items:center;gap:8px;color:#92a9aa;font-size:10px;min-width:89px;}
+#flow-proto .display-space-dot {width:6px;height:6px;border-radius:100%;background:#699c8b;}
+#flow-proto .display-space-actions {display:flex;flex:1;align-items:center;gap:6px;flex-wrap:wrap;}
+#flow-proto .display-space-actions button {background:#1b292c;color:#d4e8df;border:1px solid #314841;border-radius:7px;padding:6px 9px;font-size:11px;}
+#flow-proto .display-space-actions button:hover {background:#2a4441;}
+#flow-proto .display-space-actions kbd {font-size:9px;color:#8fbdab;margin-left:6px;}
+#flow-proto .display-space-actions .display-edit {min-width:25px;padding:6px 5px;}
+#flow-proto .display-space-actions button:disabled {opacity:.3;}
+#flow-proto .display-space-actions select {background:#1b292c;border:1px solid #314841;color:#d4e8df;border-radius:6px;font-size:10px;padding:5px;}
+#flow-proto .home-foot-buttons {display:flex;align-items:center;flex-wrap:wrap;gap:20px;}
+#flow-proto .shortcut-reference {display:flex;flex-direction:column;gap:0;margin:15px 0;}
+#flow-proto .shortcut-reference div {padding:12px 0;border-top:1px solid #ffffff18;display:flex;align-items:center;justify-content:space-between;gap:15px;}
+#flow-proto .shortcut-reference kbd {font-size:11px;color:#c9f0df;background:#223831;border:1px solid #345b4b;border-radius:6px;padding:6px 8px;flex:none;}
+#flow-proto .shortcut-reference span {font-size:11px;color:#acbdc1;text-align:right;}
+#flow-proto .shortcut-note {font-size:11px;line-height:1.65;color:#9aacb0;}
+#flow-proto .space-card-number {font-size:11px;color:#c9ead7;font-weight:650;}
+@media (max-width:650px){
+ #flow-proto .display-space-row{align-items:flex-start;flex-direction:column;gap:7px;}
+ #flow-proto .display-space-actions {gap:5px;}
+ #flow-proto .display-context{bottom:calc(var(--safe-bottom) + 12px);font-size:8px;}
+ #flow-proto .home-foot-buttons{gap:8px;}
+}
+
+</style>
+</head>
+<body>
+<div id="flow-proto" data-mode="tablet" data-cutout="auto" data-display-panel="closed">
+  <div class="device" id="device" aria-label="Flow simulated desktop">
+    <div class="wallpaper"></div><div class="display-context" id="displayContext" aria-live="polite"></div><div id="shortcutSequence" class="shortcut-sequence" role="status" aria-live="polite" hidden></div><div class="screen-clock">19:08</div><div class="screen-status">◉ ▰</div>
+    <div class="system-hub" id="systemHub" title="Swipe left for notifications, right for controls, down for Home">
+      <button type="button" class="island" id="island" aria-label="System island. Swipe left for notifications, right for quick settings, down for Home; tap for actions"><span class="live"></span><span id="islandText">Flow</span><span class="island-arrow">⌄</span></button>
+      <div class="desktop-hub" id="desktopHub" aria-label="System controls surrounding the camera cutout">
+        <div class="notch-wing notch-left">
+          <button type="button" id="desktopNotifications" aria-label="Notifications" title="Notifications">♧</button>
+          <button type="button" id="desktopHome" aria-label="Home" title="Home">⌂</button>
+        </div>
+        <span class="notch-gap" aria-hidden="true"></span>
+        <div class="notch-wing notch-right">
+          <button type="button" id="desktopSettings" aria-label="Quick settings" title="Quick settings">☷</button>
+          <span id="desktopStatusText" role="status"></span>
+        </div>
+      </div>
+    </div>
+    <div class="app-surface" id="appSurface" tabindex="-1"><div id="appArea" class="app-layout"></div></div>
+    <div class="layer" id="layer"><div class="layer-head">◈ Quick note <button type="button" id="closeLayer" aria-label="Close layer">×</button></div><div class="layer-content"><small>A temporary app above your space. It won't change the arrangement underneath.</small><textarea id="layerNote" aria-label="Quick note" placeholder="Capture a thought without leaving your work..."></textarea><button type="button" class="layer-save" id="saveLayer">Save and close</button></div></div>
+    <div class="home-overlay" id="homeOverlay"><div class="home-inner">
+    <div class="home-topline"><div class="home-profile"><span class="avatar" id="homeAvatar">A</span><span><b id="homePerson">Alex</b><small>Personal workspace · Flow</small></span></div><div class="home-profile"><button id="lockAction" type="button">◈ Lock / switch user</button></div></div>
+    <div class="flow-overline"><span class="flow-overline-dot"></span> FLOW / PINNED-FIRST <span class="flow-version">0.8</span></div>
+    <h2>Everything in its place<span>.</span></h2>
+    <button class="home-search" id="homeSearch" type="button"><span class="mag">⌕</span> Search apps, files, spaces and actions <kbd>⌘ K</kbd></button>
+    <section class="launcher-section" aria-label="Pinned spaces">
+      <div class="launcher-heading"><span>Main display · Pinned spaces</span><button type="button" id="editSpaces" aria-pressed="false">Arrange ↗</button></div>
+      <div class="spaces-collection" id="pinnedSpaces"></div><div class="display-space-links" id="displaySpaceLinks" aria-label="Other displays"></div>
+      <div class="pin-space-row"><button type="button" id="pinCurrentSpace">＋ Pin current space</button><span id="pinSpaceHint">Fixed first positions on each display · keyboard addresses</span></div>
+    </section>
+    <section class="launcher-section" aria-label="Pinned apps"><div class="launcher-heading"><span>Pinned apps</span><button id="showAllApps" type="button" aria-expanded="false">All apps ↗</button></div><div class="pinned-apps" id="pinnedApps"></div></section>
+    <div class="home-drawer" id="homeDrawer" hidden><div class="launcher-heading"><span>App library</span><span>Tap a star to pin an app</span></div><div class="home-apps" id="homeApps"></div></div>
+    <div class="home-foot"><span>Fullscreen-first · Pinned-first on every display</span><div class="home-foot-buttons"><button type="button" id="homeKeyboard">Keyboard shortcuts ↗</button><button type="button" id="customizeFlow" aria-expanded="false">System &amp; prototype settings ↗</button></div></div>
+    <div class="home-advanced" id="homeAdvanced" hidden>
+    <div class="flow-platform-heading">System capabilities <span>Platform roadmap</span></div><div class="system-shortcuts"><button id="homeDisplays" type="button">▣ Displays &amp; docks</button><button id="homeSync" type="button">↻ Devices &amp; sync</button><button id="homeCompatibility" type="button">◫ App compatibility</button><button id="homeFiles" type="button">▤ Browse files</button></div>
+    <section class="home-settings" aria-label="Prototype controls">
+      <h3>Make this workspace yours</h3>
+      <div class="setting-line"><span class="settings-label">Interaction mode</span><div class="mode" aria-label="Device mode"><button type="button" class="active" data-mode-select="tablet">◫ Tablet</button><button type="button" data-mode-select="desktop">▣ Desktop</button></div></div>
+      <div class="setting-line"><span class="settings-label">Camera cutout</span><div class="cutout-options" aria-label="Screen cutout simulation"><button class="active" type="button" data-cutout-select="auto">Auto</button><button type="button" data-cutout-select="notch">Mac notch</button><button type="button" data-cutout-select="camera">Camera pill</button></div></div>
+      <div class="notch-calibrate" id="notchCalibrate"><label for="notchWidth">Notch width <output id="notchValue">142 px</output></label><input id="notchWidth" type="range" min="100" max="200" step="2" value="142" /><small>Align the black center with your camera housing. The controls remain on either side.</small></div>
+      <div class="orientation-hint" id="orientationHint">↻ Portrait and landscape adapt the same Flow. Apps and groups keep their context as the screen changes.</div>
+      <div class="fullscreen-row"><button class="fullscreen-button" type="button" id="fullscreenAction">⤢ Fullscreen</button><div class="fullscreen-note">For iPad Safari, add this page to Home Screen when hosted online to hide browser chrome.</div></div>
+      <div class="actions"><span class="action-hint">Try an interaction:</span><button type="button" id="groupAction">⊞ Group apps</button><button type="button" id="layerAction">▤ Open a Layer</button><button type="button" id="activityAction">◉ Start activity</button></div>
+      <div class="home-hint">Prototype: external monitors are simulated within one browser window. On tablets, swipe the island ← notifications · → settings · ↓ Home. With a notch, use the compact icons beside the camera. Swipe horizontally to change apps. Tap or swipe up on the small bottom handle for the switcher. Shortcuts: Super+1–9 main display · Super+Alt then display number and space number · Super+K search. Browser fallback uses Ctrl.</div>
+    </section>
+    </div><!-- advanced -->
+    </div></div>
+    <div class="sheet" id="systemSheet" aria-live="polite"></div>
+    <div class="nav" id="nav" aria-label="Flow navigation"><button type="button" class="step" id="navSearch" title="Universal search">⌕</button><button type="button" class="step" id="navLauncher" title="All apps">▦</button><span class="sep"></span><button class="step" type="button" id="prevSpace" aria-label="Previous space">‹</button><span id="navSpaces" style="display:flex;gap:2px;"></span><button class="step" type="button" id="nextSpace" aria-label="Next space">›</button></div>
+    <button class="nav-trigger" type="button" id="navTrigger" aria-label="Reveal app switcher" aria-expanded="false" title="Swipe up or tap to reveal app switcher"></button>
+    <div class="toast" id="toast" role="status"></div>
+    <div class="search-overlay" id="searchOverlay"><div class="search-dialog" role="dialog" aria-modal="true" aria-label="Universal search"><div class="search-dialog-header"><span class="search-glyph">⌕</span><input id="universalSearch" type="text" autocomplete="off" spellcheck="false" placeholder="Search apps, files, spaces, actions…" aria-label="Search everything" /><button id="closeSearch" class="dismiss-search" type="button">Esc ×</button></div><div id="searchResults" class="search-results"></div><div class="search-footer">Search is global · Super/⌘/Ctrl + K · Esc to close</div></div></div>
+    <div class="lock-overlay" id="lockOverlay"><div class="lock-content"><div class="lock-time" id="lockTime">19:45</div><div class="lock-day" id="lockDay">Tuesday, November 10</div><div class="lock-title">Choose a person to enter their Flow</div><div class="account-list" id="accountList"></div><div class="unlock-box"><button type="button" id="unlockAction">Unlock workspace →</button><p class="demo-warning">Prototype accounts only. They have independent demo layouts and pins, but this browser screen does not authenticate or protect files.</p></div></div></div>
+  </div>
+</div>
+<script>
+(()=>{
+ const root=document.getElementById('flow-proto'); if(!root || root.dataset.initialized) return; root.dataset.initialized='true';
+ const $=id=>root.querySelector('#'+id);
+ const spaces=[{name:'Mail',icon:'✉',app:'mail',group:false},{name:'Research',icon:'◎',app:'research',group:false},{name:'Studio',icon:'◈',app:'studio',group:true},{name:'Terminal',icon:'⌘',app:'terminal',group:false},{name:'Writing',icon:'▤',app:'writing',group:false},{name:'Files',icon:'▥',app:'files',group:false}];
+ const state={active:0,spacePins:{mail:'main',studio:'main',terminal:'external1',files:'external1',writing:'external2'},spaceLocations:{},viewDisplay:'main',displayFocus:{main:'mail',external1:'terminal',external2:'writing'},editingSpaces:false,mode:'tablet',panel:null,layer:false,activity:false,notif:true,wifi:true,bluetooth:true,focus:false,brightness:75,groupNotes:{},quickNote:'',user:'alex',pins:['mail','studio','files'],fileFolder:'recent',fileSelected:null,display:{connected:true,link:'native',mode:'extend',primary:'internal',position:'right',scale:100,rotation:'landscape'}};
+ let toastTimeout, swipeStart=null, islandSwiped=false, selectedUnlock='alex';
+ const people=[{id:'alex',name:'Alex',letter:'A'},{id:'jordan',name:'Jordan',letter:'J'},{id:'guest',name:'Guest',letter:'G'}];
+ const accounts={alex:{pins:['mail','studio','files'],active:0,spacePins:{mail:'main',studio:'main',terminal:'external1',files:'external1',writing:'external2'},spaceLocations:{},viewDisplay:'main',displayFocus:{main:'mail',external1:'terminal',external2:'writing'},order:['mail','studio','research','terminal','files','writing'],groups:{studio:true},groupNotes:{},quickNote:'',fileFolder:'recent',display:{connected:true,link:'native',mode:'extend',primary:'internal',position:'right',scale:100,rotation:'landscape'}},jordan:{pins:['files','writing'],active:4,spacePins:{writing:'main',terminal:'external1'},spaceLocations:{},viewDisplay:'main',displayFocus:{main:'writing',external1:'terminal'},order:['writing','mail','research','studio','terminal','files'],groups:{writing:true},groupNotes:{},quickNote:'',fileFolder:'recent',display:{connected:false,link:'native',mode:'extend',primary:'internal',position:'right',scale:100,rotation:'landscape'}},guest:{pins:['research'],active:0,spacePins:{mail:'main',files:'external1'},spaceLocations:{},viewDisplay:'main',displayFocus:{main:'mail',external1:'files'},order:['mail','research','studio','terminal','writing','files'],groups:{},groupNotes:{},quickNote:'',fileFolder:'recent',display:{connected:false,link:'native',mode:'extend',primary:'internal',position:'right',scale:100,rotation:'landscape'}}};
+ const fileDB=[
+  {id:'f1',name:'Flow principles.md',type:'Document',icon:'▤',folder:'projects',owner:'alex',description:'Flow · Groups · Layers · System. Fullscreen first, multitasking when needed.'},
+  {id:'f2',name:'Tablet workspace.fig',type:'Design',icon:'◈',folder:'projects',owner:'alex',description:'A touch-first workspace concept with adaptable layouts.'},
+  {id:'f3',name:'Ideas.txt',type:'Note',icon:'✎',folder:'documents',owner:'alex',description:'Gesture experiments, keyboard shortcuts and an invisible system shell.'},
+  {id:'f4',name:'Weekend photo.jpg',type:'Image',icon:'▧',folder:'photos',owner:'jordan',description:'A landscape photo saved to this device.'},
+  {id:'f5',name:'Planning.txt',type:'Document',icon:'▤',folder:'documents',owner:'jordan',description:'Notes for an upcoming project.'},
+  {id:'f6',name:'Welcome to Flow.pdf',type:'Shared PDF',icon:'▣',folder:'shared',owner:'shared',description:'A shared guide available to all demonstration profiles.'}];
+ const usableFiles=()=>fileDB.filter(f=>f.owner===state.user||f.owner==='shared');
+ const appLookup={mail:'Mail',research:'Research',studio:'Studio',terminal:'Terminal',writing:'Writing',files:'Files'};
+ function persistUser(){const a=accounts[state.user];a.pins=[...state.pins];a.spacePins={...state.spacePins};a.spaceLocations={...state.spaceLocations};a.viewDisplay=state.viewDisplay;a.displayFocus={...state.displayFocus};a.order=spaces.map(s=>s.app);a.active=state.active;a.activeApp=spaces[state.active]?.app;a.groupNotes={...state.groupNotes};a.quickNote=state.quickNote;a.fileFolder=state.fileFolder;a.groups=Object.fromEntries(spaces.map(s=>[s.app,s.group]));a.display={...state.display};try{localStorage.setItem('flow-v08-accounts',JSON.stringify(accounts));localStorage.setItem('flow-v08-current-user',state.user);}catch(e){}}
+ function sortForUser(order){const rank=new Map((order||[]).map((name,i)=>[name,i]));spaces.sort((a,b)=>(rank.get(a.app)??99)-(rank.get(b.app)??99));}
+ const displayIds=['main','external1','external2'];
+ const displayName=d=>d==='main'?'Main display':d==='external1'?'External 1':'External 2';
+ const displayOf=sp=>state.spacePins[sp.app]||state.spaceLocations[sp.app]||'main';
+ const flowSpaces=d=>spaces.filter(sp=>displayOf(sp)===d);
+ const pinnedFor=d=>spaces.filter(sp=>state.spacePins[sp.app]===d);
+ function reorderPinned(){
+  const activeApp=spaces[state.active]?.app;
+  const sorted=displayIds.flatMap(d=>{
+    const mine=spaces.filter(sp=>displayOf(sp)===d);
+    return [...mine.filter(sp=>state.spacePins[sp.app]),...mine.filter(sp=>!state.spacePins[sp.app])];
+  });
+  spaces.splice(0,spaces.length,...sorted);
+  state.active=Math.max(0,spaces.findIndex(sp=>sp.app===activeApp));
+ }
+ function pinSpace(app){
+  const sp=spaces.find(x=>x.app===app);if(!sp)return;
+  const oldDisplay=displayOf(sp);
+  if(state.spacePins[app]){delete state.spacePins[app];state.spaceLocations[app]=oldDisplay;}
+  else {state.spacePins[app]=oldDisplay;delete state.spaceLocations[app];}
+  reorderPinned();persistUser();renderSpace();renderHome();toast((state.spacePins[app]?'Pinned ':'Unpinned ')+sp.name+' · '+displayName(oldDisplay));
+ }
+ function movePinnedSpace(app,direction){
+  const pinned= pinnedFor(state.spacePins[app]);
+  const from=pinned.findIndex(x=>x.app===app),to=from+direction;
+  if(to<0||to>=pinned.length)return;
+  const a=spaces.indexOf(pinned[from]),b=spaces.indexOf(pinned[to]);
+  [spaces[a],spaces[b]]=[spaces[b],spaces[a]];
+  reorderPinned();persistUser();renderSpace();renderHome();
+ }
+ function spaceDisplay(app,display){
+  if(!state.spacePins[app]||!displayIds.includes(display))return;
+  state.spacePins[app]=display;delete state.spaceLocations[app];
+  reorderPinned();if(spaces[state.active]?.app===app)state.viewDisplay=display;persistUser();renderSpace();renderHome();toast('Assigned '+appLookup[app]+' to '+displayName(display)+' · simulated');
+ }
+ function setViewDisplay(display){
+  if(!displayIds.includes(display))return;
+  state.viewDisplay=display;
+  const preferred=state.displayFocus[display];
+  const target=spaces.find(sp=>sp.app===preferred&&displayOf(sp)===display)||flowSpaces(display)[0];
+  if(!target){toast('No spaces on '+displayName(display));return;}
+  navigate(spaces.indexOf(target));
+ }
+ function stepSpace(dir){
+  const mine=flowSpaces(state.viewDisplay);const i=mine.findIndex(sp=>sp===spaces[state.active]);
+  const target=mine[i+dir];
+  if(!target){toast('End of '+displayName(state.viewDisplay)+' Flow');return;}
+  navigate(spaces.indexOf(target));
+ }
+ function jumpToPinned(display,number){
+  const target=pinnedFor(display)[number-1];
+  if(!target){toast('No pinned Space '+number+' on '+displayName(display));return;}
+  navigate(spaces.indexOf(target));
+  const focusTarget=$('appSurface');if(focusTarget)focusTarget.focus({preventScroll:true});
+ }
+
+ try{const saved=JSON.parse(localStorage.getItem('flow-v08-accounts')||'null');if(saved&&typeof saved==='object'){Object.keys(accounts).forEach(k=>{if(saved[k]&&Array.isArray(saved[k].order)&&saved[k].spacePins)accounts[k]={...accounts[k],...saved[k]};});}const last=localStorage.getItem('flow-v08-current-user');if(last&&accounts[last])state.user=last;}catch(e){}
+ const initialAccount=accounts[state.user];sortForUser(initialAccount.order);state.pins=[...initialAccount.pins];state.spacePins={...initialAccount.spacePins};state.spaceLocations={...(initialAccount.spaceLocations||{})};state.viewDisplay=initialAccount.viewDisplay||'main';state.displayFocus={...(initialAccount.displayFocus||{})};state.active=Math.max(0,spaces.findIndex(sp=>sp.app===(initialAccount.activeApp||(state.user==='jordan'?'writing':'mail'))));state.groupNotes={...initialAccount.groupNotes};spaces.forEach(s=>s.group=!!initialAccount.groups[s.app]);state.display={...initialAccount.display};reorderPinned();state.viewDisplay=displayOf(spaces[state.active]);
+
+ function switchUser(id){if(!accounts[id])return;persistUser();state.user=id;const a=accounts[id];sortForUser(a.order);state.pins=[...a.pins];state.spacePins={...a.spacePins};state.spaceLocations={...(a.spaceLocations||{})};state.viewDisplay=a.viewDisplay||'main';state.displayFocus={...(a.displayFocus||{})};state.active=Math.max(0,spaces.findIndex(sp=>sp.app===(a.activeApp||(id==='jordan'?'writing':'mail'))));state.groupNotes={...a.groupNotes};state.quickNote=a.quickNote;state.fileFolder=a.fileFolder;state.fileSelected=null;state.display={...a.display};spaces.forEach(s=>s.group=!!a.groups[s.app]);reorderPinned();state.viewDisplay=displayOf(spaces[state.active]);state.layer=false;closePanels();closeSearch();$('lockOverlay').classList.remove('open');renderSpace();renderHome();renderLayer();renderHub();persistUser();toast('Opened '+people.find(p=>p.id===id).name+'’s workspace');}
+ function launchApp(app){const i=spaces.findIndex(s=>s.app===app);if(i<0)return;navigate(i);closeSearch();}
+ function togglePin(app){state.pins=state.pins.includes(app)?state.pins.filter(x=>x!==app):[...state.pins,app];persistUser();renderHome();renderSpace();toast((state.pins.includes(app)?'Pinned ':'Unpinned ')+appLookup[app]);}
+ function lockFlow(){selectedUnlock=state.user;closePanels();closeSearch();state.layer=false;renderLayer();renderLock();$('lockOverlay').classList.add('open');showNav(false);}
+ function renderLock(){const now=new Date();$('lockTime').textContent=now.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});$('lockDay').textContent=now.toLocaleDateString([], {weekday:'long',month:'long',day:'numeric'});$('accountList').innerHTML=people.map(p=>`<button type="button" class="account-choice ${selectedUnlock===p.id?'selected':''}" data-choose-user="${p.id}"><span class="avatar">${p.letter}</span><strong>${p.name}</strong></button>`).join('');$('accountList').querySelectorAll('[data-choose-user]').forEach(b=>b.addEventListener('click',()=>{selectedUnlock=b.dataset.chooseUser;renderLock();}));}
+ 
+ const escapeHtml=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ function toast(message){const t=$('toast');t.textContent=message;t.classList.add('show');clearTimeout(toastTimeout);toastTimeout=setTimeout(()=>t.classList.remove('show'),2200);}
+ function fileBrowserHtml(){
+  const sections=[['recent','◷','Recent'],['projects','◈','Projects'],['documents','▤','Documents'],['photos','▧','Photos'],['shared','◫','Shared']];
+  const visible=usableFiles().filter(f=>state.fileFolder==='recent'||f.folder===state.fileFolder);
+  const selected=usableFiles().find(f=>f.id===state.fileSelected)||null;
+  return `<div class="app-body file-app"><aside class="file-sidebar"><h4>Locations</h4>${sections.map(([key,icon,label])=>`<button type="button" data-folder="${key}" class="${state.fileFolder===key?'active':''}">${icon} ${label}</button>`).join('')}</aside><main class="files-main"><div class="file-headerline"><h2>${sections.find(x=>x[0]===state.fileFolder)[2]}</h2><button type="button" data-files-search="1">⌕ Find files</button></div><div class="file-grid">${visible.length?visible.map(f=>`<button type="button" data-file="${f.id}" class="file-card ${state.fileSelected===f.id?'selected':''}"><span class="file-symbol">${f.icon}</span><strong>${escapeHtml(f.name)}</strong><small>${escapeHtml(f.type)}</small></button>`).join(''):'<div style="color:#8da2b4;font-size:12px">No files here yet</div>'}</div></main><aside class="file-preview">${selected?`<div style="font-size:36px">${selected.icon}</div><h3>${escapeHtml(selected.name)}</h3><small>${escapeHtml(selected.type)} · ${selected.owner==='shared'?'Shared with everyone':'Private to this profile'}</small><p>${escapeHtml(selected.description)}</p><button type="button" data-file-preview="1">Open preview ↗</button>`:'<div style="font-size:33px">▣</div><h3>Preview</h3><small>Select a file to inspect it without leaving your Flow.</small>'}</aside></div>`;
+ }
+ function attachFileEvents(){root.querySelectorAll('[data-folder]').forEach(b=>b.addEventListener('click',()=>{state.fileFolder=b.dataset.folder;state.fileSelected=null;renderSpace();}));root.querySelectorAll('[data-file]').forEach(b=>b.addEventListener('click',()=>{state.fileSelected=b.dataset.file;renderSpace();}));const find=root.querySelector('[data-files-search]');if(find)find.addEventListener('click',()=>openSearch(''));const preview=root.querySelector('[data-file-preview]');if(preview)preview.addEventListener('click',()=>{const f=usableFiles().find(x=>x.id===state.fileSelected);if(f)toast('Preview: '+f.name+' · demo only');});}
+ function appBody(app){
+   if(app==='mail')return '<div class="app-body mail-demo"><aside><strong>Mail</strong><span class="active">▣ &nbsp; Inbox</span><span>☆ &nbsp; Starred</span><span>◷ &nbsp; Drafts</span><span>▤ &nbsp; Archive</span></aside><main><div class="eyebrow">Pinned space · Example app</div><h2>Inbox.</h2><p>An example of a persistent first space, not a functional email client.</p><div class="mail-row"><b>Design team</b><span>Flow v0.8 — Space arrangements and shortcuts</span></div><div class="mail-row"><b>Project updates</b><span>Your Monday briefing is ready</span></div><div class="mail-row"><b>Collaboration</b><span>Following up on the prototype</span></div></main></div>';
+   if(app==='research')return '<div class="app-body research"><div class="eyebrow">Your workspace</div><h2>Make room for<br>what matters.</h2><p>A whole screen for the task at hand. Your other apps are only a swipe away.</p><button type="button" class="searchbox" data-search-from-app="1" style="width:100%;text-align:left;cursor:pointer">⌕ &nbsp; Search across your workspace ↗</button><div class="research-cards"><div class="research-card">✳<b>Inspiration</b><small>Design references</small></div><div class="research-card">◫<b>Open tabs</b><small>6 pages saved</small></div><div class="research-card">▤<b>Notes</b><small>3 ideas captured</small></div></div></div>';
+   if(app==='studio')return '<div class="app-body studio"><div class="tools"><span class="selected">↖</span><span>▭</span><span>◯</span><span>⌗</span><span>✎</span></div><div class="canvas"><div class="mock-design"><div class="design-top"><span>Atelier.</span><span>● ● ●</span></div><div class="design-hero"></div><div class="design-line"></div><div class="design-line small"></div><div class="design-pill">Explore work ↗</div></div></div></div>';
+   if(app==='terminal')return '<div class="app-body terminal"><div class="dim">flow@device ~ &nbsp; · &nbsp; Welcome to your workspace</div><br><div><span class="green">➜</span> <span class="blue">~</span> niri --version</div><div>niri 25.x &nbsp; · &nbsp; Wayland compositor</div><div><span class="green">➜</span> <span class="blue">~</span> echo "One workspace, every device"</div><div>One workspace, every device</div><div><span class="green">➜</span> <span class="blue">~</span> cat architecture.txt</div><div>Flow → Groups → Layers → System</div><div class="dim"># Try entering help, ls, or clear below</div><div id="termHistory"></div><div class="terminal-line"><span class="green">➜</span> <span class="blue">~</span> <input id="termInput" aria-label="Terminal command" placeholder="type a command..." autocomplete="off" /></div></div>';
+   if(app==='files')return fileBrowserHtml();
+   return '<div class="app-body writing"><div class="doc"><h2>A different kind of desktop</h2><p>Most people work inside one application at a time. They occasionally need something alongside it, and sometimes something briefly above it.</p><p>What if the computer started with that assumption?</p><p><b>Flow</b> makes the primary task the default. Groups keep related tools together. Layers let you borrow another app without leaving your context.</p><p>A system interface stays reachable from anywhere, but never takes over your work.</p></div></div>';
+ }
+ function appHeader(s){return `<div class="app-head"><div class="app-dot"></div><strong>${s.name}</strong><span>— ${displayName(displayOf(s))} · ${s.group?'Group':'Full space'}${state.spacePins[s.app]?' · Pinned '+(pinnedFor(displayOf(s)).findIndex(x=>x.app===s.app)+1):''}</span><button class="space-header-pin" type="button" data-toggle-space="${s.app}">${state.spacePins[s.app]?'✦ Pinned':'✧ Pin space'}</button><div class="head-end"><i></i><i></i></div></div>`;}
+ function renderSpace(){
+  const s=spaces[state.active];
+  const currentNotes=state.groupNotes[s.app] ?? 'Ideas, links and references stay next to your primary app.\n\nThis space remembers its layout.';
+  $('appArea').innerHTML=`<div class="primary-app">${appHeader(s)}${appBody(s.app)}</div>${s.group?`<div class="group-panel"><div class="group-header"><span>▤ &nbsp; Notes</span><span>⋯</span></div><div class="group-note"><span class="note-label">In this space</span><textarea aria-label="Notes in group" id="groupNotes">${escapeHtml(currentNotes)}</textarea><div class="note-tag">✓ Linked to ${s.name}</div></div></div>`:''}`;
+  const pinHeader=root.querySelector('[data-toggle-space]');if(pinHeader)pinHeader.addEventListener('click',()=>pinSpace(s.app));if(s.app==='files')attachFileEvents();const inAppSearch=root.querySelector('[data-search-from-app]');if(inAppSearch)inAppSearch.addEventListener('click',()=>openSearch(''));
+  const notes=$('groupNotes'); if(notes)notes.addEventListener('input',e=>{state.groupNotes[s.app]=e.target.value;persistUser();});
+  const term=$('termInput'); if(term)term.addEventListener('keydown',e=>{if(e.key!=='Enter')return;const cmd=e.target.value.trim();const history=$('termHistory');if(cmd==='clear'){history.innerHTML='';} else if(cmd){const responses={help:'Commands: help, ls, pwd, niri --version, clear',ls:'Documents/   Projects/   Notes/',pwd:'/home/flow','niri --version':'niri — scrolling Wayland compositor'};history.insertAdjacentHTML('beforeend',`<div><span class="green">➜</span> <span class="blue">~</span> ${escapeHtml(cmd)}</div><div class="dim">${escapeHtml(responses[cmd]||'Demo shell: command not implemented')}</div>`);}term.value='';e.preventDefault();});
+  $('navSpaces').innerHTML=spaces.map((sp,i)=>displayOf(sp)===state.viewDisplay?`<button type="button" class="${i===state.active?'current':''}" data-nav="${i}" aria-label="Open ${sp.name} space">${state.spacePins[sp.app]?'✦':sp.icon} ${sp.name}</button>`:'').join('');
+  root.querySelectorAll('[data-nav]').forEach(b=>b.addEventListener('click',()=>navigate(Number(b.dataset.nav))));
+  const position=flowSpaces(state.viewDisplay).findIndex(x=>x.app===s.app)+1; $('displayContext').textContent=displayName(state.viewDisplay)+' · '+String(position).padStart(2,'0'); $('displayContext').classList.toggle('on-external',state.viewDisplay!=='main');
+  $('groupAction').textContent=s.group?'⊟ Ungroup apps':'⊞ Group apps'; $('groupAction').classList.toggle('selected',s.group);
+ }
+ function renderHub(){ $('islandText').textContent=state.activity?'Focus session · 24 min':'Flow'; $('island').classList.toggle('activity',state.activity); $('desktopStatusText').textContent=state.activity?'● 24m':''; $('desktopHub').classList.toggle('has-activity',state.activity); $('activityAction').textContent=state.activity?'◉ End activity':'◉ Start activity'; $('activityAction').classList.toggle('selected',state.activity); }
+ function navigate(next){if(next<0||next>=spaces.length){toast('End of Flow — switch direction');return;} showNav(false);if(spaces[state.active])state.displayFocus[state.viewDisplay]=spaces[state.active].app; state.active=next;state.viewDisplay=displayOf(spaces[next]);state.displayFocus[state.viewDisplay]=spaces[next].app;state.panel=null;state.layer=false;closePanels();renderSpace();renderLayer();persistUser();}
+ function closePanels(){state.panel=null;$('systemSheet').classList.remove('open');$('homeOverlay').classList.remove('open');}
+ function openPanel(panel){if(state.panel===panel){closePanels();return;}state.panel=panel;$('systemSheet').classList.toggle('wide-panel',panel==='displays');$('homeOverlay').classList.toggle('open',panel==='home');$('systemSheet').classList.toggle('open',panel!=='home');if(panel!=='home')renderSheet();}
+ function renderSheet(){const s=$('systemSheet');
+  const head=(title,subtitle='')=>`<div class="sheet-head"><strong>${title}</strong><button type="button" data-close-sheet aria-label="Close panel">×</button></div>${subtitle?`<p class="sheet-sub">${subtitle}</p>`:''}`;
+  if(state.panel==='notifications')s.innerHTML=head('Notifications','Your updates are available from any space.')+(state.notif?'<div class="notify"><span class="n-icon">✦</span><div><b>File manager ready</b><p>Demo files are available locally in this prototype.</p></div></div><div class="notify"><span class="n-icon">▤</span><div><b>Studio notes</b><p>Your group notes are saved in this prototype session.</p></div></div><button type="button" id="clearNotifs" style="margin-top:13px;background:transparent;border:0;color:#a0ecd0;font-size:11px;">Clear notifications</button>':'<div class="empty">All caught up. ✳</div>');
+  else if(state.panel==='settings')s.innerHTML=head('Quick settings','System controls, wherever you are.')+`<div class="setting-grid"><button type="button" class="setting ${state.wifi?'on':''}" data-setting="wifi"><span>⌁</span>Wi-Fi · ${state.wifi?'On':'Off'}</button><button type="button" class="setting ${state.bluetooth?'on':''}" data-setting="bluetooth"><span>ᛒ</span>Bluetooth · ${state.bluetooth?'On':'Off'}</button><button type="button" class="setting ${state.focus?'on':''}" data-setting="focus"><span>☾</span>Do Not Disturb · ${state.focus?'On':'Off'}</button><button type="button" class="setting ${state.activity?'on':''}" data-setting="activity"><span>◉</span>Focus activity · ${state.activity?'Active':'Start'}</button></div><label class="slider-row">☀ &nbsp; Brightness <input aria-label="Brightness" id="brightness" type="range" min="0" max="100" value="${state.brightness}" /></label><button type="button" class="settings-displays" data-goto="displays">▣ &nbsp; Displays &amp; docks <span>›</span></button>`;
+  else if(state.panel==='displays'){
+   const d=state.display,connected=d.connected,displayType=d.link==='displaylink'?'DisplayLink USB dock':'Direct USB-C / HDMI';
+   s.innerHTML=head('Displays & docks','Design preview · No hardware is being configured.')+`
+    <div class="display-eyebrow"><span class="status-bullet"></span> Display arrangement <span class="concept-tag">INTERACTIVE CONCEPT</span></div>
+    <div class="display-arrangement pos-${d.position} ${d.mode==='mirror'?'mirrored':''} ${d.rotation==='portrait'?'portrait-ext':''} ${connected?'':'disconnected'}" aria-label="Display arrangement preview">
+      <div class="display-tile internal ${d.primary==='internal'?'primary':''}"><span>01</span><strong>Built-in</strong><small>Flow · Primary device</small></div>
+      <div class="display-tile external ${d.primary==='external'?'primary':''}"><span>02</span><strong>External</strong><small>${connected?(d.mode==='mirror'?'Mirrors built-in':d.rotation==='portrait'?'Portrait display':'Landscape display'):'Disconnected'}</small></div>
+    </div>
+    <div class="display-panel-controls">
+      <div class="display-row"><span>External display</span><button type="button" class="display-control ${connected?'active':''}" data-display-action="connected">${connected?'Connected':'Disconnected'}</button></div>
+      <div class="display-row"><span>Connection</span><div class="micro-segment"><button type="button" data-display-select="link:native" class="${d.link==='native'?'selected':''}">Native</button><button type="button" data-display-select="link:displaylink" class="${d.link==='displaylink'?'selected':''}">DisplayLink</button></div></div>
+      <div class="display-row"><span>Desktop mode</span><div class="micro-segment"><button type="button" data-display-select="mode:extend" class="${d.mode==='extend'?'selected':''}">Extend</button><button type="button" data-display-select="mode:mirror" class="${d.mode==='mirror'?'selected':''}">Mirror</button></div></div>
+      <div class="display-row"><span>Place second display</span><div class="micro-segment"><button type="button" data-display-select="position:left" class="${d.position==='left'?'selected':''}">← Left</button><button type="button" data-display-select="position:right" class="${d.position==='right'?'selected':''}">Right →</button></div></div>
+      <div class="display-row"><span>Orientation</span><div class="micro-segment"><button type="button" data-display-select="rotation:landscape" class="${d.rotation==='landscape'?'selected':''}">Wide</button><button type="button" data-display-select="rotation:portrait" class="${d.rotation==='portrait'?'selected':''}">Tall</button></div></div>
+      <div class="display-row"><span>Primary</span><div class="micro-segment"><button type="button" data-display-select="primary:internal" class="${d.primary==='internal'?'selected':''}">Built-in</button><button type="button" data-display-select="primary:external" class="${d.primary==='external'?'selected':''}" ${!connected?'disabled':''}>External</button></div></div>
+      <div class="display-row"><label for="displayScale">External scale</label><div class="display-scale"><input type="range" id="displayScale" min="75" max="200" step="25" value="${d.scale}" ${!connected?'disabled':''}><output>${d.scale}%</output></div></div>
+    </div>
+    <div class="display-driver"><span class="driver-symbol">${d.link==='displaylink'?'◈':'⌁'}</span><div><b>${displayType}</b><p>${d.link==='displaylink'?'NixOS package + EVDI kernel module + proprietary driver. Niri supports DisplayLink outputs from 25.11, but dock compatibility, latency and hotplug need testing.':'Use the Linux graphics stack and Niri output configuration for supported HDMI, USB-C or DisplayPort outputs.'}</p><small>Future Flow Display Manager · hardware integration not active in this prototype</small></div></div>
+    <div class="display-footnote">Future behavior: one independent Flow per monitor · move a Group across displays · restore workspaces when a dock reconnects.</div>`;
+  }
+  else if(state.panel==='shortcuts')s.innerHTML=head('Keyboard navigation','Pinned spaces are always the first positions in each display’s Flow.')+`<div class="shortcut-reference"><div><kbd>Super + 1–9</kbd><span>Jump to main-display pinned spaces</span></div><div><kbd>Super + Alt · 1, 1</kbd><span>External 1 → pinned space 1</span></div><div><kbd>Super + Alt · 2, 1</kbd><span>External 2 → pinned space 1</span></div><div><kbd>Super + K</kbd><span>Universal search</span></div><div><kbd>Super + Shift</kbd><span>Reserved for moving apps/Groups (future)</span></div></div><p class="shortcut-note">Prototype: Ctrl can substitute for Super. Browser and OS-reserved shortcuts may take precedence. While holding Super+Alt (or Ctrl+Alt), press the display number, then space number.</p>`;
+  else if(state.panel==='sync')s.innerHTML=head('Devices & sync','A proposed Flow Sync experience, not a live connection.')+`<div class="notify"><span class="n-icon">▣</span><div><b>Flow Sync · Concept</b><p>No devices are connected. A real implementation could sync files, pinned apps, workspace arrangements and settings per user.</p></div></div><div class="feature-note"><b>Suggested foundation:</b> Syncthing or Nextcloud for files, plus an encrypted per-user workspace-state service. Shared devices keep accounts separate. This prototype does not send anything.</div>`;
+  else if(state.panel==='compat')s.innerHTML=head('Application compatibility','The goal: apps join Flow regardless of their platform.')+`<div class="notify"><span class="n-icon">⊞</span><div><b>Windows · Achievable</b><p>Wine/Bottles for compatible apps, or WinBoat/WinApps to display apps from a Windows virtual machine as separate windows.</p></div></div><div class="notify"><span class="n-icon">⌘</span><div><b>macOS · Experimental</b><p>Darling is improving, but mainstream GUI apps are not reliably supported. Remote use of an actual Mac is a more practical bridge.</p></div></div><div class="feature-note">These are architecture options only. This browser prototype cannot run Linux, Windows or macOS applications.</div>`;
+  else s.innerHTML=head('System','Swipe directly from the island, or use these actions.')+'<div class="setting-grid"><button type="button" class="setting" data-goto="search"><span>⌕</span>Universal search</button><button type="button" class="setting" data-goto="home"><span>▦</span>All apps / Home</button><button type="button" class="setting" data-goto="notifications"><span>♧</span>Notifications ←</button><button type="button" class="setting" data-goto="settings"><span>☷</span>Quick settings →</button><button type="button" class="setting" data-goto="lock"><span>◈</span>Lock / switch user</button><button type="button" class="setting" data-goto="displays"><span>▣</span>Displays & docks</button><button type="button" class="setting" data-goto="sync"><span>↻</span>Devices & sync</button></div>';
+  s.querySelectorAll('[data-close-sheet]').forEach(b=>b.addEventListener('click',closePanels));
+  s.querySelectorAll('[data-goto]').forEach(b=>b.addEventListener('click',()=>{if(b.dataset.goto==='activity'){state.activity=!state.activity;renderHub();toast(state.activity?'Focus activity started':'Focus activity ended');}else if(b.dataset.goto==='search')openSearch('');else if(b.dataset.goto==='lock')lockFlow();else openPanel(b.dataset.goto);}));
+  s.querySelectorAll('[data-setting]').forEach(b=>b.addEventListener('click',()=>{const key=b.dataset.setting;state[key]=!state[key];if(key==='activity')renderHub();renderSheet();}));
+  const bright=$('brightness');if(bright)bright.addEventListener('input',e=>{state.brightness=Number(e.target.value);$('device').style.filter=`brightness(${.78+state.brightness*.0029})`;});
+  s.querySelectorAll('[data-display-action]').forEach(b=>b.addEventListener('click',()=>{if(b.dataset.displayAction==='connected'){state.display.connected=!state.display.connected;if(!state.display.connected)state.display.primary='internal';renderSheet();}}));
+  s.querySelectorAll('[data-display-select]').forEach(b=>b.addEventListener('click',()=>{const [k,v]=b.dataset.displaySelect.split(':');if(!state.display.connected&&k==='primary'&&v==='external')return;state.display[k]=v;renderSheet();}));
+  const scale=$('displayScale');if(scale)scale.addEventListener('input',e=>{state.display.scale=Number(e.target.value);scale.parentElement.querySelector('output').textContent=state.display.scale+'%';});
+  const clear=$('clearNotifs');if(clear)clear.addEventListener('click',()=>{state.notif=false;renderSheet();});
+ }
+ function openSearch(query=''){closePanels();state.searchOpen=true;$('searchOverlay').classList.add('open');$('universalSearch').value=query;renderSearch();setTimeout(()=>$('universalSearch').focus(),30);}
+ function closeSearch(){state.searchOpen=false;$('searchOverlay').classList.remove('open');}
+ function renderSearch(){
+  const q=$('universalSearch').value.trim().toLowerCase();
+  const catalog=[...spaces.map(s=>({type:'Applications',icon:s.icon,title:s.name,sub:({mail:'Your pinned inbox space',research:'Research, browser and reading',studio:'Design and prototyping',terminal:'Developer tools and shell',writing:'Documents and notes',files:'Folders and file management'})[s.app]+' · '+(s.group?'Grouped':'Fullscreen'),action:'app',id:s.app})),...usableFiles().map(f=>({type:'Files',icon:f.icon,title:f.name,sub:f.type+' · '+f.description,action:'file',id:f.id})),
+    {type:'Actions',icon:'⊞',title:'Group current space',sub:'Put notes next to your app',action:'group'},
+    {type:'Actions',icon:'▤',title:'Open quick layer',sub:'Temporary note over the active app',action:'layer'},
+    {type:'Actions',icon:'☷',title:'Quick settings',sub:'Wi-Fi, Focus and brightness',action:'settings'},
+    {type:'Actions',icon:'◎',title:'All apps',sub:'Open the app drawer',action:'home'},
+    {type:'Actions',icon:'◈',title:'Lock / switch user',sub:'Choose another Flow profile',action:'lock'},
+    {type:'Actions',icon:'▣',title:'Displays & docks',sub:'External monitors, layout and DisplayLink Manager',action:'displays'},
+    {type:'Actions',icon:'↻',title:'Devices & sync',sub:'Cross-device roadmap',action:'sync'},
+    {type:'Actions',icon:'◫',title:'Windows and macOS apps',sub:'Compatibility roadmap',action:'compat'}];
+  const found=catalog.filter(c=>!q||(`${c.title} ${c.sub} ${c.type}`).toLowerCase().includes(q));
+  const grouped=['Applications','Files','Actions'].map(type=>{const items=found.filter(c=>c.type===type);if(!items.length)return '';return `<div class="result-section">${type}</div>`+items.map(c=>`<button class="result-item" type="button" data-result="${c.action}" data-result-id="${c.id||''}"><span class="result-icon">${c.icon}</span><span class="result-copy"><b>${escapeHtml(c.title)}</b><small>${escapeHtml(c.sub)}</small></span><span class="result-hint">↵</span></button>`).join('');}).join('');
+  $('searchResults').innerHTML=grouped||'<div class="empty">No matches. Try an app, a file or an action.</div>';
+  $('searchResults').querySelectorAll('[data-result]').forEach(b=>b.addEventListener('click',()=>performResult(b.dataset.result,b.dataset.resultId)));
+ }
+ function performResult(action,id){closeSearch();if(action==='app')launchApp(id);else if(action==='file'){launchApp('files');state.fileFolder='recent';state.fileSelected=id;renderSpace();}else if(action==='group')$('groupAction').click();else if(action==='layer')$('layerAction').click();else if(action==='lock')lockFlow();else openPanel(action==='home'?'home':action);}
+ function renderHome(){
+  const person=people.find(p=>p.id===state.user);$('homePerson').textContent=person.name;$('homeAvatar').textContent=person.letter;
+  const pinned=pinnedFor('main');
+  $('pinnedSpaces').innerHTML=pinned.map((sp,i)=>`<div class="space-card">
+    <div class="space-preview"><div class="space-preview-main"><span class="space-preview-line"></span><span class="space-preview-line short"></span><span class="space-preview-line"></span></div>${sp.group?'<div class="space-preview-extra">▤</div>':''}</div>
+    <button type="button" class="space-card-open" data-open-space="${sp.app}"><span class="space-card-title"><span class="card-pin">✦</span>${escapeHtml(sp.name)}<span class="space-card-number">⌘ ${i+1}</span></span><span class="space-card-meta">${sp.group?'Saved Group · Adaptive layout':'Single app · Full space'} · Main display</span></button>
+    ${state.editingSpaces?`<div class="space-edit-tools"><button type="button" aria-label="Move ${sp.name} earlier" data-move-space="${sp.app}:-1" ${i===0?'disabled':''}>←</button><button type="button" aria-label="Move ${sp.name} later" data-move-space="${sp.app}:1" ${i===pinned.length-1?'disabled':''}>→</button><select aria-label="Display for ${sp.name}" data-space-display="${sp.app}"><option value="main" selected>Main display</option><option value="external1">External 1</option><option value="external2">External 2</option></select><button type="button" aria-label="Unpin ${sp.name}" data-unpin-space="${sp.app}">×</button></div>`:''}</div>`).join('')||'<div class="empty">No main-display pinned spaces yet. Pin your current space to keep it in a fixed position.</div>';
+  $('displaySpaceLinks').innerHTML=['external1','external2'].map((d,idx)=>{const mine=pinnedFor(d);if(!mine.length)return '';return `<div class="display-space-row"><div class="display-space-name"><span class="display-space-dot"></span>External ${idx+1}</div><div class="display-space-actions">${mine.map((sp,i)=>`<button type="button" data-open-space="${sp.app}" title="Open ${sp.name} on external display ${idx+1}">${escapeHtml(sp.name)} <kbd>⌘⌥ ${idx+1},${i+1}</kbd></button>${state.editingSpaces?`<button type="button" class="display-edit" data-move-space="${sp.app}:-1" ${i===0?'disabled':''} aria-label="Move ${sp.name} earlier">↑</button><button type="button" class="display-edit" data-move-space="${sp.app}:1" ${i===mine.length-1?'disabled':''} aria-label="Move ${sp.name} later">↓</button><select data-space-display="${sp.app}" aria-label="Move ${sp.name} to display"><option value="main">Main</option><option value="external1" ${d==='external1'?'selected':''}>Ext 1</option><option value="external2" ${d==='external2'?'selected':''}>Ext 2</option></select><button type="button" class="display-edit" data-unpin-space="${sp.app}" aria-label="Unpin ${sp.name}">×</button>`:''}`).join('')}</div></div>`}).join('');
+  $('editSpaces').textContent=state.editingSpaces?'Done ✓':'Arrange ↗';$('editSpaces').setAttribute('aria-pressed',String(state.editingSpaces));
+  const current=spaces[state.active];$('pinCurrentSpace').textContent=state.spacePins[current.app]?'✓ '+current.name+' is pinned':'＋ Pin '+current.name+' space';$('pinCurrentSpace').disabled=!!state.spacePins[current.app];
+  $('pinnedApps').innerHTML=state.pins.map(app=>{const s=spaces.find(x=>x.app===app);return s?`<button class="pin-tile" type="button" data-launch="${app}"><span class="appicon">${s.icon}</span>${s.name}</button>`:''}).join('')||'<span style="font-size:11px;color:#8b9fa7">No app shortcuts pinned</span>';
+  $('homeApps').innerHTML=spaces.map(s=>`<div class="launcher-item"><button type="button" data-launch="${s.app}"><span class="appicon">${s.icon}</span>${s.name}</button><button type="button" aria-label="${state.pins.includes(s.app)?'Unpin':'Pin'} ${s.name}" class="launcher-pin ${state.pins.includes(s.app)?'active':''}" data-pin="${s.app}">${state.pins.includes(s.app)?'★':'☆'}</button></div>`).join('');
+  root.querySelectorAll('[data-open-space]').forEach(b=>b.addEventListener('click',()=>launchApp(b.dataset.openSpace)));
+  root.querySelectorAll('[data-unpin-space]').forEach(b=>b.addEventListener('click',()=>pinSpace(b.dataset.unpinSpace)));
+  root.querySelectorAll('[data-move-space]').forEach(b=>b.addEventListener('click',()=>{const [app,d]=b.dataset.moveSpace.split(':');movePinnedSpace(app,Number(d));}));
+  root.querySelectorAll('[data-space-display]').forEach(b=>b.addEventListener('change',()=>spaceDisplay(b.dataset.spaceDisplay,b.value)));
+  root.querySelectorAll('[data-launch]').forEach(b=>b.addEventListener('click',()=>launchApp(b.dataset.launch)));
+  root.querySelectorAll('[data-pin]').forEach(b=>b.addEventListener('click',()=>togglePin(b.dataset.pin)));
+ }
+ function renderLayer(){$('layer').classList.toggle('open',state.layer);$('layerAction').classList.toggle('selected',state.layer);$('layerAction').textContent=state.layer?'▤ Close Layer':'▤ Open a Layer';if(state.layer)$('layerNote').value=state.quickNote;}
+ function setMode(mode){showNav(false); state.mode=mode;root.dataset.mode=mode;root.querySelectorAll('[data-mode-select]').forEach(b=>b.classList.toggle('active',b.dataset.modeSelect===mode));toast(mode==='tablet'?'Tablet island active':'Desktop controls active');}
+ function setCutout(preset){root.dataset.cutout=preset;root.querySelectorAll('[data-cutout-select]').forEach(b=>b.classList.toggle('active',b.dataset.cutoutSelect===preset));toast(preset==='auto'?'Device safe areas respected':preset==='notch'?'Notch integrated into system controls':'Camera cutout integrated into system controls');}
+ root.querySelectorAll('[data-cutout-select]').forEach(b=>b.addEventListener('click',()=>setCutout(b.dataset.cutoutSelect)));
+ $('notchWidth').addEventListener('input',e=>{const w=Math.max(100,Math.min(200,Number(e.target.value)));root.style.setProperty('--notch-width',w+'px');$('notchValue').textContent=w+' px';});
+
+ async function toggleFullscreen(){
+  if(document.fullscreenElement){try{await document.exitFullscreen();}catch(e){} return;}
+  if(document.documentElement.requestFullscreen){try{await document.documentElement.requestFullscreen();closePanels();return;}catch(e){}}
+  toast('For immersive iPad mode, open a hosted version from Home Screen');
+ }
+ $('homeSearch').addEventListener('click',()=>openSearch(''));
+ $('homeKeyboard').addEventListener('click',()=>openPanel('shortcuts'));
+ $('editSpaces').addEventListener('click',()=>{state.editingSpaces=!state.editingSpaces;renderHome();});
+ $('pinCurrentSpace').addEventListener('click',()=>{if(!state.spacePins[spaces[state.active].app])pinSpace(spaces[state.active].app);});
+ $('showAllApps').addEventListener('click',()=>{const box=$('homeDrawer');box.hidden=!box.hidden;$('showAllApps').textContent=box.hidden?'All apps ↗':'Close app library ×';$('showAllApps').setAttribute('aria-expanded',String(!box.hidden));});
+ $('customizeFlow').addEventListener('click',()=>{const box=$('homeAdvanced');box.hidden=!box.hidden;$('customizeFlow').textContent=box.hidden?'System & prototype settings ↗':'Hide system settings ×';$('customizeFlow').setAttribute('aria-expanded',String(!box.hidden));});
+ $('homeDisplays').addEventListener('click',()=>openPanel('displays'));
+ $('homeSync').addEventListener('click',()=>openPanel('sync'));
+ $('homeCompatibility').addEventListener('click',()=>openPanel('compat'));
+ $('homeFiles').addEventListener('click',()=>launchApp('files'));
+ $('lockAction').addEventListener('click',lockFlow);
+ $('unlockAction').addEventListener('click',()=>switchUser(selectedUnlock));
+ $('navSearch').addEventListener('click',()=>openSearch(''));
+ $('navLauncher').addEventListener('click',()=>openPanel('home'));
+ $('closeSearch').addEventListener('click',closeSearch);
+ $('universalSearch').addEventListener('input',renderSearch);
+ $('universalSearch').addEventListener('keydown',e=>{if(e.key==='Enter'){const first=$('searchResults').querySelector('[data-result]');if(first){first.click();e.preventDefault();}}});
+ $('searchOverlay').addEventListener('click',e=>{if(e.target===$('searchOverlay'))closeSearch();});
+ $('fullscreenAction').addEventListener('click',toggleFullscreen);
+ document.addEventListener('fullscreenchange',()=>{$('fullscreenAction').textContent=document.fullscreenElement?'⤡ Exit fullscreen':'⤢ Fullscreen';});
+ root.querySelectorAll('[data-mode-select]').forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.modeSelect)));
+
+ function showNav(visible){$('device').classList.toggle('nav-visible',visible);$('navTrigger').setAttribute('aria-expanded',String(visible));}
+ $('navTrigger').addEventListener('click',e=>{if(e.pointerType==='mouse')showNav(true);else showNav(!$('device').classList.contains('nav-visible'));});
+ $('navTrigger').addEventListener('pointerenter',e=>{if(e.pointerType==='mouse')showNav(true);});
+ $('nav').addEventListener('pointerleave',e=>{if(e.pointerType==='mouse')showNav(false);});
+ $('nav').addEventListener('focusout',e=>{if(!$('nav').contains(e.relatedTarget))showNav(false);});
+ let bottomSwipe=null;
+ $('device').addEventListener('pointerdown',e=>{
+   const bounds=$('device').getBoundingClientRect();
+   if(e.clientY>bounds.bottom-65 && !e.target.closest('.nav,.layer,.system-hub')) bottomSwipe={x:e.clientX,y:e.clientY};
+ });
+ $('device').addEventListener('pointerup',e=>{
+   if(!bottomSwipe)return;
+   const dy=e.clientY-bottomSwipe.y,dx=e.clientX-bottomSwipe.x;
+   bottomSwipe=null;
+   if(dy < -30 && Math.abs(dy)>Math.abs(dx)*1.1){showNav(true);}
+ });
+ $('prevSpace').addEventListener('click',()=>stepSpace(-1));$('nextSpace').addEventListener('click',()=>stepSpace(1));
+ $('groupAction').addEventListener('click',()=>{if(state.panel==='home')closePanels();spaces[state.active].group=!spaces[state.active].group;renderSpace();persistUser();toast(spaces[state.active].group?'Apps grouped in one space':'Back to single-app space');});
+ $('layerAction').addEventListener('click',()=>{if(state.panel==='home')closePanels();state.layer=!state.layer;renderLayer();});$('closeLayer').addEventListener('click',()=>{state.layer=false;renderLayer();});
+ $('saveLayer').addEventListener('click',()=>{state.quickNote=$('layerNote').value;state.layer=false;renderLayer();toast('Note saved · workspace unchanged');});
+ $('activityAction').addEventListener('click',()=>{if(state.panel==='home')closePanels();state.activity=!state.activity;renderHub();toast(state.activity?'Activity is visible in the System hub':'Activity finished');});
+ $('desktopNotifications').addEventListener('click',()=>openPanel('notifications'));$('desktopHome').addEventListener('click',()=>openPanel('home'));$('desktopSettings').addEventListener('click',()=>openPanel('settings'));
+ $('island').addEventListener('click',()=>{if(islandSwiped){islandSwiped=false;return;}openPanel('hub');});
+ $('systemHub').addEventListener('pointerdown',e=>{if(state.mode!=='tablet')return;swipeStart={x:e.clientX,y:e.clientY};});
+ $('systemHub').addEventListener('pointerup',e=>{if(state.mode!=='tablet'||!swipeStart)return;const dx=e.clientX-swipeStart.x,dy=e.clientY-swipeStart.y;swipeStart=null;let target=null;if(Math.abs(dx)>35&&Math.abs(dx)>Math.abs(dy)*1.1)target=dx<0?'notifications':'settings';else if(dy>34&&dy>Math.abs(dx))target='home';if(target){islandSwiped=true;openPanel(target);setTimeout(()=>{islandSwiped=false;},400);}});
+ let appTouch=null; $('appSurface').addEventListener('pointerdown',e=>{if(e.target.closest('input,textarea,button'))return;appTouch={x:e.clientX,y:e.clientY};});
+ $('appSurface').addEventListener('pointerup',e=>{if(!appTouch)return;const dx=e.clientX-appTouch.x,dy=e.clientY-appTouch.y;appTouch=null;if(Math.abs(dx)>72&&Math.abs(dx)>Math.abs(dy)*1.45)stepSpace(dx<0?1:-1);});
+ let sequence=null;
+ function showSequence(txt){const el=$('shortcutSequence');el.textContent=txt;el.hidden=false;}
+ function hideSequence(){sequence=null;$('shortcutSequence').hidden=true;}
+ function numericKey(e){return /^[1-9]$/.test(e.key)?Number(e.key):null;}
+ document.addEventListener('keydown',e=>{
+  if($('lockOverlay').classList.contains('open'))return;
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openSearch('');return;}
+  if(e.key==='Escape'){hideSequence();if(state.searchOpen){closeSearch();e.preventDefault();return;}}
+  if(state.searchOpen)return;
+  const typing=e.target.closest&&e.target.closest('input,textarea,select,[contenteditable]');
+  const digit=numericKey(e),command=e.metaKey||e.ctrlKey;
+  if(command&&digit&&e.altKey&&!e.shiftKey&&!typing){
+    e.preventDefault();
+    if(!sequence||Date.now()-sequence.ts>3500){sequence={display:digit,ts:Date.now()};showSequence('External '+digit+'  /  Choose pinned space 1–9');}
+    else {const display='external'+sequence.display;hideSequence();jumpToPinned(display,digit);}
+    return;
+  }
+  if(command&&digit&&!e.altKey&&!e.shiftKey&&!typing){e.preventDefault();hideSequence();jumpToPinned('main',digit);return;}
+  if(command&&e.shiftKey&&digit&&!typing){e.preventDefault();toast('Move to pinned space '+digit+' · reserved for native Flow');return;}
+  if(typing)return;
+  if(e.key==='ArrowRight'){stepSpace(1);e.preventDefault();return;}
+  if(e.key==='ArrowLeft'){stepSpace(-1);e.preventDefault();return;}
+  if(e.key==='g'||e.key==='G'){$('groupAction').click();return;}
+  if(e.key==='l'||e.key==='L'){$('layerAction').click();return;}
+  if(e.key==='f'||e.key==='F'){toggleFullscreen();return;}
+  if(e.key==='?'&&!e.metaKey&&!e.ctrlKey){openPanel('shortcuts');return;}
+  if(e.key==='/'&&!e.ctrlKey&&!e.metaKey){openSearch('');e.preventDefault();return;}
+  if(e.key==='p'||e.key==='P'){openPanel('home');return;}
+  if(command&&e.shiftKey&&e.key.toLowerCase()==='l'){lockFlow();e.preventDefault();return;}
+  if(e.key==='Escape'){state.layer=false;renderLayer();closePanels();showNav(false);}
+ });
+ $('appSurface').addEventListener('click',()=>{if($('device').classList.contains('nav-visible'))showNav(false);});
+ renderSpace();renderHub();renderHome();renderLayer();renderLock();window.addEventListener('pagehide',persistUser);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+input {
+    keyboard { xkb {} }
+    touchpad { tap; natural-scroll; }
+}
+layout {
+    gaps 0
+    default-column-width { proportion 1.0; }
+    focus-ring { width 2; active-color "#b8ddcb"; inactive-color "#172128"; }
+    background-color "#0b1015"
+}
+spawn-at-startup "@shell@" "-p" "@shellConfig@"
+
+binds {
+    Super+K { spawn "@launcher@"; }
+    Super+Return { spawn "@terminal@"; }
+    Super+L { spawn "@lock@"; }
+    Super+Left { focus-column-left; }
+    Super+Right { focus-column-right; }
+    Super+Shift+Left { move-column-left; }
+    Super+Shift+Right { move-column-right; }
+    Super+Q { close-window; }
+    Super+O { toggle-overview; }
+    Super+Shift+Slash { show-hotkey-overlay; }
+    Super+Shift+E { quit; }
+}
