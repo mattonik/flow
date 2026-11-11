@@ -102,3 +102,7 @@ On the ARM64 guest, Niri's logout confirmation returned to SDDM, and signing bac
 ## Session-scoped window identities (2026-11-11)
 
 New snapshots record window IDs and the compositor session identity. Recovery can reorder and focus multiple still-open windows of one app only while that identity matches; after a compositor restart it still reports duplicates for manual recovery. Existing snapshots remain readable. An isolated ARM64 guest test matched two real Foot windows in the current session and refused to match them with a different session identity. This does not recover closed duplicate windows, terminal processes or documents.
+
+## Recovery workspace safety (2026-11-11)
+
+Recovery stops when the focused workspace changes while an app is launching or before a layout action, without returning focus to the original workspace. Already launched apps are left open. Automated tests cover changes during launch and Group reconstruction; an ARM64 guest test switched workspaces while recovery was waiting and confirmed no recovery actions were sent. Niri IPC calls are separate operations, so a workspace change between individual calls cannot be made atomic by this check.

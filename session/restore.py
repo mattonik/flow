@@ -53,6 +53,17 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
     group_ids = {id(entry) for group in groups for entry in group}
     report, restored = [], []
     original = workspace.get("active_window_id")
+    workspace_id = workspace["id"]
+    workspace_changed = False
+
+    def checked_snapshot():
+        nonlocal workspace_changed
+        current, live = get_snapshot()
+        if current["id"] != workspace_id:
+            workspace_changed = True
+            raise ValueError("Workspace changed; session recovery stopped")
+        return current, live
+
     same_session = bool(session and data.get("session") == session)
     for entry in entries:
         app_id = entry["app_id"]
@@ -82,7 +93,7 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 continue
             for _ in range(30):
                 wait(0.5)
-                workspace, windows = get_snapshot()
+                workspace, windows = checked_snapshot()
                 matches = [w for w in windows if w.get("app_id") == app_id]
                 if matches:
                     break
@@ -99,6 +110,7 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
         # shortcut: keep existing column order when restoring groups; add safe group-aware ordering later.
         if not groups:
             for index, (_, window) in enumerate(restored, 1):
+                checked_snapshot()
                 action("action", "focus-window", "--id", window["id"])
                 action("action", "move-column-to-index", index)
         for group in groups:
@@ -106,7 +118,7 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
             if len(group) != 2 or any(not app or app_counts[app] != 1 or app in pinned for app in group_apps):
                 report.append("Group requires manual recovery (ambiguous, pinned, or more than two apps)")
                 continue
-            workspace, live = get_snapshot()
+            workspace, live = checked_snapshot()
             pair = []
             for app in group_apps:
                 matches = [w for w in live if w.get("app_id") == app]
@@ -133,7 +145,7 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 target = positions[0][0] + (positions[1][0] > positions[0][0])
                 action("action", "focus-window", "--id", pair[1]["id"])
                 action("action", "move-column-to-index", target)
-                workspace, live = get_snapshot()
+                workspace, live = checked_snapshot()
                 pair = [next((w for w in live if w.get("id") == member["id"]), None) for member in pair]
                 if (not all(spaces.eligible(w, workspace, live) for w in pair)
                         or pair[1]["layout"]["pos_in_scrolling_layout"][0]
@@ -143,7 +155,8 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
             action("action", "focus-window", "--id", pair[0]["id"])
             action("action", "consume-window-into-column")
     finally:
-        if desired_focus:
+        if desired_focus and not workspace_changed:
+            checked_snapshot()
             action("action", "focus-window", "--id", desired_focus)
     return report, len(restored)
 
