@@ -86,3 +86,7 @@ The VM's Super+L shortcut locked the session; a wrong password left it locked, a
 ## Shell identity across updates (2026-11-11)
 
 After a NixOS rebuild, shortcuts targeted the new shell store path while the running shell still used the previous path. The NixOS module now installs the shell at a stable `/etc/flow/shell.qml` path for both startup and IPC. The guest built and activated the change; after restarting only the shell, Super+H opened the Desk. IPC remained available when the symlink was temporarily pointed at a different file. A full second rebuild was blocked by inode exhaustion, despite available disk capacity; garbage collection recovered unused store paths but left the filesystem at 99% inode use. No rollback generations were removed.
+
+## VM inode recovery and rebuild check (2026-11-11)
+
+The guest had 7.5 GiB free but 99% inode use, mostly in the Nix store. `nix-store --optimise` deduplicated store files without deleting rollback generations, reducing inode use substantially. A NixOS rebuild with a temporary shell configuration change then succeeded, and the running shell accepted its Desk IPC command after the symlink's store target changed. A second rebuild restored the original configuration and the guest's input lock was updated. This verifies shortcut routing across a rebuild; it does not establish that every QML change is hot-reloaded.

@@ -47,3 +47,5 @@ nix build .#nixosConfigurations.test.config.system.build.toplevel
 ```
 
 The `test` configuration is an **evaluation/build fixture**, not an installable image: it has a placeholder root filesystem, no configured user and no bootloader. Build on ARM64 Linux or configure a suitable remote builder; a macOS ARM64 host cannot execute Linux build steps by itself. After changing the lock file, rebuild and re-run the guest checks. No passwords or private state are included.
+
+If a VM build reports `No space left on device` despite free disk capacity, check `df -i /` as well as `df -h /`: the filesystem can run out of inodes. On the test guest, `sudo nix-store --optimise` recovered inodes by deduplicating Nix store files while retaining system generations. It can take several minutes and cause disk activity.
