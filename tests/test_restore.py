@@ -25,6 +25,7 @@ class RecoveryTest(unittest.TestCase):
             saved = json.loads(path.read_text())
             self.assertEqual([e["app_id"] for e in saved["windows"]], ["one", "two"])
             self.assertTrue(saved["windows"][1]["focused"])
+            self.assertEqual([e["column"] for e in saved["windows"]], [1, 2])
 
     def test_existing_window_is_focused_without_relaunch(self):
         launch, action = Mock(), Mock()
@@ -42,6 +43,34 @@ class RecoveryTest(unittest.TestCase):
         self.assertEqual(count, 0)
         self.assertEqual(len(report), 3)
         launch.assert_not_called()
+
+    def test_restores_saved_group_only_for_adjacent_unique_windows(self):
+        ws = {"id": 1, "active_window_id": 2}
+        saved = {"version": 1, "windows": [{"app_id": "one", "column": 1},
+                                           {"app_id": "two", "column": 1, "focused": True}]}
+        windows = [window(1, "one", 1), window(2, "two", 2)]
+        action = Mock()
+        report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), action)
+        self.assertEqual((report, count), ([], 2))
+        action.assert_any_call("action", "consume-window-into-column")
+        action.assert_called_with("action", "focus-window", "--id", 2)
+        action.reset_mock()
+        windows[1]["layout"]["pos_in_scrolling_layout"] = [3, 1]
+        report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), action)
+        self.assertIn("not adjacent", report[0])
+        self.assertNotIn("consume-window-into-column", str(action.call_args_list))
+
+    def test_existing_group_is_preserved_and_pins_prevent_grouping(self):
+        ws = {"id": 1, "active_window_id": 1}
+        saved = {"version": 1, "windows": [{"app_id": "one", "column": 1}, {"app_id": "two", "column": 1}]}
+        windows = [window(1, "one", 1), window(2, "two", 1)]
+        windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        action = Mock()
+        report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), action)
+        self.assertEqual((report, count), ([], 2))
+        self.assertNotIn("consume-window-into-column", str(action.call_args_list))
+        report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), Mock(), pinned={"one"})
+        self.assertIn("pinned", report[0])
 
     def test_launch_only_exact_desktop_entry(self):
         with tempfile.TemporaryDirectory() as directory:
