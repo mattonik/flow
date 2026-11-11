@@ -74,11 +74,13 @@ ShellRoot {
             }
         }
     }
+    property string recoveryMessage: ""
     property bool switcherOpen: false
     property var windows: []
     property var pins: []
     property string spacesError: ""
     function spaceAction(action, id) {
+        if (recoveryProcess.running) return
         if (spacesProcess.running) {
             if (action !== "refresh") { spacesError = "Please try again"; deskOpen = true }
             return
@@ -103,6 +105,17 @@ ShellRoot {
                         else if (result.action === "pin") root.deskOpen = true
                     }
                 } catch (e) { root.spacesError = "Could not read pinned spaces" }
+            }
+        }
+    }
+    Process {
+        id: recoveryProcess
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const result = JSON.parse(this.text)
+                    root.recoveryMessage = result.error || result.message || "Recovery unavailable"
+                } catch (e) { root.recoveryMessage = "Could not read recovery result" }
             }
         }
     }
@@ -226,6 +239,14 @@ ShellRoot {
                         }
                         Text { anchors.verticalCenter: parent.verticalCenter; text: "Experimental application menu"; color: "#d7e5df"; font.pixelSize: 14 }
                     }
+                    Text { text: "SESSION RECOVERY"; color: "#91a59d"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
+                    Text { text: "Save your documents, then save the current window list before restarting."; color: "#9baea7"; width: parent.width; wrapMode: Text.Wrap }
+                    Row {
+                        spacing: 8
+                        FlowButton { width: 180; text: "Save session"; enabled: !recoveryProcess.running && !spacesProcess.running; onClicked: { recoveryProcess.command = ["flow-recovery", "save"]; recoveryProcess.running = true } }
+                        FlowButton { width: 180; text: "Restore session"; enabled: !recoveryProcess.running && !spacesProcess.running; onClicked: { root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
+                    }
+                    Text { visible: root.recoveryMessage !== ""; text: root.recoveryMessage; color: "#b8ddcb"; width: parent.width; wrapMode: Text.Wrap }
                     Text { text: "PINNED SPACES"; color: "#91a59d"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
                     Text { visible: root.pins.length === 0; text: "Pin the current app to keep its place"; color: "#80948b"; font.pixelSize: 14 }
                     Flow {

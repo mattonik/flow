@@ -4,6 +4,11 @@ let
   spaces = pkgs.writeShellScriptBin "flow-spaces" ''
     exec ${pkgs.python3}/bin/python3 ${../session/spaces.py} "$@"
   '';
+  recovery = pkgs.writeShellScriptBin "flow-recovery" ''
+    export PYTHONPATH="${../session}"
+    export PATH="${pkgs.glib}/bin:$PATH"
+    exec ${pkgs.python3}/bin/python3 ${../session/restore.py} "$@"
+  '';
   appmenu = pkgs.writeShellScriptBin "flow-appmenu" ''
     export GI_TYPELIB_PATH="${pkgs.at-spi2-core}/lib/girepository-1.0:${pkgs.glib}/lib/girepository-1.0:${pkgs.gobject-introspection}/lib/girepository-1.0''${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
     exec ${pkgs.python3.withPackages (p: [ p.pyatspi p.pygobject3 ])}/bin/python3 ${../session/appmenu.py} "$@"
@@ -28,7 +33,7 @@ in {
     security.polkit.enable = true;
     environment.systemPackages = with pkgs; [
       foot fuzzel quickshell swaylock firefox nautilus spaces launcher appmenu
-      xwayland-satellite mesa-demos wayland-utils
+      xwayland-satellite mesa-demos wayland-utils recovery
     ];
     environment.etc."niri/config.kdl".source = niriConfig;
     environment.etc."xdg/fuzzel/fuzzel.ini".text = ''
