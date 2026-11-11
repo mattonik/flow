@@ -524,7 +524,7 @@ ShellRoot {
         implicitWidth: 320; implicitHeight: 235; margins.top: 60
         color: "#17201e"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
         FocusScope {
             anchors.fill: parent; focus: true
             Keys.onEscapePressed: root.quickSettingsOpen = false
