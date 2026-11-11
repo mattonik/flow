@@ -9,6 +9,7 @@ ShellRoot {
     id: root
     property bool deskOpen: false
     property bool settingsOpen: false
+    property bool editPins: false
     property bool quickSettingsOpen: false
     property string volumeStatus: "Checking audio…"
     property string networkStatus: "Checking network…"
@@ -331,13 +332,13 @@ ShellRoot {
                     x: (parent.width - width) / 2
                     y: Math.max(70, (parent.height - height) / 2)
                     width: Math.max(200, Math.min(parent.width - 48, 910))
-                    spacing: 24
+                    spacing: 16
                     Text { text: "●  FLOW / YOUR DESK"; color: "#a0d9c0"; font.bold: true; font.letterSpacing: 2; font.pixelSize: 13 }
                     Text {
                         text: "Everything<br>in its <font color='#9fe2c5'>place.</font>"
                         textFormat: Text.RichText
                         color: "#eff5f2"; font.bold: true
-                        font.pixelSize: Math.max(36, Math.min(100, parent.width / 7))
+                        font.pixelSize: Math.max(36, Math.min(72, parent.width / 9))
                         lineHeight: 0.95
                     }
                     Text { text: "Your tools are here. Your work is right where you left it."; color: "#9baea7"; font.pixelSize: 17; wrapMode: Text.Wrap; width: parent.width }
@@ -348,29 +349,6 @@ ShellRoot {
                         text: "⌕   Search apps and open spaces   ·   Super K"
                         onClicked: root.openSearch()
                     }
-                    FlowButton {
-                        width: 150; text: root.settingsOpen ? "Close settings" : "Settings"
-                        onClicked: root.settingsOpen = !root.settingsOpen
-                    }
-                    Row {
-                        visible: root.settingsOpen
-                        spacing: 12
-                        Switch {
-                            id: menuSwitch
-                            checked: menuPreferences.appMenuEnabled
-                            Accessible.name: "Experimental application menu"
-                            onToggled: { menuPreferences.appMenuEnabled = checked; menuPreferences.sync(); root.appMenuOpen = false }
-                        }
-                        Text { anchors.verticalCenter: parent.verticalCenter; text: "Experimental application menu"; color: "#d7e5df"; font.pixelSize: 14 }
-                    }
-                    Text { text: "SESSION RECOVERY"; color: "#91a59d"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
-                    Text { text: "Save your documents, then save the current window list before restarting."; color: "#9baea7"; width: parent.width; wrapMode: Text.Wrap }
-                    Row {
-                        spacing: 8
-                        FlowButton { width: 180; text: "Save session"; enabled: !recoveryProcess.running && !spacesProcess.running; onClicked: { recoveryProcess.command = ["flow-recovery", "save"]; recoveryProcess.running = true } }
-                        FlowButton { width: 180; text: "Restore session"; enabled: !recoveryProcess.running && !spacesProcess.running; onClicked: { root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
-                    }
-                    Text { visible: root.recoveryMessage !== ""; text: root.recoveryMessage; color: "#b8ddcb"; width: parent.width; wrapMode: Text.Wrap }
                     Text { text: "PINNED SPACES"; color: "#91a59d"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
                     Text { visible: root.pins.length === 0; text: "Pin the current app to keep its place"; color: "#80948b"; font.pixelSize: 14 }
                     Flow {
@@ -388,19 +366,24 @@ ShellRoot {
                                     Accessible.name: (modelData.available ? "Focus " : "Open ") + modelData.label
                                     onClicked: root.spaceAction("focus", modelData.id)
                                 }
-                                FlowButton { width: 42; text: "‹"; Accessible.name: "Move " + modelData.label + " left"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("left", modelData.id) }
-                                FlowButton { width: 42; text: "›"; Accessible.name: "Move " + modelData.label + " right"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("right", modelData.id) }
-                                FlowButton { width: 42; text: "×"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; Accessible.name: "Unpin " + modelData.label; onClicked: root.spaceAction("unpin", modelData.id) }
+                                FlowButton { visible: root.editPins; width: 42; text: "‹"; Accessible.name: "Move " + modelData.label + " left"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("left", modelData.id) }
+                                FlowButton { visible: root.editPins; width: 42; text: "›"; Accessible.name: "Move " + modelData.label + " right"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("right", modelData.id) }
+                                FlowButton { visible: root.editPins; width: 42; text: "×"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; Accessible.name: "Unpin " + modelData.label; onClicked: root.spaceAction("unpin", modelData.id) }
                             }
                         }
                     }
-                    FlowButton { width: 200; text: "Pin current app · Super P"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("pin") }
+                    Row {
+                        spacing: 8
+                        FlowButton { width: 200; text: "Pin current app · Super P"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("pin") }
+                        FlowButton { visible: root.pins.length > 0; width: 100; text: root.editPins ? "Done" : "Edit pins"; onClicked: root.editPins = !root.editPins }
+                    }
                     Text { visible: root.spacesError !== ""; text: root.spacesError; color: "#f1baaa"; wrapMode: Text.Wrap; width: parent.width; font.pixelSize: 14 }
+                    Text { text: "TOOLS"; color: "#91a59d"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
                     Flow {
                         width: parent.width
                         spacing: 12
                         Repeater {
-                            model: ["Apps", "Files", "Overview", "Return to work"]
+                            model: ["Apps", "Files", "Overview", "Settings", "Return to work"]
                             FlowButton {
                                 id: toolButton
                                 required property string modelData
@@ -408,6 +391,11 @@ ShellRoot {
                                 width: modelData === "Return to work" ? 145 : 100
                                 text: modelData
                                 onClicked: {
+                                    if (modelData === "Settings") {
+                                        root.settingsOpen = !root.settingsOpen
+                                        if (root.settingsOpen) Qt.callLater(function() { deskScroller.ensureVisible(menuSwitch) })
+                                        return
+                                    }
                                     root.deskOpen = false
                                     if (modelData === "Apps") root.openApps()
                                     else if (modelData === "Files") Quickshell.execDetached(["nautilus"])
@@ -415,6 +403,29 @@ ShellRoot {
                                 }
                             }
                         }
+                    }
+                    Column {
+                        visible: root.settingsOpen; width: parent.width; spacing: 12
+                        Text { text: "SETTINGS"; color: "#91a59d"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
+                        Row {
+                            spacing: 12
+                            Switch {
+                                id: menuSwitch
+                                checked: menuPreferences.appMenuEnabled
+                                Accessible.name: "Experimental application menu"
+                                onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(menuSwitch)
+                                onToggled: { menuPreferences.appMenuEnabled = checked; menuPreferences.sync(); root.appMenuOpen = false }
+                            }
+                            Text { anchors.verticalCenter: parent.verticalCenter; text: "Experimental application menu"; color: "#d7e5df"; font.pixelSize: 14 }
+                        }
+                        Text { text: "SESSION RECOVERY"; color: "#91a59d"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
+                        Text { text: "Save your documents, then save the current window list before restarting."; color: "#9baea7"; width: parent.width; wrapMode: Text.Wrap }
+                        Flow {
+                            width: parent.width; spacing: 8
+                            FlowButton { id: saveSession; width: 180; text: "Save session"; enabled: !recoveryProcess.running && !spacesProcess.running; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(saveSession); onClicked: { recoveryProcess.command = ["flow-recovery", "save"]; recoveryProcess.running = true } }
+                            FlowButton { id: restoreSession; width: 180; text: "Restore session"; enabled: !recoveryProcess.running && !spacesProcess.running; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(restoreSession); onClicked: { root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
+                        }
+                        Text { visible: root.recoveryMessage !== ""; text: root.recoveryMessage; color: "#b8ddcb"; width: parent.width; wrapMode: Text.Wrap }
                     }
                     Text { text: "Tab to navigate · Esc or Super H to return"; color: "#788d84"; font.pixelSize: 12 }
                 }
@@ -434,7 +445,7 @@ ShellRoot {
     PanelWindow {
         visible: root.switcherOpen
         anchors { bottom: true; left: true; right: true }
-        implicitHeight: 290; color: "#101a18"; exclusionMode: ExclusionMode.Ignore
+        implicitHeight: width < 500 ? 336 : 290; color: "#101a18"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
         FocusScope {
@@ -444,14 +455,15 @@ ShellRoot {
                 anchors.fill: parent; anchors.margins: 12; spacing: 8
                 Row {
                     spacing: 12
-                    Text { text: "OPEN SPACES"; color: "#b8ddcb"; font.bold: true; font.pixelSize: 13 }
+                    Text { text: "OPEN SPACES  ·  " + root.displaySpaces.length; color: "#b8ddcb"; font.bold: true; font.pixelSize: 13 }
                     Text { text: "Select a space or app · Esc to close"; color: "#91a59d"; font.pixelSize: 13 }
                 }
-                Row {
-                    spacing: 8
+                Flow {
+                    width: parent.width; spacing: 8
                     FlowButton { width: 160; implicitHeight: 38; text: "Stack with next"; onClicked: root.spaceAction("stack") }
                     FlowButton { width: 160; implicitHeight: 38; text: "Separate stack"; onClicked: root.spaceAction("unstack") }
-                    Text { text: root.spacesError; color: "#f1baaa"; anchors.verticalCenter: parent.verticalCenter }
+                    FlowButton { width: 130; implicitHeight: 38; text: "Live overview"; onClicked: { root.switcherOpen = false; Quickshell.execDetached(["niri", "msg", "action", "open-overview"]) } }
+                    Text { text: root.spacesError; color: "#f1baaa" }
                 }
                 Text { visible: root.displaySpaces.length === 0; text: "No open spaces"; color: "#91a59d" }
                 Flickable {

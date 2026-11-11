@@ -114,3 +114,7 @@ An explicit session save assigns stable IDs and editable names to unambiguous tw
 ## Preserve missing Group members (2026-11-11)
 
 Later session saves retain missing Group members as recovery entries, including when both members are absent. Ambiguous matches, members on another workspace, or a surviving member in another stack stop the save and leave the previous snapshot intact. Automated tests cover absent and ambiguous members; an isolated ARM64 guest test used real compositor windows to verify that omitting one member retains its identity and recovery entry. Restoring still depends on installed application launchers and does not restore document contents. Adaptive layouts and pinned Groups remain open.
+
+## Desk and live overview for demos (2026-11-11)
+
+The Desk puts search, pins and tools ahead of settings; pin management and session recovery remain available on demand. The bottom switcher counts open spaces and links directly to Niri's live overview. On the ARM64 guest, the main Desk fit on screen, keyboard navigation reached session recovery, and the switcher's overview control opened the real application surfaces. The guest rebuild and 35 automated tests passed. Touch and small portrait displays remain unverified.
