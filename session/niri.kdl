@@ -20,6 +20,8 @@ binds {
     Super+Shift+Right { move-column-right; }
     Super+Q { close-window; }
     Super+O { toggle-overview; }
+    Super+Tab { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "overview"; }
+    Super+H { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "toggle"; }
     Super+Shift+Slash { show-hotkey-overlay; }
     Super+Shift+E { quit; }
 }
