@@ -32,3 +32,7 @@ The v1.0 brief and prototype are included as references. The opt-in Desk setting
 ## Bottom switcher (2026-11-11)
 
 The bottom handle and Super+Tab open a scrollable list of real windows on the active workspace; selecting a window requests focus and Escape dismisses the list. The ARM64 UTM guest displayed its running applications. The list uses titles rather than live previews. Restart restoration, gesture navigation, touch, cross-workspace and multi-display behavior remain unfinished.
+
+## Experimental session recovery (2026-11-11)
+
+Desk now offers explicit save and restore of the active workspace's app list, order and focus. On the ARM64 guest, saving four real windows and restoring the already-running unique applications worked, with duplicate terminals reported; a separate test relaunched KWrite from its exact desktop entry. Ten Python tests passed. A full VM restart, document recovery, duplicate windows, multiple workspaces and displays remain unverified or unsupported; snapshots never replace application document saves.

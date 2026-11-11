@@ -18,7 +18,9 @@ The initial session uses Niri's horizontal columns and real Linux apps. `Super+L
 
 The bottom handle opens a horizontally scrollable list of the current workspace’s open windows; select one to focus it, or press Escape to dismiss it. This first version shows window names, not live previews, and has not yet been validated for touch or multiple displays.
 
-**Restart restoration is not implemented:** save your work before restarting; Flow does not yet reopen applications or restore their documents and window arrangement.
+**Session recovery is experimental.** Before restarting, save your documents in their applications, open the Desk and choose **Save session**. After signing in to Niri, open the Desk and choose **Restore session**. Flow records the current workspace's ordered window list and focused app in `~/.local/state/flow/session.json`, and retains the snapshot until you explicitly save again. It tries to relaunch each missing app through its exact installed desktop entry, order unique single-window apps, and restore focus. The result reports applications that need manual recovery. Existing pinned-space metadata is stored separately.
+
+This does not save unsaved documents, app-specific internal state, terminal processes, multiple windows of the same app, Groups, other workspaces or multiple displays. Apps without a matching desktop entry or with ambiguous windows require manual recovery. Never treat the snapshot as a backup of files. VM restart recovery has not yet been verified end to end; save your work separately.
 
 ## Experimental application menu
 
