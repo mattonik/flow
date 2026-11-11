@@ -3,7 +3,6 @@ let
   cfg = config.services.flow;
   niriConfig = pkgs.replaceVars ../session/niri.kdl {
     terminal = lib.getExe pkgs.foot;
-    launcher = lib.getExe pkgs.fuzzel;
     lock = lib.getExe pkgs.swaylock;
     shell = lib.getExe pkgs.quickshell;
     shellConfig = ../session/shell.qml;

@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -11,8 +12,31 @@ ShellRoot {
         deskOpen = !deskOpen
     }
 
+    function openApps() {
+        deskOpen = false
+        Quickshell.execDetached(["fuzzel"])
+    }
+
+    component FlowButton: Button {
+        id: control
+        focusPolicy: Qt.StrongFocus
+        Keys.onReturnPressed: control.clicked()
+        Keys.onEnterPressed: control.clicked()
+        implicitHeight: 58
+        contentItem: Text {
+            text: control.text; color: "#d7e5df"; font.pixelSize: 14
+            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+        }
+        background: Rectangle {
+            radius: 12; color: control.down ? "#29453a" : "#171f1e"
+            border.width: control.activeFocus ? 2 : 1
+            border.color: control.activeFocus ? "#a0d9c0" : "#34423d"
+        }
+    }
+
     IpcHandler {
         target: "desk"
+        function apps(): void { root.openApps() }
         function toggle(): void { root.toggleDesk() }
         function overview(): void {
             const action = root.deskOpen ? "open-overview" : "toggle-overview"
@@ -40,50 +64,65 @@ ShellRoot {
             anchors.fill: parent
             focus: true
             Keys.onEscapePressed: root.deskOpen = false
-            Column {
-                anchors.centerIn: parent
-                width: Math.min(parent.width - 80, 910)
-                spacing: 28
-                Text { text: "●  FLOW / YOUR DESK"; color: "#a0d9c0"; font.bold: true; font.letterSpacing: 2; font.pixelSize: 13 }
-                Text {
-                    text: "Everything<br>in its <font color='#9fe2c5'>place.</font>"
-                    textFormat: Text.RichText
-                    color: "#eff5f2"; font.bold: true
-                    font.pixelSize: Math.max(44, Math.min(100, parent.width / 7))
-                    lineHeight: 0.95
+            Flickable {
+                id: deskScroller
+                function ensureVisible(item) {
+                    const top = item.mapToItem(contentItem, 0, 0).y
+                    if (top < contentY) contentY = Math.max(0, top)
+                    else if (top + item.height > contentY + height)
+                        contentY = Math.min(contentHeight - height, top + item.height - height)
                 }
-                Text { text: "Your tools are here. Your work is right where you left it."; color: "#9baea7"; font.pixelSize: 17; wrapMode: Text.Wrap; width: parent.width }
-                Rectangle {
-                    width: Math.min(parent.width, 590); height: 58; radius: 14
-                    color: "#171e1e"; border.color: "#38413f"
-                    Text { anchors.centerIn: parent; text: "⌕   Search installed apps   ·   Super K"; color: "#b8c7c1"; font.pixelSize: 16 }
-                    MouseArea { anchors.fill: parent; onClicked: { root.deskOpen = false; Quickshell.execDetached(["fuzzel"]) } }
-                }
-                Text { text: "PINNED SPACES"; color: "#91a59d"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
-                Text { text: "No pinned spaces yet"; color: "#80948b"; font.pixelSize: 14 }
-                Flow {
-                    width: parent.width
-                    spacing: 12
-                    Repeater {
-                        model: ["Apps", "Files", "Overview", "Return to work"]
-                        Rectangle {
-                            required property string modelData
-                            width: modelData === "Return to work" ? 145 : 100; height: 62; radius: 12
-                            color: "#171f1e"; border.color: "#34423d"
-                            Text { anchors.centerIn: parent; text: parent.modelData; color: "#d7e5df"; font.pixelSize: 14 }
-                            MouseArea {
-                                anchors.fill: parent
+                anchors.fill: parent
+                contentWidth: width
+                contentHeight: Math.max(height, deskContent.implicitHeight + 120)
+                boundsBehavior: Flickable.StopAtBounds
+                clip: true
+                Column {
+                    id: deskContent
+                    x: (parent.width - width) / 2
+                    y: Math.max(70, (parent.height - height) / 2)
+                    width: Math.max(200, Math.min(parent.width - 48, 910))
+                    spacing: 24
+                    Text { text: "●  FLOW / YOUR DESK"; color: "#a0d9c0"; font.bold: true; font.letterSpacing: 2; font.pixelSize: 13 }
+                    Text {
+                        text: "Everything<br>in its <font color='#9fe2c5'>place.</font>"
+                        textFormat: Text.RichText
+                        color: "#eff5f2"; font.bold: true
+                        font.pixelSize: Math.max(36, Math.min(100, parent.width / 7))
+                        lineHeight: 0.95
+                    }
+                    Text { text: "Your tools are here. Your work is right where you left it."; color: "#9baea7"; font.pixelSize: 17; wrapMode: Text.Wrap; width: parent.width }
+                    FlowButton {
+                        id: searchButton
+                        onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(searchButton)
+                        width: Math.min(parent.width, 590)
+                        text: "⌕   Search installed apps   ·   Super K"
+                        onClicked: root.openApps()
+                    }
+                    Text { text: "PINNED SPACES"; color: "#91a59d"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
+                    Text { text: "Pinned spaces are coming soon"; color: "#80948b"; font.pixelSize: 14 }
+                    Flow {
+                        width: parent.width
+                        spacing: 12
+                        Repeater {
+                            model: ["Apps", "Files", "Overview", "Return to work"]
+                            FlowButton {
+                                id: toolButton
+                                required property string modelData
+                                onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(toolButton)
+                                width: modelData === "Return to work" ? 145 : 100
+                                text: modelData
                                 onClicked: {
                                     root.deskOpen = false
-                                    if (modelData === "Apps") Quickshell.execDetached(["fuzzel"])
+                                    if (modelData === "Apps") root.openApps()
                                     else if (modelData === "Files") Quickshell.execDetached(["nautilus"])
                                     else if (modelData === "Overview") Quickshell.execDetached(["niri", "msg", "action", "open-overview"])
                                 }
                             }
                         }
                     }
+                    Text { text: "Tab to navigate · Esc or Super H to return"; color: "#788d84"; font.pixelSize: 12 }
                 }
-                Text { text: "Esc or Super H to return to your work"; color: "#788d84"; font.pixelSize: 12 }
             }
         }
     }
@@ -100,7 +139,7 @@ ShellRoot {
                 Text { text: "●  FLOW"; color: "#b8ddcb"; font.bold: true; anchors.verticalCenter: parent.verticalCenter
                     MouseArea { anchors.fill: parent; onClicked: root.toggleDesk() } }
                 Text { text: "Apps"; color: "#ecf2f0"; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter
-                    MouseArea { anchors.fill: parent; onClicked: { root.deskOpen = false; Quickshell.execDetached(["fuzzel"]) } } }
+                    MouseArea { anchors.fill: parent; onClicked: root.openApps() } }
                 Text { text: Qt.formatTime(clock.date, "hh:mm"); color: "#ecf2f0"; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter }
             }
         }

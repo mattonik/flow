@@ -11,4 +11,8 @@ The prototype includes many future features; none are implemented merely because
 
 ## v0.9 VM check (2026-11-11)
 
-On the existing ARM64 UTM/NixOS guest, the updated system configuration built and activated, `niri validate` accepted the generated configuration, and Quickshell loaded the installed QML. The Desk was displayed through Quickshell IPC; two Foot windows and a Nautilus window remained visible to Niri IPC after changing views. This is a smoke test, not a complete interaction or accessibility test. Keyboard shortcuts, pointer controls, touch, small displays, session restart and animation still need end-to-end verification. Desk controls are currently pointer-oriented; keyboard navigation within the Desk is not implemented.
+On the existing ARM64 UTM/NixOS guest, the updated system configuration built and activated, `niri validate` accepted the generated configuration, and Quickshell loaded the installed QML. The Desk was displayed through Quickshell IPC; two Foot windows and a Nautilus window remained visible to Niri IPC after changing views. This is a smoke test, not a complete interaction or accessibility test. Keyboard shortcuts, pointer controls, touch, small displays, session restart and animation still need end-to-end verification. An initial keyboard navigation path has since been added; full accessibility and touch coverage remain open.
+
+## Desk interaction check (2026-11-11)
+
+In the UTM guest, Tab showed the focus ring on a Desk control and Enter activated the Files button. Calling the app-search action while Desk was open hid Desk and displayed Fuzzel. The content can scroll on shorter screens, but portrait, touch and screen-reader behavior still need testing. Pin identity needs to handle duplicate application windows and compositor restarts before it can provide the persistent, ordered spaces described in the brief.

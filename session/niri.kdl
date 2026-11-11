@@ -11,7 +11,7 @@ layout {
 spawn-at-startup "@shell@" "-p" "@shellConfig@"
 
 binds {
-    Super+K { spawn "@launcher@"; }
+    Super+K { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "apps"; }
     Super+Return { spawn "@terminal@"; }
     Super+L { spawn "@lock@"; }
     Super+Left { focus-column-left; }
