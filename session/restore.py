@@ -2,6 +2,7 @@
 """Explicit, best-effort recovery of one Flow workspace."""
 import json
 import os
+from collections import Counter
 from pathlib import Path
 import subprocess
 import sys
@@ -14,17 +15,17 @@ def state_path():
     return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "flow" / "session.json"
 
 
-def save(path, workspace, windows):
+def save(path, workspace, windows, session=None):
     current = [w for w in windows if w.get("workspace_id") == workspace["id"]]
     current.sort(key=lambda w: w.get("layout", {}).get("pos_in_scrolling_layout") or [99999, 0])
-    entries = [{"app_id": w.get("app_id"), "label": w.get("title") or w.get("app_id") or "Unknown application",
+    entries = [{"app_id": w.get("app_id"), "window_id": w["id"], "label": w.get("title") or w.get("app_id") or "Unknown application",
                 "focused": w["id"] == workspace.get("active_window_id"),
                 "column": ((w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0]
                            if not w.get("is_floating") else None)} for w in current]
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as tmp:
         try:
-            json.dump({"version": 1, "windows": entries}, tmp, ensure_ascii=False)
+            json.dump({"version": 1, "session": session, "windows": entries}, tmp, ensure_ascii=False)
             tmp.flush()
             os.fsync(tmp.fileno())
             os.replace(tmp.name, path)
@@ -34,13 +35,15 @@ def save(path, workspace, windows):
     return len(entries)
 
 
-def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=time.sleep, pinned=()):
+def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=time.sleep, pinned=(), session=None):
     if data.get("version") != 1 or not isinstance(data.get("windows"), list):
         raise ValueError("Unsupported or invalid saved session")
     entries = data["windows"]
     if any(not isinstance(e, dict) or not isinstance(e.get("app_id"), (str, type(None))) for e in entries):
         raise ValueError("Saved session includes a window without an application ID")
     ids = [e["app_id"] for e in entries]
+    app_counts = Counter(ids)
+    window_ids = Counter(e.get("window_id") for e in entries if isinstance(e.get("window_id"), int))
     columns = {}
     for entry in entries:
         column = entry.get("column")
@@ -50,15 +53,20 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
     group_ids = {id(entry) for group in groups for entry in group}
     report, restored = [], []
     original = workspace.get("active_window_id")
+    same_session = bool(session and data.get("session") == session)
     for entry in entries:
         app_id = entry["app_id"]
         if not app_id:
             report.append("Unknown application: reopen manually")
             continue
-        if ids.count(app_id) != 1:
+        window_id = entry.get("window_id")
+        exact = [w for w in windows if same_session and isinstance(window_id, int) and not isinstance(window_id, bool)
+                 and window_ids[window_id] == 1
+                 and w.get("id") == window_id and w.get("app_id") == app_id]
+        if app_counts[app_id] != 1 and len(exact) != 1:
             report.append(f"{app_id}: multiple saved windows require manual recovery")
             continue
-        matches = [w for w in windows if w.get("app_id") == app_id]
+        matches = exact or [w for w in windows if w.get("app_id") == app_id]
         if len(matches) > 1:
             report.append(f"{app_id}: multiple running windows require manual recovery")
             continue
@@ -95,7 +103,7 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 action("action", "move-column-to-index", index)
         for group in groups:
             group_apps = [entry["app_id"] for entry in group]
-            if len(group) != 2 or any(not app or ids.count(app) != 1 or app in pinned for app in group_apps):
+            if len(group) != 2 or any(not app or app_counts[app] != 1 or app in pinned for app in group_apps):
                 report.append("Group requires manual recovery (ambiguous, pinned, or more than two apps)")
                 continue
             workspace, live = get_snapshot()
@@ -148,7 +156,7 @@ def main():
         return
     workspace, windows = spaces.snapshot()
     if op == "save":
-        count = save(path, workspace, windows)
+        count = save(path, workspace, windows, spaces.session_id())
         print(json.dumps({"message": f"Saved {count} open windows. Save documents in each app before restarting."}))
     elif op == "restore":
         data = json.loads(path.read_text())
@@ -159,7 +167,7 @@ def main():
             raise ValueError("Invalid pinned spaces; recovery was not started")
         report, count = restore(data, workspace, windows, dirs,
                                 lambda desktop: subprocess.run(["gio", "launch", str(desktop)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL),
-                                spaces.snapshot, spaces.command, pinned={pin["app_id"] for pin in pins})
+                                spaces.snapshot, spaces.command, pinned={pin["app_id"] for pin in pins}, session=spaces.session_id())
         print(json.dumps({"message": f"Restored {count} windows." + (" " + "; ".join(report) if report else "")}))
     else:
         raise ValueError("Unknown recovery action")

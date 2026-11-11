@@ -27,6 +27,12 @@ def snapshot():
     return workspace, windows
 
 
+def session_id():
+    socket_path = os.environ.get("NIRI_SOCKET", "")
+    stat = os.stat(socket_path)
+    return f"{Path('/proc/sys/kernel/random/boot_id').read_text().strip()}:{socket_path}:{stat.st_ino}:{stat.st_ctime_ns}"
+
+
 def desktop_file(app_id, dirs):
     # Match only an exact desktop ID; never interpret window titles as commands.
     if not app_id or "/" in app_id or app_id in (".", ".."):
@@ -180,8 +186,7 @@ def main():
             raise ValueError("Invalid saved spaces; state was not changed")
         workspace, windows = snapshot()
         before = json.dumps(pins, sort_keys=True)
-        socket_path = os.environ.get("NIRI_SOCKET", "")
-        socket = f"{Path('/proc/sys/kernel/random/boot_id').read_text().strip()}:{os.stat(socket_path).st_ino}"
+        socket = session_id()
         for pin in pins:
             window = resolve(pin, windows, socket)
             if window and (pin.get("session") != socket or pin.get("window_id") != window["id"]):

@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -78,6 +79,13 @@ class SpacesTest(unittest.TestCase):
         self.assertEqual(spaces.resolve(pin, self.windows, "session")["id"], 1)
         self.windows.append(window(3, "terminal", 3))
         self.assertIsNone(spaces.resolve(pin, self.windows, "session"))
+
+    def test_session_id_changes_when_socket_inode_is_reused(self):
+        with patch.dict(spaces.os.environ, {"NIRI_SOCKET": "/tmp/niri.sock"}), \
+             patch.object(Path, "read_text", return_value="boot-id\n"), \
+             patch.object(spaces.os, "stat", side_effect=[SimpleNamespace(st_ino=7, st_ctime_ns=10),
+                                                           SimpleNamespace(st_ino=7, st_ctime_ns=11)]):
+            self.assertNotEqual(spaces.session_id(), spaces.session_id())
 
     @patch.object(spaces, "command")
     @patch.object(spaces.time, "sleep")

@@ -21,11 +21,12 @@ class RecoveryTest(unittest.TestCase):
     def test_snapshot_order_and_focus(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.json"
-            restore.save(path, {"id": 1, "active_window_id": 2}, [window(2, "two", 2), window(1, "one", 1)])
+            restore.save(path, {"id": 1, "active_window_id": 2}, [window(2, "two", 2), window(1, "one", 1)], "session")
             saved = json.loads(path.read_text())
             self.assertEqual([e["app_id"] for e in saved["windows"]], ["one", "two"])
             self.assertTrue(saved["windows"][1]["focused"])
             self.assertEqual([e["column"] for e in saved["windows"]], [1, 2])
+            self.assertEqual((saved["session"], [e["window_id"] for e in saved["windows"]]), ("session", [1, 2]))
 
     def test_existing_window_is_focused_without_relaunch(self):
         launch, action = Mock(), Mock()
@@ -43,6 +44,36 @@ class RecoveryTest(unittest.TestCase):
         self.assertEqual(count, 0)
         self.assertEqual(len(report), 3)
         launch.assert_not_called()
+
+    def test_duplicate_windows_resolve_only_in_the_original_session(self):
+        saved = {"version": 1, "session": "old", "windows": [
+            {"app_id": "term", "window_id": 2, "focused": True},
+            {"app_id": "term", "window_id": 1}]}
+        windows = [window(1, "term", 1), window(2, "term", 2)]
+        ws = {"id": 1, "active_window_id": 1}
+        launch, action = Mock(), Mock()
+        report, count = restore.restore(saved, ws, windows, [], launch, Mock(), action, session="old")
+        self.assertEqual((report, count), ([], 2))
+        action.assert_any_call("action", "focus-window", "--id", 2)
+        action.assert_any_call("action", "focus-window", "--id", 1)
+        action.assert_called_with("action", "focus-window", "--id", 2)
+        report, count = restore.restore(saved, ws, windows, [], launch, Mock(), Mock(), session="new")
+        self.assertEqual((len(report), count), (2, 0))
+        launch.assert_not_called()
+
+    def test_missing_duplicate_is_never_relaunched(self):
+        saved = {"version": 1, "session": "old", "windows": [
+            {"app_id": "term", "window_id": 1}, {"app_id": "term", "window_id": 2}]}
+        launch = Mock()
+        report, count = restore.restore(saved, {"id": 1}, [window(1, "term", 1)], [], launch, Mock(), Mock(), session="old")
+        self.assertEqual((len(report), count), (1, 1))
+        launch.assert_not_called()
+
+    def test_reused_saved_id_does_not_match_two_entries_to_one_window(self):
+        saved = {"version": 1, "session": "old", "windows": [
+            {"app_id": "term", "window_id": 1}, {"app_id": "term", "window_id": 1}]}
+        report, count = restore.restore(saved, {"id": 1}, [window(1, "term", 1)], [], Mock(), Mock(), Mock(), session="old")
+        self.assertEqual((len(report), count), (2, 0))
 
     def test_restores_saved_group_for_adjacent_unique_windows(self):
         ws = {"id": 1, "active_window_id": 2}

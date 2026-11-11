@@ -98,3 +98,7 @@ The shell refreshes spaces after relevant Niri events, coalescing bursts and ret
 ## Logout, sign-in and reboot retest (2026-11-11)
 
 On the ARM64 guest, Niri's logout confirmation returned to SDDM, and signing back in started Flow. Desk recovery reopened Nautilus, KWrite, Kate and Foot, retaining the pinned Nautilus position, KWrite/Kate stack and selected Kate window. A subsequent warm reboot again hung on a black screen with QEMU using high host CPU. After a forced stop and cold start, Desk recovery reopened all four windows again. The previous snapshot was backed up before the test. After installing the startup overlay change, another logout and login started Flow without the hotkey overlay, and Super+Shift+/ opened it on demand. Warm reboot reliability remains unresolved.
+
+## Session-scoped window identities (2026-11-11)
+
+New snapshots record window IDs and the compositor session identity. Recovery can reorder and focus multiple still-open windows of one app only while that identity matches; after a compositor restart it still reports duplicates for manual recovery. Existing snapshots remain readable. An isolated ARM64 guest test matched two real Foot windows in the current session and refused to match them with a different session identity. This does not recover closed duplicate windows, terminal processes or documents.
