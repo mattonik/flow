@@ -10,13 +10,25 @@ def niri(what):
     return json.loads(subprocess.check_output(["niri", "msg", "-j", what], text=True))
 
 
+def app_name(app_id, title):
+    if app_id:
+        try:
+            from gi.repository import GioUnix
+            desktop = GioUnix.DesktopAppInfo.new(app_id if app_id.endswith(".desktop") else app_id + ".desktop")
+            if desktop and desktop.get_display_name():
+                return desktop.get_display_name()
+        except (ImportError, ValueError):
+            pass
+    return app_id or title or "Application"
+
+
 def active_window(identity_only=False):
     workspace = next((w for w in niri("workspaces") if w["is_focused"]), None)
     windows = niri("windows")
     active = next((w for w in windows if workspace and w["id"] == workspace.get("active_window_id")), None)
     if not active:
         return None
-    result = {"id": active["id"], "name": active.get("app_id") or active.get("title") or "Application", "menus": []}
+    result = {"id": active["id"], "name": app_name(active.get("app_id"), active.get("title")), "menus": []}
     if identity_only:
         return result
     import pyatspi

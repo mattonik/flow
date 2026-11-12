@@ -118,3 +118,7 @@ Later session saves retain missing Group members as recovery entries, including 
 ## Desk and live overview for demos (2026-11-11)
 
 The Desk puts search, pins and tools ahead of settings; pin management and session recovery remain available on demand. The bottom switcher counts open spaces and links directly to Niri's live overview. On the ARM64 guest, the main Desk fit on screen, keyboard navigation reached session recovery, and the switcher's overview control opened the real application surfaces. The guest rebuild and 35 automated tests passed. Touch and small portrait displays remain unverified.
+
+## Application names in the menu (2026-11-12)
+
+The experimental app menu now uses installed desktop-entry names when available, falling back to the app ID or window title. On the ARM64 guest the menu button displayed Kate instead of its desktop ID, and Kate's exposed commands remained available. The guest rebuild and 36 automated tests passed; app naming and menus still depend on application metadata and accessibility support.
