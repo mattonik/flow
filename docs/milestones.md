@@ -126,3 +126,7 @@ The experimental app menu now uses installed desktop-entry names when available,
 ## Overview appearance (2026-11-12)
 
 Niri's live overview now uses the same dark backdrop as the Flow Desk. The generated configuration validated, the guest system rebuilt, and the active overview showed the updated backdrop around real application windows.
+
+## Contextual menu focus safety (2026-11-12)
+
+When Niri reports a different focused window or the menu's window closes, an open application menu keeps its existing context and disables commands until dismissed. The backend rejects invocation if its saved window is no longer active. The ARM64 UTM guest built and activated the updated NixOS configuration, and 37 local Python tests passed including a focus-mismatch guard. An interactive real-window test remains open: the guest's SDDM greeter displayed only its background after startup, so no session was signed in for this test.

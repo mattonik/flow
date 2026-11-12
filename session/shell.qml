@@ -58,6 +58,13 @@ ShellRoot {
         audioControl.running = true
     }
     property bool appMenuOpen: false
+    property bool appMenuFocusChanged: false
+    onAppMenuOpenChanged: {
+        if (!appMenuOpen && appMenuFocusChanged) {
+            appMenu = null
+            appMenuFocusChanged = false
+        }
+    }
     property bool overviewOpen: false
     property var appMenu: null
     property string appMenuError: ""
@@ -87,7 +94,11 @@ ShellRoot {
             onStreamFinished: {
                 try {
                     const result = JSON.parse(this.text)
-                    if (result && result.error) { root.appMenu = null; root.openMenuWhenReady = false; root.appMenuError = result.error; return }
+                    if (result && result.error) {
+                        if (root.appMenuOpen) root.appMenuFocusChanged = true
+                        else root.appMenu = null
+                        root.openMenuWhenReady = false; root.appMenuError = result.error; return
+                    }
                     if (appMenuProcess.command.length === 1 && (!root.openMenuWhenReady || !root.appMenu || !result || root.appMenu.id !== result.id)) {
                         root.openMenuWhenReady = false
                         return
@@ -121,8 +132,13 @@ ShellRoot {
                         event.WindowsChanged || event.WindowOpenedOrChanged || event.WindowClosed ||
                         event.WindowFocusChanged || event.WindowLayoutsChanged) refreshAfterEvent.restart()
                     if (event.WindowFocusChanged && event.WindowFocusChanged.id !== null && root.appMenu && root.appMenu.id !== event.WindowFocusChanged.id) {
-                        root.appMenu = null
-                        root.appMenuOpen = false
+                        if (root.appMenuOpen) root.appMenuFocusChanged = true
+                        else root.appMenu = null
+                        root.openMenuWhenReady = false
+                    }
+                    if (event.WindowClosed && root.appMenu && root.appMenu.id === event.WindowClosed.id) {
+                        if (root.appMenuOpen) root.appMenuFocusChanged = true
+                        else root.appMenu = null
                         root.openMenuWhenReady = false
                     }
                     if (event.OverviewOpenedOrClosed) {
@@ -555,6 +571,7 @@ ShellRoot {
                         id: menuColumn; width: parent.width; spacing: 8
                         Text { text: root.appMenu ? root.appMenu.name : "Application"; color: "#edf5f0"; font.bold: true; font.pixelSize: 18 }
                         Text { visible: root.appMenuError !== ""; text: root.appMenuError; color: "#f1baaa"; width: parent.width; wrapMode: Text.Wrap }
+                        Text { visible: root.appMenuFocusChanged; text: "Application focus changed. Close this menu to update it."; color: "#f1baaa"; width: parent.width; wrapMode: Text.Wrap }
                         Text {
                             visible: !root.appMenu || root.currentAppItems().length === 0
                             text: "No exposed app commands. Use the application's own menu."
@@ -572,7 +589,7 @@ ShellRoot {
                                 required property int index
                                 width: menuColumn.width
                                 text: modelData.label + (modelData.children ? "   ›" : "")
-                                enabled: modelData.enabled && !appMenuProcess.running
+                                enabled: modelData.enabled && !appMenuProcess.running && !root.appMenuFocusChanged
                                 onClicked: {
                                     if (modelData.children) root.appMenuPath = root.appMenuPath.concat([index])
                                     else {

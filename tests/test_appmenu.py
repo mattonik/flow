@@ -43,6 +43,13 @@ class AppMenuTest(unittest.TestCase):
         menu[0]["enabled"] = False
         self.assertFalse(appmenu.find_action(menu, [0, 1], "New"))
 
+    @patch.object(appmenu, "active_window", return_value={"id": 8, "name": "Other", "menus": []})
+    @patch.object(appmenu.subprocess, "check_output", return_value="b true")
+    @patch.object(sys, "argv", ["flow-appmenu", "activate", "7", "[0, 1]", "New"])
+    def test_command_is_rejected_when_focus_moves_to_another_window(self, _status, _active):
+        with self.assertRaisesRegex(ValueError, "focus changed"):
+            appmenu.main()
+
 
 if __name__ == "__main__":
     unittest.main()
