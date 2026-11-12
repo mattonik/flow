@@ -1,8 +1,8 @@
 # Flow
 
-Flow is an experimental, multiplatform Linux session. The authoritative requirements are in [the unmodified v1.0 product brief](docs/Flow_product_brief_v1.0.md); [the v1.0 HTML prototype](docs/Flow_v1.0_Contextual_Menus.html) is a design reference, not a native implementation. iPad enablement is a separate project.
+Flow is an experimental, multiplatform Linux session. Product intent is in [the unmodified v1.1 master specification](docs/Flow_MASTER_SPEC_v1.1.md), with [contextual menu direction](docs/Flow_contextual_menus_groups.md). The [v1.0 product brief](docs/Flow_product_brief_v1.0.md) is retained, and the [v1.0 HTML prototype](docs/Flow_v1.0_Contextual_Menus.html) is a design reference, not a native implementation. iPad enablement is a separate project.
 
-**Status: foundation only, not a working MVP.** A single-display ARM64 UTM guest has run the Niri session, Quickshell island, app launcher and two terminal windows; see [graphics validation](docs/graphics-validation.md). Pinned spaces are an experimental single-display implementation; other MVP requirements remain incomplete. See [milestones](docs/milestones.md).
+**Status: foundation only, not a working MVP.** A single-display ARM64 UTM guest has run the Niri session, Quickshell island, app launcher and two terminal windows; see [graphics validation](docs/graphics-validation.md). Pinned spaces are an experimental single-display implementation; other MVP requirements remain incomplete. See the [acceptance status](docs/IMPLEMENTATION_STATUS.md) and [milestones](docs/milestones.md).
 
 For a short walkthrough using real applications, see [Recording a Flow demo](docs/demo.md).
 
