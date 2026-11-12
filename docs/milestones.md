@@ -122,3 +122,7 @@ The Desk puts search, pins and tools ahead of settings; pin management and sessi
 ## Application names in the menu (2026-11-12)
 
 The experimental app menu now uses installed desktop-entry names when available, falling back to the app ID or window title. On the ARM64 guest the menu button displayed Kate instead of its desktop ID, and Kate's exposed commands remained available. The guest rebuild and 36 automated tests passed; app naming and menus still depend on application metadata and accessibility support.
+
+## Overview appearance (2026-11-12)
+
+Niri's live overview now uses the same dark backdrop as the Flow Desk. The generated configuration validated, the guest system rebuilt, and the active overview showed the updated backdrop around real application windows.
