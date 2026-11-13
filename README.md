@@ -30,7 +30,7 @@ Within the same compositor session, recovery can identify multiple still-open wi
 
 ## Experimental application menu
 
-Open the Desk with `Super+H`, choose **Settings**, and enable **Experimental application menu**. The preference is off by default and saved per user in `$XDG_CONFIG_HOME/flow-settings.ini` (normally `~/.config/flow-settings.ini`). With a work window focused, use the top-left app button or `Super+M` to open its commands. Navigate with Tab and Enter or Space; Escape closes the menu. The switch has been enabled in the current test VM for evaluation.
+Open the Desk with `Super+H`, choose **Settings**, and enable **Experimental application menu**. The preference is off by default and saved per user in `$XDG_CONFIG_HOME/flow-settings.ini` (normally `~/.config/flow-settings.ini`). With a work window focused, use the top-left app button or `Super+M` to open its commands. Navigate with Tab and Enter or Space; Escape closes the menu.
 
 Flow reads and invokes the focused application's exposed AT-SPI accessibility menu. It enables the user session's accessibility status when first used and leaves it enabled when the switch is turned off so other accessibility tools are not disrupted. Applications that do not expose a compatible menu show a fallback; their own menus remain available. Multiple windows sharing an application process are treated as ambiguous and also fall back. Menu coverage and responsiveness depend on the application; keyboard shortcut labels, checked states, desktop menu-bar layout and command search are not yet implemented. This experiment has been exercised with Kate, not every app toolkit.
 
