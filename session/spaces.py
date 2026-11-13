@@ -185,7 +185,9 @@ def display_spaces(workspace, windows, groups=()):
     for _, members in columns:
         selected = next((w for w in members if w["active"]), members[0])
         app_ids = [w["app_id"] for w in members]
-        matches = [g for g in groups if g["members"] == app_ids and all(counts.get(a) == 1 for a in app_ids)]
+        matches = [g for g in groups if len(app_ids) == 2 and len(set(app_ids)) == 2
+                   and len(g["members"]) == 2 and len(set(g["members"])) == 2
+                   and set(g["members"]) == set(app_ids) and all(counts.get(a) == 1 for a in app_ids)]
         group = matches[0] if len(matches) == 1 else None
         result.append({"id": selected["id"], "label": group["label"] if group else " + ".join(w["label"] for w in members),
                        "group_id": group["id"] if group else None,

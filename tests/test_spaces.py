@@ -52,10 +52,24 @@ class SpacesTest(unittest.TestCase):
         groups = [{"id": "group-1", "label": "Work", "members": ["terminal", "files"]}]
         shown = spaces.display_spaces(self.ws, self.windows, groups)[0]
         self.assertEqual((shown["group_id"], shown["label"]), ("group-1", "Work"))
+        self.windows[0]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 1]
+        shown = spaces.display_spaces(self.ws, self.windows, groups)[0]
+        self.assertEqual((shown["group_id"], shown["label"]), ("group-1", "Work"))
         self.windows.append(window(3, "terminal", 2))
         shown = spaces.display_spaces(self.ws, self.windows, groups)[0]
         self.assertIsNone(shown["group_id"])
         self.assertNotEqual(shown["label"], "Work")
+
+    def test_duplicate_saved_groups_make_membership_ambiguous(self):
+        self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        groups = [
+            {"id": "group-1", "label": "Work", "members": ["terminal", "files"]},
+            {"id": "group-2", "label": "Other", "members": ["files", "terminal"]},
+        ]
+        shown = spaces.display_spaces(self.ws, self.windows, groups)[0]
+        self.assertIsNone(shown["group_id"])
+        self.assertNotIn(shown["label"], {"Work", "Other"})
 
     @patch.object(spaces, "command")
     def test_stack_and_separate_two_unpinned_windows(self, command):
