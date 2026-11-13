@@ -1,0 +1,22 @@
+# ADR 0003: Reuse Quickshell's NetworkManager service
+
+Status: proposed; read-only startup probe passed in the ARM64 Flow guest, but no network controls or recovery behavior are accepted yet.
+
+**User journey:** see current connectivity in Quick Settings, inspect available connection state, and eventually connect or disconnect without leaving the shell; keep status updates in sync with NetworkManager.
+
+| Option | NixOS and Quickshell | Touch | Security and limits | Decision |
+|---|---|---|---|---|
+| Quickshell 0.3.2 `Quickshell.Networking` ([API](https://quickshell.org/docs/v0.3.2/types/Quickshell.Networking/Networking/)) | Pinned Quickshell provides a NetworkManager backend with reactive devices, connectivity, Wi-Fi state, and connection methods | Can use Flow's existing controls; real touch still untested | Uses the current user's NetworkManager session; connection secrets and auth need careful handling | Preferred; probe before replacing status polling |
+| `nmcli` subprocess polling | Already packaged and currently used by `shell.qml` for connectivity only | Existing display | Repeated subprocess, parsed status only; keep for diagnostics/fallback | Retain until API and UI equivalence are verified |
+| Pond Wi-Fi integration ([source](https://github.com/bflycomputer/pond-interface/blob/9277356200ac02c5367587bc7b68a079cb2574e7/shell/wifi/State.qml)) | BSD-3-Clause source reference; depends on Pond's broader shell and its `/usr/bin/nmcli` assumptions | Source demonstrates a mature workflow, not Flow touch validation | Do not import its distro paths or panel wholesale | Reference only |
+| Omarchy network panel ([plugin catalog](https://github.com/omacom/omarchy/blob/quattro/shell/plugins/README.md)) | Uses Quickshell networking in a shared plugin shell; Omarchy is Arch/Hyprland | UX reference only | In-process plugins are trusted code, not sandboxes | Reuse service pattern, not shell implementation |
+
+The NixOS module currently installs the NetworkManager package but does not itself enable `services.networkmanager`; package presence does not prove the daemon or Quickshell backend is available. Keep NixOS/Niri/Quickshell. Do not add another daemon or an app-specific networking stack. The probe at `tests/network-probe.qml` only reads backend, connectivity, device type, and connection state; it does not scan, connect, disconnect, print SSIDs/MAC addresses, or read secrets.
+
+**Integration recommendation:** `Networking` is Quickshell's singleton; `Network` is the per-connection type. Read `Networking.devices.values`, `Networking.connectivity`, `device.type`, and `device.state` directly for shell presentation. Use `Networking.wifiEnabled` only for an explicit user toggle and device/network `connect()`/`disconnect()` only after an interactive confirmation/authentication design exists. Do not poll `nmcli` every four seconds for the same status once equivalent updates are proven. Keep connectivity distinct from link state: captive portal checks can require distro configuration, and `Networking.checkConnectivity()` should only be called after portal authentication to refresh it.
+
+**Evidence:** `tests/network-probe.qml` passed in the ARM64 NixOS/Niri guest on the pinned Quickshell 0.3.2 build. After a 3-second warmup it reported the NetworkManager backend, Full connectivity, and two connected wired devices. The probe only reads state and emits device type/state; it neither mutates settings nor prints device identifiers. This establishes API availability and an initial state read only.
+
+**Validation still required before adoption:** compare connection changes initiated externally, offline/limited/portal states, device removal/re-add and NetworkManager restart. The Quickshell 0.3.2 changelog specifically includes a fix for state recovery after NetworkManager restart. Then check keyboard focus, touch targets, portrait layout, polkit/secret prompts, and that no credentials enter logs. Until those checks pass, keep the current `nmcli` status path and label this integration a candidate rather than implemented.
+
+**Sources:** [Quickshell Networking 0.3.2](https://quickshell.org/docs/v0.3.2/types/Quickshell.Networking/Networking/), [Network and Wi-Fi device APIs](https://quickshell.org/docs/v0.3.2/types/Quickshell.Networking/Network/), [NetworkManager restart fix in 0.3.2](https://quickshell.org/changelog/), [Pond engineering](https://www.butterfly.so/pond/engineering).
