@@ -493,6 +493,20 @@ ShellRoot {
                     FlowButton { width: 160; implicitHeight: 38; text: "Stack with next"; onClicked: root.spaceAction("stack") }
                     FlowButton { width: 160; implicitHeight: 38; text: "Separate stack"; onClicked: root.spaceAction("unstack") }
                     FlowButton { width: 130; implicitHeight: 38; text: "Live overview"; onClicked: { root.switcherOpen = false; Quickshell.execDetached(["niri", "msg", "action", "open-overview"]) } }
+                    Row {
+                        visible: spaceScroller.contentWidth > spaceScroller.width
+                        spacing: 6
+                        FlowButton {
+                            width: 44; implicitHeight: 44; text: "‹"; Accessible.name: "Show earlier spaces"
+                            enabled: spaceScroller.contentX > 0; opacity: enabled ? 1 : 0.4
+                            onClicked: spaceScroller.contentX = Math.max(0, spaceScroller.contentX - spaceScroller.width * 0.8)
+                        }
+                        FlowButton {
+                            width: 44; implicitHeight: 44; text: "›"; Accessible.name: "Show later spaces"
+                            enabled: spaceScroller.contentX < spaceScroller.contentWidth - spaceScroller.width; opacity: enabled ? 1 : 0.4
+                            onClicked: spaceScroller.contentX = Math.min(spaceScroller.contentWidth - spaceScroller.width, spaceScroller.contentX + spaceScroller.width * 0.8)
+                        }
+                    }
                     Text { text: root.spacesError; color: "#f1baaa" }
                 }
                 Text { visible: root.displaySpaces.length === 0; text: "No open spaces"; color: "#91a59d" }

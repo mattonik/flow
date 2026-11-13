@@ -144,3 +144,8 @@ Flow settings and quick settings are discoverable in search. The guest configura
 ## Keyboard navigation in the bottom switcher (2026-11-13)
 
 The bottom switcher scrolls horizontally to keep the focused space, Group member or Group control visible. The ARM64 VM build succeeded; with ten real windows open, tabbing beyond the initially visible cards scrolled to the focused card. Temporary test windows were closed afterwards. Group controls and touch scrolling still need interactive verification.
+
+
+## Switcher overflow controls (2026-11-13)
+
+The bottom switcher shows earlier and later page buttons when its space list overflows. The ARM64 VM build activated and the shell accepted the switcher command. The host locked before the new buttons could be exercised visually; mouse, touch and keyboard interaction still need a live check.
