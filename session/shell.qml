@@ -421,9 +421,9 @@ ShellRoot {
                                     Accessible.name: (modelData.available ? "Focus " : modelData.kind === "group" ? "Unavailable Group " : "Open ") + modelData.label
                                     onClicked: root.spaceAction("focus", modelData.id)
                                 }
-                                FlowButton { visible: root.editPins; width: 42; text: "‹"; Accessible.name: "Move " + modelData.label + " left"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("left", modelData.id) }
-                                FlowButton { visible: root.editPins; width: 42; text: "›"; Accessible.name: "Move " + modelData.label + " right"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("right", modelData.id) }
-                                FlowButton { visible: root.editPins; width: 42; text: "×"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; Accessible.name: "Unpin " + modelData.label; onClicked: root.spaceAction("unpin", modelData.id) }
+                                FlowButton { visible: root.editPins; width: 44; text: "‹"; Accessible.name: "Move " + modelData.label + " left"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("left", modelData.id) }
+                                FlowButton { visible: root.editPins; width: 44; text: "›"; Accessible.name: "Move " + modelData.label + " right"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("right", modelData.id) }
+                                FlowButton { visible: root.editPins; width: 44; text: "×"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; Accessible.name: "Unpin " + modelData.label; onClicked: root.spaceAction("unpin", modelData.id) }
                             }
                         }
                     }
@@ -505,7 +505,7 @@ ShellRoot {
     PanelWindow {
         visible: root.switcherOpen
         anchors { bottom: true; left: true; right: true }
-        implicitHeight: Math.min(screen.height - 16, (width < 500 ? 336 : 290) + (switcherSpacesError.visible ? switcherSpacesError.implicitHeight + 8 : 0)); color: "#101a18"; exclusionMode: ExclusionMode.Ignore
+        implicitHeight: Math.min(screen.height - 16, (width < 500 ? 350 : 300) + (switcherSpacesError.visible ? switcherSpacesError.implicitHeight + 8 : 0)); color: "#101a18"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
         FocusScope {
@@ -520,9 +520,9 @@ ShellRoot {
                 }
                 Flow {
                     width: parent.width; spacing: 8
-                    FlowButton { width: 160; implicitHeight: 38; text: "Stack with next"; onClicked: root.spaceAction("stack") }
-                    FlowButton { width: 160; implicitHeight: 38; text: "Separate stack"; onClicked: root.spaceAction("unstack") }
-                    FlowButton { width: 130; implicitHeight: 38; text: "Live overview"; onClicked: { root.switcherOpen = false; Quickshell.execDetached(["niri", "msg", "action", "open-overview"]) } }
+                    FlowButton { width: 160; implicitHeight: 44; text: "Stack with next"; onClicked: root.spaceAction("stack") }
+                    FlowButton { width: 160; implicitHeight: 44; text: "Separate stack"; onClicked: root.spaceAction("unstack") }
+                    FlowButton { width: 130; implicitHeight: 44; text: "Live overview"; onClicked: { root.switcherOpen = false; Quickshell.execDetached(["niri", "msg", "action", "open-overview"]) } }
                     Row {
                         visible: spaceScroller.contentWidth > spaceScroller.width
                         spacing: 6
@@ -579,7 +579,7 @@ ShellRoot {
                                             id: memberButton
                                             required property var modelData
                                             onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberButton)
-                                            width: 132; implicitHeight: 36
+                                            width: 132; implicitHeight: 44
                                             text: (modelData.active ? "● " : "") + modelData.label.slice(0, 14)
                                             Accessible.name: "Focus " + modelData.label + " in group"
                                             onClicked: root.spaceAction("focus-window", String(modelData.id))

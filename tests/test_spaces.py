@@ -122,6 +122,32 @@ class SpacesTest(unittest.TestCase):
         self.assertIsNone(spaces.pin_window(pin, self.ws, self.windows, "session", [{"id": "group-1", "label": "Work",
                                                                                       "members": ["terminal", "other"]}]))
 
+    def test_reopened_group_member_rebinds_only_when_unambiguous(self):
+        pin = {"id": "group-pin", "group_id": "group-1", "label": "Work", "app_id": "terminal",
+               "members": ["terminal", "files"], "window_id": 1, "window_ids": [1, 2], "session": "session"}
+        groups = [{"id": "group-1", "label": "Work", "members": ["terminal", "files"]}]
+        windows = [window(1, "terminal", 1), window(9, "files", 1)]
+        windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        self.assertEqual([w["id"] for w in spaces.group_windows(pin, self.ws, windows, "session", groups)], [1, 9])
+        windows.append(window(10, "files", 2))
+        self.assertIsNone(spaces.group_windows(pin, self.ws, windows, "session", groups))
+
+    @patch.object(spaces, "command")
+    def test_group_pin_returns_to_last_focused_member_across_sessions(self, command):
+        self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        groups = [{"id": "group-1", "label": "Work", "members": ["terminal", "files"]}]
+        spaces.run(self.pins, "pin", None, self.ws, self.windows, "session", groups)
+        self.assertEqual(self.pins[0]["last_focused_app"], "files")
+        self.ws["active_window_id"] = 1
+        spaces.run(self.pins, "refresh", None, self.ws, self.windows, "session", groups)
+        self.assertEqual(self.pins[0]["last_focused_app"], "terminal")
+        windows = [window(10, "terminal", 1), window(20, "files", 1)]
+        windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        self.ws["active_window_id"] = None
+        command.reset_mock()
+        spaces.run(self.pins, "focus", self.pins[0]["id"], self.ws, windows, "new-session", groups)
+        command.assert_any_call("action", "focus-window", "--id", 10)
+
     @patch.object(spaces, "command")
     def test_unpin_removes_group_metadata_without_touching_windows(self, command):
         pin = {"id": "group-pin", "group_id": "group-1", "label": "Work", "app_id": "terminal",
@@ -181,6 +207,20 @@ class SpacesTest(unittest.TestCase):
             with self.subTest(groups=groups, window_count=len(windows)), self.assertRaisesRegex(ValueError, "saved two-app Group"):
                 spaces.run([], "group-view", None, self.ws, windows, "session", groups)
         command.assert_not_called()
+
+    @patch.object(spaces, "command")
+    def test_renamed_saved_group_updates_its_pinned_label(self, command):
+        group = {"id": "group-1", "label": "Studio", "members": ["terminal", "files"]}
+        pin = {"id": "group-pin", "group_id": "group-1", "label": "Work", "app_id": "terminal",
+               "members": ["terminal", "files"], "window_id": 1, "window_ids": [1, 2], "session": "session"}
+
+        result = spaces.run([pin], "refresh", None, self.ws, self.windows, "session", [group])
+
+        self.assertEqual(pin["label"], "Studio")
+        self.assertEqual(result[0]["label"], "Studio")
+        spaces.run([pin], "refresh", None, self.ws, self.windows, "session",
+                   [{**group, "label": "Other", "members": ["terminal", "other"]}])
+        self.assertEqual(pin["label"], "Studio")
 
     @patch.object(spaces, "command")
     def test_stack_and_separate_two_unpinned_windows(self, command):

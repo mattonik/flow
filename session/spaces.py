@@ -78,6 +78,8 @@ def group_windows(pin, workspace, windows, socket, groups=()):
                 for app, ident in zip(members, ids)]
     else:
         pair = []
+    if not pair or any(w is None for w in pair):
+        pair = []
         for app in members:
             matches = [w for w in windows if w.get("app_id") == app]
             pair.append(matches[0] if len(matches) == 1 else None)
@@ -97,7 +99,7 @@ def group_windows(pin, workspace, windows, socket, groups=()):
 def pin_window(pin, workspace, windows, socket, groups=()):
     if "members" in pin:
         pair = group_windows(pin, workspace, windows, socket, groups)
-        return pair[0] if pair else None
+        return next((w for w in pair if w["app_id"] == pin.get("last_focused_app")), pair[0]) if pair else None
     window = resolve(pin, windows, socket)
     return window if eligible(window, workspace, windows) else None
 
@@ -133,12 +135,25 @@ def pin_group(pins, group, workspace, windows, socket):
         raise ValueError("Saved Group is unavailable, ambiguous, or no longer one stack")
     if any(set(members) & set(p.get("members", [p.get("app_id")])) for p in pins):
         raise ValueError("A Group member is already pinned")
+    focused = next((w for w in pair if w["id"] == workspace.get("active_window_id")), pair[0])
     pins.append({"id": uuid.uuid4().hex, "label": group["label"], "app_id": members[0],
-                 "window_id": pair[0]["id"], "members": members, "window_ids": [w["id"] for w in pair],
+                 "window_id": focused["id"], "last_focused_app": focused["app_id"], "members": members, "window_ids": [w["id"] for w in pair],
                  "group_id": group["id"], "session": socket})
 
 
 def run(pins, op, arg, workspace, windows, socket, groups=()):
+    for pin in pins:
+        if "group_id" in pin:
+            matches = [group for group in groups if group.get("id") == pin["group_id"]]
+            members = pin.get("members")
+            if (len(matches) == 1 and isinstance(members, list) and len(members) == 2
+                    and all(isinstance(app, str) for app in members)
+                    and set(matches[0]["members"]) == set(members)):
+                pin["label"] = matches[0]["label"]
+            pair = group_windows(pin, workspace, windows, socket, groups)
+            focused = next((w for w in pair or [] if w["id"] == workspace.get("active_window_id")), None)
+            if focused:
+                pin["last_focused_app"] = focused["app_id"]
     if op == "pin":
         window = next((w for w in windows if w["id"] == workspace.get("active_window_id")), None)
         if not window:
