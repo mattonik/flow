@@ -154,3 +154,8 @@ The bottom switcher shows earlier and later page buttons when its space list ove
 ## Recent files in search (2026-11-13)
 
 Search can list readable, existing recent files under the current user's home using their local recent-file history, and opens the selected file with its default application. It skips non-local, missing and outside-home targets and limits work to a small recent list. The ARM64 VM build activated and the search tests passed in the guest. The guest had no recent-file history at the time, and the host was locked, so an end-to-end UI check remains open. This is not a full file index.
+
+
+## Switcher and recent-file search checks (2026-11-13)
+
+In the ARM64 VM, a ten-space switcher showed its paging controls; keyboard activation of the later-spaces control moved to the end and updated the arrows' enabled states. A temporary local document and isolated recent-file history appeared in search, and selecting the result opened its contents in Kate. Temporary test windows and files were removed. Reverse paging by mouse, touch and naturally populated recent-file history remain unverified.
