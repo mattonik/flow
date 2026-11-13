@@ -25,6 +25,36 @@ class FloeThemeTest(unittest.TestCase):
                 for fg in ("text-primary","text-secondary","text-muted"):
                     with self.subTest(mode=mode,surface=surface,text=fg):
                         self.assertGreaterEqual(contrast(p[surface]["$value"],p[fg]["$value"]),4.5)
+    def test_text_on_all_surfaces_meets_aa(self):
+        for mode in ("dark", "light"):
+            p = TOKENS["semantic"][mode]
+            for surface in ("canvas", "surface", "surface-raised", "surface-selected"):
+                for role in ("text-primary", "text-secondary", "text-muted",
+                             "danger", "warning", "success"):
+                    with self.subTest(mode=mode, surface=surface, role=role):
+                        self.assertGreaterEqual(contrast(p[surface]["$value"], p[role]["$value"]), 4.5)
+
+    def test_essential_nontext_states_meet_aa(self):
+        for mode in ("dark", "light"):
+            p = TOKENS["semantic"][mode]
+            for surface in ("canvas", "surface", "surface-raised", "surface-selected"):
+                for role in ("border", "border-strong", "focus", "accent"):
+                    with self.subTest(mode=mode, surface=surface, role=role):
+                        self.assertGreaterEqual(contrast(p[surface]["$value"], p[role]["$value"]), 3.0)
+
+    def test_filled_accent_button_text(self):
+        for mode in ("dark", "light"):
+            p = TOKENS["semantic"][mode]
+            self.assertGreaterEqual(contrast(p["accent"]["$value"], p["on-accent"]["$value"]), 4.5)
+
+    def test_international_font_policy(self):
+        families = TOKENS["typography"]["family"]
+        self.assertEqual(families["interface"]["$value"][0], "Noto Sans")
+        self.assertEqual(families["technical"]["$value"][0], "Noto Sans Mono")
+        self.assertIn("noto-fonts", NIX)
+        self.assertIn("noto-fonts-cjk-sans", NIX)
+        self.assertIn("noto-fonts-color-emoji", NIX)
+
     def test_qml_palette_matches_tokens(self):
         for mode in ("dark","light"):
             for role,entry in TOKENS["semantic"][mode].items():

@@ -88,7 +88,7 @@
       },
       "daylight-stroke": {
         "$type": "color",
-        "$value": "#78969A"
+        "$value": "#667F86"
       },
       "daylight-ink": {
         "$type": "color",
@@ -97,6 +97,14 @@
       "daylight-secondary": {
         "$type": "color",
         "$value": "#28584C"
+      },
+      "dark-functional-stroke": {
+        "$type": "color",
+        "$value": "#78969A"
+      },
+      "dark-muted-legible": {
+        "$type": "color",
+        "$value": "#9DB2B4"
       }
     }
   },
@@ -128,7 +136,7 @@
       },
       "text-muted": {
         "$type": "color",
-        "$value": "#8FA8AA"
+        "$value": "#9DB2B4"
       },
       "accent": {
         "$type": "color",
@@ -144,7 +152,7 @@
       },
       "border": {
         "$type": "color",
-        "$value": "#667F86"
+        "$value": "#78969A"
       },
       "border-strong": {
         "$type": "color",
@@ -210,7 +218,7 @@
       },
       "border": {
         "$type": "color",
-        "$value": "#78969A"
+        "$value": "#667F86"
       },
       "border-strong": {
         "$type": "color",
@@ -240,21 +248,21 @@
         "$type": "fontFamily",
         "$value": [
           "Manrope",
-          "Inter",
+          "Noto Sans",
           "sans-serif"
         ]
       },
       "interface": {
         "$type": "fontFamily",
         "$value": [
-          "Inter",
+          "Noto Sans",
           "sans-serif"
         ]
       },
       "technical": {
         "$type": "fontFamily",
         "$value": [
-          "IBM Plex Mono",
+          "Noto Sans Mono",
           "monospace"
         ]
       }
@@ -316,6 +324,14 @@
         "$type": "number",
         "$value": 1.5
       }
+    },
+    "fallbackPolicy": {
+      "ui": "Noto Sans is the preferred UI family. Fontconfig and Qt choose script-specific Noto fallback; no single font file has worldwide Unicode coverage.",
+      "cjk": "Install Noto Sans CJK, respecting language metadata for Simplified Chinese, Traditional Chinese, Japanese and Korean glyph variants.",
+      "complexScripts": "Test appropriate script-specific Noto fonts and shaping for Arabic, Hebrew, Indic scripts and Southeast Asian writing systems.",
+      "emoji": "Noto Color Emoji is available as system fallback; avoid using emoji alone for unlabeled controls.",
+      "bidirectional": "Test RTL UI mirroring and mixed-direction Arabic/Hebrew text; glyph coverage alone does not solve bidi layout.",
+      "licensing": "Review SIL OFL notices and font package contents before redistributing custom system images."
     }
   },
   "spacing": {

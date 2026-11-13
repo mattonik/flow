@@ -61,13 +61,15 @@ Never rely on literal colors copied into widgets. Use the semantic `canvas`, `su
 
 Color is a relationship: a mint intended for dark surfaces cannot automatically be used as accessible small text on daylight surfaces. Do not put `#667F86` as tiny text on Arctic Daylight. Use `#405A5F` or darker instead.
 
+Essential control borders are stronger than decorative separators. Polar Night uses `#78969A` and Arctic Daylight uses `#667F86` as semantic functional borders to meet the 3:1 non-text contrast target against common surfaces; muted dark text is raised to `#9DB2B4` for more legibility on selected surfaces.
+
 Provide strong keyboard focus rings; never communicate selected state by tint alone. Danger, warning, and success colors must be verified separately against each surface. Use `prefers-reduced-motion` and accessible fallbacks.
 
 Do not recolor third-party apps without their consent or supported theme hooks. NixOS may package desktop settings and portal preferences, but that is separate engineering work.
 
 ## Typography
 
-Interface: **Inter** with system sans fallback. Brand / wordmark exploration: **Manrope** or a manually tuned geometric/humanist wordmark. Technical detail: **IBM Plex Mono**, reserved for addresses, shortcuts, device information, and diagnostics—not long paragraphs.
+**Interface:** Noto Sans, with locale-aware system font fallback for writing systems that require their own Noto families. **Brand:** Manrope for the wordmark and promotional headlines only, with Noto Sans fallback. **Technical:** Noto Sans Mono for shortcuts and diagnostics. The Noto collection is not a single typeface that covers every character. Install Noto Sans CJK and Noto Color Emoji; test regional glyph variants, Unicode shaping, Arabic/Hebrew bidirectional text, Indic scripts and vertical metrics. See [International Typography](TYPOGRAPHY_I18N.md).
 
 Target UI scale: 11 micro / 12 caption / 14 small / 16 body / 18 title small / 24 medium / 32 large / 52 display (logical px). Use restrained 400/500/600 weights and 1.5 body line-height. Do not force a remote font download. Confirm font package licenses and NixOS availability before bundling.
 

@@ -28,6 +28,9 @@ def render_qml(tokens):
         "import QtQml", "",
         "QtObject {",
         "    property bool light: false",
+        f'    readonly property string interfaceFont: "{tokens["typography"]["family"]["interface"]["$value"][0]}"',
+        f'    readonly property string technicalFont: "{tokens["typography"]["family"]["technical"]["$value"][0]}"',
+        f'    readonly property string brandFont: "{tokens["typography"]["family"]["brand"]["$value"][0]}"',
         *(f'    readonly property color {camel(key)}: light ? "{light[key]["$value"]}" : "{dark[key]["$value"]}"' for key in dark),
         "}", ""
     ])
@@ -41,9 +44,9 @@ def render_css(tokens):
         "/* Floe Arctic Minimalism — GENERATED from design/tokens/floe.tokens.json. Do not edit by hand. */",
         ":root, .theme-dark { color-scheme: dark;",
         *(f'  --floe-{k}: {v["$value"]};' for k, v in dark.items()),
-        '  --floe-font-ui: "Inter", system-ui, sans-serif;',
-        '  --floe-font-brand: "Manrope", "Inter", system-ui, sans-serif;',
-        '  --floe-font-mono: "IBM Plex Mono", ui-monospace, monospace;',
+        f'  --floe-font-ui: "{tokens["typography"]["family"]["interface"]["$value"][0]}", system-ui, sans-serif;',
+        f'  --floe-font-brand: "{tokens["typography"]["family"]["brand"]["$value"][0]}", "{tokens["typography"]["family"]["interface"]["$value"][0]}", system-ui, sans-serif;',
+        f'  --floe-font-mono: "{tokens["typography"]["family"]["technical"]["$value"][0]}", ui-monospace, monospace;',
         '  --floe-radius-card: 20px; --floe-radius-control: 14px; --floe-radius-pill: 999px;',
         '  --floe-space-unit: 4px; --floe-ease-spatial: cubic-bezier(.22, 1, .36, 1); --floe-time-spatial: 380ms;',
         "}",

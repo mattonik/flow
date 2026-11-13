@@ -69,6 +69,16 @@ in {
     programs.niri.enable = true;
     security.pam.services.swaylock = {};
     hardware.graphics.enable = true;
+    fonts.packages = with pkgs; [
+      noto-fonts
+      noto-fonts-cjk-sans
+      noto-fonts-color-emoji
+    ];
+    fonts.fontconfig.defaultFonts = {
+      sansSerif = [ "Noto Sans" ];
+      monospace = [ "Noto Sans Mono" ];
+      emoji = [ "Noto Color Emoji" ];
+    };
     security.polkit.enable = true;
     environment.systemPackages = with pkgs; [
       foot fuzzel quickshell swaylock firefox nautilus gnome-control-center networkmanagerapplet spaces launcher appmenu keyboard wvkbd wifiSettings

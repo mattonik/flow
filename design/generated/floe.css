@@ -6,19 +6,19 @@
   --floe-surface-selected: #263C46;
   --floe-text-primary: #EBF1EB;
   --floe-text-secondary: #BDDAD1;
-  --floe-text-muted: #8FA8AA;
+  --floe-text-muted: #9DB2B4;
   --floe-accent: #BDDAD1;
   --floe-accent-strong: #EBF1EB;
   --floe-on-accent: #0B1218;
-  --floe-border: #667F86;
+  --floe-border: #78969A;
   --floe-border-strong: #BDDAD1;
   --floe-focus: #BDDAD1;
   --floe-danger: #FFB4A8;
   --floe-warning: #F1BAAA;
   --floe-success: #A4D4C4;
-  --floe-font-ui: "Inter", system-ui, sans-serif;
-  --floe-font-brand: "Manrope", "Inter", system-ui, sans-serif;
-  --floe-font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --floe-font-ui: "Noto Sans", system-ui, sans-serif;
+  --floe-font-brand: "Manrope", "Noto Sans", system-ui, sans-serif;
+  --floe-font-mono: "Noto Sans Mono", ui-monospace, monospace;
   --floe-radius-card: 20px; --floe-radius-control: 14px; --floe-radius-pill: 999px;
   --floe-space-unit: 4px; --floe-ease-spatial: cubic-bezier(.22, 1, .36, 1); --floe-time-spatial: 380ms;
 }
@@ -33,7 +33,7 @@
   --floe-accent: #28584C;
   --floe-accent-strong: #153139;
   --floe-on-accent: #F2F5F0;
-  --floe-border: #78969A;
+  --floe-border: #667F86;
   --floe-border-strong: #28584C;
   --floe-focus: #28584C;
   --floe-danger: #8F2D23;
@@ -51,7 +51,7 @@
   --floe-accent: #28584C;
   --floe-accent-strong: #153139;
   --floe-on-accent: #F2F5F0;
-  --floe-border: #78969A;
+  --floe-border: #667F86;
   --floe-border-strong: #28584C;
   --floe-focus: #28584C;
   --floe-danger: #8F2D23;

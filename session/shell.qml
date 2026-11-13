@@ -313,7 +313,7 @@ ShellRoot {
         Keys.onEnterPressed: control.clicked()
         implicitHeight: 58
         contentItem: Text {
-            text: control.text; textFormat: Text.PlainText; color: floeTheme.textPrimary; font.pixelSize: 14; elide: Text.ElideRight
+            text: control.text; textFormat: Text.PlainText; color: floeTheme.textPrimary; font.pixelSize: 14; font.family: floeTheme.interfaceFont; elide: Text.ElideRight
             horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
         }
         background: Rectangle {
@@ -369,7 +369,7 @@ ShellRoot {
         Rectangle {
             anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; anchors.topMargin: 8
             width: 150; height: 36; radius: 18; color: floeTheme.surface; border.color: floeTheme.border
-            Text { anchors.centerIn: parent; text: "floe.  ···"; color: floeTheme.accent; font.bold: true }
+            Text { anchors.centerIn: parent; text: "floe.  ···"; color: floeTheme.accent; font.bold: true; font.family: floeTheme.brandFont }
             MouseArea { anchors.fill: parent; onClicked: root.deskOpen = false }
         }
         FocusScope {

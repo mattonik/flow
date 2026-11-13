@@ -3,6 +3,8 @@
 - [Brand guidelines](BRAND_GUIDELINES.md)
 - [Editable vector sources](brand/)
 - [Design tokens](tokens/floe.tokens.json)
+- [International typography](TYPOGRAPHY_I18N.md)
+- [Dark + light accessibility audit](ACCESSIBILITY_AUDIT.md)
 - [CSS output](generated/floe.css)
 - [Interactive HTML identity preview](preview/index.html)
 
