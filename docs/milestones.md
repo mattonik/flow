@@ -149,3 +149,8 @@ The bottom switcher scrolls horizontally to keep the focused space, Group member
 ## Switcher overflow controls (2026-11-13)
 
 The bottom switcher shows earlier and later page buttons when its space list overflows. The ARM64 VM build activated and the shell accepted the switcher command. The host locked before the new buttons could be exercised visually; mouse, touch and keyboard interaction still need a live check.
+
+
+## Recent files in search (2026-11-13)
+
+Search can list readable, existing recent files under the current user's home using their local recent-file history, and opens the selected file with its default application. It skips non-local, missing and outside-home targets and limits work to a small recent list. The ARM64 VM build activated and the search tests passed in the guest. The guest had no recent-file history at the time, and the host was locked, so an end-to-end UI check remains open. This is not a full file index.
