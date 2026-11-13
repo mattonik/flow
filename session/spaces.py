@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import uuid
+import groups as group_store
 
 
 def command(*args):
@@ -156,7 +157,46 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
             focused = next((w for w in pair or [] if w["id"] == workspace.get("active_window_id")), None)
             if focused:
                 pin["last_focused_app"] = focused["app_id"]
-    if op == "pin":
+    if op in ("create-group", "dissolve-group"):
+        active = next((space for space in display_spaces(workspace, windows, groups) if space["active"]), None)
+        if not active or len(active["members"]) != 2:
+            raise ValueError("Select a stack of two apps first")
+        apps = [w["app_id"] for w in active["members"]]
+        if (not all(apps) or len(set(apps)) != 2
+                or any(sum(w.get("app_id") == app for w in windows) != 1 for app in apps)):
+            raise ValueError("Group members must be distinct, unambiguous apps")
+        if any(set(apps) & set(p.get("members", [p.get("app_id")])) for p in pins):
+            raise ValueError("Unpin these apps before changing their Group")
+        if op == "create-group":
+            if any(set(apps) & set(g["members"]) for g in groups):
+                raise ValueError("An app already belongs to a saved Group; stack its members to recover it")
+        elif not arg or active["group_id"] != arg or sum(g["id"] == arg for g in groups) != 1:
+            raise ValueError("Select the active saved Group first")
+        current_workspace, current_windows = snapshot()
+        current = next((space for space in display_spaces(current_workspace, current_windows, groups) if space["active"]), None)
+        if (current_workspace["id"] != workspace["id"]
+                or current_workspace.get("active_window_id") != workspace.get("active_window_id")
+                or not current or current["group_id"] != active["group_id"]
+                or {w["id"] for w in current["members"]} != {w["id"] for w in active["members"]}):
+            raise ValueError("Group or focus changed; try again")
+        if op == "create-group":
+            groups.append({"id": uuid.uuid4().hex, "label": " + ".join(w["label"] for w in active["members"]), "members": apps})
+        else:
+            column = next(w for w in current_windows if w["id"] == workspace["active_window_id"])["layout"]["pos_in_scrolling_layout"][0]
+            pinned_apps = {app for pin in pins for app in pin.get("members", [pin.get("app_id")])}
+            if any(w.get("workspace_id") == workspace["id"] and not w.get("is_floating") and w.get("app_id") in pinned_apps
+                   and (w.get("layout", {}).get("pos_in_scrolling_layout") or [0])[0] > column for w in current_windows):
+                raise ValueError("Move pinned spaces left before dissolving this Group")
+            # shortcut: Niri's targeted action can consume a neighbor after a race; use expel-only by ID when available.
+            command("action", "consume-or-expel-window-right", "--id", workspace["active_window_id"])
+            changed_workspace, changed_windows = snapshot()
+            pair = [next((w for w in changed_windows if w.get("id") == member["id"]), None) for member in active["members"]]
+            if (changed_workspace["id"] != workspace["id"]
+                    or not all(eligible(w, changed_workspace, changed_windows) for w in pair)
+                    or any(w.get("app_id") != app for w, app in zip(pair, apps))):
+                raise ValueError("Could not confirm separation; Group remains saved. Stack its apps and retry")
+            groups.remove(next(g for g in groups if g["id"] == arg))
+    elif op == "pin":
         window = next((w for w in windows if w["id"] == workspace.get("active_window_id")), None)
         if not window:
             raise ValueError("Select one non-floating app window to pin")
@@ -169,7 +209,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
             apps = [w.get("app_id") for w in stack]
             matches = [g for g in groups if set(g.get("members", [])) == set(apps)]
             if len(matches) != 1:
-                raise ValueError("Save this two-app stack as a Group before pinning it")
+                raise ValueError("Create a Group from this stack before pinning it")
             pin_group(pins, matches[0], workspace, windows, socket, groups)
             window = None
         if window:
@@ -256,6 +296,8 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
             raise ValueError("Select a single window with one single window to its right")
         if op == "unstack" and len(pair) != 2:
             raise ValueError("Select a stack containing exactly two windows")
+        if op == "unstack" and any(set(g["members"]) == {w.get("app_id") for w in pair} for g in groups):
+            raise ValueError("Use Dissolve Group to separate a saved Group")
         if any(w.get("app_id") in pin.get("members", [pin.get("app_id")]) for pin in pins for w in pair):
             raise ValueError("Unpin these windows before stacking or separating")
         command("action", "consume-window-into-column" if op == "stack" else "expel-window-from-column")
@@ -266,7 +308,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
         command("action", "focus-window", "--id", window["id"])
     elif op != "refresh":
         raise ValueError("Unknown action")
-    if op not in ("focus", "focus-window", "stack", "unstack", "group-view"):
+    if op not in ("focus", "focus-window", "stack", "unstack", "group-view", "create-group", "dissolve-group"):
         reconcile(pins, workspace, windows, socket, groups)
     return [{"id": p["id"], "label": p["label"], "kind": "group" if "members" in p else "app", "group_id": p.get("group_id"),
              "available": bool(pin_window(p, workspace, windows, socket, groups))} for p in pins]
@@ -306,16 +348,14 @@ def display_spaces(workspace, windows, groups=()):
         matches = [g for g in groups if len(app_ids) == 2 and len(set(app_ids)) == 2
                    and len(g["members"]) == 2 and len(set(g["members"])) == 2
                    and set(g["members"]) == set(app_ids) and all(counts.get(a) == 1 for a in app_ids)]
-        group = matches[0] if len(matches) == 1 else None
+        group = matches[0] if len(matches) == 1 and sum(g["id"] == matches[0]["id"] for g in groups) == 1 else None
         result.append({"id": selected["id"], "label": group["label"] if group else " + ".join(w["label"] for w in members),
                        "group_id": group["id"] if group else None,
                        "active": any(w["active"] for w in members), "members": members})
     return result
 
 
-def main():
-    state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "flow"
-    state.mkdir(mode=0o700, parents=True, exist_ok=True)
+def run_locked(state):
     path = state / "spaces.json"
     with (state / "spaces.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -325,7 +365,8 @@ def main():
         workspace, windows = snapshot()
         before = json.dumps(pins, sort_keys=True)
         socket = session_id()
-        groups = saved_groups(state / "session.json")
+        groups = group_store.load(state)
+        before_groups = json.dumps(groups, sort_keys=True)
         for pin in pins:
             if "members" in pin:
                 pair = group_windows(pin, workspace, windows, socket, groups)
@@ -338,6 +379,15 @@ def main():
         result = run(pins, sys.argv[1] if len(sys.argv) > 1 else "refresh",
                      sys.argv[2] if len(sys.argv) > 2 else None, workspace, windows,
                      socket, groups)
+        if before_groups != json.dumps(groups, sort_keys=True):
+            try:
+                group_store.write(state / "groups.json", groups)
+            except OSError as exc:
+                if len(sys.argv) > 1 and sys.argv[1] == "dissolve-group":
+                    raise ValueError("Could not confirm Group update; if it remains saved, stack its apps and retry") from exc
+                raise ValueError("Could not confirm Group update; check the Group state before retrying") from exc
+        if len(sys.argv) > 1 and sys.argv[1] == "dissolve-group":
+            workspace, windows = snapshot()
         if before != json.dumps(pins, sort_keys=True):
             with tempfile.NamedTemporaryFile("w", dir=state, delete=False) as tmp:
                 try:
@@ -354,6 +404,14 @@ def main():
                     "app_id": w.get("app_id") or "", "active": w["id"] == workspace.get("active_window_id")}
                    for w in ordered]
         print(json.dumps({"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows, groups), "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
+
+
+def main():
+    state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "flow"
+    state.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with (state / "session.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        run_locked(state)
 
 
 if __name__ == "__main__":

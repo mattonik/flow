@@ -11,6 +11,7 @@ import tempfile
 import time
 import uuid
 import spaces
+import groups as group_store
 
 
 def state_path():
@@ -53,21 +54,32 @@ def pinned_apps(pins):
     return {app for pin in pins for app in pin.get("members", [pin["app_id"]])}
 
 
-def save(path, workspace, windows, session=None, pins=()):
+def save(path, workspace, windows, session=None, pins=(), registered=None):
     current = [w for w in windows if w.get("workspace_id") == workspace["id"]]
     current.sort(key=lambda w: w.get("layout", {}).get("pos_in_scrolling_layout") or [99999, 0])
     entries = [{"app_id": w.get("app_id"), "window_id": w["id"], "label": w.get("title") or w.get("app_id") or "Unknown application",
                 "focused": w["id"] == workspace.get("active_window_id"),
                 "column": ((w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0]
                            if not w.get("is_floating") else None)} for w in current]
-    previous = spaces.saved_groups(path)
-    old = json.loads(path.read_text()) if previous else {}
+    previous = spaces.saved_groups(path) if registered is None else registered
+    old = json.loads(path.read_text()) if previous and path.exists() else {}
     live_counts = Counter(w.get("app_id") for w in windows)
     for group in previous:
         apps = group["members"]
         if any(live_counts[app] > 1 or live_counts[app] != sum(e["app_id"] == app for e in entries) for app in apps):
             raise ValueError("Saved Group members are ambiguous or on another workspace; session was not replaced")
         if all(live_counts[app] == 1 for app in apps):
+            if registered is not None:
+                pair = [e for e in entries if e["app_id"] in apps]
+                column = pair[0]["column"]
+                if column is None or pair[1]["column"] != column or sum(e["column"] == column for e in entries) != 2:
+                    raise ValueError("Rejoin or dissolve the separated Group before saving; session was not replaced")
+            continue
+        missing = [app for app in apps if not live_counts[app]]
+        old_entries = old.get("windows", [])
+        if registered is not None and any(sum(isinstance(e, dict) and e.get("app_id") == app for e in old_entries) != 1 for app in missing):
+            if any(pin.get("group_id") == group["id"] for pin in pins):
+                raise ValueError("Reopen the pinned Group before saving; session was not replaced")
             continue
         present = [e for e in entries if e["app_id"] in apps]
         if present:
@@ -76,7 +88,6 @@ def save(path, workspace, windows, session=None, pins=()):
                 raise ValueError("A saved Group member is in another stack; session was not replaced")
         else:
             column = max((e["column"] for e in entries if e["column"] is not None), default=0) + 1
-        old_entries = old.get("windows", [])
         for app in apps:
             if any(e["app_id"] == app for e in present):
                 continue
@@ -99,8 +110,10 @@ def save(path, workspace, windows, session=None, pins=()):
         if len(apps) != 2 or not all(isinstance(app, str) and app and app_counts[app] == 1 for app in apps):
             continue
         matches = [g for g in previous if set(g["members"]) == set(apps)]
-        groups.append({**matches[0], "members": apps} if len(matches) == 1 else {"id": uuid.uuid4().hex,
-                      "label": " + ".join(entry["label"] for entry in members), "members": apps})
+        if len(matches) == 1:
+            groups.append({**matches[0], "members": apps})
+        elif registered is None:
+            groups.append({"id": uuid.uuid4().hex, "label": " + ".join(entry["label"] for entry in members), "members": apps})
     for pin in pins:
         matches = [g for g in previous if g["id"] == pin.get("group_id")]
         if len(matches) == 1 and not any(g["id"] == matches[0]["id"]
@@ -111,7 +124,7 @@ def save(path, workspace, windows, session=None, pins=()):
 
 
 def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=time.sleep, pinned=(), session=None,
-            pinned_groups=()):
+            pinned_groups=(), registered=None):
     if data.get("version") != 1 or not isinstance(data.get("windows"), list):
         raise ValueError("Unsupported or invalid saved session")
     entries = data["windows"]
@@ -215,6 +228,15 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
             groups_ok = True
             for group in groups:
                 group_apps = [entry["app_id"] for entry in group]
+                snapshot_matches = [g for g in saved_groups if isinstance(g, dict) and isinstance(g.get("members"), list)
+                                    and len(g["members"]) == 2 and set(g["members"]) == set(group_apps)]
+                if registered is not None and snapshot_matches:
+                    live_matches = [g for g in registered if g.get("id") == snapshot_matches[0].get("id")
+                                    and set(g.get("members", [])) == set(group_apps)]
+                    if len(snapshot_matches) != 1 or len(live_matches) != 1:
+                        report.append("Saved Group was dissolved or changed; group not restored")
+                        groups_ok = False
+                        continue
                 claiming_pins = [pin for pin in pinned_groups if isinstance(pin, dict)
                                  and any(app in pin.get("members", [pin.get("app_id")]) for app in group_apps)]
                 pin = claiming_pins[0] if len(claiming_pins) == 1 else {}
@@ -355,38 +377,60 @@ def main():
     if op == "status":
         print(json.dumps({"saved": path.exists()}))
         return
-    if op in ("save", "rename-group"):
+    if op in ("save", "rename-group", "restore"):
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         with (path.parent / "session.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            if op == "save":
-                with (path.parent / "spaces.lock").open("a") as spaces_lock:
-                    fcntl.flock(spaces_lock, fcntl.LOCK_EX)
+            with (path.parent / "spaces.lock").open("a") as spaces_lock:
+                fcntl.flock(spaces_lock, fcntl.LOCK_EX)
+                registered = group_store.load(path.parent)
+                if op == "save":
                     pins_path = path.parent / "spaces.json"
                     pins = json.loads(pins_path.read_text()) if pins_path.exists() else []
                     pinned_apps(pins)
                     workspace, windows = spaces.snapshot()
-                    count = save(path, workspace, windows, spaces.session_id(), pins)
-                print(json.dumps({"message": f"Saved {count} open windows. Save documents in each app before restarting."}))
-            else:
-                if len(sys.argv) != 4:
-                    raise ValueError("Group name and ID are required")
-                rename_group(path, sys.argv[2], sys.argv[3])
-                print(json.dumps({"message": "Group renamed"}))
+                    count = save(path, workspace, windows, spaces.session_id(), pins, registered)
+                    print(json.dumps({"message": f"Saved {count} open windows. Save documents in each app before restarting."}))
+                elif op == "rename-group":
+                    if len(sys.argv) != 4:
+                        raise ValueError("Group name and ID are required")
+                    group_store.rename(registered, sys.argv[2], sys.argv[3])
+                    group_store.write(path.parent / "groups.json", registered)
+                    print(json.dumps({"message": "Group renamed"}))
+                else:
+                    workspace, windows = spaces.snapshot()
+                    original_snapshot = path.read_bytes()
+                    data = json.loads(original_snapshot)
+                    dirs = (os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share"), *os.environ.get("XDG_DATA_DIRS", "/run/current-system/sw/share:/usr/share").split(":"))
+                    pins_path = path.parent / "spaces.json"
+                    pins = json.loads(pins_path.read_text()) if pins_path.exists() else []
+                    pinned_apps(pins)
+                    original_registered = json.dumps(registered, sort_keys=True)
+                    original_pins = json.dumps(pins, sort_keys=True)
+                    session = spaces.session_id()
+        if op == "restore":
+            def checked_state():
+                with (path.parent / "session.lock").open("a") as lock:
+                    fcntl.flock(lock, fcntl.LOCK_EX)
+                    with (path.parent / "spaces.lock").open("a") as spaces_lock:
+                        fcntl.flock(spaces_lock, fcntl.LOCK_EX)
+                        now_groups = group_store.load(path.parent)
+                        now_pins = json.loads(pins_path.read_text()) if pins_path.exists() else []
+                        pinned_apps(now_pins)
+                        if (path.read_bytes() != original_snapshot or json.dumps(now_groups, sort_keys=True) != original_registered
+                                or json.dumps(now_pins, sort_keys=True) != original_pins):
+                            raise ValueError("Session, Groups or pinned spaces changed; session recovery stopped")
+                        return spaces.snapshot()
+            def launch(desktop):
+                current, _ = checked_state()
+                if current["id"] != workspace["id"]:
+                    raise ValueError("Workspace changed; session recovery stopped")
+                subprocess.run(["gio", "launch", str(desktop)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            report, count = restore(data, workspace, windows, dirs, launch, checked_state, spaces.command,
+                                    pinned=pinned_apps(pins), session=session, pinned_groups=pins, registered=registered)
+            print(json.dumps({"message": f"Restored {count} windows." + (" " + "; ".join(report) if report else "")}))
         return
-    if op == "restore":
-        workspace, windows = spaces.snapshot()
-        data = json.loads(path.read_text())
-        dirs = (os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share"), *os.environ.get("XDG_DATA_DIRS", "/run/current-system/sw/share:/usr/share").split(":"))
-        pins_path = path.parent / "spaces.json"
-        pins = json.loads(pins_path.read_text()) if pins_path.exists() else []
-        report, count = restore(data, workspace, windows, dirs,
-                                lambda desktop: subprocess.run(["gio", "launch", str(desktop)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL),
-                                spaces.snapshot, spaces.command, pinned=pinned_apps(pins), session=spaces.session_id(),
-                                pinned_groups=pins)
-        print(json.dumps({"message": f"Restored {count} windows." + (" " + "; ".join(report) if report else "")}))
-    else:
-        raise ValueError("Unknown recovery action")
+    raise ValueError("Unknown recovery action")
 
 
 if __name__ == "__main__":

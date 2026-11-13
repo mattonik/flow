@@ -2,6 +2,7 @@
 let
   cfg = config.services.flow;
   spaces = pkgs.writeShellScriptBin "flow-spaces" ''
+    export PYTHONPATH="${../session}"
     user_name="$(${pkgs.coreutils}/bin/id -un)"
     export XDG_DATA_DIRS="''${XDG_DATA_DIRS:+$XDG_DATA_DIRS:}$HOME/.nix-profile/share:$HOME/.local/state/nix/profile/share:/etc/profiles/per-user/$user_name/share:/nix/var/nix/profiles/default/share:/run/current-system/sw/share:/usr/local/share:/usr/share"
     export PATH="${pkgs.glib}/bin:$PATH"

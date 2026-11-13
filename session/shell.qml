@@ -609,6 +609,15 @@ ShellRoot {
                                         }
                                     }
                                 }
+                                FlowButton {
+                                    id: createGroupButton
+                                    visible: spaceCard.modelData.members.length === 2 && !spaceCard.modelData.group_id
+                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(createGroupButton)
+                                    width: parent.width; implicitHeight: 44; text: "Create Group"
+                                    Accessible.name: "Create Group from " + spaceCard.modelData.label
+                                    enabled: spaceCard.modelData.active && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    onClicked: root.spaceAction("create-group")
+                                }
                                 Row {
                                     visible: !!spaceCard.modelData.group_id; spacing: 4
                                     FlowButton {
@@ -635,6 +644,16 @@ ShellRoot {
                                     Accessible.name: text + " " + spaceCard.modelData.label
                                     enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                     onClicked: root.spaceAction(spaceCard.groupPin ? "unpin" : "pin-group", spaceCard.groupPin ? spaceCard.groupPin.id : spaceCard.modelData.group_id)
+                                }
+                                FlowButton {
+                                    id: dissolveGroupButton
+                                    visible: !!spaceCard.modelData.group_id
+                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(dissolveGroupButton)
+                                    width: parent.width; implicitHeight: 44
+                                    text: spaceCard.groupPin ? "Unpin to dissolve" : "Dissolve Group"
+                                    Accessible.name: text + " " + spaceCard.modelData.label
+                                    enabled: spaceCard.modelData.active && !spaceCard.groupPin && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    onClicked: root.spaceAction("dissolve-group", spaceCard.modelData.group_id)
                                 }
                                 Row {
                                     visible: !!spaceCard.modelData.group_id && root.renameGroupId === spaceCard.modelData.group_id

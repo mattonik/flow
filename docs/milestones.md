@@ -272,3 +272,11 @@ The switcher now sends the selected Group ID when changing tabs or stack, and th
 ## Niri side-by-side primitives (2026-11-13)
 
 The repeatable [disposable-window smoke test](../tests/niri_group_layout_smoke.py) exercised Niri 26.04's window-ID-targeted stack, split and sizing actions in the ARM64 guest. Both half-width columns measured 636 logical pixels, focus stayed on the intended member, and original windows, workspace, focus and pins were unchanged. This verifies compositor primitives only; Flow does not yet treat two columns as one Group or reflow automatically.
+
+## Independent stack Groups (2026-11-13)
+
+Two distinct, unambiguous apps in an active stack can now become a Group through the switcher without saving the whole session. A separate per-user registry retains its ID, name and membership, and existing session Groups migrate without replacing their snapshot or pins. An unpinned Group can be dissolved from the switcher without closing its apps. Session recovery checks the current registry so it will not resurrect an explicitly dissolved Group.
+
+The [lifecycle smoke test](../tests/niri_group_lifecycle_smoke.py) passed in the ARM64 guest with disposable apps and isolated state: it exercised legacy migration, create, rename, pin, unpin and dissolve, and checked the old snapshot and real state remained unchanged. In the installed shell, keyboard navigation created and dissolved a temporary Group while keeping both apps open; the original workspace, focus, snapshot, pins and Group records were restored. The guest's existing Writing Group migrated with its previous identity. A backup of pre-migration guest state was made before the installed shell restarted.
+
+This is partial M1: missing Groups have no complete repair UI, and a newly created Group is not itself a full session snapshot. Niri's targeted consume-or-expel action is conditional; a concurrent external layout change between validation and dissolution can still affect a neighbor. If dissolution is interrupted after separation, the saved Group remains and its apps must be stacked again before retrying. Full reboot, physical touch and multi-display behavior were not verified.

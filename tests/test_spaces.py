@@ -1,10 +1,12 @@
 import importlib.util
 from pathlib import Path
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).parents[1] / "session"))
 spec = importlib.util.spec_from_file_location("spaces", Path(__file__).parents[1] / "session/spaces.py")
 spaces = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(spaces)
