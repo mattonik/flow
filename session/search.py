@@ -6,7 +6,8 @@ import sys
 
 
 def entries(snapshot, apps):
-    result = []
+    result = [("Flow Settings  ·  Settings", ("settings", "settings")),
+              ("Quick Settings  ·  Audio and network", ("settings", "quick_open"))]
     for pin in snapshot.get("pins", []):
         if pin.get("available"):
             result.append((f"{pin['label']}  ·  Pinned space", ("pin", pin["id"])))
@@ -36,6 +37,8 @@ def main():
         kind, value = choices[index][1]
         if kind == "app":
             value.launch([], None)
+        elif kind == "settings":
+            subprocess.run(["quickshell", "ipc", "-p", "/etc/flow/shell.qml", "call", "desk", value], check=True)
         else:
             subprocess.run(["flow-spaces", "focus" if kind == "pin" else "focus-window", value], check=True)
     except (ValueError, OSError, subprocess.SubprocessError) as exc:

@@ -13,7 +13,7 @@ The recorded test environment is an Apple Silicon Mac running UTM 5.0.8, QEMU AR
 | F-005 Group identity | Partial | An unambiguous two-app stack has a saved name and ID in the explicit session snapshot. Adaptive orientation, independent semantic persistence and the full lifecycle remain open. |
 | F-006 Layer dismissal | Open | No verified Flow Layer model or Group-preserving dismissal journey. |
 | F-007 Desk/Overview | Partial | Desk overlays real windows and Niri overview displays them. Complete before/after checks of IDs, position and focus for both transitions are not recorded. |
-| F-008 Search | Partial | Search covers installed applications, open windows and available pins; settings, files and commands are missing. |
+| F-008 Search | Partial | Search covers Flow settings, quick settings, installed applications, open windows and available pins; files and commands are missing. The settings results require guest validation. |
 | F-009 Island/system | Partial | Island, quick settings and lock exist; notification history and independent availability across all contexts are not established. |
 | F-010 Real accounts | Open | Two-user and guest isolation and switching have not been verified. |
 | F-011 Display hotplug | Open | No verified external-display disconnect and reconnect journey. |

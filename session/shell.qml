@@ -302,6 +302,12 @@ ShellRoot {
             }
         }
         function quick(): void { root.toggleQuickSettings() }
+        function quick_open(): void { if (!root.quickSettingsOpen) root.toggleQuickSettings() }
+        function settings(): void {
+            if (!root.deskOpen) root.toggleDesk()
+            root.settingsOpen = true
+            Qt.callLater(function() { deskScroller.ensureVisible(menuSwitch) })
+        }
         function apps(): void { root.openApps() }
         function search(): void { root.openSearch() }
         function pin(): void { root.spaceAction("pin") }
