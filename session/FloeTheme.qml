@@ -1,5 +1,5 @@
 // Generated from design/tokens/floe.tokens.json. Keep synchronized with semantic roles.
-import QtQml
+import QtQuick
 
 QtObject {
     property bool light: false

@@ -56,6 +56,7 @@ class FloeThemeTest(unittest.TestCase):
         self.assertIn("noto-fonts-color-emoji", NIX)
 
     def test_qml_palette_matches_tokens(self):
+        self.assertIn("import QtQuick", THEME)
         for mode in ("dark","light"):
             for role,entry in TOKENS["semantic"][mode].items():
                 self.assertIn(entry["$value"],THEME,mode + "/" + role)

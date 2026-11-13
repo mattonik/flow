@@ -25,7 +25,7 @@ def render_qml(tokens):
         raise ValueError("Dark and light semantic roles must match")
     return "\n".join([
         "// Generated from design/tokens/floe.tokens.json. Keep synchronized with semantic roles.",
-        "import QtQml", "",
+        "import QtQuick", "",
         "QtObject {",
         "    property bool light: false",
         f'    readonly property string interfaceFont: "{tokens["typography"]["family"]["interface"]["$value"][0]}"',
