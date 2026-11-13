@@ -80,6 +80,17 @@ class NiriStateTest(unittest.TestCase):
         self.assertFalse(self.state.apply({"WindowLayoutsChanged": {"changes": [[{}, {}]]}}))
         self.assertEqual((self.state.workspaces, self.state.windows), before)
 
+    def test_duplicate_snapshot_ids_do_not_silently_drop_rows(self):
+        self.load_snapshot()
+        before = (dict(self.state.workspaces), dict(self.state.windows))
+        self.assertFalse(self.state.apply({"WorkspacesChanged": {"workspaces": [
+            {"id": 10, "output": "DP-1"}, {"id": 10, "output": "DP-2"},
+        ]}}))
+        self.assertFalse(self.state.apply({"WindowsChanged": {"windows": [
+            window(1), window(1, True),
+        ]}}))
+        self.assertEqual((self.state.workspaces, self.state.windows), before)
+
 
 if __name__ == "__main__":
     unittest.main()

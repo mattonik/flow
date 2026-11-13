@@ -30,14 +30,16 @@ class NiriState:
         if name == "WorkspacesChanged":
             rows = data.get("workspaces")
             if not isinstance(rows, list) or not all(
-                    isinstance(w, dict) and _valid_id(w.get("id")) for w in rows):
+                    isinstance(w, dict) and _valid_id(w.get("id")) for w in rows) or \
+                    len({w["id"] for w in rows}) != len(rows):
                 return False
             self.workspaces = {w["id"]: deepcopy(w) for w in rows}
             self._have_workspaces = True
         elif name == "WindowsChanged":
             rows = data.get("windows")
             if not isinstance(rows, list) or not all(
-                    isinstance(w, dict) and _valid_id(w.get("id")) for w in rows):
+                    isinstance(w, dict) and _valid_id(w.get("id")) for w in rows) or \
+                    len({w["id"] for w in rows}) != len(rows):
                 return False
             self.windows = {w["id"]: deepcopy(w) for w in rows}
             self._have_windows = True
