@@ -183,4 +183,6 @@ A Quickshell notification inbox prototype is built into the guest session and re
 
 ## Notification inbox interaction (2026-11-13)
 
-On the ARM64 guest, a test notification appeared in the inbox. The inbox was opened from the Desk with the keyboard; Tab reached the dismiss control and Enter removed the notification. Escape closed the inbox. Notification actions, empty-state layout, expiry, lock-screen behavior and touch remain open.
+On the ARM64 guest, a test notification appeared in the inbox. The inbox was opened from the Desk with the keyboard; Tab reached the dismiss control and Enter removed the notification. Escape closed the inbox.
+
+Follow-up: activating a notification action emitted `ActionInvoked` on D-Bus. The inbox now uses Quickshell's reactive notification model and defers its size limit until the server inserts each notification. A guest test sent 21 notifications and observed the oldest being closed before the remaining test notifications were cleaned up. The revised empty-state layout still needs a visual check; expiry, lock-screen behavior and touch also remain open.

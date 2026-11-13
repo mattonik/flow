@@ -20,6 +20,10 @@ ShellRoot {
         Math.round(audioSink.audio.volume * 100) + "%" + (audioSink.audio.muted ? " · muted" : "")
     property string networkStatus: "Checking network…"
     property string quickError: ""
+    function trimTrackedNotifications() {
+        const tracked = [...notificationServer.trackedNotifications.values]
+        for (let i = 0; i < tracked.length - 20; i++) tracked[i].dismiss()
+    }
     PwObjectTracker { objects: root.audioSink ? [root.audioSink] : [] }
     NotificationServer {
         id: notificationServer
@@ -28,7 +32,8 @@ ShellRoot {
         keepOnReload: false
         onNotification: notification => {
             notification.tracked = true
-            if (trackedNotifications.count > 20) trackedNotifications.get(0).dismiss()
+            // Quickshell adds the notification to its model after this handler returns.
+            Qt.callLater(root.trimTrackedNotifications)
         }
     }
     Process {
@@ -698,22 +703,27 @@ ShellRoot {
         FocusScope {
             anchors.fill: parent; focus: root.notificationsOpen
             Keys.onEscapePressed: root.notificationsOpen = false
-        ScrollView {
+            ScrollView {
             anchors.fill: parent; anchors.margins: 12; clip: true
+            contentWidth: availableWidth; contentHeight: notificationColumn.implicitHeight
             Column {
                 id: notificationColumn; width: parent.width; spacing: 8
                 Row {
                     width: parent.width; spacing: 8
                     Text { text: "NOTIFICATIONS"; color: "#b8ddcb"; font.bold: true; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
-                    FlowButton { width: 66; implicitHeight: 44; text: "Close"; onClicked: root.notificationsOpen = false }
+                    FlowButton { width: 80; implicitHeight: 44; text: "Close"; onClicked: root.notificationsOpen = false }
                 }
-                Text { visible: notificationServer.trackedNotifications.count === 0; text: "No notifications"; color: "#91a59d" }
+                Text {
+                    visible: notificationServer.trackedNotifications.values.length === 0
+                    width: parent.width; height: 88; verticalAlignment: Text.AlignVCenter; horizontalAlignment: Text.AlignHCenter
+                    text: "No notifications"; color: "#91a59d"
+                }
                 Repeater {
                     model: notificationServer.trackedNotifications
                     delegate: Rectangle {
                         required property var modelData
                         required property int index
-                        visible: root.notificationsOpen || index === notificationServer.trackedNotifications.count - 1
+                        visible: root.notificationsOpen || index === notificationServer.trackedNotifications.values.length - 1
                         width: notificationColumn.width; implicitHeight: cardColumn.implicitHeight + 20
                         radius: 12; color: "#202d29"; border.color: "#3a4d45"
                         Column {
