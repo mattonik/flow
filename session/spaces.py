@@ -189,6 +189,11 @@ def rejoin_pair(group, workspace, windows, pins):
 
 
 def run(pins, op, arg, workspace, windows, socket, groups=()):
+    if op == "repair-side-group":
+        repair_side_group(arg, workspace, windows, groups, pins)
+        return [{"id": p["id"], "label": p["label"], "kind": "group" if "members" in p else "app",
+                 "group_id": p.get("group_id"), "available": bool(pin_window(p, workspace, windows, socket, groups))}
+                for p in pins]
     if op in ("pin", "pin-group", "left", "right", "create-group", "dissolve-group", "stack", "unstack") and has_side_layout(workspace, windows, groups):
         raise ValueError("Return side-by-side Groups to a stack before changing pins or Groups")
     for group in groups:
@@ -557,6 +562,7 @@ def incomplete_groups(workspace, windows, groups, pins):
         candidates = [[w for w in windows if w.get("app_id") == app] for app in group["members"]]
         missing = [app for app, found in zip(group["members"], candidates) if not found]
         can_rejoin = False
+        can_repair = False
         can_resume = bool(group.get("pending_layout")) and all(
             len(found) == 1 and found[0].get("workspace_id") == workspace["id"] for found in candidates)
         if group.get("pending_layout"):
@@ -568,7 +574,14 @@ def incomplete_groups(workspace, windows, groups, pins):
         elif missing:
             status = ("Both apps are closed." if len(missing) == 2 else "A Group app is closed.")
         elif group.get("layout") == "side-by-side":
-            status = "Group layout changed; place its apps side by side in saved order."
+            try:
+                _, first, last = side_group_repair_plan(group, workspace, windows, groups, pins)
+                if last == first + 1:
+                    raise ValueError("Group members are already adjacent")
+                can_repair = True
+                status = "Group members are separated by a safe standalone window; repair their order."
+            except ValueError as exc:
+                status = str(exc) + "."
         else:
             try:
                 rejoin_pair(group, workspace, windows, pins)
@@ -580,8 +593,109 @@ def incomplete_groups(workspace, windows, groups, pins):
                        (found and found[0].get("workspace_id") != workspace["id"]) for found in candidates)
         result.append({"id": group["id"], "label": group["label"], "status": status,
                        "can_open": can_open, "can_rejoin": can_rejoin, "can_resume_layout": can_resume,
+                       "can_repair": can_repair,
                        "missing_app": missing[0] if can_open else ""})
     return result
+
+
+def side_group_repair_plan(group, workspace, windows, groups, pins):
+    """Return the saved-order pair and intervening columns, without guessing identities."""
+    matches = [g for g in groups if g.get("id") == group.get("id")]
+    if (len(matches) != 1 or matches[0] is not group or group.get("layout") != "side-by-side"
+            or group.get("pending_layout")):
+        raise ValueError("Saved side-by-side Group is missing or transitioning")
+    pair = []
+    for app in group["members"]:
+        found = [w for w in windows if w.get("app_id") == app]
+        if len(found) != 1:
+            raise ValueError("Group members are missing or ambiguous")
+        pair.append(found[0])
+    if any(w.get("workspace_id") != workspace["id"] for w in pair):
+        raise ValueError("A Group member is on another workspace")
+    if any(w.get("is_floating") or not w.get("layout", {}).get("pos_in_scrolling_layout") for w in pair):
+        raise ValueError("Group members must be standalone tiled windows")
+    left, right = pair
+    first = left["layout"]["pos_in_scrolling_layout"][0]
+    last = right["layout"]["pos_in_scrolling_layout"][0]
+    if first >= last:
+        raise ValueError("Restore the saved Group member order before repair")
+    claimed_apps = {app for other in groups if other.get("id") != group["id"]
+                    for app in other.get("members", [])}
+    pinned_apps = {app for pin in pins for app in pin.get("members", [pin.get("app_id")])}
+    by_column = {}
+    for w in windows:
+        pos = w.get("layout", {}).get("pos_in_scrolling_layout")
+        if w.get("workspace_id") == workspace["id"] and pos and not w.get("is_floating"):
+            by_column.setdefault(pos[0], []).append(w)
+    for member, column in zip(pair, (first, last)):
+        if by_column.get(column) != [member]:
+            raise ValueError("Group members must be the only windows in their columns")
+    for col in range(first + 1, last):
+        neighbors = by_column.get(col, [])
+        if len(neighbors) != 1:
+            raise ValueError("An intervening column is missing or stacked; resolve it manually")
+        neighbor = neighbors[0]
+        if (not neighbor.get("app_id") or neighbor.get("app_id") in claimed_apps
+                or neighbor.get("app_id") in pinned_apps):
+            raise ValueError("An intervening window belongs to another Group or pin")
+    return pair, first, last
+
+
+def repair_side_group(group_id, workspace, windows, groups, pins):
+    matches = [g for g in groups if g.get("id") == group_id]
+    if len(matches) != 1:
+        raise ValueError("Saved Group no longer exists or is ambiguous")
+    pair, first, last = side_group_repair_plan(matches[0], workspace, windows, groups, pins)
+    if last == first + 1:
+        raise ValueError("Group members are already adjacent")
+    active = workspace.get("active_window_id")
+    ids = [w["id"] for w in pair]
+
+    def checked(expected_adjacent=False):
+        ws, live = snapshot()
+        plan, left_col, right_col = side_group_repair_plan(matches[0], ws, live, groups, pins)
+        expected_focus = ids[1] if expected_adjacent else active
+        if (ws["id"] != workspace["id"] or ws.get("active_window_id") != expected_focus
+                or [w["id"] for w in plan] != ids
+                or (expected_adjacent and left_col != first)
+                or [w["layout"]["pos_in_scrolling_layout"][0] for w in plan] !=
+                   ([left_col, left_col + 1] if expected_adjacent else [first, last])):
+            raise ValueError("Group, workspace, or focus changed during repair")
+        return ws, live, plan
+
+    checked()
+    try:
+        # shortcut: Niri IPC calls are not atomic; revalidation narrows but cannot close the compositor race.
+        command("action", "focus-window", "--id", pair[1]["id"])
+        ws, live = snapshot()
+        # Focus necessarily changes for the move; verify all other preconditions before acting.
+        if ws["id"] != workspace["id"]:
+            raise ValueError("Workspace changed during repair")
+        live_plan, live_left, live_right = side_group_repair_plan(matches[0], ws, live, groups, pins)
+        if ([w["id"] for w in live_plan] != ids or (live_left, live_right) != (first, last)
+                or ws.get("active_window_id") != pair[1]["id"]):
+            raise ValueError("Group or focus changed during repair")
+        command("action", "move-column-to-index", first + 1)
+        ws, live, moved = checked(expected_adjacent=True)
+        if active in {w["id"] for w in live} and active != ids[1]:
+            ws, live = snapshot()
+            plan, left_col, right_col = side_group_repair_plan(matches[0], ws, live, groups, pins)
+            if (ws["id"] != workspace["id"] or ws.get("active_window_id") != ids[1]
+                    or not any(w.get("id") == active and w.get("workspace_id") == workspace["id"] for w in live)
+                    or [w["id"] for w in plan] != ids or (left_col, right_col) != (first, first + 1)):
+                raise ValueError("Focus or Group changed; previous focus was not restored")
+            command("action", "focus-window", "--id", active)
+            ws, live = snapshot()
+            verified = {w.get("id"): w for w in live}
+            verified_pair, left_col, right_col = side_group_repair_plan(matches[0], ws, live, groups, pins)
+            if (ws["id"] != workspace["id"] or active not in verified
+                    or verified[active].get("workspace_id") != workspace["id"]
+                    or ws.get("active_window_id") != active or [w["id"] for w in verified_pair] != ids
+                    or (left_col, right_col) != (first, first + 1)):
+                raise ValueError("Could not safely restore the previous focus")
+        return
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise ValueError("Side-by-side repair interrupted; inspect the windows and retry") from exc
 
 
 def change_group_layout(state, groups, pins, group_id, workspace, windows, socket, resume=False):
@@ -671,7 +785,11 @@ def run_locked(state):
                 pin["session"], pin["window_id"] = socket, window["id"]
         op = sys.argv[1] if len(sys.argv) > 1 else "refresh"
         arg = sys.argv[2] if len(sys.argv) > 2 else None
-        if op in ("group-layout", "resume-group-layout"):
+        if op == "repair-side-group":
+            run(pins, op, arg, workspace, windows, socket, groups)
+            workspace, windows = snapshot()
+            result = run(pins, "refresh", None, workspace, windows, socket, groups)
+        elif op in ("group-layout", "resume-group-layout"):
             change_group_layout(state, groups, pins, arg, workspace, windows, socket, op == "resume-group-layout")
             workspace, windows = snapshot()
             before_groups = json.dumps(groups, sort_keys=True)

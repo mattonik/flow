@@ -326,6 +326,15 @@ ShellRoot {
             border.color: control.activeFocus ? floeTheme.focus : control.enabled && (control.down || control.hovered) ? floeTheme.borderStrong : floeTheme.border
         }
     }
+    component IslandButton: FlowButton {
+        id: islandButton
+        background: Rectangle {
+            radius: 12
+            color: islandButton.down || islandButton.hovered ? floeTheme.surfaceSelected : "transparent"
+            border.width: islandButton.activeFocus ? 2 : 0
+            border.color: floeTheme.focus
+        }
+    }
     component FlowSwitch: Switch {
         id: toggle
         focusPolicy: Qt.StrongFocus
@@ -585,11 +594,15 @@ ShellRoot {
     PanelWindow {
         visible: !root.deskOpen && !root.switcherOpen && !root.appMenuOpen && !root.overviewOpen
         anchors.bottom: true
-        implicitWidth: 100; implicitHeight: 28
+        implicitWidth: 100; implicitHeight: 44
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
-        Rectangle { anchors.centerIn: parent; width: 64; height: 5; radius: 3; color: floeTheme.accent }
-        MouseArea { anchors.fill: parent; onClicked: root.toggleSwitcher() }
+        FlowButton {
+            anchors.fill: parent; implicitHeight: 44; text: ""; Accessible.name: "Open spaces and apps"
+            background: Rectangle { color: "transparent" }
+            contentItem: Item { Rectangle { anchors.centerIn: parent; width: 64; height: 5; radius: 3; color: floeTheme.accent } }
+            onClicked: root.toggleSwitcher()
+        }
     }
     PanelWindow {
         visible: root.switcherOpen
@@ -816,6 +829,15 @@ ShellRoot {
                                 onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(resumeGroupLayout)
                                 onClicked: root.spaceAction("resume-group-layout", modelData.id)
                             }
+                            FlowButton {
+                                id: repairGroupLayout
+                                visible: modelData.can_repair
+                                width: Math.min(parent.width, 220); implicitHeight: 44; text: "Repair Group layout"
+                                Accessible.name: "Repair layout for Group " + modelData.label
+                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(repairGroupLayout)
+                                onClicked: root.spaceAction("repair-side-group", modelData.id)
+                            }
                         }
                     }
                 }
@@ -893,7 +915,7 @@ ShellRoot {
     PanelWindow {
         visible: root.quickSettingsOpen
         anchors.top: true
-        implicitWidth: 320; implicitHeight: Math.min(screen.height - 80, Math.max(235, quickSettingsColumn.implicitHeight + 32)); margins.top: 60
+        implicitWidth: Math.max(0, Math.min(320, screen.width - 24)); implicitHeight: Math.min(screen.height - 80, Math.max(235, quickSettingsColumn.implicitHeight + 32)); margins.top: 60
         color: floeTheme.surface; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
@@ -911,8 +933,8 @@ ShellRoot {
                 FlowButton { width: parent.width; implicitHeight: 48; text: "Choose Wi-Fi network"; onClicked: { root.quickSettingsOpen = false; Quickshell.execDetached(["flow-wifi-settings"]) } }
                 FlowButton { width: parent.width; implicitHeight: 48; text: "Toggle on-screen keyboard"; Accessible.name: "Toggle on-screen keyboard"; onClicked: { Quickshell.execDetached(["flow-keyboard"]); root.quickSettingsOpen = false } }
                 Text { text: "Output volume: " + root.volumeStatus; color: floeTheme.textPrimary; font.pixelSize: 14 }
-                Row {
-                    spacing: 6
+                Flow {
+                    width: parent.width; spacing: 6
                     FlowButton { width: 70; implicitHeight: 44; text: "− 5%"; Accessible.name: "Decrease volume"; enabled: root.audioAvailable; onClicked: root.changeVolume(-0.05) }
                     FlowButton { width: 70; implicitHeight: 44; text: "+ 5%"; Accessible.name: "Increase volume"; enabled: root.audioAvailable; onClicked: root.changeVolume(0.05) }
                     FlowButton { width: 110; implicitHeight: 44; text: "Mute / unmute"; enabled: root.audioAvailable; onClicked: root.changeVolume("mute") }
@@ -943,8 +965,8 @@ ShellRoot {
                     }
                 }
                 Text { visible: root.quickError !== ""; text: root.quickError; color: floeTheme.danger; font.pixelSize: 12 }
-                Row {
-                    spacing: 6
+                Flow {
+                    width: parent.width; spacing: 6
                     FlowButton { width: 180; implicitHeight: 44; text: "Edit connections"; onClicked: { root.quickSettingsOpen = false; Quickshell.execDetached(["nm-connection-editor"]) } }
                     FlowButton { width: 90; implicitHeight: 44; text: "Close"; onClicked: root.quickSettingsOpen = false }
                 }
@@ -1022,14 +1044,12 @@ ShellRoot {
         Rectangle {
             anchors.fill: parent; radius: 22; color: floeTheme.canvas; border.color: floeTheme.border
             Row {
-                anchors.centerIn: parent; spacing: 18
-                Text { text: "floe."; color: floeTheme.accent; font.bold: true; anchors.verticalCenter: parent.verticalCenter
-                    MouseArea { anchors.fill: parent; onClicked: root.toggleDesk() } }
-                Text { text: "Apps"; color: floeTheme.textPrimary; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter
-                    MouseArea { anchors.fill: parent; onClicked: root.openApps() } }
+                anchors.centerIn: parent; spacing: 8
+                IslandButton { width: 48; implicitHeight: 44; text: "floe."; Accessible.name: "Open Floe desk"; onClicked: root.toggleDesk() }
+                IslandButton { width: 44; implicitHeight: 44; text: "Apps"; Accessible.name: "Open apps"; onClicked: root.openApps() }
                 Text { text: Qt.formatTime(clock.date, "hh:mm"); color: floeTheme.textPrimary; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter }
-                FlowButton { width: 38; implicitHeight: 34; text: "◉"; Accessible.name: "Notifications"; onClicked: root.toggleNotifications() }
-                FlowButton { width: 38; implicitHeight: 34; text: "⚙"; Accessible.name: "Quick settings"; onClicked: root.toggleQuickSettings() }
+                IslandButton { width: 44; implicitHeight: 44; text: "◉"; Accessible.name: "Notifications"; onClicked: root.toggleNotifications() }
+                IslandButton { width: 44; implicitHeight: 44; text: "⚙"; Accessible.name: "Quick settings"; onClicked: root.toggleQuickSettings() }
             }
         }
         SystemClock { id: clock; precision: SystemClock.Minutes }

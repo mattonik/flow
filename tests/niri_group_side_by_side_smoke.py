@@ -81,6 +81,7 @@ def main():
 
     token = uuid.uuid4().hex
     apps = [f"flow-layout-{token}-{suffix}" for suffix in ("a", "b", "neighbor")]
+    intruder = f"flow-layout-{token}-intruder"
     processes = []
     test_workspace = None
     interrupted = False
@@ -97,7 +98,7 @@ def main():
             interrupted = True
             raise RuntimeError("Workspace changed during the test")
         windows = read("windows")
-        if any(w.get("workspace_id") == test_workspace and w.get("app_id") not in apps for w in windows):
+        if any(w.get("workspace_id") == test_workspace and w.get("app_id") not in [*apps, intruder] for w in windows):
             interrupted = True
             raise RuntimeError("Another window appeared on the test workspace")
         return windows
@@ -248,6 +249,37 @@ def main():
                 raise RuntimeError("Navigation did not skip both Group columns")
             niri("action", "focus-window", "--id", ids[0])
 
+            # Niri may insert a new app between the two registered Group columns.
+            intruder_process = subprocess.Popen(["foot", "--app-id", intruder], stdin=subprocess.DEVNULL,
+                                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            processes.append(intruder_process)
+            inserted = wait_for(lambda: next((w for w in checked_windows() if w.get("app_id") == intruder), None),
+                                "intervening window")
+            wait_for(lambda: group_pair(lambda ws: ws[1]["layout"]["pos_in_scrolling_layout"][0] ==
+                                       ws[0]["layout"]["pos_in_scrolling_layout"][0] + 2),
+                     "separated Group columns")
+            attention = cli(cli_env, "refresh")
+            if not any(g.get("id") == group_id and g.get("can_repair") for g in attention["incomplete_groups"]):
+                raise RuntimeError("Separated Group did not offer a repair")
+            focused_before_repair = focus().get("active_window_id")
+            repaired = cli(cli_env, "repair-side-group", group_id)
+            wait_for(lambda: group_pair(lambda ws: ws[1]["layout"]["pos_in_scrolling_layout"][0] ==
+                                       ws[0]["layout"]["pos_in_scrolling_layout"][0] + 1),
+                     "repaired Group columns")
+            if not group_space(repaired, group_id) or not pinned(repaired, group_id, pin_id):
+                raise RuntimeError("Repair did not restore the pinned Group")
+            if not any(p.get("id") == neighbor_pin_id and p.get("available") for p in repaired["pins"]):
+                raise RuntimeError("Repair changed the neighboring pin")
+            if focus().get("active_window_id") != focused_before_repair:
+                raise RuntimeError("Repair changed the focused window")
+            if not any(w["id"] == inserted["id"] for w in checked_windows()):
+                raise RuntimeError("Repair closed the intervening window")
+            niri("action", "close-window", "--id", inserted["id"])
+            wait_for(lambda: not any(w.get("app_id") == intruder for w in checked_windows()), "intervening window to close")
+            intruder_process.wait(timeout=5)
+            processes.remove(intruder_process)
+            niri("action", "focus-window", "--id", ids[0])
+
             focused_id = focus().get("active_window_id")
             stacked = cli(cli_env, "group-layout", group_id)
             wait_for(lambda: group_pair(lambda ws: ws[0]["layout"]["pos_in_scrolling_layout"][0] ==
@@ -270,7 +302,8 @@ def main():
 
             result = {"result": "pass", "niri": niri("version").strip(), "group_id": group_id,
                       "pin_id": pin_id, "neighbor_pin_id": neighbor_pin_id, "window_ids": ids,
-                      "side_by_side_widths": widths, "focus_preserved": True, "logical_navigation": True}
+                      "side_by_side_widths": widths, "focus_preserved": True, "logical_navigation": True,
+                      "separated_group_repaired": True}
             if (temporary_state / "session.json").exists():
                 raise RuntimeError("Layout changes unexpectedly wrote a temporary session snapshot")
     finally:
@@ -288,7 +321,7 @@ def main():
                 process.wait(timeout=5)
         try:
             for window in read("windows"):
-                if window.get("app_id") in apps:
+                if window.get("app_id") in [*apps, intruder]:
                     niri("action", "close-window", "--id", window["id"])
         except (OSError, subprocess.SubprocessError):
             pass

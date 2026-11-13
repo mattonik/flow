@@ -198,6 +198,102 @@ class GroupLayoutTest(unittest.TestCase):
                 command.assert_not_called()
                 self.assertEqual((state / "groups.json").read_bytes(), before)
 
+    def test_explicit_repair_moves_only_the_saved_order_member_and_restores_focus(self):
+        live = [window(11, "a", 1), window(13, "other", 2), window(12, "b", 3)]
+        self.ws["active_window_id"] = 11
+        actions = []
+
+        def action(*args):
+            actions.append(args)
+            if args[1] == "focus-window":
+                self.ws["active_window_id"] = int(args[-1])
+            elif args[1] == "move-column-to-index":
+                live[1]["layout"]["pos_in_scrolling_layout"] = [3, 1]
+                live[2]["layout"]["pos_in_scrolling_layout"] = [2, 1]
+
+        with patch.object(spaces, "snapshot", side_effect=lambda: (self.ws, live)), \
+             patch.object(spaces, "command", side_effect=action):
+            spaces.repair_side_group("g", self.ws, live, [self.group], [])
+
+        self.assertEqual([args[1] for args in actions],
+                         ["focus-window", "move-column-to-index", "focus-window"])
+        self.assertEqual(actions[1], ("action", "move-column-to-index", 2))
+        self.assertEqual([w["app_id"] for w in sorted(live, key=lambda w: w["layout"]["pos_in_scrolling_layout"])],
+                         ["a", "b", "other"])
+        self.assertEqual(self.ws["active_window_id"], 11)
+
+    def test_incomplete_group_reports_safe_repair_and_rejects_unsafe_interveners(self):
+        live = [window(11, "a", 1), window(13, "other", 2), window(12, "b", 3)]
+        entry = spaces.incomplete_groups(self.ws, live, [self.group], [])[0]
+        self.assertTrue(entry["can_repair"])
+        self.assertIn("repair", entry["status"])
+        pin = {"id": "p", "app_id": "other", "label": "Other"}
+        entry = spaces.incomplete_groups(self.ws, live, [self.group], [pin])[0]
+        self.assertFalse(entry["can_repair"])
+        self.assertIn("pin", entry["status"])
+
+    def test_repair_rejects_missing_duplicate_focus_and_workspace_changes(self):
+        cases = [
+            ([window(11, "a", 1), window(13, "other", 2)], self.ws, "missing or ambiguous"),
+            ([window(11, "a", 1), window(13, "other", 2), window(12, "b", 3), window(14, "a", 4)], self.ws,
+             "missing or ambiguous"),
+            ([window(11, "a", 1), window(13, "other", 2), window(12, "b", 3)],
+             {**self.ws, "active_window_id": 99}, "changed during repair"),
+            ([window(11, "a", 1, workspace=2), window(13, "other", 2, workspace=2),
+              window(12, "b", 3, workspace=2)], {**self.ws, "id": 2}, "another workspace"),
+        ]
+        for live, ws, error in cases:
+            with self.subTest(error=error), patch.object(spaces, "snapshot", return_value=(ws, live)), \
+                 patch.object(spaces, "command") as action:
+                with self.assertRaisesRegex(ValueError, error):
+                    spaces.repair_side_group("g", self.ws, live, [self.group], [])
+                action.assert_not_called()
+
+    def test_repair_keeps_an_interrupted_command_visible(self):
+        live = [window(11, "a", 1), window(13, "other", 2), window(12, "b", 3)]
+        with patch.object(spaces, "snapshot", return_value=(self.ws, live)), \
+             patch.object(spaces, "command", side_effect=OSError("Niri stopped")), \
+             self.assertRaisesRegex(ValueError, "interrupted"):
+            spaces.repair_side_group("g", self.ws, live, [self.group], [])
+
+    def test_repair_rejects_stacked_member_columns_and_pinned_group_neighbor(self):
+        stacked = [window(11, "a", 1), window(15, "extra", 1, 2), window(13, "other", 2), window(12, "b", 3)]
+        with self.assertRaisesRegex(ValueError, "only windows"):
+            spaces.repair_side_group("g", self.ws, stacked, [self.group], [])
+        live = [window(11, "a", 1), window(13, "other", 2), window(12, "b", 3)]
+        other_group = {"id": "h", "label": "Other Group", "members": ["other", "x"]}
+        with self.assertRaisesRegex(ValueError, "another Group or pin"):
+            spaces.repair_side_group("g", self.ws, live, [self.group, other_group], [])
+        group_pin = {"id": "p", "group_id": "h", "members": ["other", "x"]}
+        with self.assertRaisesRegex(ValueError, "another Group or pin"):
+            spaces.repair_side_group("g", self.ws, live, [self.group], [group_pin])
+
+    def test_repair_does_not_restore_focus_after_an_unrelated_focus_change(self):
+        live = [window(11, "a", 1), window(13, "other", 2), window(12, "b", 3)]
+        self.ws["active_window_id"] = 11
+        calls = []
+        actions = []
+
+        def current_state():
+            calls.append(None)
+            if len(calls) == 4:
+                self.ws["active_window_id"] = 13
+            return self.ws, live
+
+        def action(*args):
+            actions.append(args)
+            if args[1] == "focus-window":
+                self.ws["active_window_id"] = int(args[-1])
+            elif args[1] == "move-column-to-index":
+                live[1]["layout"]["pos_in_scrolling_layout"] = [3, 1]
+                live[2]["layout"]["pos_in_scrolling_layout"] = [2, 1]
+
+        with patch.object(spaces, "snapshot", side_effect=current_state), \
+             patch.object(spaces, "command", side_effect=action), \
+             self.assertRaisesRegex(ValueError, "interrupted"):
+            spaces.repair_side_group("g", self.ws, live, [self.group], [])
+        self.assertEqual([args[1] for args in actions], ["focus-window", "move-column-to-index"])
+
 
 if __name__ == "__main__":
     unittest.main()
