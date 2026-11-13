@@ -179,3 +179,8 @@ Quick Settings now reads and updates the default audio sink through Quickshell's
 ## Coordinated service prototypes (2026-11-13)
 
 A Quickshell notification inbox prototype is built into the guest session and received a test D-Bus notification; it only retains up to 20 active notifications in memory and has no automatic alerts, persistent history or DND. The guest build succeeded, but the host was locked before visual interaction and lock-screen checks could be completed. A separate read-only Quickshell Networking probe observed the NetworkManager backend, full connectivity and two connected wired devices in the ARM64 guest; the existing network UI was not replaced. A standalone Niri event-state projection passed unit tests and matched initial guest window/workspace IDs and focus against separate snapshots; it is not yet connected to Flow's runtime. Touch, network changes and restart/reconnect are unverified. See ADRs 0002–0004.
+
+
+## Notification inbox interaction (2026-11-13)
+
+On the ARM64 guest, a test notification appeared in the inbox. The inbox was opened from the Desk with the keyboard; Tab reached the dismiss control and Enter removed the notification. Escape closed the inbox. Notification actions, empty-state layout, expiry, lock-screen behavior and touch remain open.

@@ -1,6 +1,6 @@
 # ADR 0002: Use Quickshell for session notifications
 
-Status: prototype; the NixOS guest build activated and a D-Bus notification call returned an ID. Inbox interaction, persistence and lock-screen privacy remain open.
+Status: prototype; the NixOS guest build activated, and inbox display and keyboard dismissal were verified. Persistence and lock-screen privacy remain open.
 
 **User journey:** receive desktop notifications without focus theft, open a compact inbox and dismiss items. Notification content is rendered as plain text and remains in the current shell process only.
 
@@ -14,4 +14,4 @@ The server is declared once in the existing long-lived Quickshell process. Notif
 
 **Limitations:** active tracked notifications are not durable history and can disappear on expiry or shell restart; no per-app controls, DND, priority policy, verified lock-screen occlusion, or hardware-touch evidence. The inbox relies on the compositor lock surface to occlude it while locked; validate this in the guest before claiming lock privacy. One notification service must own the session D-Bus name; disable any competing daemon when validating. Before lock-screen display or persistent history, add explicit redaction/retention policy and verify storage permissions. Roll back by removing the Quickshell server and surfaces; no persisted data migration is needed.
 
-**Evidence basis:** Flow reuse atlas and master spec; Quickshell 0.3.2 notification API documents `NotificationServer.notification`, `trackedNotifications`, actions, and plain-text body handling. Runtime behavior still requires validation in the ARM64 guest.
+**Evidence basis:** Flow reuse atlas and master spec; Quickshell 0.3.2 notification API documents `NotificationServer.notification`, `trackedNotifications`, actions, and plain-text body handling. In the ARM64 guest, a test D-Bus notification appeared in the inbox opened from the Desk, and keyboard navigation dismissed it. Touch, notification actions, empty-state layout, expiry, and lock-screen behavior remain unverified.
