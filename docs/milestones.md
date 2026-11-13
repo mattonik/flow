@@ -134,3 +134,8 @@ When Niri reports a different focused window or the menu's window closes, an ope
 ## Group menu focus retest (2026-11-13)
 
 After the user restarted and signed into the ARM64 UTM guest, KWrite and Kate were opened and stacked using `flow-spaces stack`. With KWrite's menu open, `niri msg action focus-window --id 3` changed the active member to Kate. Niri emitted `WorkspaceActiveWindowChanged` while the shell's exclusive layer had keyboard focus; the original implementation only handled `WindowFocusChanged` and failed to disable the menu. The app-menu context now includes its workspace ID and handles that workspace event. After rebuilding and restarting the shell, the same focus change kept KWrite's menu visible, displayed the warning and left only Close menu keyboard-focusable. Closing updated the label to Kate. Kate's File → New created an untitled Kate document; `flow-appmenu activate 2 '[0]' New` while Kate was active returned `Application focus changed` with exit status 1. Super+Up also changed the label back to KWrite. `python3 -B -m unittest discover -s tests` passed 37 tests, and the guest build and input-lock update passed. Pointer focus, closure, duplicate-process windows and other toolkits remain unverified.
+
+
+## Search settings in the ARM64 guest (2026-11-13)
+
+Flow settings and quick settings are discoverable in search. The guest configuration built and activated, and the restarted Quickshell accepted both new actions through IPC. The search results and dispatch are covered by the local Python tests. Selecting each result in the guest UI still needs verification.
