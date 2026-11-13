@@ -204,3 +204,5 @@ Quick Settings now uses Quickshell's MPRIS integration for a single unambiguous 
 A store-only wvkbd probe displayed an on-screen keyboard under a disposable Foot window in the ARM64 guest. Input delivery, accessible sizing, physical touch and compositor shortcuts are not yet verified; the keyboard is not integrated into Flow. The pinned Niri version predates an upstream virtual-keyboard shortcut fix. See ADR 0007.
 
 Saved two-app Groups now retain their name and identity when their members change order in a stack. Unit tests cover reversed order and ambiguous matches. In the ARM64 guest, a real Group retained its identity after its members were reversed; the original member order and focus were restored after the check. This does not add adaptive or pinned Groups.
+
+After temporary media-test packages brought the guest to 97% inode usage, `nix-store --optimise` completed successfully and reduced usage to 31% by hard-linking duplicate store files. No system generations were removed.
