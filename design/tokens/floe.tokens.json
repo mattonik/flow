@@ -1,0 +1,507 @@
+{
+  "$schema": "https://design-tokens.github.io/community-group/format/",
+  "name": "Floe / Arctic Minimalism",
+  "version": "1.0.0",
+  "status": "design-system-proposal",
+  "description": "Floe Arctic Minimalism working brand palette: Polar Night and low-glare Arctic Daylight. Semantic roles are preferred over primitives.",
+  "color": {
+    "primitive": {
+      "polar-night": {
+        "$type": "color",
+        "$value": "#0B1218"
+      },
+      "deep-ice": {
+        "$type": "color",
+        "$value": "#1C2D36"
+      },
+      "glacial-stone": {
+        "$type": "color",
+        "$value": "#667F86"
+      },
+      "sea-glass": {
+        "$type": "color",
+        "$value": "#BDDAD1"
+      },
+      "snow-light": {
+        "$type": "color",
+        "$value": "#EBF1EB"
+      },
+      "polar-raised": {
+        "$type": "color",
+        "$value": "#13232C"
+      },
+      "deep-raised": {
+        "$type": "color",
+        "$value": "#263C46"
+      },
+      "text-muted-dark": {
+        "$type": "color",
+        "$value": "#8FA8AA"
+      },
+      "sea-glass-muted": {
+        "$type": "color",
+        "$value": "#9CBFB5"
+      },
+      "frost": {
+        "$type": "color",
+        "$value": "#F5FAF7"
+      },
+      "dark-ink": {
+        "$type": "color",
+        "$value": "#153139"
+      },
+      "teal-ink": {
+        "$type": "color",
+        "$value": "#28584C"
+      },
+      "text-muted-light": {
+        "$type": "color",
+        "$value": "#405A5F"
+      },
+      "error": {
+        "$type": "color",
+        "$value": "#FFB4A8"
+      },
+      "warning": {
+        "$type": "color",
+        "$value": "#F1BAAA"
+      },
+      "success": {
+        "$type": "color",
+        "$value": "#A4D4C4"
+      },
+      "daylight-mist": {
+        "$type": "color",
+        "$value": "#DFE9E6"
+      },
+      "daylight-surface": {
+        "$type": "color",
+        "$value": "#EAF0EC"
+      },
+      "daylight-raised": {
+        "$type": "color",
+        "$value": "#F2F5F0"
+      },
+      "daylight-selected": {
+        "$type": "color",
+        "$value": "#D1E1DA"
+      },
+      "daylight-stroke": {
+        "$type": "color",
+        "$value": "#667F86"
+      },
+      "daylight-ink": {
+        "$type": "color",
+        "$value": "#153139"
+      },
+      "daylight-secondary": {
+        "$type": "color",
+        "$value": "#28584C"
+      },
+      "dark-functional-stroke": {
+        "$type": "color",
+        "$value": "#78969A"
+      },
+      "dark-muted-legible": {
+        "$type": "color",
+        "$value": "#9DB2B4"
+      }
+    }
+  },
+  "semantic": {
+    "dark": {
+      "canvas": {
+        "$type": "color",
+        "$value": "#0B1218"
+      },
+      "surface": {
+        "$type": "color",
+        "$value": "#1C2D36"
+      },
+      "surface-raised": {
+        "$type": "color",
+        "$value": "#13232C"
+      },
+      "surface-selected": {
+        "$type": "color",
+        "$value": "#263C46"
+      },
+      "text-primary": {
+        "$type": "color",
+        "$value": "#EBF1EB"
+      },
+      "text-secondary": {
+        "$type": "color",
+        "$value": "#BDDAD1"
+      },
+      "text-muted": {
+        "$type": "color",
+        "$value": "#9DB2B4"
+      },
+      "accent": {
+        "$type": "color",
+        "$value": "#BDDAD1"
+      },
+      "accent-strong": {
+        "$type": "color",
+        "$value": "#EBF1EB"
+      },
+      "on-accent": {
+        "$type": "color",
+        "$value": "#0B1218"
+      },
+      "border": {
+        "$type": "color",
+        "$value": "#78969A"
+      },
+      "border-strong": {
+        "$type": "color",
+        "$value": "#BDDAD1"
+      },
+      "focus": {
+        "$type": "color",
+        "$value": "#BDDAD1"
+      },
+      "danger": {
+        "$type": "color",
+        "$value": "#FFB4A8"
+      },
+      "warning": {
+        "$type": "color",
+        "$value": "#F1BAAA"
+      },
+      "success": {
+        "$type": "color",
+        "$value": "#A4D4C4"
+      }
+    },
+    "light": {
+      "canvas": {
+        "$type": "color",
+        "$value": "#DFE9E6"
+      },
+      "surface": {
+        "$type": "color",
+        "$value": "#EAF0EC"
+      },
+      "surface-raised": {
+        "$type": "color",
+        "$value": "#F2F5F0"
+      },
+      "surface-selected": {
+        "$type": "color",
+        "$value": "#D1E1DA"
+      },
+      "text-primary": {
+        "$type": "color",
+        "$value": "#153139"
+      },
+      "text-secondary": {
+        "$type": "color",
+        "$value": "#28584C"
+      },
+      "text-muted": {
+        "$type": "color",
+        "$value": "#405A5F"
+      },
+      "accent": {
+        "$type": "color",
+        "$value": "#28584C"
+      },
+      "accent-strong": {
+        "$type": "color",
+        "$value": "#153139"
+      },
+      "on-accent": {
+        "$type": "color",
+        "$value": "#F2F5F0"
+      },
+      "border": {
+        "$type": "color",
+        "$value": "#667F86"
+      },
+      "border-strong": {
+        "$type": "color",
+        "$value": "#28584C"
+      },
+      "focus": {
+        "$type": "color",
+        "$value": "#28584C"
+      },
+      "danger": {
+        "$type": "color",
+        "$value": "#8F2D23"
+      },
+      "warning": {
+        "$type": "color",
+        "$value": "#805015"
+      },
+      "success": {
+        "$type": "color",
+        "$value": "#25634D"
+      }
+    }
+  },
+  "typography": {
+    "family": {
+      "brand": {
+        "$type": "fontFamily",
+        "$value": [
+          "Manrope",
+          "Noto Sans",
+          "sans-serif"
+        ]
+      },
+      "interface": {
+        "$type": "fontFamily",
+        "$value": [
+          "Noto Sans",
+          "sans-serif"
+        ]
+      },
+      "technical": {
+        "$type": "fontFamily",
+        "$value": [
+          "Noto Sans Mono",
+          "monospace"
+        ]
+      }
+    },
+    "size": {
+      "micro": {
+        "$type": "dimension",
+        "$value": "11px"
+      },
+      "caption": {
+        "$type": "dimension",
+        "$value": "12px"
+      },
+      "small": {
+        "$type": "dimension",
+        "$value": "14px"
+      },
+      "body": {
+        "$type": "dimension",
+        "$value": "16px"
+      },
+      "title-sm": {
+        "$type": "dimension",
+        "$value": "18px"
+      },
+      "title-md": {
+        "$type": "dimension",
+        "$value": "24px"
+      },
+      "title-lg": {
+        "$type": "dimension",
+        "$value": "32px"
+      },
+      "display": {
+        "$type": "dimension",
+        "$value": "52px"
+      }
+    },
+    "weight": {
+      "regular": {
+        "$type": "fontWeight",
+        "$value": 400
+      },
+      "medium": {
+        "$type": "fontWeight",
+        "$value": 500
+      },
+      "semibold": {
+        "$type": "fontWeight",
+        "$value": 600
+      }
+    },
+    "lineHeight": {
+      "tight": {
+        "$type": "number",
+        "$value": 1.12
+      },
+      "body": {
+        "$type": "number",
+        "$value": 1.5
+      }
+    },
+    "fallbackPolicy": {
+      "ui": "Noto Sans is the preferred UI family. Fontconfig and Qt choose script-specific Noto fallback; no single font file has worldwide Unicode coverage.",
+      "cjk": "Install Noto Sans CJK, respecting language metadata for Simplified Chinese, Traditional Chinese, Japanese and Korean glyph variants.",
+      "complexScripts": "Test appropriate script-specific Noto fonts and shaping for Arabic, Hebrew, Indic scripts and Southeast Asian writing systems.",
+      "emoji": "Noto Color Emoji is available as system fallback; avoid using emoji alone for unlabeled controls.",
+      "bidirectional": "Test RTL UI mirroring and mixed-direction Arabic/Hebrew text; glyph coverage alone does not solve bidi layout.",
+      "licensing": "Review SIL OFL notices and font package contents before redistributing custom system images."
+    }
+  },
+  "spacing": {
+    "0": {
+      "$type": "dimension",
+      "$value": "0px"
+    },
+    "1": {
+      "$type": "dimension",
+      "$value": "4px"
+    },
+    "2": {
+      "$type": "dimension",
+      "$value": "8px"
+    },
+    "3": {
+      "$type": "dimension",
+      "$value": "12px"
+    },
+    "4": {
+      "$type": "dimension",
+      "$value": "16px"
+    },
+    "5": {
+      "$type": "dimension",
+      "$value": "20px"
+    },
+    "6": {
+      "$type": "dimension",
+      "$value": "24px"
+    },
+    "8": {
+      "$type": "dimension",
+      "$value": "32px"
+    },
+    "10": {
+      "$type": "dimension",
+      "$value": "40px"
+    },
+    "12": {
+      "$type": "dimension",
+      "$value": "48px"
+    },
+    "16": {
+      "$type": "dimension",
+      "$value": "64px"
+    }
+  },
+  "radius": {
+    "none": {
+      "$type": "dimension",
+      "$value": "0px"
+    },
+    "xs": {
+      "$type": "dimension",
+      "$value": "6px"
+    },
+    "sm": {
+      "$type": "dimension",
+      "$value": "10px"
+    },
+    "md": {
+      "$type": "dimension",
+      "$value": "14px"
+    },
+    "lg": {
+      "$type": "dimension",
+      "$value": "20px"
+    },
+    "xl": {
+      "$type": "dimension",
+      "$value": "28px"
+    },
+    "pill": {
+      "$type": "dimension",
+      "$value": "999px"
+    }
+  },
+  "stroke": {
+    "hairline": {
+      "$type": "dimension",
+      "$value": "1px"
+    },
+    "focus": {
+      "$type": "dimension",
+      "$value": "2px"
+    }
+  },
+  "motion": {
+    "duration": {
+      "instant": {
+        "$type": "duration",
+        "$value": "0ms"
+      },
+      "quick": {
+        "$type": "duration",
+        "$value": "120ms"
+      },
+      "standard": {
+        "$type": "duration",
+        "$value": "220ms"
+      },
+      "spatial": {
+        "$type": "duration",
+        "$value": "380ms"
+      },
+      "deliberate": {
+        "$type": "duration",
+        "$value": "520ms"
+      }
+    },
+    "curve": {
+      "standard": {
+        "$type": "cubicBezier",
+        "$value": [
+          0.22,
+          1,
+          0.36,
+          1
+        ]
+      },
+      "enter": {
+        "$type": "cubicBezier",
+        "$value": [
+          0.16,
+          1,
+          0.3,
+          1
+        ]
+      },
+      "exit": {
+        "$type": "cubicBezier",
+        "$value": [
+          0.4,
+          0,
+          1,
+          1
+        ]
+      }
+    }
+  },
+  "sizing": {
+    "target-min": {
+      "$type": "dimension",
+      "$value": "44px"
+    },
+    "target-comfortable": {
+      "$type": "dimension",
+      "$value": "52px"
+    },
+    "island-compact-height": {
+      "$type": "dimension",
+      "$value": "38px"
+    }
+  },
+  "conventions": {
+    "use": "Semantic role tokens for product UI; primitives only for graphics and exploratory composition.",
+    "type": "A DTCG-inspired JSON data source; validate consumers before claiming complete format compatibility.",
+    "motion": "Platform gestures and compositor transitions are not implemented by these values.",
+    "name": "Floe is product; Flow is spatial navigation; IceBear is creator; Nival is reserved for possible future ecosystem."
+  },
+  "theme-policy": {
+    "default": "dark",
+    "modes": [
+      "dark",
+      "light"
+    ],
+    "light-mode": "Soft Arctic daylight, no pure #fff surfaces; dark ink and mineral fog replaces stark white.",
+    "preference": "Per-user explicit setting; optionally follow operating system when reliable, but never change without user control.",
+    "scope": "Floe shell UI and supported themeable tools only; existing applications retain their own preferences.",
+    "accessibility": "Body/small text AA 4.5:1 or greater on its rendered surface; focus indicator perceivable, touch targets 44dp minimum; reduced motion supported."
+  }
+}
