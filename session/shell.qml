@@ -136,6 +136,14 @@ ShellRoot {
                         else root.appMenu = null
                         root.openMenuWhenReady = false
                     }
+                    if (event.WorkspaceActiveWindowChanged && root.appMenu &&
+                            event.WorkspaceActiveWindowChanged.workspace_id === root.appMenu.workspace_id &&
+                            event.WorkspaceActiveWindowChanged.active_window_id !== null &&
+                            event.WorkspaceActiveWindowChanged.active_window_id !== root.appMenu.id) {
+                        if (root.appMenuOpen) root.appMenuFocusChanged = true
+                        else root.appMenu = null
+                        root.openMenuWhenReady = false
+                    }
                     if (event.WindowClosed && root.appMenu && root.appMenu.id === event.WindowClosed.id) {
                         if (root.appMenuOpen) root.appMenuFocusChanged = true
                         else root.appMenu = null

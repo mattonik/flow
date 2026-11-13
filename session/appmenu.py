@@ -28,7 +28,8 @@ def active_window(identity_only=False):
     active = next((w for w in windows if workspace and w["id"] == workspace.get("active_window_id")), None)
     if not active:
         return None
-    result = {"id": active["id"], "name": app_name(active.get("app_id"), active.get("title")), "menus": []}
+    result = {"id": active["id"], "workspace_id": workspace["id"],
+              "name": app_name(active.get("app_id"), active.get("title")), "menus": []}
     if identity_only:
         return result
     import pyatspi

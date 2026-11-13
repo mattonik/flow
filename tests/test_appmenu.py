@@ -28,9 +28,9 @@ class AppMenuTest(unittest.TestCase):
 
     @patch.object(appmenu, "niri")
     def test_identity_does_not_need_accessibility_menu(self, niri):
-        niri.side_effect = [[{"is_focused": True, "active_window_id": 7}],
+        niri.side_effect = [[{"id": 1, "is_focused": True, "active_window_id": 7}],
                             [{"id": 7, "app_id": "editor", "pid": 10}]]
-        self.assertEqual(appmenu.active_window(identity_only=True), {"id": 7, "name": "editor", "menus": []})
+        self.assertEqual(appmenu.active_window(identity_only=True), {"id": 7, "workspace_id": 1, "name": "editor", "menus": []})
 
     def test_only_matching_enabled_command_is_allowed(self):
         menu = [{"label": "File", "enabled": True, "children": [
