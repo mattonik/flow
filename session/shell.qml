@@ -4,6 +4,7 @@ import QtCore as Core
 import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Pipewire
+import Quickshell.Services.Mpris
 import Quickshell.Services.Notifications
 import Quickshell.Wayland
 
@@ -18,6 +19,11 @@ ShellRoot {
     readonly property bool audioAvailable: !!(audioSink && audioSink.audio)
     readonly property string volumeStatus: !Pipewire.ready ? "Checking audio…" : !audioAvailable ? "Audio unavailable" :
         Math.round(audioSink.audio.volume * 100) + "%" + (audioSink.audio.muted ? " · muted" : "")
+    readonly property var controllablePlayers: Mpris.players.values.filter(player => player.canTogglePlaying)
+    readonly property var playingPlayers: controllablePlayers.filter(player => player.isPlaying)
+    // shortcut: hide media controls when players are ambiguous; add a player picker if this occurs in practice.
+    readonly property var mediaPlayer: playingPlayers.length === 1 ? playingPlayers[0] :
+        playingPlayers.length === 0 && controllablePlayers.length === 1 ? controllablePlayers[0] : null
     property string networkStatus: "Checking network…"
     property string quickError: ""
     function trimTrackedNotifications() {
@@ -678,15 +684,19 @@ ShellRoot {
     PanelWindow {
         visible: root.quickSettingsOpen
         anchors.top: true
-        implicitWidth: 320; implicitHeight: 235; margins.top: 60
+        implicitWidth: 320; implicitHeight: Math.min(screen.height - 80, Math.max(235, quickSettingsColumn.implicitHeight + 32)); margins.top: 60
         color: "#17201e"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
         FocusScope {
             anchors.fill: parent; focus: true
             Keys.onEscapePressed: root.quickSettingsOpen = false
-            Column {
-                anchors.fill: parent; anchors.margins: 16; spacing: 10
+            ScrollView {
+                anchors.fill: parent; anchors.margins: 16; clip: true
+                contentWidth: availableWidth; contentHeight: quickSettingsColumn.implicitHeight
+                Column {
+                id: quickSettingsColumn
+                width: parent.width; spacing: 10
                 Text { text: "QUICK SETTINGS"; color: "#b8ddcb"; font.bold: true; font.pixelSize: 14 }
                 Text { text: "Network: " + root.networkStatus; color: "#d7e5df"; font.pixelSize: 14 }
                 Text { text: "Output volume: " + root.volumeStatus; color: "#d7e5df"; font.pixelSize: 14 }
@@ -696,11 +706,37 @@ ShellRoot {
                     FlowButton { width: 70; implicitHeight: 44; text: "+ 5%"; Accessible.name: "Increase volume"; enabled: root.audioAvailable; onClicked: root.changeVolume(0.05) }
                     FlowButton { width: 110; implicitHeight: 44; text: "Mute / unmute"; enabled: root.audioAvailable; onClicked: root.changeVolume("mute") }
                 }
+                Row {
+                    visible: !!root.mediaPlayer
+                    width: parent.width; spacing: 8
+                    Column {
+                        width: parent.width - mediaToggle.width - parent.spacing; spacing: 2
+                        Text {
+                            width: parent.width; maximumLineCount: 1; wrapMode: Text.NoWrap; elide: Text.ElideRight
+                            text: root.mediaPlayer ? (root.mediaPlayer.trackTitle || root.mediaPlayer.identity || "Media player").slice(0, 160) : ""
+                            textFormat: Text.PlainText; color: "#edf5f0"; font.bold: true; font.pixelSize: 14
+                        }
+                        Text {
+                            visible: !!(root.mediaPlayer && root.mediaPlayer.trackArtist)
+                            width: parent.width; maximumLineCount: 1; wrapMode: Text.NoWrap; elide: Text.ElideRight
+                            text: root.mediaPlayer ? root.mediaPlayer.trackArtist.slice(0, 160) : ""
+                            textFormat: Text.PlainText; color: "#91a59d"; font.pixelSize: 12
+                        }
+                    }
+                    FlowButton {
+                        id: mediaToggle; width: 76; implicitHeight: 44
+                        text: root.mediaPlayer && root.mediaPlayer.isPlaying ? "Pause" : "Play"
+                        Accessible.name: root.mediaPlayer && root.mediaPlayer.isPlaying ? "Pause media" : "Play media"
+                        enabled: !!(root.mediaPlayer && root.mediaPlayer.canTogglePlaying)
+                        onClicked: if (root.mediaPlayer && root.mediaPlayer.canTogglePlaying) root.mediaPlayer.togglePlaying()
+                    }
+                }
                 Text { visible: root.quickError !== ""; text: root.quickError; color: "#f1baaa"; font.pixelSize: 12 }
                 Row {
                     spacing: 6
                     FlowButton { width: 180; implicitHeight: 44; text: "Edit connections"; onClicked: { root.quickSettingsOpen = false; Quickshell.execDetached(["nm-connection-editor"]) } }
                     FlowButton { width: 90; implicitHeight: 44; text: "Close"; onClicked: root.quickSettingsOpen = false }
+                }
                 }
             }
         }

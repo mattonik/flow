@@ -1,0 +1,11 @@
+# ADR 0006: Reuse Quickshell's MPRIS integration
+
+Status: adopted for a minimal Quick Settings media control; tested in the ARM64 NixOS/Niri guest on 2026-11-13.
+
+Flow uses the existing Quickshell 0.3.2 [MPRIS player model](https://quickshell.org/docs/v0.3.2/types/Quickshell.Services.Mpris/Mpris/) and [player API](https://quickshell.org/docs/v0.3.2/types/Quickshell.Services.Mpris/MprisPlayer/). Quickshell is LGPL-3.0-only in the pinned nixpkgs; Flow does not copy its code or introduce a media daemon. The player owns metadata and playback. The shell renders bounded metadata as plain text and offers a 44-pixel play/pause target only when the player reports support.
+
+The shell selects a single playing controllable player, or a single controllable player when none are playing. When the choice is ambiguous it hides the control; a player selector is future work. This avoids sending commands to an unintended app but means multiple simultaneous players are not controllable from this first surface. There is no seek, artwork, track navigation or playback history.
+
+In the guest, pinned mpv 0.42.0 with its MIT-licensed mpv-mpris 1.3 plugin was built in the Nix store only and played a disposable silent audio file. Quick Settings showed its title. Keyboard activation paused and resumed it, with its MPRIS `PlaybackStatus` independently reporting `Paused` and `Playing`; adding a second playing instance hid the ambiguous control, removing it restored the first, and stopping both removed the row. Existing output-volume and network controls remained visible. The test players were stopped afterward. Firefox 159.0.1 played the same local audio but did not expose an MPRIS service in this guest; no claim is made for Firefox integration.
+
+The implementation adds no service, persistent state or new system package; reverting the shell change or selecting the preceding NixOS generation removes it. Other players, player capabilities changing at runtime, short screens, mouse and physical touch remain to be tested. The guest had 97% inode usage after the temporary mpv test build; inspect inode availability before further large builds and preserve rollback generations.
