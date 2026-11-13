@@ -53,7 +53,7 @@ def pinned_apps(pins):
     return {app for pin in pins for app in pin.get("members", [pin["app_id"]])}
 
 
-def save(path, workspace, windows, session=None):
+def save(path, workspace, windows, session=None, pins=()):
     current = [w for w in windows if w.get("workspace_id") == workspace["id"]]
     current.sort(key=lambda w: w.get("layout", {}).get("pos_in_scrolling_layout") or [99999, 0])
     entries = [{"app_id": w.get("app_id"), "window_id": w["id"], "label": w.get("title") or w.get("app_id") or "Unknown application",
@@ -101,6 +101,11 @@ def save(path, workspace, windows, session=None):
         matches = [g for g in previous if set(g["members"]) == set(apps)]
         groups.append({**matches[0], "members": apps} if len(matches) == 1 else {"id": uuid.uuid4().hex,
                       "label": " + ".join(entry["label"] for entry in members), "members": apps})
+    for pin in pins:
+        matches = [g for g in previous if g["id"] == pin.get("group_id")]
+        if len(matches) == 1 and not any(g["id"] == matches[0]["id"]
+                                         and set(g["members"]) == set(matches[0]["members"]) for g in groups):
+            raise ValueError("Rejoin or unpin the separated pinned Group before saving; session was not replaced")
     write_snapshot(path, {"version": 1, "session": session, "windows": entries, "groups": groups})
     return len(current)
 
@@ -348,8 +353,13 @@ def main():
         with (path.parent / "session.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             if op == "save":
-                workspace, windows = spaces.snapshot()
-                count = save(path, workspace, windows, spaces.session_id())
+                with (path.parent / "spaces.lock").open("a") as spaces_lock:
+                    fcntl.flock(spaces_lock, fcntl.LOCK_EX)
+                    pins_path = path.parent / "spaces.json"
+                    pins = json.loads(pins_path.read_text()) if pins_path.exists() else []
+                    pinned_apps(pins)
+                    workspace, windows = spaces.snapshot()
+                    count = save(path, workspace, windows, spaces.session_id(), pins)
                 print(json.dumps({"message": f"Saved {count} open windows. Save documents in each app before restarting."}))
             else:
                 if len(sys.argv) != 4:

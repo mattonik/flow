@@ -250,3 +250,7 @@ The Group rename editor now provides Cancel and handles Escape without closing t
 ## Pin Groups from the switcher (2026-11-13)
 
 Saved Groups can now be pinned and unpinned directly from their switcher card. The control reflects the Group's actual pin identity rather than its label. In the ARM64 guest, keyboard navigation pinned an existing Group and unpinned it again; its original column order and focus were restored after the check. Physical touch and multi-display pinning remain untested.
+
+## Protect separated pinned Groups (2026-11-13)
+
+Saving now refuses to replace the session snapshot if an existing pinned Group was separated outside Flow. Rejoining or unpinning it allows the user to continue. A temporary-state ARM64 guest test used two disposable Niri windows and the recovery command's save path: it checked both lock files, verified the pinned rejection preserved the snapshot byte-for-byte, and confirmed that an unpinned Group could be removed by saving. The test did not exercise concurrent lock contention or reboot.

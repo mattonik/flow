@@ -133,6 +133,23 @@ class RecoveryTest(unittest.TestCase):
                 restore.save(path, ws, [pair[0], other])
             self.assertEqual(path.read_text(), before)
 
+    def test_save_does_not_orphan_a_separated_pinned_group(self):
+        ws = {"id": 1}
+        pair = [window(1, "one", 1), window(2, "two", 1)]
+        pair[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.json"
+            restore.save(path, ws, pair)
+            before = path.read_text()
+            group_id = json.loads(before)["groups"][0]["id"]
+            pin = {"app_id": "one", "members": ["one", "two"], "group_id": group_id}
+            pair[1]["layout"]["pos_in_scrolling_layout"] = [2, 1]
+            with self.assertRaisesRegex(ValueError, "pinned Group"):
+                restore.save(path, ws, pair, pins=[pin])
+            self.assertEqual(path.read_text(), before)
+            restore.save(path, ws, pair)
+            self.assertEqual(json.loads(path.read_text())["groups"], [])
+
     def test_rename_saved_group_keeps_snapshot_and_rejects_bad_names(self):
         ws = {"id": 1}
         windows = [window(1, "one", 1), window(2, "two", 1)]
