@@ -209,4 +209,8 @@ Saved two-app Groups now retain their name and identity when their members chang
 
 Recovery can order a saved mix of single windows and two-app Groups after reconstructing the Groups. It skips the ordering pass and reports manual recovery when saved entries are incomplete, ambiguous or invalid, a Group cannot be reconstructed, or a pinned app is present on the workspace. In the ARM64 guest, four disposable Foot windows were rearranged into a single window, a two-window Group and another single window in saved order, with saved focus restored; the test windows were then closed. Automated tests cover incomplete and ambiguous cases, pins and workspace changes. This does not establish reboot restoration or recover application documents.
 
+## Desk and Overview continuity (2026-11-13)
+
+In the ARM64 guest, opening and closing Desk and Niri Overview left four existing window IDs, their workspace and scrolling positions, and the focused window unchanged. The test observed Desk's exclusive keyboard layer and Niri's open Overview state before closing each surface. This checks single-display IPC transitions, not touch gestures or animation quality.
+
 After temporary media-test packages brought the guest to 97% inode usage, `nix-store --optimise` completed successfully and reduced usage to 31% by hard-linking duplicate store files. No system generations were removed.
