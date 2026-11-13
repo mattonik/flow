@@ -1,4 +1,6 @@
-# Flow
+# Floe (formerly Flow)
+
+**Floe** is the product identity; **Flow** remains the horizontal interaction model and the current internal service/configuration name. Explore [Arctic Minimalism](design/BRAND_GUIDELINES.md) and the [interactive dark/light identity preview](design/preview/index.html). The design branch adds appearance tokens but is **not** a validated full-system theme.
 
 Flow is an experimental, multiplatform Linux session. Product intent is in [the unmodified v1.1 master specification](docs/Flow_MASTER_SPEC_v1.1.md), with [contextual menu direction](docs/Flow_contextual_menus_groups.md). The [v1.0 product brief](docs/Flow_product_brief_v1.0.md) is retained, and the [v1.0 HTML prototype](docs/Flow_v1.0_Contextual_Menus.html) is a design reference, not a native implementation. iPad enablement is a separate project.
 

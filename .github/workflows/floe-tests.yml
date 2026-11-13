@@ -1,0 +1,22 @@
+name: Floe — design tokens and Python tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    name: Token consistency and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify generated Floe palettes
+        run: python3 design/scripts/generate_theme.py --check
+      - name: Check Python syntax
+        run: python3 -m compileall -q session design/scripts tests
+      - name: Run Python unit tests and WCAG color regression tests
+        run: python3 -m unittest discover -s tests -v
