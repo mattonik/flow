@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" role="img" aria-labelledby="title">
+<title id="title">Floe Arctic Minimalism identity board</title>
+<rect width="1200" height="760" fill="#0B1218"/>
+<text x="68" y="58" font-family="Inter,sans-serif" font-weight="600" font-size="15" letter-spacing="3" fill="#8FA8AA">FLOE / ARCTIC MINIMALISM / DESIGN CONCEPT 01</text>
+<g transform="translate(70 118) scale(1.65)">
+<path fill="#BDDAD1" d="M19 16H62L82 29L72 40H29L12 28Z"/><path fill="#EBF1EB" d="M26 43H74L87 55L75 67H29L16 55Z"/><path fill="#8FA8AA" d="M17 70H60L73 81L64 91H23L9 80Z"/>
+</g>
+<text x="246" y="253" font-family="Manrope,Inter,sans-serif" font-size="132" font-weight="500" letter-spacing="-7" fill="#EBF1EB">floe.</text>
+<text x="252" y="301" font-family="Inter,sans-serif" font-size="25" fill="#BDDAD1">Room to think.</text>
+<text x="70" y="380" font-family="Inter,sans-serif" font-size="15" letter-spacing="2" fill="#8FA8AA">THE FIVE ARCTIC FOUNDATIONS</text>
+<g font-family="Inter,sans-serif" font-size="15">
+<rect x="70" y="405" width="204" height="106" fill="#0B1218" stroke="#667F86"/><text x="82" y="537" fill="#8FA8AA">POLAR NIGHT</text>
+<rect x="284" y="405" width="204" height="106" fill="#1C2D36"/><text x="296" y="537" fill="#8FA8AA">DEEP ICE</text>
+<rect x="498" y="405" width="204" height="106" fill="#667F86"/><text x="510" y="537" fill="#8FA8AA">GLACIAL STONE</text>
+<rect x="712" y="405" width="204" height="106" fill="#BDDAD1"/><text x="724" y="537" fill="#8FA8AA">SEA GLASS</text>
+<rect x="926" y="405" width="204" height="106" fill="#EBF1EB"/><text x="938" y="537" fill="#8FA8AA">SNOW LIGHT</text>
+</g>
+<rect x="70" y="578" width="1060" height="124" rx="19" fill="#1C2D36" stroke="#304851"/>
+<text x="99" y="618" font-family="Inter,sans-serif" font-weight="600" font-size="23" fill="#EBF1EB">Everything in its place.</text>
+<text x="99" y="653" font-family="Inter,sans-serif" font-size="17" fill="#8FA8AA">A spacious environment for thoughtful work.</text>
+<rect x="866" y="608" width="230" height="54" rx="27" fill="#BDDAD1"/>
+<text x="981" y="642" font-family="Inter,sans-serif" font-size="17" font-weight="600" text-anchor="middle" fill="#0B1218">Explore spaces</text>
+</svg>
