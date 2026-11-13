@@ -20,6 +20,13 @@ class ShellTextTest(unittest.TestCase):
         qml = (Path(__file__).parents[1] / "session/shell.qml").read_text()
         self.assertRegex(qml, r'(?s)text: "Everything<br>.*?textFormat: Text\.RichText')
 
+    def test_spaces_errors_have_accessible_dismiss_controls_in_desk_and_switcher(self):
+        qml = (Path(__file__).parents[1] / "session/shell.qml").read_text()
+        self.assertEqual(qml.count('Accessible.name: "Dismiss spaces error"'), 2)
+        self.assertEqual(qml.count('onClicked: root.spacesError = ""'), 2)
+        self.assertGreaterEqual(qml.count('implicitHeight: 44; text: "Dismiss"'), 2)
+        self.assertIn('Math.min(screen.height - 16, (width < 500 ? 336 : 290) + (switcherSpacesError.visible ? switcherSpacesError.implicitHeight + 8 : 0))', qml)
+
 
 if __name__ == "__main__":
     unittest.main()

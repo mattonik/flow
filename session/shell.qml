@@ -426,7 +426,11 @@ ShellRoot {
                         FlowButton { width: 200; text: "Pin current app · Super P"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("pin") }
                         FlowButton { visible: root.pins.length > 0; width: 100; text: root.editPins ? "Done" : "Edit pins"; onClicked: root.editPins = !root.editPins }
                     }
-                    Text { visible: root.spacesError !== ""; text: root.spacesError; textFormat: Text.PlainText; color: "#f1baaa"; wrapMode: Text.Wrap; width: parent.width; font.pixelSize: 14 }
+                    Row {
+                        visible: root.spacesError !== ""; width: parent.width; spacing: 8
+                        Text { text: root.spacesError; textFormat: Text.PlainText; color: "#f1baaa"; wrapMode: Text.Wrap; width: parent.width - dismissSpacesError.width - 8; font.pixelSize: 14 }
+                        FlowButton { id: dismissSpacesError; width: 96; implicitHeight: 44; text: "Dismiss"; Accessible.name: "Dismiss spaces error"; onClicked: root.spacesError = "" }
+                    }
                     Text { text: "TOOLS"; color: "#91a59d"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
                     Flow {
                         width: parent.width
@@ -495,7 +499,7 @@ ShellRoot {
     PanelWindow {
         visible: root.switcherOpen
         anchors { bottom: true; left: true; right: true }
-        implicitHeight: width < 500 ? 336 : 290; color: "#101a18"; exclusionMode: ExclusionMode.Ignore
+        implicitHeight: Math.min(screen.height - 16, (width < 500 ? 336 : 290) + (switcherSpacesError.visible ? switcherSpacesError.implicitHeight + 8 : 0)); color: "#101a18"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
         FocusScope {
@@ -527,7 +531,12 @@ ShellRoot {
                             onClicked: spaceScroller.contentX = Math.min(spaceScroller.contentWidth - spaceScroller.width, spaceScroller.contentX + spaceScroller.width * 0.8)
                         }
                     }
-                    Text { text: root.spacesError; textFormat: Text.PlainText; color: "#f1baaa" }
+                    Row {
+                        id: switcherSpacesError
+                        visible: root.spacesError !== ""; width: parent.width; spacing: 8
+                        Text { text: root.spacesError; textFormat: Text.PlainText; color: "#f1baaa"; wrapMode: Text.Wrap; width: parent.width - dismissSwitcherSpacesError.width - 8 }
+                        FlowButton { id: dismissSwitcherSpacesError; width: 96; implicitHeight: 44; text: "Dismiss"; Accessible.name: "Dismiss spaces error"; onClicked: root.spacesError = "" }
+                    }
                 }
                 Text { visible: root.displaySpaces.length === 0; text: "No open spaces"; color: "#91a59d" }
                 Flickable {
