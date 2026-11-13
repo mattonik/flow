@@ -199,8 +199,15 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
     try:
         if not groups:
             for index, (_, window) in enumerate(restored, 1):
-                checked_snapshot()
+                current, live = checked_snapshot()
+                if any(w.get("workspace_id") == workspace_id and w.get("app_id") in pinned for w in live):
+                    report.append("Pinned spaces keep their positions; session order needs manual recovery")
+                    break
                 action("action", "focus-window", "--id", window["id"])
+                current, live = checked_snapshot()
+                if any(w.get("workspace_id") == workspace_id and w.get("app_id") in pinned for w in live):
+                    report.append("Pinned spaces keep their positions; session order needs manual recovery")
+                    break
                 action("action", "move-column-to-index", index)
         else:
             group_entry_ids = {id(entry) for group in groups for entry in group}

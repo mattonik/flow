@@ -254,3 +254,7 @@ Saved Groups can now be pinned and unpinned directly from their switcher card. T
 ## Protect separated pinned Groups (2026-11-13)
 
 Saving now refuses to replace the session snapshot if an existing pinned Group was separated outside Flow. Rejoining or unpinning it allows the user to continue. A temporary-state ARM64 guest test used two disposable Niri windows and the recovery command's save path: it checked both lock files, verified the pinned rejection preserved the snapshot byte-for-byte, and confirmed that an unpinned Group could be removed by saving. The test did not exercise concurrent lock contention or reboot.
+
+## Protect pin ordering during recovery (2026-11-13)
+
+Recovery of snapshots without Groups now avoids reordering when a live pinned app occupies the workspace, matching the existing conservative behavior for mixed Group snapshots. In the ARM64 guest, an isolated test kept a disposable pin and restored app in their original columns and retained focus. Automated checks also cover a pin appearing before a move. Niri IPC actions are separate, so a pin appearing between the final check and a move is still a race.

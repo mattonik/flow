@@ -179,6 +179,40 @@ class RecoveryTest(unittest.TestCase):
         launch.assert_not_called()
         action.assert_any_call("action", "focus-window", "--id", 1)
 
+    def test_single_window_recovery_does_not_reorder_around_a_live_pin(self):
+        ws = {"id": 1, "active_window_id": 2}
+        saved = {"version": 1, "windows": [{"app_id": "one", "column": 1}]}
+        windows = [window(1, "pin", 1), window(2, "one", 2)]
+        actions = Mock()
+        report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                        pinned={"pin"})
+        self.assertEqual(count, 1)
+        self.assertTrue(any("Pinned spaces keep" in message for message in report))
+        self.assertNotIn("move-column-to-index", [call.args[1] for call in actions.call_args_list])
+
+    def test_single_window_recovery_stops_if_a_pin_appears_before_move(self):
+        ws = {"id": 1, "active_window_id": 1}
+        saved = {"version": 1, "windows": [{"app_id": "one", "column": 1}]}
+        windows = [window(1, "one", 1)]
+        snapshots = Mock(side_effect=[(ws, windows), (ws, windows + [window(2, "pin", 2)]),
+                                      (ws, windows)])
+        actions = Mock()
+        report, _ = restore.restore(saved, ws, windows, [], Mock(), snapshots, actions, pinned={"pin"})
+        self.assertTrue(any("Pinned spaces keep" in message for message in report))
+        self.assertNotIn("move-column-to-index", [call.args[1] for call in actions.call_args_list])
+
+    def test_single_window_recovery_ignores_pins_on_another_workspace(self):
+        ws = {"id": 1, "active_window_id": 1}
+        saved = {"version": 1, "windows": [{"app_id": "one", "column": 1}]}
+        other_pin = window(2, "pin", 1)
+        other_pin["workspace_id"] = 2
+        windows = [window(1, "one", 2), other_pin]
+        actions = Mock()
+        report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                        pinned={"pin"})
+        self.assertEqual((report, count), ([], 1))
+        actions.assert_any_call("action", "move-column-to-index", 1)
+
     def test_duplicate_or_unknown_windows_are_not_launched(self):
         launch = Mock()
         saved = {"version": 1, "windows": [{"app_id": "one"}, {"app_id": "one"}, {"app_id": None}]}
