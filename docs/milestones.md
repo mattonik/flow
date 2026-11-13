@@ -205,4 +205,8 @@ A store-only wvkbd probe displayed an on-screen keyboard under a disposable Foot
 
 Saved two-app Groups now retain their name and identity when their members change order in a stack. Unit tests cover reversed order and ambiguous matches. In the ARM64 guest, a real Group retained its identity after its members were reversed; the original member order and focus were restored after the check. This does not add adaptive or pinned Groups.
 
+## Mixed Group recovery ordering (2026-11-13)
+
+Recovery can order a saved mix of single windows and two-app Groups after reconstructing the Groups. It skips the ordering pass and reports manual recovery when saved entries are incomplete, ambiguous or invalid, a Group cannot be reconstructed, or a pinned app is present on the workspace. In the ARM64 guest, four disposable Foot windows were rearranged into a single window, a two-window Group and another single window in saved order, with saved focus restored; the test windows were then closed. Automated tests cover incomplete and ambiguous cases, pins and workspace changes. This does not establish reboot restoration or recover application documents.
+
 After temporary media-test packages brought the guest to 97% inode usage, `nix-store --optimise` completed successfully and reduced usage to 31% by hard-linking duplicate store files. No system generations were removed.

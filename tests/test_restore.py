@@ -17,6 +17,37 @@ def window(ident, app, column):
             "layout": {"pos_in_scrolling_layout": [column, 1]}}
 
 
+class NiriActions:
+    def __init__(self, workspace, windows):
+        self.workspace = workspace
+        self.windows = windows
+        self.focused = workspace.get("active_window_id")
+
+    def __call__(self, _kind, action, *args):
+        if action == "focus-window":
+            self.focused = args[1]
+            self.workspace["active_window_id"] = self.focused
+            return
+        columns = {}
+        for item in self.windows:
+            column = item["layout"]["pos_in_scrolling_layout"][0]
+            columns.setdefault(column, []).append(item)
+        ordered = [columns[key] for key in sorted(columns)]
+        if action == "move-column-to-index":
+            item = next(w for w in self.windows if w["id"] == self.focused)
+            source = next(i for i, members in enumerate(ordered) if item in members)
+            moving = ordered.pop(source)
+            ordered.insert(args[0] - 1, moving)
+        elif action == "consume-window-into-column":
+            item = next(w for w in self.windows if w["id"] == self.focused)
+            target = next(i for i, members in enumerate(ordered) if item in members)
+            if target + 1 < len(ordered):
+                ordered[target] += ordered.pop(target + 1)
+        for column, members in enumerate(ordered, 1):
+            for row, item in enumerate(members, 1):
+                item["layout"]["pos_in_scrolling_layout"] = [column, row]
+
+
 class RecoveryTest(unittest.TestCase):
     def test_snapshot_order_and_focus(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -164,30 +195,69 @@ class RecoveryTest(unittest.TestCase):
         saved = {"version": 1, "windows": [{"app_id": "one", "column": 1},
                                            {"app_id": "two", "column": 1, "focused": True}]}
         windows = [window(1, "one", 1), window(2, "two", 2)]
-        action = Mock()
+        action = Mock(side_effect=NiriActions(ws, windows))
         report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), action)
         self.assertEqual((report, count), ([], 2))
         action.assert_any_call("action", "consume-window-into-column")
         action.assert_called_with("action", "focus-window", "--id", 2)
+
+    def test_restores_mixed_group_and_singleton_column_order_with_extra_window(self):
+        ws = {"id": 1, "active_window_id": 4}
+        saved = {"version": 1, "windows": [
+            {"app_id": "one", "column": 1},
+            {"app_id": "two", "column": 2},
+            {"app_id": "three", "column": 2},
+            {"app_id": "four", "column": 3, "focused": True},
+        ]}
+        windows = [window(1, "one", 3), window(2, "two", 2), window(3, "three", 4),
+                   window(4, "four", 1), window(5, "extra", 5)]
+        actions = Mock(side_effect=NiriActions(ws, windows))
+        report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions)
+        columns = {}
+        for item in windows:
+            columns.setdefault(item["layout"]["pos_in_scrolling_layout"][0], []).append(item["app_id"])
+        self.assertEqual((report, count), ([], 4))
+        self.assertEqual([set(columns[i]) for i in sorted(columns)],
+                         [{"one"}, {"two", "three"}, {"four"}, {"extra"}])
+        actions.assert_called_with("action", "focus-window", "--id", 4)
+
+    def test_failed_group_keeps_other_saved_columns_in_place(self):
+        ws = {"id": 1, "active_window_id": 3}
+        saved = {"version": 1, "windows": [
+            {"app_id": "one", "column": 1},
+            {"app_id": "two", "column": 2},
+            {"app_id": "missing", "column": 2},
+            {"app_id": "three", "column": 3, "focused": True},
+        ]}
+        windows = [window(1, "one", 3), window(2, "two", 1), window(3, "three", 2)]
+        before = [w["layout"]["pos_in_scrolling_layout"][:] for w in windows]
+        actions = Mock()
+        report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions)
+        self.assertTrue(any("Group members unavailable or ambiguous" in message for message in report))
+        self.assertEqual([w["layout"]["pos_in_scrolling_layout"] for w in windows], before)
+        self.assertNotIn("move-column-to-index", [call.args[1] for call in actions.call_args_list])
+
+    def test_ambiguous_group_does_not_trigger_singleton_reordering(self):
+        ws = {"id": 1, "active_window_id": 4}
+        saved = {"version": 1, "windows": [
+            {"app_id": "one", "column": 1}, {"app_id": "two", "column": 2},
+            {"app_id": "three", "column": 2}, {"app_id": "four", "column": 3, "focused": True},
+        ]}
+        windows = [window(1, "one", 3), window(2, "two", 1), window(5, "two", 4),
+                   window(3, "three", 2), window(4, "four", 5)]
+        before = [w["layout"]["pos_in_scrolling_layout"][:] for w in windows]
+        actions = Mock()
+        report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions)
+        self.assertTrue(any("ambiguous" in message for message in report))
+        self.assertEqual([w["layout"]["pos_in_scrolling_layout"] for w in windows], before)
+        self.assertNotIn("move-column-to-index", [call.args[1] for call in actions.call_args_list])
 
     def test_moves_group_member_next_to_partner_in_either_direction(self):
         saved = {"version": 1, "windows": [{"app_id": "one", "column": 1}, {"app_id": "two", "column": 1}]}
         ws = {"id": 1}
         for order in (("one", "other", "two"), ("two", "other", "one")):
             windows = [window(i, app, i) for i, app in enumerate(order, 1)]
-            focused = None
-            def action(*args):
-                nonlocal focused
-                if args[1] == "focus-window":
-                    focused = args[3]
-                elif args[1] == "move-column-to-index":
-                    ordered = sorted(windows, key=lambda w: w["layout"]["pos_in_scrolling_layout"][0])
-                    member = next(w for w in ordered if w["id"] == focused)
-                    ordered.remove(member)
-                    ordered.insert(args[2] - 1, member)
-                    for index, w in enumerate(ordered, 1):
-                        w["layout"]["pos_in_scrolling_layout"][0] = index
-            actions = Mock(side_effect=action)
+            actions = Mock(side_effect=NiriActions(ws, windows))
             report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions)
             self.assertEqual((report, count), ([], 2))
             actions.assert_any_call("action", "consume-window-into-column")
@@ -201,8 +271,42 @@ class RecoveryTest(unittest.TestCase):
         report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), action)
         self.assertEqual((report, count), ([], 2))
         self.assertNotIn("consume-window-into-column", str(action.call_args_list))
-        report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), Mock(), pinned={"one"})
+        pinned_action = Mock()
+        report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), pinned_action, pinned={"one"})
         self.assertIn("pinned", report[0])
+        self.assertNotIn("move-column-to-index", [call.args[1] for call in pinned_action.call_args_list])
+
+    def test_live_saved_or_unsaved_pin_blocks_the_new_ordering_pass(self):
+        saved = {"version": 1, "windows": [
+            {"app_id": "three", "column": 1}, {"app_id": "one", "column": 2},
+            {"app_id": "two", "column": 2},
+        ]}
+        for pins, windows in (
+            ({"one"}, [window(9, "pin", 1), window(3, "three", 3), window(1, "one", 2), window(2, "two", 2)]),
+            ({"pin"}, [window(9, "pin", 1), window(3, "three", 3), window(1, "one", 2), window(2, "two", 2)]),
+        ):
+            with self.subTest(pins=pins):
+                windows[-1]["layout"]["pos_in_scrolling_layout"] = [2, 2]
+                ws = {"id": 1, "active_window_id": windows[0]["id"]}
+                before = [w["layout"]["pos_in_scrolling_layout"][:] for w in windows]
+                action = Mock()
+                report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), action, pinned=pins)
+                self.assertTrue(any("pinned" in message.lower() or "Pinned spaces keep" in message for message in report))
+                self.assertEqual([w["layout"]["pos_in_scrolling_layout"] for w in windows], before)
+                self.assertNotIn("move-column-to-index", [call.args[1] for call in action.call_args_list])
+
+    def test_mixed_group_ordering_requires_valid_columns_for_every_entry(self):
+        ws = {"id": 1, "active_window_id": 3}
+        saved = {"version": 1, "windows": [
+            {"app_id": "one", "column": 1}, {"app_id": "two", "column": 1},
+            {"app_id": "three"},
+        ]}
+        windows = [window(1, "one", 2), window(2, "two", 2), window(3, "three", 1)]
+        windows[1]["layout"]["pos_in_scrolling_layout"] = [2, 2]
+        actions = Mock()
+        report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions)
+        self.assertIn("Saved columns are incomplete", " ".join(report))
+        self.assertNotIn("move-column-to-index", [call.args[1] for call in actions.call_args_list])
 
     def test_launch_only_exact_desktop_entry(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -238,6 +342,26 @@ class RecoveryTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Workspace changed"):
             restore.restore(saved, ws, windows, [], Mock(), lambda: ({"id": 2}, windows), action)
         action.assert_not_called()
+
+    def test_workspace_change_during_ordering_stops_before_more_moves_or_focus(self):
+        ws = {"id": 1, "active_window_id": 4}
+        windows = [window(1, "one", 2), window(2, "two", 1), window(3, "three", 1), window(4, "four", 3)]
+        windows[2]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        saved = {"version": 1, "windows": [{"app_id": "one", "column": 1},
+                                           {"app_id": "two", "column": 2},
+                                           {"app_id": "three", "column": 2},
+                                           {"app_id": "four", "column": 3, "focused": True}]}
+        snapshots = 0
+        def get_snapshot():
+            nonlocal snapshots
+            snapshots += 1
+            return (ws if snapshots < 4 else {"id": 2}, windows)
+        action = Mock()
+        with self.assertRaisesRegex(ValueError, "Workspace changed"):
+            restore.restore(saved, ws, windows, [], Mock(), get_snapshot, action)
+        self.assertEqual(action.call_args_list, [
+            unittest.mock.call("action", "focus-window", "--id", 1),
+        ])
 
 
 if __name__ == "__main__":

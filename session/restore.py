@@ -125,6 +125,19 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
             raise ValueError("Workspace changed; session recovery stopped")
         return current, live
 
+    def column_members(window, current, live):
+        position = window and window.get("layout", {}).get("pos_in_scrolling_layout")
+        if not position:
+            return []
+        return [w for w in live if w.get("workspace_id") == current["id"] and not w.get("is_floating")
+                and (w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0] == position[0]]
+
+    def group_column_matches(member_ids, current, live):
+        pair = [next((w for w in live if w.get("id") == ident), None) for ident in member_ids]
+        positions = [w.get("layout", {}).get("pos_in_scrolling_layout") if w else None for w in pair]
+        return (all(positions) and positions[0][0] == positions[1][0] and positions[0][1] < positions[1][1]
+                and {w["id"] for w in column_members(pair[0], current, live)} == set(member_ids))
+
     same_session = bool(session and data.get("session") == session)
     for entry in entries:
         app_id = entry["app_id"]
@@ -168,53 +181,112 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
         restored.append((entry, matches[0]))
     desired_focus = next((w["id"] for e, w in restored if e.get("focused")), original)
     try:
-        # shortcut: keep existing column order when restoring groups; add safe group-aware ordering later.
         if not groups:
             for index, (_, window) in enumerate(restored, 1):
                 checked_snapshot()
                 action("action", "focus-window", "--id", window["id"])
                 action("action", "move-column-to-index", index)
-        for group in groups:
-            group_apps = [entry["app_id"] for entry in group]
-            if len(group) != 2 or any(not app or app_counts[app] != 1 or app in pinned for app in group_apps):
-                report.append("Group requires manual recovery (ambiguous, pinned, or more than two apps)")
-                continue
-            workspace, live = checked_snapshot()
-            pair = []
-            for app in group_apps:
-                matches = [w for w in live if w.get("app_id") == app]
-                if len(matches) != 1 or matches[0].get("workspace_id") != workspace["id"] or matches[0].get("is_floating"):
-                    break
-                pair.append(matches[0])
-            if len(pair) != 2:
-                report.append("Group members unavailable or ambiguous; group not restored")
-                continue
-            positions = [w.get("layout", {}).get("pos_in_scrolling_layout") for w in pair]
-            if any(not pos for pos in positions):
-                report.append("Group members are not tiled; group not restored")
-                continue
-            if positions[0][0] == positions[1][0]:
-                members = [w for w in live if w.get("workspace_id") == workspace["id"] and not w.get("is_floating")
-                           and (w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0] == positions[0][0]]
-                if len(members) != 2 or positions[0][1] >= positions[1][1]:
-                    report.append("Existing group differs from saved group; check manually")
-                continue
-            if not all(spaces.eligible(w, workspace, live) for w in pair):
-                report.append("Group members are not single windows; group not restored")
-                continue
-            if positions[1][0] != positions[0][0] + 1:
-                target = positions[0][0] + (positions[1][0] > positions[0][0])
-                action("action", "focus-window", "--id", pair[1]["id"])
-                action("action", "move-column-to-index", target)
-                workspace, live = checked_snapshot()
-                pair = [next((w for w in live if w.get("id") == member["id"]), None) for member in pair]
-                if (not all(spaces.eligible(w, workspace, live) for w in pair)
-                        or pair[1]["layout"]["pos_in_scrolling_layout"][0]
-                        != pair[0]["layout"]["pos_in_scrolling_layout"][0] + 1):
-                    report.append("Group members moved unexpectedly; group not restored")
+        else:
+            group_entry_ids = {id(entry) for group in groups for entry in group}
+            group_destinations = []
+            groups_ok = True
+            for group in groups:
+                group_apps = [entry["app_id"] for entry in group]
+                if len(group) != 2 or any(not app or app_counts[app] != 1 or app in pinned for app in group_apps):
+                    report.append("Group requires manual recovery (ambiguous, pinned, or more than two apps)")
+                    groups_ok = False
                     continue
-            action("action", "focus-window", "--id", pair[0]["id"])
-            action("action", "consume-window-into-column")
+                workspace, live = checked_snapshot()
+                pair = []
+                for app in group_apps:
+                    matches = [w for w in live if w.get("app_id") == app]
+                    if len(matches) != 1 or matches[0].get("workspace_id") != workspace["id"] or matches[0].get("is_floating"):
+                        break
+                    pair.append(matches[0])
+                if len(pair) != 2:
+                    report.append("Group members unavailable or ambiguous; group not restored")
+                    groups_ok = False
+                    continue
+                positions = [w.get("layout", {}).get("pos_in_scrolling_layout") for w in pair]
+                if any(not pos for pos in positions):
+                    report.append("Group members are not tiled; group not restored")
+                    groups_ok = False
+                    continue
+                member_ids = tuple(w["id"] for w in pair)
+                if positions[0][0] == positions[1][0]:
+                    if not group_column_matches(member_ids, workspace, live):
+                        report.append("Existing group differs from saved group; check manually")
+                        groups_ok = False
+                    else:
+                        group_destinations.append((group[0]["column"], pair[0]["id"], member_ids))
+                    continue
+                if not all(spaces.eligible(w, workspace, live) for w in pair):
+                    report.append("Group members are not single windows; group not restored")
+                    groups_ok = False
+                    continue
+                if positions[1][0] != positions[0][0] + 1:
+                    target = positions[0][0] + (positions[1][0] > positions[0][0])
+                    action("action", "focus-window", "--id", pair[1]["id"])
+                    action("action", "move-column-to-index", target)
+                    workspace, live = checked_snapshot()
+                    pair = [next((w for w in live if w.get("id") == member["id"]), None) for member in pair]
+                    if (not all(spaces.eligible(w, workspace, live) for w in pair)
+                            or pair[1]["layout"]["pos_in_scrolling_layout"][0]
+                            != pair[0]["layout"]["pos_in_scrolling_layout"][0] + 1):
+                        report.append("Group members moved unexpectedly; group not restored")
+                        groups_ok = False
+                        continue
+                action("action", "focus-window", "--id", pair[0]["id"])
+                action("action", "consume-window-into-column")
+                workspace, live = checked_snapshot()
+                if not group_column_matches(member_ids, workspace, live):
+                    report.append("Group members moved unexpectedly; group not restored")
+                    groups_ok = False
+                    continue
+                group_destinations.append((group[0]["column"], pair[0]["id"], member_ids))
+
+            if groups_ok and len(restored) != len(entries):
+                report.append("Session is incomplete; saved ordering needs manual recovery")
+            elif groups_ok and any(not isinstance(entry.get("column"), int)
+                                   or isinstance(entry.get("column"), bool) or entry["column"] <= 0
+                                   for entry in entries):
+                report.append("Saved columns are incomplete; session ordering needs manual recovery")
+            elif groups_ok:
+                destinations = group_destinations + [
+                    (entry["column"], window["id"], None) for entry, window in restored
+                    if id(entry) not in group_entry_ids
+                ]
+                destinations.sort(key=lambda item: item[0])
+                if destinations:
+                    workspace, live = checked_snapshot()
+                    if any(w.get("workspace_id") == workspace_id and w.get("app_id") in pinned for w in live):
+                        report.append("Pinned spaces keep their positions; session order needs manual recovery")
+                        destinations = []
+                    else:
+                        valid = all(group_column_matches(ids, workspace, live) if ids else
+                                    spaces.eligible(next((w for w in live if w.get("id") == ident), None), workspace, live)
+                                    for _, ident, ids in destinations)
+                        if not valid:
+                            report.append("Saved destinations changed during recovery; session order needs manual recovery")
+                            destinations = []
+                if destinations:
+                    for target, (_, ident, member_ids) in enumerate(destinations, 1):
+                        workspace, live = checked_snapshot()
+                        window = next((w for w in live if w.get("id") == ident), None)
+                        valid = group_column_matches(member_ids, workspace, live) if member_ids else spaces.eligible(window, workspace, live)
+                        if not valid:
+                            report.append("Saved destinations changed during recovery; remaining order needs manual recovery")
+                            break
+                        position = window.get("layout", {}).get("pos_in_scrolling_layout")
+                        if position[0] != target:
+                            action("action", "focus-window", "--id", ident)
+                            workspace, live = checked_snapshot()
+                            window = next((w for w in live if w.get("id") == ident), None)
+                            valid = group_column_matches(member_ids, workspace, live) if member_ids else spaces.eligible(window, workspace, live)
+                            if not valid:
+                                report.append("Saved destinations changed during recovery; remaining order needs manual recovery")
+                                break
+                            action("action", "move-column-to-index", target)
     finally:
         if desired_focus and not workspace_changed:
             checked_snapshot()
