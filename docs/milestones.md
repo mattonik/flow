@@ -185,4 +185,10 @@ A Quickshell notification inbox prototype is built into the guest session and re
 
 On the ARM64 guest, a test notification appeared in the inbox. The inbox was opened from the Desk with the keyboard; Tab reached the dismiss control and Enter removed the notification. Escape closed the inbox.
 
-Follow-up: activating a notification action emitted `ActionInvoked` on D-Bus. The inbox now uses Quickshell's reactive notification model and defers its size limit until the server inserts each notification. A guest test sent 21 notifications and observed the oldest being closed before the remaining test notifications were cleaned up. The revised empty-state layout still needs a visual check; expiry, lock-screen behavior and touch also remain open.
+Follow-up: activating a notification action emitted `ActionInvoked` on D-Bus. The inbox now uses Quickshell's reactive notification model and defers its size limit until the server inserts each notification. A guest test sent 21 notifications and observed the oldest being closed before the remaining test notifications were cleaned up. The empty inbox displayed “No notifications” and closed with Escape on the ARM64 guest. Expiry, lock-screen behavior and touch remain open.
+
+## Connection profiles and portal availability (2026-11-13)
+
+Quick Settings now opens NetworkManager's existing connection editor. In the ARM64 NixOS/Niri guest, keyboard activation opened it and displayed the two existing wired profiles; the test made no connection changes. A guest rebuild activated the package and shell, and the portal broker was active and owned its session D-Bus name. This does not verify Wi-Fi selection, profile edits, touch, file chooser or screen sharing. See ADRs 0003 and 0005.
+
+Pin reconciliation now skips unavailable or ineligible pins while maintaining the order of eligible pins on the current workspace. Unit tests cover an off-workspace pin and the case where no pins are eligible. In the ARM64 guest, an isolated live test kept an existing pin on its original workspace, moved an eligible temporary window to the first column of another workspace, preserved focus, and closed the temporary windows. It does not add cross-workspace or Group pinning.

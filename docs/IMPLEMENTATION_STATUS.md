@@ -1,6 +1,6 @@
 # Implementation status against Flow Master Spec v1.1
 
-Updated 2026-11-12. This is a repository and recorded-evidence audit, not a new full acceptance run. **Partial** means some relevant behavior exists but the whole journey is not established. **Open** means the acceptance journey has not been demonstrated. See [milestones](milestones.md) and [graphics validation](graphics-validation.md) for prior evidence and its limits. The UTM guest was stopped during this audit; its current runtime state was not checked.
+Updated 2026-11-13. This is a repository and recorded-evidence audit, not a new full acceptance run. **Partial** means some relevant behavior exists but the whole journey is not established. **Open** means the acceptance journey has not been demonstrated. See [milestones](milestones.md) and [graphics validation](graphics-validation.md) for prior evidence and its limits. Recent targeted checks ran in the UTM guest; they do not validate every journey below.
 
 The recorded test environment is an Apple Silicon Mac running UTM 5.0.8, QEMU ARM64 with HVF, 8 GiB RAM and virtio-ramfb-gl; NixOS 26.11 with Niri 26.04 and virgl acceleration. Exact host model and physical input details were not recorded. No journey below is promoted to a full pass solely from the HTML prototypes or from unit tests.
 
@@ -8,16 +8,16 @@ The recorded test environment is an Apple Silicon Mac running UTM 5.0.8, QEMU AR
 |---|---|---|
 | F-001 Native session | Partial | Niri, Quickshell, real apps and login were exercised; Plasma remains installed as a fallback. Warm reboot hung in UTM; fallback login was not newly verified. |
 | F-002 Three real apps | Partial | Files, terminal, editors and browser ran in the guest; focus movement has been exercised. The exact three-app end-to-end journey needs a recorded repeat with before/after focus. |
-| F-003 Pinned positions | Partial | Single-app pins and recovery exist; pinned Groups, display-scoped positions and the specified restart journey are absent. |
+| F-003 Pinned positions | Partial | Single-app pins and recovery exist; an unavailable pin no longer blocks ordering eligible pins on the current workspace, verified with temporary guest windows. Pinned Groups, display-scoped positions and the complete specified restart journey remain absent. |
 | F-004 Shortcut accuracy | Partial | Single-display Super+number pin focus exists; display-number sequences and multi-display direct routing do not. |
 | F-005 Group identity | Partial | An unambiguous two-app stack has a saved name and ID in the explicit session snapshot. Adaptive orientation, independent semantic persistence and the full lifecycle remain open. |
 | F-006 Layer dismissal | Open | No verified Flow Layer model or Group-preserving dismissal journey. |
 | F-007 Desk/Overview | Partial | Desk overlays real windows and Niri overview displays them. Complete before/after checks of IDs, position and focus for both transitions are not recorded. |
 | F-008 Search | Partial | Search covers recent local files within the user’s home folder, Flow settings, quick settings, installed applications, open windows and saved pins, including closed apps. File indexing and commands are missing. The settings shell actions were checked through IPC. A recent-file result from an isolated history was selected in the guest and opened in Kate; naturally populated history and the settings results still need end-to-end validation. |
-| F-009 Island/system | Partial | Island, quick settings and lock exist; notification history and independent availability across all contexts are not established. |
+| F-009 Island/system | Partial | Island, quick settings, lock and a temporary notification inbox exist. The connection-profile editor opens from Quick Settings; Flow Wi-Fi selection, durable notification history and independent availability across all contexts are not established. |
 | F-010 Real accounts | Open | Two-user and guest isolation and switching have not been verified. |
 | F-011 Display hotplug | Open | No verified external-display disconnect and reconnect journey. |
-| F-012 Portal correctness | Open | Representative file chooser, screenshot, screenshare, clipboard and drag/drop matrix is not verified. |
+| F-012 Portal correctness | Open | The guest's portal broker is active and owns its session D-Bus name. The representative file chooser, screenshot, screenshare, clipboard and drag/drop matrix is not verified. |
 | F-013 Audio/peripherals | Open | Volume control was exercised; a Bluetooth headset and microphone were not tested on physical hardware. |
 | F-014 Figma day | Open | No recorded Figma workload, screenshare or browser-load test. |
 | F-015 Development day | Open | Terminal and editors run, but the native-host development, container and VM workflow is not verified. |
