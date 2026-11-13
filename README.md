@@ -4,7 +4,7 @@ Flow is an experimental, multiplatform Linux session. Product intent is in [the 
 
 **Status: foundation only, not a working MVP.** A single-display ARM64 UTM guest has run the Niri session, Quickshell island, app launcher and two terminal windows; see [graphics validation](docs/graphics-validation.md). Pinned spaces are an experimental single-display implementation; other MVP requirements remain incomplete. See the [acceptance status](docs/IMPLEMENTATION_STATUS.md) and [milestones](docs/milestones.md).
 
-For a short walkthrough using real applications, see [Recording a Flow demo](docs/demo.md).
+For a short walkthrough using real applications, see [Recording a Flow demo](docs/demo.md). Engineering guidance and reuse opportunities are in the [reuse-first atlas](docs/engineering/REUSE_FIRST_REFERENCE_ATLAS.md) and [reuse audit](docs/engineering/REUSE_AUDIT_2026-11-13.md).
 
 ## First: validate the graphics path
 
