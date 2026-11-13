@@ -60,6 +60,35 @@ class NiriActions:
 
 
 class RecoveryTest(unittest.TestCase):
+    def test_save_preserves_existing_snapshot_for_side_by_side_or_pending_group(self):
+        ws = {"id": 1, "active_window_id": 1}
+        for group in ({"id": "g", "members": ["one", "two"], "layout": "side-by-side"},
+                      {"id": "g", "members": ["one", "two"], "layout": "stack", "pending_layout": "side-by-side"}):
+            with self.subTest(group=group), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "state.json"
+                path.write_text('{"version":1,"windows":[]}')
+                before = path.read_bytes()
+                with self.assertRaisesRegex(ValueError, "snapshot was not replaced"):
+                    restore.save(path, ws, [window(1, "one", 1)], registered=[group])
+                self.assertEqual(path.read_bytes(), before)
+
+    def test_restore_refuses_to_change_side_by_side_or_transitioning_groups(self):
+        ws = {"id": 1, "active_window_id": 1}
+        windows = [window(1, "one", 1), window(2, "two", 2)]
+        saved = {"version": 1, "windows": [{"app_id": "one"}, {"app_id": "two"}]}
+        for group in (
+                {"id": "g", "members": ["one", "two"], "layout": "side-by-side"},
+                {"id": "g", "members": ["one", "two"], "layout": "stack", "pending_layout": "side-by-side"}):
+            with self.subTest(group=group):
+                launch, action = Mock(), Mock()
+                before = json.dumps(windows, sort_keys=True)
+                with self.assertRaisesRegex(ValueError, "cannot safely restore.*resolve it manually"):
+                    restore.restore(saved, ws, windows, [], launch, lambda: (ws, windows), action,
+                                    registered=[group])
+                launch.assert_not_called()
+                action.assert_not_called()
+                self.assertEqual(json.dumps(windows, sort_keys=True), before)
+
     def test_snapshot_order_and_focus(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.json"

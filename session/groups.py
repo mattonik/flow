@@ -29,7 +29,11 @@ def validate(data):
     if any(not isinstance(g, dict) or not isinstance(g.get("id"), str) or not g["id"]
            or not isinstance(g.get("label"), str) or not isinstance(g.get("members"), list)
            or len(g["members"]) != 2 or not all(isinstance(a, str) and a for a in g["members"])
-           or len(set(g["members"])) != 2 for g in groups):
+           or len(set(g["members"])) != 2
+           or any(key in g and g[key] not in ("stack", "side-by-side")
+                  for key in ("layout", "pending_layout"))
+           or ("last_focused_app" in g and g["last_focused_app"] not in g["members"])
+           or ("pending_layout" in g and g["pending_layout"] == g.get("layout", "stack")) for g in groups):
         raise ValueError("Invalid saved Groups; state was not changed")
     ids, members = set(), set()
     for group in groups:

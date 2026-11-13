@@ -30,10 +30,10 @@ binds {
     Super+9 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "focus" "9"; }
     Super+Return { spawn "@terminal@"; }
     Super+L allow-when-locked=true { spawn "@lock@" "-c" "0b1015"; }
-    Super+Left { focus-column-left; }
-    Super+Right { focus-column-right; }
-    Super+Up { focus-window-up; }
-    Super+Down { focus-window-down; }
+    Super+Left { spawn "@spaces@" "navigate" "left"; }
+    Super+Right { spawn "@spaces@" "navigate" "right"; }
+    Super+Up { spawn "@spaces@" "focus-member" "up"; }
+    Super+Down { spawn "@spaces@" "focus-member" "down"; }
     Super+Shift+Left { move-column-left; }
     Super+Shift+Right { move-column-right; }
     Super+Q { close-window; }

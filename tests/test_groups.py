@@ -21,6 +21,46 @@ def window(ident, app, column, row=1):
 
 
 class GroupRegistryTest(unittest.TestCase):
+    def test_optional_layout_fields_preserve_legacy_and_unknown_fields(self):
+        legacy = {"id": "legacy", "label": "Old", "members": ["a", "b"], "extra": 4}
+        laid_out = {"id": "new", "label": "New", "members": ["c", "d"],
+                    "layout": "side-by-side", "pending_layout": "stack", "extra": 5}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "groups.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            groups.write(path, [legacy, laid_out])
+            self.assertEqual(groups.load(Path(directory)), [legacy, laid_out])
+            self.assertNotIn("layout", groups.load(Path(directory))[0])
+
+    def test_invalid_optional_layout_fields_leave_registry_unchanged(self):
+        for field in ("layout", "pending_layout"):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                state = Path(directory)
+                path = state / "groups.json"
+                path.write_text(json.dumps({"version": 1, "groups": [
+                    {"id": "g", "label": "Work", "members": ["a", "b"], field: "diagonal"}]}))
+                before = path.read_bytes()
+                with self.assertRaisesRegex(ValueError, "Invalid saved Groups"):
+                    groups.load(state)
+                self.assertEqual(path.read_bytes(), before)
+
+    def test_invalid_optional_layout_field_prevents_snapshot_migration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            path = state / "session.json"
+            path.write_text(json.dumps({"version": 1, "windows": [], "groups": [
+                {"id": "g", "label": "Work", "members": ["a", "b"], "pending_layout": None}]}))
+            before = path.read_bytes()
+            with self.assertRaisesRegex(ValueError, "Invalid saved Groups"):
+                groups.load(state)
+            self.assertEqual(path.read_bytes(), before)
+            self.assertFalse((state / "groups.json").exists())
+
+    def test_pending_layout_must_differ_from_current_layout(self):
+        for group in ({"pending_layout": "stack"}, {"layout": "side-by-side", "pending_layout": "side-by-side"}):
+            with self.subTest(group=group), self.assertRaisesRegex(ValueError, "Invalid saved Groups"):
+                groups.validate({"version": 1, "groups": [{"id": "g", "label": "Work", "members": ["a", "b"], **group}]})
+
     def test_migration_preserves_snapshot_pins_and_group_identity(self):
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory)

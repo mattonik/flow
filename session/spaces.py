@@ -12,6 +12,10 @@ import uuid
 import groups as group_store
 
 
+class MultipleDisplays(ValueError):
+    pass
+
+
 def command(*args):
     return subprocess.check_output(["niri", "msg", *map(str, args)], text=True, stderr=subprocess.PIPE)
 
@@ -21,7 +25,7 @@ def snapshot():
     workspaces = json.loads(command("-j", "workspaces"))
     windows = json.loads(command("-j", "windows"))
     if sum(output.get("logical") is not None for output in outputs.values()) != 1:
-        raise ValueError("Pinned spaces currently require one display")
+        raise MultipleDisplays("Pinned spaces currently require one display")
     workspace = next((w for w in workspaces if w["is_focused"]), None)
     if workspace is None:
         raise ValueError("No active workspace")
@@ -91,7 +95,13 @@ def group_windows(pin, workspace, windows, socket, groups=()):
         return None
     positions = [w["layout"]["pos_in_scrolling_layout"] for w in pair]
     column = positions[0][0]
-    if positions[1][0] != column or sum(w.get("workspace_id") == workspace["id"] and not w.get("is_floating")
+    group = saved[0]
+    if group.get("pending_layout"):
+        return None
+    if group.get("layout", "stack") == "side-by-side":
+        if positions[1][0] != column + 1 or not all(eligible(w, workspace, windows) for w in pair):
+            return None
+    elif positions[1][0] != column or sum(w.get("workspace_id") == workspace["id"] and not w.get("is_floating")
             and (w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0] == column for w in windows) != 2:
         return None
     if any(sum(w.get("app_id") == app for w in windows) != 1 for app in members):
@@ -107,12 +117,20 @@ def pin_window(pin, workspace, windows, socket, groups=()):
     return window if eligible(window, workspace, windows) else None
 
 
+def has_side_layout(workspace, windows, groups):
+    apps = {w.get("app_id") for w in windows if w.get("workspace_id") == workspace["id"]}
+    return any((g.get("pending_layout") or g.get("layout") == "side-by-side") and
+               apps.intersection(g["members"]) for g in groups)
+
+
 def reconcile(pins, workspace, windows, socket, groups=()):
     # shortcut: absent or ambiguous apps have no physical placeholder; use compositor-backed placeholders when available.
     resolved = [pin_window(pin, workspace, windows, socket, groups) for pin in pins]
     active = workspace.get("active_window_id")
     # One unavailable pin must not prevent the remaining live pins from keeping their order.
     desired = [w for w in resolved if w]
+    if has_side_layout(workspace, windows, groups):
+        return
     if all(w["layout"]["pos_in_scrolling_layout"][0] == i for i, w in enumerate(desired, 1)):
         return
     try:
@@ -171,6 +189,14 @@ def rejoin_pair(group, workspace, windows, pins):
 
 
 def run(pins, op, arg, workspace, windows, socket, groups=()):
+    if op in ("pin", "pin-group", "left", "right", "create-group", "dissolve-group", "stack", "unstack") and has_side_layout(workspace, windows, groups):
+        raise ValueError("Return side-by-side Groups to a stack before changing pins or Groups")
+    for group in groups:
+        candidate = {"group_id": group["id"], "members": group["members"], "session": None}
+        pair = group_windows(candidate, workspace, windows, socket, groups)
+        focused = next((w for w in pair or [] if w["id"] == workspace.get("active_window_id")), None)
+        if focused and group.get("last_focused_app") != focused["app_id"]:
+            group["last_focused_app"] = focused["app_id"]
     for pin in pins:
         if "group_id" in pin:
             matches = [group for group in groups if group.get("id") == pin["group_id"]]
@@ -183,11 +209,22 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
             focused = next((w for w in pair or [] if w["id"] == workspace.get("active_window_id")), None)
             if focused:
                 pin["last_focused_app"] = focused["app_id"]
+    def remember_focus(space, member):
+        if not space.get("group_id"):
+            return
+        for group in groups:
+            if group["id"] == space["group_id"]:
+                group["last_focused_app"] = member["app_id"]
+        for pin in pins:
+            if pin.get("group_id") == space["group_id"]:
+                pin["last_focused_app"] = member["app_id"]
     if op == "rejoin-group":
         matches = [group for group in groups if group.get("id") == arg]
         if len(matches) != 1:
             raise ValueError("Saved Group no longer exists or is ambiguous")
         group = matches[0]
+        if group.get("pending_layout") or group.get("layout", "stack") != "stack":
+            raise ValueError("Finish the Group layout change before rejoining")
         pair = rejoin_pair(group, workspace, windows, pins)
         current_workspace, current_windows = snapshot()
         current_pair = rejoin_pair(group, current_workspace, current_windows, pins)
@@ -395,14 +432,46 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
         if any(w.get("app_id") in pin.get("members", [pin.get("app_id")]) for pin in pins for w in pair):
             raise ValueError("Unpin these windows before stacking or separating")
         command("action", "consume-window-into-column" if op == "stack" else "expel-window-from-column")
+    elif op == "navigate":
+        if arg not in ("left", "right"):
+            raise ValueError("Choose left or right")
+        destinations = display_spaces(workspace, windows, groups, pins)
+        index = next((i for i, space in enumerate(destinations) if space["active"]), None)
+        if index is not None:
+            target = index + (-1 if arg == "left" else 1)
+            if 0 <= target < len(destinations):
+                selected = destinations[target]
+                pin = next((p for p in pins if p.get("group_id") and p["group_id"] == selected.get("group_id")), None)
+                member = next((w for w in selected["members"] if pin and w["app_id"] == pin.get("last_focused_app")), None)
+                member = member or next(w for w in selected["members"] if w["id"] == selected["id"])
+                command("action", "focus-window", "--id", member["id"])
+                remember_focus(selected, member)
+    elif op == "focus-member":
+        if arg not in ("up", "down"):
+            raise ValueError("Choose up or down")
+        current = next((space for space in display_spaces(workspace, windows, groups, pins) if space["active"]), None)
+        if current and current.get("group_layout") == "side-by-side":
+            index = next(i for i, member in enumerate(current["members"]) if member["active"])
+            target = index + (-1 if arg == "up" else 1)
+            if 0 <= target < len(current["members"]):
+                member = current["members"][target]
+                command("action", "focus-window", "--id", member["id"])
+                remember_focus(current, member)
+        else:
+            command("action", "focus-window-" + arg)
     elif op == "focus-window":
         window = next((w for w in windows if str(w["id"]) == arg and w["workspace_id"] == workspace["id"]), None)
         if not window:
             raise ValueError("This window is no longer available")
         command("action", "focus-window", "--id", window["id"])
+        space = next((s for s in display_spaces(workspace, windows, groups, pins)
+                      if s.get("group_id") and any(w["id"] == window["id"] for w in s["members"])), None)
+        if space:
+            member = next(w for w in space["members"] if w["id"] == window["id"])
+            remember_focus(space, member)
     elif op != "refresh":
         raise ValueError("Unknown action")
-    if op not in ("focus", "focus-window", "stack", "unstack", "group-view", "create-group", "dissolve-group", "open-group-member", "rejoin-group"):
+    if op not in ("focus", "focus-window", "focus-member", "navigate", "stack", "unstack", "group-view", "create-group", "dissolve-group", "open-group-member", "rejoin-group"):
         reconcile(pins, workspace, windows, socket, groups)
     return [{"id": p["id"], "label": p["label"], "kind": "group" if "members" in p else "app", "group_id": p.get("group_id"),
              "available": bool(pin_window(p, workspace, windows, socket, groups))} for p in pins]
@@ -422,7 +491,7 @@ def saved_groups(path):
         return []
 
 
-def display_spaces(workspace, windows, groups=()):
+def display_spaces(workspace, windows, groups=(), pins=()):
     """Represent each tiled column once; floating windows remain separate."""
     current = [w for w in windows if w.get("workspace_id") == workspace["id"]]
     current.sort(key=lambda w: w.get("layout", {}).get("pos_in_scrolling_layout") or [99999, 0])
@@ -436,15 +505,42 @@ def display_spaces(workspace, windows, groups=()):
                               "app_id": w.get("app_id") or "", "active": w["id"] == workspace.get("active_window_id")})
     result = []
     counts = {app: sum(w.get("app_id") == app for w in windows) for g in groups for app in g["members"]}
-    for _, members in columns:
+    skip = set()
+    for index, (_, members) in enumerate(columns):
+        if index in skip:
+            continue
+        for group in groups:
+            if group.get("layout") != "side-by-side" or group.get("pending_layout"):
+                continue
+            candidate = {"group_id": group["id"], "members": group["members"], "session": None}
+            pair = group_windows(candidate, workspace, windows, "", groups)
+            if pair and members[0]["id"] == pair[0]["id"] and index + 1 < len(columns) and columns[index + 1][1][0]["id"] == pair[1]["id"]:
+                joined = members + columns[index + 1][1]
+                pin = next((p for p in pins if p.get("group_id") == group["id"]), {})
+                last = pin.get("last_focused_app") or group.get("last_focused_app")
+                selected = next((w for w in joined if w["active"]),
+                                next((w for w in joined if w["app_id"] == last), joined[0]))
+                result.append({"id": selected["id"], "label": group["label"], "group_id": group["id"],
+                               "group_layout": "side-by-side", "active": any(w["active"] for w in joined), "members": joined})
+                skip.add(index + 1)
+                break
+        else:
+            group = None
+        if group:
+            continue
         selected = next((w for w in members if w["active"]), members[0])
         app_ids = [w["app_id"] for w in members]
-        matches = [g for g in groups if len(app_ids) == 2 and len(set(app_ids)) == 2
+        matches = [g for g in groups if g.get("layout", "stack") == "stack" and not g.get("pending_layout")
+                   and len(app_ids) == 2 and len(set(app_ids)) == 2
                    and len(g["members"]) == 2 and len(set(g["members"])) == 2
                    and set(g["members"]) == set(app_ids) and all(counts.get(a) == 1 for a in app_ids)]
         group = matches[0] if len(matches) == 1 and sum(g["id"] == matches[0]["id"] for g in groups) == 1 else None
+        if group and not any(w["active"] for w in members):
+            pin = next((p for p in pins if p.get("group_id") == group["id"]), {})
+            last = pin.get("last_focused_app") or group.get("last_focused_app")
+            selected = next((w for w in members if w["app_id"] == last), selected)
         result.append({"id": selected["id"], "label": group["label"] if group else " + ".join(w["label"] for w in members),
-                       "group_id": group["id"] if group else None,
+                       "group_id": group["id"] if group else None, "group_layout": "stack" if group else None,
                        "active": any(w["active"] for w in members), "members": members})
     return result
 
@@ -461,12 +557,18 @@ def incomplete_groups(workspace, windows, groups, pins):
         candidates = [[w for w in windows if w.get("app_id") == app] for app in group["members"]]
         missing = [app for app, found in zip(group["members"], candidates) if not found]
         can_rejoin = False
-        if any(len(found) > 1 for found in candidates):
+        can_resume = bool(group.get("pending_layout")) and all(
+            len(found) == 1 and found[0].get("workspace_id") == workspace["id"] for found in candidates)
+        if group.get("pending_layout"):
+            status = "Layout change interrupted; finish it when both apps are available."
+        elif any(len(found) > 1 for found in candidates):
             status = "Multiple windows match a Group app; resolve duplicates."
         elif any(found and found[0].get("workspace_id") != workspace["id"] for found in candidates):
             status = "A Group app is on another workspace."
         elif missing:
             status = ("Both apps are closed." if len(missing) == 2 else "A Group app is closed.")
+        elif group.get("layout") == "side-by-side":
+            status = "Group layout changed; place its apps side by side in saved order."
         else:
             try:
                 rejoin_pair(group, workspace, windows, pins)
@@ -477,9 +579,73 @@ def incomplete_groups(workspace, windows, groups, pins):
         can_open = bool(missing) and not any(len(found) > 1 or
                        (found and found[0].get("workspace_id") != workspace["id"]) for found in candidates)
         result.append({"id": group["id"], "label": group["label"], "status": status,
-                       "can_open": can_open, "can_rejoin": can_rejoin,
+                       "can_open": can_open, "can_rejoin": can_rejoin, "can_resume_layout": can_resume,
                        "missing_app": missing[0] if can_open else ""})
     return result
+
+
+def change_group_layout(state, groups, pins, group_id, workspace, windows, socket, resume=False):
+    matches = [group for group in groups if group.get("id") == group_id]
+    if len(matches) != 1:
+        raise ValueError("Saved Group no longer exists or is ambiguous")
+    group = matches[0]
+    source = group.get("layout", "stack")
+    target = group.get("pending_layout") if resume else ("side-by-side" if source == "stack" else "stack")
+    if (resume and not target) or (not resume and group.get("pending_layout")):
+        raise ValueError("Finish the interrupted Group layout change first")
+    claims = [pin for pin in pins if set(group["members"]) & set(pin.get("members", [pin.get("app_id")]))]
+    if len(claims) > 1 or any(pin.get("group_id") != group_id or
+                              set(pin.get("members", [])) != set(group["members"]) for pin in claims):
+        raise ValueError("Unpin conflicting apps before changing the Group layout")
+
+    def pair_for(layout, ws, live):
+        clean = {k: v for k, v in group.items() if k != "pending_layout"}
+        clean["layout"] = layout
+        current_groups = [clean if g["id"] == group_id else g for g in groups]
+        candidate = {"group_id": group_id, "members": group["members"], "session": None}
+        return group_windows(candidate, ws, live, socket, current_groups)
+
+    pair = pair_for(source, workspace, windows) or (pair_for(target, workspace, windows) if resume else None)
+    if not pair:
+        raise ValueError("Group layout is unavailable or ambiguous; check both apps")
+    if not resume and workspace.get("active_window_id") not in {w["id"] for w in pair}:
+        raise ValueError("Select the Group before changing its layout")
+    ids = [w["id"] for w in pair]
+    active = workspace.get("active_window_id")
+    workspace_id = workspace["id"]
+
+    def checked(layout):
+        ws, live = snapshot()
+        found = pair_for(layout, ws, live)
+        if (ws["id"] != workspace_id or ws.get("active_window_id") != active or not found
+                or [w["id"] for w in found] != ids):
+            raise ValueError("Group or focus changed; check the windows and finish the layout change")
+        return found
+
+    current_source = pair_for(source, workspace, windows)
+    if current_source and source == "stack" and (
+            current_source[0]["layout"]["pos_in_scrolling_layout"][1] >=
+            current_source[1]["layout"]["pos_in_scrolling_layout"][1]):
+        raise ValueError("Restore the saved Group member order before changing layout")
+    checked(source if current_source else target)
+    if not resume:
+        group["pending_layout"] = target
+        group_store.write(state / "groups.json", groups)
+    try:
+        if current_source:
+            # shortcut: Niri's targeted action can consume a neighbor after a race; use expel-only/consume-only by ID when available.
+            command("action", "consume-or-expel-window-right" if target == "side-by-side"
+                    else "consume-or-expel-window-left", "--id", ids[1])
+            checked(target)
+        for ident in (ids if target == "side-by-side" else ids[:1]):
+            checked(target)
+            command("action", "set-window-width", "--id", ident, "50%" if target == "side-by-side" else "100%")
+            checked(target)
+        group["layout"] = target
+        group.pop("pending_layout", None)
+        group_store.write(state / "groups.json", groups)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise ValueError("Group layout change interrupted; check the windows and choose Finish layout change") from exc
 
 
 def run_locked(state):
@@ -503,9 +669,15 @@ def run_locked(state):
             window = resolve(pin, windows, socket)
             if window and (pin.get("session") != socket or pin.get("window_id") != window["id"]):
                 pin["session"], pin["window_id"] = socket, window["id"]
-        result = run(pins, sys.argv[1] if len(sys.argv) > 1 else "refresh",
-                     sys.argv[2] if len(sys.argv) > 2 else None, workspace, windows,
-                     socket, groups)
+        op = sys.argv[1] if len(sys.argv) > 1 else "refresh"
+        arg = sys.argv[2] if len(sys.argv) > 2 else None
+        if op in ("group-layout", "resume-group-layout"):
+            change_group_layout(state, groups, pins, arg, workspace, windows, socket, op == "resume-group-layout")
+            workspace, windows = snapshot()
+            before_groups = json.dumps(groups, sort_keys=True)
+            result = run(pins, "refresh", None, workspace, windows, socket, groups)
+        else:
+            result = run(pins, op, arg, workspace, windows, socket, groups)
         if before_groups != json.dumps(groups, sort_keys=True):
             try:
                 group_store.write(state / "groups.json", groups)
@@ -530,7 +702,7 @@ def run_locked(state):
         visible = [{"id": w["id"], "label": w.get("title") or w.get("app_id") or "Application",
                     "app_id": w.get("app_id") or "", "active": w["id"] == workspace.get("active_window_id")}
                    for w in ordered]
-        print(json.dumps({"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows, groups),
+        print(json.dumps({"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows, groups, pins),
                           "incomplete_groups": incomplete_groups(workspace, windows, groups, pins),
                           "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
 
@@ -540,7 +712,16 @@ def main():
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
     with (state / "session.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        run_locked(state)
+        try:
+            run_locked(state)
+        except MultipleDisplays:
+            op = sys.argv[1] if len(sys.argv) > 1 else ""
+            direction = sys.argv[2] if len(sys.argv) > 2 else ""
+            if (op, direction) not in (("navigate", "left"), ("navigate", "right"),
+                                       ("focus-member", "up"), ("focus-member", "down")):
+                raise
+            command("action", ("focus-column-" if op == "navigate" else "focus-window-") + direction)
+            print(json.dumps({"action": op}))
 
 
 if __name__ == "__main__":

@@ -55,6 +55,9 @@ def pinned_apps(pins):
 
 
 def save(path, workspace, windows, session=None, pins=(), registered=None):
+    if registered is not None and any(group.get("layout") == "side-by-side" or group.get("pending_layout")
+                                      for group in registered):
+        raise ValueError("Stack side-by-side Groups and finish layout changes before saving the session; the snapshot was not replaced")
     current = [w for w in windows if w.get("workspace_id") == workspace["id"]]
     current.sort(key=lambda w: w.get("layout", {}).get("pos_in_scrolling_layout") or [99999, 0])
     entries = [{"app_id": w.get("app_id"), "window_id": w["id"], "label": w.get("title") or w.get("app_id") or "Unknown application",
@@ -125,6 +128,9 @@ def save(path, workspace, windows, session=None, pins=(), registered=None):
 
 def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=time.sleep, pinned=(), session=None,
             pinned_groups=(), registered=None):
+    if registered is not None and any(group.get("layout") == "side-by-side" or group.get("pending_layout")
+                                      for group in registered):
+        raise ValueError("Session recovery cannot safely restore a side-by-side or transitioning Group yet; keep its layout and resolve it manually")
     if data.get("version") != 1 or not isinstance(data.get("windows"), list):
         raise ValueError("Unsupported or invalid saved session")
     entries = data["windows"]

@@ -714,19 +714,30 @@ ShellRoot {
                                         id: groupViewButton
                                         onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(groupViewButton)
                                         width: 132; implicitHeight: 44; text: "Tabs / stack"
-                                        enabled: spaceCard.modelData.active
+                                        visible: spaceCard.modelData.group_layout !== "side-by-side"
+                                        enabled: spaceCard.modelData.active && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                         Accessible.name: "Toggle tabs or stack for " + spaceCard.modelData.label
                                         onClicked: root.spaceAction("group-view", spaceCard.modelData.group_id)
                                     }
+                                }
+                                FlowButton {
+                                    id: groupLayoutButton
+                                    visible: !!spaceCard.modelData.group_id && spaceCard.modelData.members.length === 2
+                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(groupLayoutButton)
+                                    width: parent.width; implicitHeight: 44
+                                    text: spaceCard.modelData.group_layout === "side-by-side" ? "Stack" : "Side by side"
+                                    Accessible.name: text + " Group " + spaceCard.modelData.label
+                                    enabled: spaceCard.modelData.active && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    onClicked: root.spaceAction("group-layout", spaceCard.modelData.group_id)
                                 }
                                 FlowButton {
                                     id: groupPinButton
                                     visible: !!spaceCard.modelData.group_id
                                     onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(groupPinButton)
                                     width: parent.width; implicitHeight: 44
-                                    text: spaceCard.groupPin ? "Unpin Group" : "Pin Group"
+                                    text: spaceCard.groupPin ? "Unpin Group" : spaceCard.modelData.group_layout === "side-by-side" ? "Stack to pin" : "Pin Group"
                                     Accessible.name: text + " " + spaceCard.modelData.label
-                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    enabled: (spaceCard.groupPin || spaceCard.modelData.group_layout !== "side-by-side") && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                     onClicked: root.spaceAction(spaceCard.groupPin ? "unpin" : "pin-group", spaceCard.groupPin ? spaceCard.groupPin.id : spaceCard.modelData.group_id)
                                 }
                                 FlowButton {
@@ -734,9 +745,9 @@ ShellRoot {
                                     visible: !!spaceCard.modelData.group_id
                                     onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(dissolveGroupButton)
                                     width: parent.width; implicitHeight: 44
-                                    text: spaceCard.groupPin ? "Unpin to dissolve" : "Dissolve Group"
+                                    text: spaceCard.modelData.group_layout === "side-by-side" ? "Stack to dissolve" : spaceCard.groupPin ? "Unpin to dissolve" : "Dissolve Group"
                                     Accessible.name: text + " " + spaceCard.modelData.label
-                                    enabled: spaceCard.modelData.active && !spaceCard.groupPin && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    enabled: spaceCard.modelData.active && spaceCard.modelData.group_layout !== "side-by-side" && !spaceCard.groupPin && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                     onClicked: root.spaceAction("dissolve-group", spaceCard.modelData.group_id)
                                 }
                                 Row {
@@ -795,6 +806,15 @@ ShellRoot {
                                 enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                 onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(rejoinGroup)
                                 onClicked: root.spaceAction("rejoin-group", modelData.id)
+                            }
+                            FlowButton {
+                                id: resumeGroupLayout
+                                visible: modelData.can_resume_layout
+                                width: Math.min(parent.width, 220); implicitHeight: 44; text: "Finish layout change"
+                                Accessible.name: "Finish layout change for Group " + modelData.label
+                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(resumeGroupLayout)
+                                onClicked: root.spaceAction("resume-group-layout", modelData.id)
                             }
                         }
                     }

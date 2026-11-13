@@ -1,4 +1,6 @@
 import importlib.util
+import contextlib
+import io
 from pathlib import Path
 import sys
 import tempfile
@@ -22,6 +24,74 @@ class SpacesTest(unittest.TestCase):
         self.ws = {"id": 1, "active_window_id": 2}
         self.windows = [window(1, "terminal", 1), window(2, "files", 2)]
         self.pins = []
+
+    @patch.object(spaces, "command")
+    def test_navigation_skips_both_columns_of_explicit_side_by_side_group(self, command):
+        group = {"id": "g", "label": "Work", "members": ["a", "b"], "layout": "side-by-side"}
+        windows = [window(1, "left", 1), window(2, "a", 2), window(3, "b", 3), window(4, "right", 4)]
+        pin = {"id": "p", "group_id": "g", "members": ["a", "b"], "app_id": "a",
+               "window_ids": [2, 3], "session": "session", "last_focused_app": "b"}
+        spaces.run([pin], "navigate", "right", {"id": 1, "active_window_id": 3}, windows, "session", [group])
+        command.assert_called_once_with("action", "focus-window", "--id", 4)
+        command.reset_mock()
+        spaces.run([pin], "navigate", "left", {"id": 1, "active_window_id": 4}, windows, "session", [group])
+        command.assert_called_once_with("action", "focus-window", "--id", 3)
+        projected = spaces.display_spaces({"id": 1, "active_window_id": 4}, windows, [group], [pin])
+        self.assertEqual(projected[1]["id"], 3)
+
+    @patch.object(spaces, "command")
+    def test_reconcile_does_not_split_side_by_side_group(self, command):
+        group = {"id": "g", "label": "Work", "members": ["a", "b"], "layout": "side-by-side"}
+        windows = [window(1, "other", 1), window(2, "a", 2), window(3, "b", 3)]
+        pin = {"id": "p", "group_id": "g", "members": ["a", "b"], "app_id": "a",
+               "window_ids": [2, 3], "session": "session"}
+        spaces.run([pin], "refresh", None, {"id": 1, "active_window_id": 2}, windows, "session", [group])
+        command.assert_not_called()
+
+    @patch.object(spaces, "command")
+    def test_unpinned_group_remembers_its_last_focused_member(self, command):
+        group = {"id": "g", "label": "Work", "members": ["a", "b"], "layout": "side-by-side"}
+        windows = [window(1, "a", 1), window(2, "b", 2), window(3, "other", 3)]
+        spaces.run([], "refresh", None, {"id": 1, "active_window_id": 2}, windows, "session", [group])
+        self.assertEqual(group["last_focused_app"], "b")
+        spaces.run([], "navigate", "left", {"id": 1, "active_window_id": 3}, windows, "session", [group])
+        command.assert_called_once_with("action", "focus-window", "--id", 2)
+
+    @patch.object(spaces, "command")
+    def test_up_down_focuses_side_by_side_members_and_otherwise_uses_niri(self, command):
+        group = {"id": "g", "label": "Work", "members": ["a", "b"], "layout": "side-by-side"}
+        windows = [window(1, "a", 1), window(2, "b", 2), window(3, "other", 3)]
+        spaces.run([], "focus-member", "down", {"id": 1, "active_window_id": 1}, windows, "session", [group])
+        command.assert_called_once_with("action", "focus-window", "--id", 2)
+        command.reset_mock()
+        spaces.run([], "focus-member", "up", {"id": 1, "active_window_id": 3}, windows, "session", [group])
+        command.assert_called_once_with("action", "focus-window-up")
+
+    @patch.object(spaces, "command")
+    def test_member_focus_is_remembered_without_waiting_for_refresh(self, command):
+        group = {"id": "g", "label": "Work", "members": ["a", "b"], "layout": "side-by-side"}
+        windows = [window(1, "a", 1), window(2, "b", 2), window(3, "other", 3)]
+        pin = {"id": "p", "group_id": "g", "members": ["a", "b"], "app_id": "a",
+               "window_ids": [1, 2], "session": "session", "last_focused_app": "a"}
+        spaces.run([pin], "focus-member", "down", {"id": 1, "active_window_id": 1}, windows, "session", [group])
+        spaces.run([pin], "focus-member", "up", {"id": 1, "active_window_id": 2}, windows, "session", [group])
+        self.assertEqual((group["last_focused_app"], pin["last_focused_app"]), ("a", "a"))
+        command.reset_mock()
+        spaces.run([pin], "navigate", "left", {"id": 1, "active_window_id": 3}, windows, "session", [group])
+        command.assert_called_once_with("action", "focus-window", "--id", 1)
+
+    @patch.object(spaces, "command")
+    def test_navigation_falls_back_to_niri_with_multiple_displays(self, command):
+        for op, direction, expected in (("navigate", "left", "focus-column-left"),
+                                        ("focus-member", "down", "focus-window-down")):
+            with self.subTest(op=op), tempfile.TemporaryDirectory() as directory, \
+                 patch.dict(spaces.os.environ, {"XDG_STATE_HOME": directory}), \
+                 patch.object(sys, "argv", ["flow-spaces", op, direction]), \
+                 patch.object(spaces, "run_locked", side_effect=spaces.MultipleDisplays("multiple displays")), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                spaces.main()
+            command.assert_called_once_with("action", expected)
+            command.reset_mock()
 
     @patch.object(spaces, "command")
     def test_pin_reorders_and_unpin_preserves_window(self, command):

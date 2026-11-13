@@ -62,6 +62,7 @@ let
     idle = lib.getExe pkgs.swayidle;
     shell = lib.getExe pkgs.quickshell;
     shellConfig = "/etc/flow/shell.qml";
+    spaces = lib.getExe spaces;
     keyboard = lib.getExe keyboard;
   };
 in {
