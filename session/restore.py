@@ -105,10 +105,12 @@ def save(path, workspace, windows, session=None):
     return len(current)
 
 
-def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=time.sleep, pinned=(), session=None):
+def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=time.sleep, pinned=(), session=None,
+            pinned_groups=()):
     if data.get("version") != 1 or not isinstance(data.get("windows"), list):
         raise ValueError("Unsupported or invalid saved session")
     entries = data["windows"]
+    saved_groups = data.get("groups", []) if isinstance(data.get("groups", []), list) else []
     if any(not isinstance(e, dict) or not isinstance(e.get("app_id"), (str, type(None))) for e in entries):
         raise ValueError("Saved session includes a window without an application ID")
     ids = [e["app_id"] for e in entries]
@@ -201,7 +203,27 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
             groups_ok = True
             for group in groups:
                 group_apps = [entry["app_id"] for entry in group]
-                if len(group) != 2 or any(not app or app_counts[app] != 1 or app in pinned for app in group_apps):
+                claiming_pins = [pin for pin in pinned_groups if isinstance(pin, dict)
+                                 and any(app in pin.get("members", [pin.get("app_id")]) for app in group_apps)]
+                pin = claiming_pins[0] if len(claiming_pins) == 1 else {}
+                members = pin.get("members")
+                saved_matches = [saved for saved in saved_groups if isinstance(saved, dict)
+                                 and saved.get("id") == pin.get("group_id")]
+                membership_matches = [saved for saved in saved_groups if isinstance(saved, dict)
+                                      and isinstance(saved.get("members"), list) and len(saved["members"]) == 2
+                                      and all(isinstance(app, str) and app for app in saved["members"])
+                                      and set(saved["members"]) == set(group_apps)]
+                pinned_group = (isinstance(pin.get("group_id"), str) and isinstance(members, list)
+                                and len(members) == len(group_apps) == 2
+                                and all(isinstance(app, str) and app for app in members)
+                                and set(members) == set(group_apps) and len(saved_matches) == len(membership_matches) == 1
+                                and isinstance(saved_matches[0].get("members"), list)
+                                and len(saved_matches[0]["members"]) == 2
+                                and all(isinstance(app, str) and app for app in saved_matches[0]["members"])
+                                and set(saved_matches[0]["members"]) == set(group_apps))
+                pinned_member = any(app in pinned for app in group_apps)
+                if (len(group) != 2 or any(not app or app_counts[app] != 1 for app in group_apps)
+                        or (pinned_member and not pinned_group)):
                     report.append("Group requires manual recovery (ambiguous, pinned, or more than two apps)")
                     groups_ok = False
                     continue
@@ -229,6 +251,14 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                     else:
                         group_destinations.append((group[0]["column"], pair[0]["id"], member_ids))
                     continue
+                if pinned_group:
+                    live_columns = [w.get("layout", {}).get("pos_in_scrolling_layout")
+                                    for w in live if w.get("workspace_id") == workspace_id and not w.get("is_floating")]
+                    if (positions[1][0] != positions[0][0] + 1
+                            or any(pos and pos[0] > positions[1][0] for pos in live_columns)):
+                        report.append("Pinned Group cannot be restored without shifting other spaces")
+                        groups_ok = False
+                        continue
                 if not all(spaces.eligible(w, workspace, live) for w in pair):
                     report.append("Group members are not single windows; group not restored")
                     groups_ok = False
@@ -245,8 +275,11 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                         report.append("Group members moved unexpectedly; group not restored")
                         groups_ok = False
                         continue
-                action("action", "focus-window", "--id", pair[0]["id"])
-                action("action", "consume-window-into-column")
+                if pinned_group:
+                    action("action", "consume-or-expel-window-left", "--id", pair[1]["id"])
+                else:
+                    action("action", "focus-window", "--id", pair[0]["id"])
+                    action("action", "consume-window-into-column")
                 workspace, live = checked_snapshot()
                 if not group_column_matches(member_ids, workspace, live):
                     report.append("Group members moved unexpectedly; group not restored")
@@ -331,7 +364,8 @@ def main():
         pins = json.loads(pins_path.read_text()) if pins_path.exists() else []
         report, count = restore(data, workspace, windows, dirs,
                                 lambda desktop: subprocess.run(["gio", "launch", str(desktop)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL),
-                                spaces.snapshot, spaces.command, pinned=pinned_apps(pins), session=spaces.session_id())
+                                spaces.snapshot, spaces.command, pinned=pinned_apps(pins), session=spaces.session_id(),
+                                pinned_groups=pins)
         print(json.dumps({"message": f"Restored {count} windows." + (" " + "; ".join(report) if report else "")}))
     else:
         raise ValueError("Unknown recovery action")

@@ -43,6 +43,11 @@ class NiriActions:
             target = next(i for i, members in enumerate(ordered) if item in members)
             if target + 1 < len(ordered):
                 ordered[target] += ordered.pop(target + 1)
+        elif action == "consume-or-expel-window-left":
+            item = next(w for w in self.windows if w["id"] == args[1])
+            target = next(i for i, members in enumerate(ordered) if item in members)
+            if target > 0:
+                ordered[target - 1] += ordered.pop(target)
         for column, members in enumerate(ordered, 1):
             for row, item in enumerate(members, 1):
                 item["layout"]["pos_in_scrolling_layout"] = [column, row]
@@ -286,6 +291,74 @@ class RecoveryTest(unittest.TestCase):
             restore.pinned_apps([{"app_id": "one", "members": "two"}])
         with self.assertRaisesRegex(ValueError, "Invalid pinned spaces"):
             restore.pinned_apps([{"app_id": "one", "members": ["one", []]}])
+
+    def test_recovers_adjacent_members_of_the_matching_pinned_group_in_place(self):
+        ws = {"id": 1, "active_window_id": 3}
+        windows = [window(3, "other", 1), window(1, "one", 2), window(2, "two", 3)]
+        pin = {"id": "pin-id", "app_id": "one", "members": ["one", "two"],
+               "group_id": "group-id", "window_ids": [11, 12], "session": "old"}
+        saved = {"version": 1, "groups": [{"id": "group-id", "label": "Studio", "members": ["one", "two"]}],
+                 "windows": [{"app_id": "one", "column": 1}, {"app_id": "two", "column": 1}]}
+        pins_before = json.loads(json.dumps([pin]))
+        actions = Mock(side_effect=NiriActions(ws, windows))
+        report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                       pinned={"one", "two", "other"}, pinned_groups=[pin])
+        self.assertEqual(count, 2)
+        self.assertTrue(any("Pinned spaces keep their positions" in message for message in report))
+        self.assertEqual(windows[1]["layout"]["pos_in_scrolling_layout"][0],
+                         windows[2]["layout"]["pos_in_scrolling_layout"][0])
+        self.assertEqual(windows[0]["layout"]["pos_in_scrolling_layout"], [1, 1])
+        action_names = [call.args[1] for call in actions.call_args_list]
+        self.assertIn("consume-or-expel-window-left", action_names)
+        self.assertNotIn("focus-window", action_names[:-1])
+        self.assertNotIn("move-column-to-index", action_names)
+        self.assertEqual([pin], pins_before)
+
+    def test_pinned_group_recovery_accepts_reversed_members_but_rejects_overlapping_pins(self):
+        saved = {"version": 1, "groups": [{"id": "group-id", "members": ["two", "one"]}],
+                 "windows": [{"app_id": "one", "column": 1}, {"app_id": "two", "column": 1}]}
+        group_pin = {"app_id": "one", "members": ["two", "one"], "group_id": "group-id"}
+        for pins, expected in (([group_pin], True), ([group_pin, {"app_id": "two"}], False)):
+            with self.subTest(pins=pins):
+                ws = {"id": 1}
+                windows = [window(1, "one", 1), window(2, "two", 2)]
+                actions = Mock(side_effect=NiriActions(ws, windows))
+                restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                pinned={"one", "two"}, pinned_groups=pins)
+                self.assertEqual(any(call.args[1] == "consume-or-expel-window-left"
+                                     for call in actions.call_args_list), expected)
+
+    def test_pinned_group_recovery_skips_nonadjacent_or_unmatched_identity(self):
+        saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two"]}],
+                 "windows": [{"app_id": "one", "column": 1}, {"app_id": "two", "column": 1}]}
+        pin = {"app_id": "one", "members": ["one", "two"], "group_id": "group-id"}
+        for windows, candidate in (
+                ([window(1, "one", 1), window(3, "other", 2), window(2, "two", 3)], pin),
+                ([window(1, "one", 1), window(2, "two", 2), window(3, "other", 3)], pin),
+                ([window(1, "one", 1), window(2, "two", 2)], {**pin, "group_id": "other-id"})):
+            with self.subTest(windows=windows, pin=candidate):
+                ws = {"id": 1}
+                before = [w["layout"]["pos_in_scrolling_layout"][:] for w in windows]
+                actions = Mock()
+                report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                            pinned={"one", "two"}, pinned_groups=[candidate])
+                self.assertTrue(report)
+                self.assertEqual([w["layout"]["pos_in_scrolling_layout"] for w in windows], before)
+                self.assertNotIn("consume-or-expel-window-left", [call.args[1] for call in actions.call_args_list])
+                self.assertNotIn("move-column-to-index", [call.args[1] for call in actions.call_args_list])
+
+    def test_pinned_group_recovery_rejects_duplicate_saved_membership(self):
+        saved = {"version": 1, "groups": [{"id": "first", "members": ["one", "two"]},
+                                          {"id": "second", "members": ["two", "one"]}],
+                 "windows": [{"app_id": "one", "column": 1}, {"app_id": "two", "column": 1}]}
+        pin = {"app_id": "one", "members": ["one", "two"], "group_id": "first"}
+        ws = {"id": 1}
+        windows = [window(1, "one", 1), window(2, "two", 2)]
+        actions = Mock()
+        report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                    pinned={"one", "two"}, pinned_groups=[pin])
+        self.assertTrue(report)
+        self.assertNotIn("consume-or-expel-window-left", [call.args[1] for call in actions.call_args_list])
 
     def test_live_saved_or_unsaved_pin_blocks_the_new_ordering_pass(self):
         saved = {"version": 1, "windows": [
