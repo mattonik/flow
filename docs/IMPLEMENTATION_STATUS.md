@@ -7,7 +7,7 @@ The recorded test environment is an Apple Silicon Mac running UTM 5.0.8, QEMU AR
 | ID | Status | Evidence and remaining acceptance gap |
 |---|---|---|
 | F-001 Native session | Partial | Niri, Quickshell, real apps and login were exercised; Plasma remains installed as a fallback. Warm reboot hung in UTM; fallback login was not newly verified. |
-| F-002 Three real apps | Partial | Files, terminal, editors and browser ran in the guest; focus movement has been exercised. The exact three-app end-to-end journey needs a recorded repeat with before/after focus. |
+| F-002 Three real apps | Partial | Files, terminal, editors and browser ran in the guest. A single-workspace Niri IPC check focused running Firefox, Kate and Files in turn and returned focus to Files. The complete navigation journey, including touch, remains to be checked. |
 | F-003 Pinned positions | Partial | Single-app pins and recovery exist; an unavailable pin no longer blocks ordering eligible pins on the current workspace, verified with temporary guest windows. Pinned Groups, display-scoped positions and the complete specified restart journey remain absent. |
 | F-004 Shortcut accuracy | Partial | Single-display Super+number pin focus exists; display-number sequences and multi-display direct routing do not. |
 | F-005 Group identity | Partial | An unambiguous two-app stack has a saved name and ID in the explicit session snapshot. A mixed Group/single-window ordering was recovered using disposable guest windows; pinned, incomplete or ambiguous cases may need manual ordering. Adaptive orientation, independent semantic persistence and the full lifecycle remain open. |

@@ -213,4 +213,6 @@ Recovery can order a saved mix of single windows and two-app Groups after recons
 
 In the ARM64 guest, opening and closing Desk and Niri Overview left four existing window IDs, their workspace and scrolling positions, and the focused window unchanged. The test observed Desk's exclusive keyboard layer and Niri's open Overview state before closing each surface. This checks single-display IPC transitions, not touch gestures or animation quality.
 
+The same guest also focused the existing Firefox, Kate and Files windows in turn through Niri IPC and restored the original Files focus. This checks real application focus, not the full touch-navigation journey.
+
 After temporary media-test packages brought the guest to 97% inode usage, `nix-store --optimise` completed successfully and reduced usage to 31% by hard-linking duplicate store files. No system generations were removed.
