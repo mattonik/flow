@@ -567,7 +567,7 @@ ShellRoot {
                 Text { visible: root.displaySpaces.length === 0; text: "No open spaces"; color: "#91a59d" }
                 Flickable {
                     id: spaceScroller
-                    width: parent.width; height: 180; contentWidth: windowRow.width; contentHeight: height
+                    width: parent.width; height: Math.max(180, windowRow.implicitHeight); contentWidth: windowRow.width; contentHeight: height
                     boundsBehavior: Flickable.StopAtBounds; clip: true
                     function ensureVisible(item) {
                         switcherScroller.ensureVisible(item)
@@ -630,13 +630,13 @@ ShellRoot {
                                     TextField {
                                         id: groupName
                                         onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(groupName)
-                                        width: parent.width - 68; height: 36; maximumLength: 80
+                                        width: parent.width - 68; height: 44; maximumLength: 80
                                         text: spaceCard.modelData.label
                                         placeholderText: "Group name"
                                         Accessible.name: "Group name"
                                         onAccepted: root.renameGroup(spaceCard.modelData.group_id, text)
                                     }
-                                    FlowButton { id: saveGroupName; onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(saveGroupName); width: 64; implicitHeight: 36; text: "Save"; onClicked: root.renameGroup(spaceCard.modelData.group_id, groupName.text) }
+                                    FlowButton { id: saveGroupName; onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(saveGroupName); width: 64; implicitHeight: 44; text: "Save"; onClicked: root.renameGroup(spaceCard.modelData.group_id, groupName.text) }
                                 }
                             }
                         }

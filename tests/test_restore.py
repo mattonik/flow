@@ -48,6 +48,12 @@ class NiriActions:
             target = next(i for i, members in enumerate(ordered) if item in members)
             if target > 0:
                 ordered[target - 1] += ordered.pop(target)
+        elif action == "consume-or-expel-window-right":
+            item = next(w for w in self.windows if w["id"] == args[1])
+            target = next(i for i, members in enumerate(ordered) if item in members)
+            if target + 1 < len(ordered):
+                moving = ordered.pop(target)
+                ordered[target] += moving
         for column, members in enumerate(ordered, 1):
             for row, item in enumerate(members, 1):
                 item["layout"]["pos_in_scrolling_layout"] = [column, row]
@@ -313,6 +319,22 @@ class RecoveryTest(unittest.TestCase):
         self.assertNotIn("focus-window", action_names[:-1])
         self.assertNotIn("move-column-to-index", action_names)
         self.assertEqual([pin], pins_before)
+
+    def test_pinned_group_recovery_restores_saved_order_from_reversed_columns(self):
+        ws = {"id": 1}
+        windows = [window(3, "other", 1), window(2, "two", 2), window(1, "one", 3)]
+        pin = {"app_id": "one", "members": ["one", "two"], "group_id": "group-id"}
+        saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two"]}],
+                 "windows": [{"app_id": "one", "column": 1}, {"app_id": "two", "column": 1}]}
+        actions = Mock(side_effect=NiriActions(ws, windows))
+        report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                       pinned={"one", "two", "other"}, pinned_groups=[pin])
+        self.assertEqual(count, 2)
+        self.assertTrue(any("Pinned spaces keep their positions" in message for message in report))
+        self.assertEqual(windows[0]["layout"]["pos_in_scrolling_layout"], [1, 1])
+        self.assertEqual(windows[1]["layout"]["pos_in_scrolling_layout"], [2, 2])
+        self.assertEqual(windows[2]["layout"]["pos_in_scrolling_layout"], [2, 1])
+        actions.assert_any_call("action", "consume-or-expel-window-right", "--id", 2)
 
     def test_pinned_group_recovery_accepts_reversed_members_but_rejects_overlapping_pins(self):
         saved = {"version": 1, "groups": [{"id": "group-id", "members": ["two", "one"]}],

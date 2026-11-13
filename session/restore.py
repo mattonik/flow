@@ -252,10 +252,10 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                         group_destinations.append((group[0]["column"], pair[0]["id"], member_ids))
                     continue
                 if pinned_group:
+                    left, right = sorted(pos[0] for pos in positions)
                     live_columns = [w.get("layout", {}).get("pos_in_scrolling_layout")
                                     for w in live if w.get("workspace_id") == workspace_id and not w.get("is_floating")]
-                    if (positions[1][0] != positions[0][0] + 1
-                            or any(pos and pos[0] > positions[1][0] for pos in live_columns)):
+                    if right != left + 1 or any(pos and pos[0] > right for pos in live_columns):
                         report.append("Pinned Group cannot be restored without shifting other spaces")
                         groups_ok = False
                         continue
@@ -263,7 +263,7 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                     report.append("Group members are not single windows; group not restored")
                     groups_ok = False
                     continue
-                if positions[1][0] != positions[0][0] + 1:
+                if not pinned_group and positions[1][0] != positions[0][0] + 1:
                     target = positions[0][0] + (positions[1][0] > positions[0][0])
                     action("action", "focus-window", "--id", pair[1]["id"])
                     action("action", "move-column-to-index", target)
@@ -276,7 +276,8 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                         groups_ok = False
                         continue
                 if pinned_group:
-                    action("action", "consume-or-expel-window-left", "--id", pair[1]["id"])
+                    direction = "left" if positions[1][0] > positions[0][0] else "right"
+                    action("action", "consume-or-expel-window-" + direction, "--id", pair[1]["id"])
                 else:
                     action("action", "focus-window", "--id", pair[0]["id"])
                     action("action", "consume-window-into-column")
