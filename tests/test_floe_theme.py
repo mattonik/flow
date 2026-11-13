@@ -1,5 +1,6 @@
 """Static consistency checks for Floe appearance (not a native QML test)."""
 import json
+import importlib.util
 from pathlib import Path
 import unittest
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +29,15 @@ class FloeThemeTest(unittest.TestCase):
         for mode in ("dark","light"):
             for role,entry in TOKENS["semantic"][mode].items():
                 self.assertIn(entry["$value"],THEME,mode + "/" + role)
+
+    def test_generated_files_are_in_sync_with_tokens(self):
+        script = ROOT / "design/scripts/generate_theme.py"
+        spec = importlib.util.spec_from_file_location("floe_generator",script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(module.render_qml(TOKENS),THEME)
+        self.assertEqual(module.render_css(TOKENS),(ROOT / "design/generated/floe.css").read_text())
+
     def test_shell_integrates_theme(self):
         self.assertIn("FloeTheme { id: floeTheme;",SHELL)
         self.assertIn('"/floe-appearance.ini"',SHELL)
