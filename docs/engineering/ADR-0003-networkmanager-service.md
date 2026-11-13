@@ -2,6 +2,8 @@
 
 Status: proposed; read-only startup probe passed in the ARM64 Flow guest, but no network controls or recovery behavior are accepted yet.
 
+Interim UI: `networkmanagerapplet` from the pinned nixpkgs is installed as an on-demand connection-profile editor; it supplies `nm-connection-editor` (1.36.0, GPL-2.0-or-later). Quick Settings offers “Edit connections”; this is not the Flow Wi-Fi scan/activate picker. The already-installed NetworkManager package supplies `nmtui` as a keyboard-only fallback for connection activation; it is not touch-first. Installing the applet package does not start `nm-applet` or enable NetworkManager. Keep the existing `nmcli` status poll until reactive state has passed transition and restart checks. On the ARM64 NixOS/Niri guest, keyboard activation opened the editor and displayed existing wired profiles; no settings were changed. Actual network actions and touch remain untested.
+
 **User journey:** see current connectivity in Quick Settings, inspect available connection state, and eventually connect or disconnect without leaving the shell; keep status updates in sync with NetworkManager.
 
 | Option | NixOS and Quickshell | Touch | Security and limits | Decision |

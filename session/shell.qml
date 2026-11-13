@@ -688,7 +688,11 @@ ShellRoot {
                     FlowButton { width: 110; implicitHeight: 44; text: "Mute / unmute"; enabled: root.audioAvailable; onClicked: root.changeVolume("mute") }
                 }
                 Text { visible: root.quickError !== ""; text: root.quickError; color: "#f1baaa"; font.pixelSize: 12 }
-                FlowButton { width: 90; implicitHeight: 38; text: "Close"; onClicked: root.quickSettingsOpen = false }
+                Row {
+                    spacing: 6
+                    FlowButton { width: 180; implicitHeight: 44; text: "Edit connections"; onClicked: { root.quickSettingsOpen = false; Quickshell.execDetached(["nm-connection-editor"]) } }
+                    FlowButton { width: 90; implicitHeight: 44; text: "Close"; onClicked: root.quickSettingsOpen = false }
+                }
             }
         }
     }

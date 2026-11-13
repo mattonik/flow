@@ -44,7 +44,7 @@ in {
     hardware.graphics.enable = true;
     security.polkit.enable = true;
     environment.systemPackages = with pkgs; [
-      foot fuzzel quickshell swaylock firefox nautilus spaces launcher appmenu
+      foot fuzzel quickshell swaylock firefox nautilus networkmanagerapplet spaces launcher appmenu
       xwayland-satellite mesa-demos wayland-utils recovery search wireplumber networkmanager
     ];
     environment.etc."niri/config.kdl".source = niriConfig;
