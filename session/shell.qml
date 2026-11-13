@@ -299,6 +299,13 @@ ShellRoot {
         spaceAction("refresh")
     }
 
+    // Floe's appearance preference is per-user and does not change app/window state.
+    FloeTheme { id: floeTheme; light: appearancePreferences.lightMode }
+    Core.Settings {
+        id: appearancePreferences
+        location: "file://" + (Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config") + "/floe-appearance.ini"
+        property bool lightMode: false
+    }
     component FlowButton: Button {
         id: control
         focusPolicy: Qt.StrongFocus
@@ -306,13 +313,13 @@ ShellRoot {
         Keys.onEnterPressed: control.clicked()
         implicitHeight: 58
         contentItem: Text {
-            text: control.text; textFormat: Text.PlainText; color: "#d7e5df"; font.pixelSize: 14; elide: Text.ElideRight
+            text: control.text; textFormat: Text.PlainText; color: floeTheme.textPrimary; font.pixelSize: 14; elide: Text.ElideRight
             horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
         }
         background: Rectangle {
-            radius: 12; color: control.down ? "#29453a" : "#171f1e"
+            radius: 12; color: control.down ? floeTheme.surfaceSelected : floeTheme.surface
             border.width: control.activeFocus ? 2 : 1
-            border.color: control.activeFocus ? "#a0d9c0" : "#34423d"
+            border.color: control.activeFocus ? floeTheme.focus : floeTheme.border
         }
     }
 
@@ -354,15 +361,15 @@ ShellRoot {
     PanelWindow {
         visible: root.deskOpen
         anchors { top: true; bottom: true; left: true; right: true }
-        color: "#0d1313"
+        color: floeTheme.canvas
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
 
         Rectangle {
             anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; anchors.topMargin: 8
-            width: 150; height: 36; radius: 18; color: "#080c0c"; border.color: "#303d38"
-            Text { anchors.centerIn: parent; text: "●   Flow   ···"; color: "#b8ddcb"; font.bold: true }
+            width: 150; height: 36; radius: 18; color: floeTheme.surface; border.color: floeTheme.border
+            Text { anchors.centerIn: parent; text: "floe.  ···"; color: floeTheme.accent; font.bold: true }
             MouseArea { anchors.fill: parent; onClicked: root.deskOpen = false }
         }
         FocusScope {
@@ -388,15 +395,15 @@ ShellRoot {
                     y: Math.max(70, (parent.height - height) / 2)
                     width: Math.max(200, Math.min(parent.width - 48, 910))
                     spacing: 16
-                    Text { text: "●  FLOW / YOUR DESK"; color: "#a0d9c0"; font.bold: true; font.letterSpacing: 2; font.pixelSize: 13 }
+                    Text { text: "FLOE / YOUR DESK"; color: floeTheme.focus; font.bold: true; font.letterSpacing: 2; font.pixelSize: 13 }
                     Text {
-                        text: "Everything<br>in its <font color='#9fe2c5'>place.</font>"
+                        text: "Everything<br>in its <font color='" + floeTheme.textSecondary + "'>place.</font>"
                         textFormat: Text.RichText
-                        color: "#eff5f2"; font.bold: true
+                        color: floeTheme.textPrimary; font.bold: true
                         font.pixelSize: Math.max(36, Math.min(72, parent.width / 9))
                         lineHeight: 0.95
                     }
-                    Text { text: "Your tools are here. Your work is right where you left it."; color: "#9baea7"; font.pixelSize: 17; wrapMode: Text.Wrap; width: parent.width }
+                    Text { text: "Your tools are here. Your work is right where you left it."; color: floeTheme.textMuted; font.pixelSize: 17; wrapMode: Text.Wrap; width: parent.width }
                     FlowButton {
                         id: searchButton
                         onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(searchButton)
@@ -404,8 +411,8 @@ ShellRoot {
                         text: "⌕   Search apps and open spaces   ·   Super K"
                         onClicked: root.openSearch()
                     }
-                    Text { text: "PINNED SPACES"; color: "#91a59d"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
-                    Text { visible: root.pins.length === 0; text: "Pin the current space to keep its place"; color: "#80948b"; font.pixelSize: 14 }
+                    Text { text: "PINNED SPACES"; color: floeTheme.textMuted; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
+                    Text { visible: root.pins.length === 0; text: "Pin the current space to keep its place"; color: floeTheme.textMuted; font.pixelSize: 14 }
                     Flow {
                         width: parent.width
                         spacing: 8
@@ -438,10 +445,10 @@ ShellRoot {
                     }
                     Row {
                         visible: root.spacesError !== ""; width: parent.width; spacing: 8
-                        Text { text: root.spacesError; textFormat: Text.PlainText; color: "#f1baaa"; wrapMode: Text.Wrap; width: parent.width - dismissSpacesError.width - 8; font.pixelSize: 14 }
+                        Text { text: root.spacesError; textFormat: Text.PlainText; color: floeTheme.danger; wrapMode: Text.Wrap; width: parent.width - dismissSpacesError.width - 8; font.pixelSize: 14 }
                         FlowButton { id: dismissSpacesError; width: 96; implicitHeight: 44; text: "Dismiss"; Accessible.name: "Dismiss spaces error"; onClicked: root.spacesError = "" }
                     }
-                    Text { text: "TOOLS"; color: "#91a59d"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
+                    Text { text: "TOOLS"; color: floeTheme.textMuted; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
                     Flow {
                         width: parent.width
                         spacing: 12
@@ -470,7 +477,23 @@ ShellRoot {
                     }
                     Column {
                         visible: root.settingsOpen; width: parent.width; spacing: 12
-                        Text { text: "SETTINGS"; color: "#91a59d"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
+                        Text { text: "SETTINGS"; color: floeTheme.textMuted; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
+                        Row {
+                            spacing: 12
+                            Switch {
+                                id: appearanceSwitch
+                                checked: appearancePreferences.lightMode
+                                Accessible.name: "Use Arctic Daylight light mode"
+                                onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(appearanceSwitch)
+                                onToggled: { appearancePreferences.lightMode = checked; appearancePreferences.sync() }
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: appearancePreferences.lightMode ? "Arctic Daylight · Light" : "Polar Night · Dark"
+                                color: floeTheme.textPrimary
+                                font.pixelSize: 14
+                            }
+                        }
                         Row {
                             spacing: 12
                             Switch {
@@ -480,18 +503,18 @@ ShellRoot {
                                 onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(menuSwitch)
                                 onToggled: { menuPreferences.appMenuEnabled = checked; menuPreferences.sync(); root.appMenuOpen = false }
                             }
-                            Text { anchors.verticalCenter: parent.verticalCenter; text: "Experimental application menu"; color: "#d7e5df"; font.pixelSize: 14 }
+                            Text { anchors.verticalCenter: parent.verticalCenter; text: "Experimental application menu"; color: floeTheme.textPrimary; font.pixelSize: 14 }
                         }
-                        Text { text: "SESSION RECOVERY"; color: "#91a59d"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
-                        Text { text: "Save your documents, then save the current window list before restarting."; color: "#9baea7"; width: parent.width; wrapMode: Text.Wrap }
+                        Text { text: "SESSION RECOVERY"; color: floeTheme.textMuted; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
+                        Text { text: "Save your documents, then save the current window list before restarting."; color: floeTheme.textMuted; width: parent.width; wrapMode: Text.Wrap }
                         Flow {
                             width: parent.width; spacing: 8
                             FlowButton { id: saveSession; width: 180; text: "Save session"; enabled: !recoveryProcess.running && !spacesProcess.running; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(saveSession); onClicked: { recoveryProcess.command = ["flow-recovery", "save"]; recoveryProcess.running = true } }
                             FlowButton { id: restoreSession; width: 180; text: "Restore session"; enabled: !recoveryProcess.running && !spacesProcess.running; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(restoreSession); onClicked: { root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
                         }
-                        Text { visible: root.recoveryMessage !== ""; text: root.recoveryMessage; textFormat: Text.PlainText; color: "#b8ddcb"; width: parent.width; wrapMode: Text.Wrap }
+                        Text { visible: root.recoveryMessage !== ""; text: root.recoveryMessage; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
                     }
-                    Text { text: "Tab to navigate · Esc or Super H to return"; color: "#788d84"; font.pixelSize: 12 }
+                    Text { text: "Tab to navigate · Esc or Super H to return"; color: floeTheme.textMuted; font.pixelSize: 12 }
                 }
             }
         }
@@ -503,13 +526,13 @@ ShellRoot {
         implicitWidth: 100; implicitHeight: 28
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
-        Rectangle { anchors.centerIn: parent; width: 64; height: 5; radius: 3; color: "#b8ddcb" }
+        Rectangle { anchors.centerIn: parent; width: 64; height: 5; radius: 3; color: floeTheme.accent }
         MouseArea { anchors.fill: parent; onClicked: root.toggleSwitcher() }
     }
     PanelWindow {
         visible: root.switcherOpen
         anchors { bottom: true; left: true; right: true }
-        implicitHeight: Math.min(screen.height - 16, Math.max(300, switcherContent.implicitHeight + 24)); color: "#101a18"; exclusionMode: ExclusionMode.Ignore
+        implicitHeight: Math.min(screen.height - 16, Math.max(300, switcherContent.implicitHeight + 24)); color: floeTheme.surface; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
         FocusScope {
@@ -531,8 +554,8 @@ ShellRoot {
                 width: switcherScroller.width; spacing: 8
                 Flow {
                     width: parent.width; spacing: 12
-                    Text { text: "OPEN SPACES  ·  " + root.displaySpaces.length; color: "#b8ddcb"; font.bold: true; font.pixelSize: 13 }
-                    Text { text: "Select a space or app · Esc to close"; color: "#91a59d"; font.pixelSize: 13 }
+                    Text { text: "OPEN SPACES  ·  " + root.displaySpaces.length; color: floeTheme.accent; font.bold: true; font.pixelSize: 13 }
+                    Text { text: "Select a space or app · Esc to close"; color: floeTheme.textMuted; font.pixelSize: 13 }
                 }
                 Flow {
                     width: parent.width; spacing: 8
@@ -560,11 +583,11 @@ ShellRoot {
                     Row {
                         id: switcherSpacesError
                         visible: root.spacesError !== ""; width: parent.width; spacing: 8
-                        Text { text: root.spacesError; textFormat: Text.PlainText; color: "#f1baaa"; wrapMode: Text.Wrap; width: parent.width - dismissSwitcherSpacesError.width - 8 }
+                        Text { text: root.spacesError; textFormat: Text.PlainText; color: floeTheme.danger; wrapMode: Text.Wrap; width: parent.width - dismissSwitcherSpacesError.width - 8 }
                         FlowButton { id: dismissSwitcherSpacesError; onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(dismissSwitcherSpacesError); width: 96; implicitHeight: 44; text: "Dismiss"; Accessible.name: "Dismiss spaces error"; onClicked: root.spacesError = "" }
                     }
                 }
-                Text { visible: root.displaySpaces.length === 0; text: "No open spaces"; color: "#91a59d" }
+                Text { visible: root.displaySpaces.length === 0; text: "No open spaces"; color: floeTheme.textMuted }
                 Flickable {
                     id: spaceScroller
                     width: parent.width; height: Math.max(180, windowRow.implicitHeight); contentWidth: windowRow.width; contentHeight: height
@@ -671,19 +694,19 @@ ShellRoot {
             Keys.onEscapePressed: root.appMenuOpen = false
             Rectangle {
                 x: 8; y: 8; width: Math.min(390, parent.width - 16); height: Math.min(menuColumn.implicitHeight + 32, parent.height - 16)
-                radius: 16; color: "#17201e"; border.color: "#3a4d45"
+                radius: 16; color: floeTheme.surface; border.color: floeTheme.border
                 Flickable {
                     anchors.fill: parent; anchors.margins: 16
                     contentWidth: width; contentHeight: menuColumn.implicitHeight; clip: true
                     Column {
                         id: menuColumn; width: parent.width; spacing: 8
-                        Text { text: root.appMenu ? root.appMenu.name : "Application"; textFormat: Text.PlainText; color: "#edf5f0"; font.bold: true; font.pixelSize: 18 }
-                        Text { visible: root.appMenuError !== ""; text: root.appMenuError; textFormat: Text.PlainText; color: "#f1baaa"; width: parent.width; wrapMode: Text.Wrap }
-                        Text { visible: root.appMenuFocusChanged; text: "Application focus changed. Close this menu to update it."; color: "#f1baaa"; width: parent.width; wrapMode: Text.Wrap }
+                        Text { text: root.appMenu ? root.appMenu.name : "Application"; textFormat: Text.PlainText; color: floeTheme.textPrimary; font.bold: true; font.pixelSize: 18 }
+                        Text { visible: root.appMenuError !== ""; text: root.appMenuError; textFormat: Text.PlainText; color: floeTheme.danger; width: parent.width; wrapMode: Text.Wrap }
+                        Text { visible: root.appMenuFocusChanged; text: "Application focus changed. Close this menu to update it."; color: floeTheme.danger; width: parent.width; wrapMode: Text.Wrap }
                         Text {
                             visible: !root.appMenu || root.currentAppItems().length === 0
                             text: "No exposed app commands. Use the application's own menu."
-                            color: "#a3b5ad"; width: parent.width; wrapMode: Text.Wrap
+                            color: floeTheme.textMuted; width: parent.width; wrapMode: Text.Wrap
                         }
                         FlowButton {
                             visible: root.appMenuPath.length > 0
@@ -717,7 +740,7 @@ ShellRoot {
         visible: root.quickSettingsOpen
         anchors.top: true
         implicitWidth: 320; implicitHeight: Math.min(screen.height - 80, Math.max(235, quickSettingsColumn.implicitHeight + 32)); margins.top: 60
-        color: "#17201e"; exclusionMode: ExclusionMode.Ignore
+        color: floeTheme.surface; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
         FocusScope {
@@ -729,11 +752,11 @@ ShellRoot {
                 Column {
                 id: quickSettingsColumn
                 width: parent.width; spacing: 10
-                Text { text: "QUICK SETTINGS"; color: "#b8ddcb"; font.bold: true; font.pixelSize: 14 }
-                Text { text: "Network: " + root.networkStatus; color: "#d7e5df"; font.pixelSize: 14 }
+                Text { text: "QUICK SETTINGS"; color: floeTheme.accent; font.bold: true; font.pixelSize: 14 }
+                Text { text: "Network: " + root.networkStatus; color: floeTheme.textPrimary; font.pixelSize: 14 }
                 FlowButton { width: parent.width; implicitHeight: 48; text: "Choose Wi-Fi network"; onClicked: { root.quickSettingsOpen = false; Quickshell.execDetached(["flow-wifi-settings"]) } }
                 FlowButton { width: parent.width; implicitHeight: 48; text: "Toggle on-screen keyboard"; Accessible.name: "Toggle on-screen keyboard"; onClicked: { Quickshell.execDetached(["flow-keyboard"]); root.quickSettingsOpen = false } }
-                Text { text: "Output volume: " + root.volumeStatus; color: "#d7e5df"; font.pixelSize: 14 }
+                Text { text: "Output volume: " + root.volumeStatus; color: floeTheme.textPrimary; font.pixelSize: 14 }
                 Row {
                     spacing: 6
                     FlowButton { width: 70; implicitHeight: 44; text: "− 5%"; Accessible.name: "Decrease volume"; enabled: root.audioAvailable; onClicked: root.changeVolume(-0.05) }
@@ -748,13 +771,13 @@ ShellRoot {
                         Text {
                             width: parent.width; maximumLineCount: 1; wrapMode: Text.NoWrap; elide: Text.ElideRight
                             text: root.mediaPlayer ? (root.mediaPlayer.trackTitle || root.mediaPlayer.identity || "Media player").slice(0, 160) : ""
-                            textFormat: Text.PlainText; color: "#edf5f0"; font.bold: true; font.pixelSize: 14
+                            textFormat: Text.PlainText; color: floeTheme.textPrimary; font.bold: true; font.pixelSize: 14
                         }
                         Text {
                             visible: !!(root.mediaPlayer && root.mediaPlayer.trackArtist)
                             width: parent.width; maximumLineCount: 1; wrapMode: Text.NoWrap; elide: Text.ElideRight
                             text: root.mediaPlayer ? root.mediaPlayer.trackArtist.slice(0, 160) : ""
-                            textFormat: Text.PlainText; color: "#91a59d"; font.pixelSize: 12
+                            textFormat: Text.PlainText; color: floeTheme.textMuted; font.pixelSize: 12
                         }
                     }
                     FlowButton {
@@ -765,7 +788,7 @@ ShellRoot {
                         onClicked: if (root.mediaPlayer && root.mediaPlayer.canTogglePlaying) root.mediaPlayer.togglePlaying()
                     }
                 }
-                Text { visible: root.quickError !== ""; text: root.quickError; color: "#f1baaa"; font.pixelSize: 12 }
+                Text { visible: root.quickError !== ""; text: root.quickError; color: floeTheme.danger; font.pixelSize: 12 }
                 Row {
                     spacing: 6
                     FlowButton { width: 180; implicitHeight: 44; text: "Edit connections"; onClicked: { root.quickSettingsOpen = false; Quickshell.execDetached(["nm-connection-editor"]) } }
@@ -780,7 +803,7 @@ ShellRoot {
         anchors.top: true
         implicitWidth: Math.min(420, screen.width - 24); implicitHeight: Math.min(notificationColumn.implicitHeight + 24, screen.height - 80)
         margins.top: 60
-        color: "#17201e"; exclusionMode: ExclusionMode.Ignore
+        color: floeTheme.surface; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: root.notificationsOpen ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
         FocusScope {
@@ -793,13 +816,13 @@ ShellRoot {
                 id: notificationColumn; width: parent.width; spacing: 8
                 Row {
                     width: parent.width; spacing: 8
-                    Text { text: "NOTIFICATIONS"; color: "#b8ddcb"; font.bold: true; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
+                    Text { text: "NOTIFICATIONS"; color: floeTheme.accent; font.bold: true; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
                     FlowButton { width: 80; implicitHeight: 44; text: "Close"; onClicked: root.notificationsOpen = false }
                 }
                 Text {
                     visible: notificationServer.trackedNotifications.values.length === 0
                     width: parent.width; height: 88; verticalAlignment: Text.AlignVCenter; horizontalAlignment: Text.AlignHCenter
-                    text: "No notifications"; color: "#91a59d"
+                    text: "No notifications"; color: floeTheme.textMuted
                 }
                 Repeater {
                     model: notificationServer.trackedNotifications
@@ -808,15 +831,15 @@ ShellRoot {
                         required property int index
                         visible: root.notificationsOpen || index === notificationServer.trackedNotifications.values.length - 1
                         width: notificationColumn.width; implicitHeight: cardColumn.implicitHeight + 20
-                        radius: 12; color: "#202d29"; border.color: "#3a4d45"
+                        radius: 12; color: floeTheme.surfaceRaised; border.color: floeTheme.border
                         Column {
                             id: cardColumn; anchors.fill: parent; anchors.margins: 10; spacing: 5
                             Row {
                                 width: parent.width; spacing: 8
-                                Text { width: parent.width - dismiss.width - 8; text: modelData.appName + " · " + modelData.summary; textFormat: Text.PlainText; color: "#edf5f0"; font.bold: true; wrapMode: Text.Wrap }
+                                Text { width: parent.width - dismiss.width - 8; text: modelData.appName + " · " + modelData.summary; textFormat: Text.PlainText; color: floeTheme.textPrimary; font.bold: true; wrapMode: Text.Wrap }
                                 FlowButton { id: dismiss; width: 44; implicitHeight: 44; text: "×"; Accessible.name: "Dismiss notification"; onClicked: modelData.dismiss() }
                             }
-                            Text { visible: modelData.body !== ""; width: parent.width; text: modelData.body; textFormat: Text.PlainText; color: "#c4d2cb"; wrapMode: Text.Wrap }
+                            Text { visible: modelData.body !== ""; width: parent.width; text: modelData.body; textFormat: Text.PlainText; color: floeTheme.textSecondary; wrapMode: Text.Wrap }
                             Flow {
                                 width: parent.width; spacing: 6
                                 Repeater {
@@ -843,14 +866,14 @@ ShellRoot {
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         Rectangle {
-            anchors.fill: parent; radius: 22; color: "#0b1015"; border.color: "#33433e"
+            anchors.fill: parent; radius: 22; color: floeTheme.canvas; border.color: floeTheme.border
             Row {
                 anchors.centerIn: parent; spacing: 18
-                Text { text: "●  FLOW"; color: "#b8ddcb"; font.bold: true; anchors.verticalCenter: parent.verticalCenter
+                Text { text: "floe."; color: floeTheme.accent; font.bold: true; anchors.verticalCenter: parent.verticalCenter
                     MouseArea { anchors.fill: parent; onClicked: root.toggleDesk() } }
-                Text { text: "Apps"; color: "#ecf2f0"; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter
+                Text { text: "Apps"; color: floeTheme.textPrimary; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter
                     MouseArea { anchors.fill: parent; onClicked: root.openApps() } }
-                Text { text: Qt.formatTime(clock.date, "hh:mm"); color: "#ecf2f0"; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter }
+                Text { text: Qt.formatTime(clock.date, "hh:mm"); color: floeTheme.textPrimary; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter }
                 FlowButton { width: 38; implicitHeight: 34; text: "◉"; Accessible.name: "Notifications"; onClicked: root.toggleNotifications() }
                 FlowButton { width: 38; implicitHeight: 34; text: "⚙"; Accessible.name: "Quick settings"; onClicked: root.toggleQuickSettings() }
             }

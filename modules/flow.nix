@@ -76,6 +76,7 @@ in {
     ];
     environment.etc."niri/config.kdl".source = niriConfig;
     environment.etc."flow/shell.qml".source = ../session/shell.qml;
+    environment.etc."flow/FloeTheme.qml".source = ../session/FloeTheme.qml;
     environment.etc."xdg/fuzzel/fuzzel.ini".text = ''
       [main]
       font=sans:size=12
