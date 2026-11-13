@@ -240,3 +240,9 @@ The switcher now grows with wrapped controls and scrolls if the screen is too sh
 ## Reversed Group recovery and rename editor (2026-11-13)
 
 Pinned Group recovery now handles adjacent members that reopen in reverse order at the end of the workspace, using Niri's window-ID-targeted consume action to restore their saved order. An isolated ARM64 guest test preserved the neighboring pinned column, focus, Group ID and pin ID. Other layouts that could shift existing spaces remain manual. The Group name editor now grows its switcher area and uses 44-pixel controls; the installed guest UI showed the entire field and Save button, and Tab reached Save. This does not verify physical touch, reboot recovery or automatic orientation reflow.
+
+## Missing Group member relaunch (2026-11-13)
+
+An isolated ARM64 guest test used a temporary desktop entry and Gio to reopen a missing member of a pinned two-app Group. Recovery rebuilt the Group while preserving a neighboring pin, focus, and the Group and pin IDs. The test used disposable windows and an in-memory snapshot in an existing session; it does not establish full reboot recovery or restore application documents. Duplicate app windows remain manual when their identity is ambiguous.
+
+The Group rename editor now provides Cancel and handles Escape without closing the switcher. In the installed guest, a keyboard test discarded a changed draft, reopened the editor with its saved name, and used Escape to return to the switcher and then the app. The new control has a 44-pixel target; physical touch was not tested.

@@ -180,6 +180,7 @@ ShellRoot {
     property string recoveryMessage: ""
     property string renameGroupId: ""
     property bool switcherOpen: false
+    onSwitcherOpenChanged: if (!switcherOpen) renameGroupId = ""
     property var windows: []
     property var displaySpaces: []
     property var pins: []
@@ -613,7 +614,7 @@ ShellRoot {
                                         id: renameButton
                                         onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(renameButton)
                                         width: 132; implicitHeight: 44; text: "Rename Group"
-                                        onClicked: { root.renameGroupId = spaceCard.modelData.group_id; groupName.forceActiveFocus() }
+                                        onClicked: { groupName.text = spaceCard.modelData.label; root.renameGroupId = spaceCard.modelData.group_id; groupName.forceActiveFocus() }
                                     }
                                     FlowButton {
                                         id: groupViewButton
@@ -627,16 +628,18 @@ ShellRoot {
                                 Row {
                                     visible: !!spaceCard.modelData.group_id && root.renameGroupId === spaceCard.modelData.group_id
                                     width: parent.width; spacing: 4
+                                    Keys.onEscapePressed: { root.renameGroupId = ""; renameButton.forceActiveFocus() }
                                     TextField {
                                         id: groupName
                                         onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(groupName)
-                                        width: parent.width - 68; height: 44; maximumLength: 80
+                                        width: parent.width - 136; height: 44; maximumLength: 80
                                         text: spaceCard.modelData.label
                                         placeholderText: "Group name"
                                         Accessible.name: "Group name"
                                         onAccepted: root.renameGroup(spaceCard.modelData.group_id, text)
                                     }
                                     FlowButton { id: saveGroupName; onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(saveGroupName); width: 64; implicitHeight: 44; text: "Save"; onClicked: root.renameGroup(spaceCard.modelData.group_id, groupName.text) }
+                                    FlowButton { id: cancelGroupName; onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(cancelGroupName); width: 64; implicitHeight: 44; text: "Cancel"; Accessible.name: "Cancel Group rename"; onClicked: { root.renameGroupId = ""; renameButton.forceActiveFocus() } }
                                 }
                             }
                         }
