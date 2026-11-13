@@ -81,6 +81,7 @@ class SpacesTest(unittest.TestCase):
         self.assertEqual((pin["group_id"], pin["members"], pin["window_ids"]),
                          ("group-1", ["terminal", "files"], [1, 2]))
         self.assertEqual(result[0]["kind"], "group")
+        self.assertEqual(result[0]["group_id"], "group-1")
         self.assertTrue(result[0]["available"])
         command.assert_any_call("action", "move-column-to-index", 1)
         self.assertEqual([w["id"] for w in spaces.group_windows(pin, self.ws, self.windows, "session", groups)], [1, 2])

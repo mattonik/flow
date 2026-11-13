@@ -258,7 +258,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
         raise ValueError("Unknown action")
     if op not in ("focus", "focus-window", "stack", "unstack", "group-view"):
         reconcile(pins, workspace, windows, socket, groups)
-    return [{"id": p["id"], "label": p["label"], "kind": "group" if "members" in p else "app",
+    return [{"id": p["id"], "label": p["label"], "kind": "group" if "members" in p else "app", "group_id": p.get("group_id"),
              "available": bool(pin_window(p, workspace, windows, socket, groups))} for p in pins]
 
 

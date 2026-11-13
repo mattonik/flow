@@ -583,6 +583,7 @@ ShellRoot {
                             Column {
                                 id: spaceCard
                                 required property var modelData
+                                property var groupPin: root.pins.find(p => p.kind === "group" && p.group_id === modelData.group_id) || null
                                 width: modelData.members.length > 1 ? modelData.members.length * 136 - 4 : 200
                                 spacing: 4
                                 FlowButton {
@@ -624,6 +625,16 @@ ShellRoot {
                                         Accessible.name: "Toggle tabs or stack for " + spaceCard.modelData.label
                                         onClicked: root.spaceAction("group-view")
                                     }
+                                }
+                                FlowButton {
+                                    id: groupPinButton
+                                    visible: !!spaceCard.modelData.group_id
+                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(groupPinButton)
+                                    width: parent.width; implicitHeight: 44
+                                    text: spaceCard.groupPin ? "Unpin Group" : "Pin Group"
+                                    Accessible.name: text + " " + spaceCard.modelData.label
+                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    onClicked: root.spaceAction(spaceCard.groupPin ? "unpin" : "pin-group", spaceCard.groupPin ? spaceCard.groupPin.id : spaceCard.modelData.group_id)
                                 }
                                 Row {
                                     visible: !!spaceCard.modelData.group_id && root.renameGroupId === spaceCard.modelData.group_id
