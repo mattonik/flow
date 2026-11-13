@@ -161,6 +161,31 @@ class SpacesTest(unittest.TestCase):
         spaces.reconcile(pins, self.ws, self.windows, "session")
         command.assert_not_called()
 
+    @patch.object(spaces, "command")
+    def test_unavailable_pin_does_not_block_reconciling_live_pins(self, command):
+        other_workspace = {**self.windows[0], "workspace_id": 2}
+        pins = [
+            {"app_id": "terminal", "window_id": 1, "session": "session"},
+            {"app_id": "files", "window_id": 2, "session": "session"},
+        ]
+
+        spaces.reconcile(pins, self.ws, [other_workspace, self.windows[1]], "session")
+
+        self.assertEqual(command.call_args_list, [
+            unittest.mock.call("action", "focus-window", "--id", 2),
+            unittest.mock.call("action", "move-column-to-index", 1),
+            unittest.mock.call("action", "focus-window", "--id", 2),
+        ])
+
+    @patch.object(spaces, "command")
+    def test_unavailable_pins_alone_do_not_issue_compositor_actions(self, command):
+        pin = {"app_id": "terminal", "window_id": 1, "session": "session"}
+        window = {**self.windows[0], "workspace_id": 2}
+
+        spaces.reconcile([pin], self.ws, [window], "session")
+
+        command.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

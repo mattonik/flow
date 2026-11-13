@@ -64,10 +64,9 @@ def eligible(window, workspace, windows):
 def reconcile(pins, workspace, windows, socket):
     # shortcut: absent or ambiguous apps have no physical placeholder; use compositor-backed placeholders when available.
     resolved = [resolve(pin, windows, socket) for pin in pins]
-    if any(w and not eligible(w, workspace, windows) for w in resolved):
-        return
     active = workspace.get("active_window_id")
-    desired = [w for w in resolved if w]
+    # One unavailable pin must not prevent the remaining live pins from keeping their order.
+    desired = [w for w in resolved if w and eligible(w, workspace, windows)]
     if all(w["layout"]["pos_in_scrolling_layout"][0] == i for i, w in enumerate(desired, 1)):
         return
     try:
