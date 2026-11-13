@@ -3,7 +3,7 @@
   "name": "Floe / Arctic Minimalism",
   "version": "1.0.0",
   "status": "design-system-proposal",
-  "description": "Working Floe visual identity. Primitive colors must not be used as small text without checking their contrast with the intended surface.",
+  "description": "Floe Arctic Minimalism working brand palette: Polar Night and low-glare Arctic Daylight. Semantic roles are preferred over primitives.",
   "color": {
     "primitive": {
       "polar-night": {
@@ -69,6 +69,34 @@
       "success": {
         "$type": "color",
         "$value": "#A4D4C4"
+      },
+      "daylight-mist": {
+        "$type": "color",
+        "$value": "#DFE9E6"
+      },
+      "daylight-surface": {
+        "$type": "color",
+        "$value": "#EAF0EC"
+      },
+      "daylight-raised": {
+        "$type": "color",
+        "$value": "#F2F5F0"
+      },
+      "daylight-selected": {
+        "$type": "color",
+        "$value": "#D1E1DA"
+      },
+      "daylight-stroke": {
+        "$type": "color",
+        "$value": "#78969A"
+      },
+      "daylight-ink": {
+        "$type": "color",
+        "$value": "#153139"
+      },
+      "daylight-secondary": {
+        "$type": "color",
+        "$value": "#28584C"
       }
     }
   },
@@ -142,19 +170,19 @@
     "light": {
       "canvas": {
         "$type": "color",
-        "$value": "#EBF1EB"
+        "$value": "#DFE9E6"
       },
       "surface": {
         "$type": "color",
-        "$value": "#F5FAF7"
+        "$value": "#EAF0EC"
       },
       "surface-raised": {
         "$type": "color",
-        "$value": "#FFFFFF"
+        "$value": "#F2F5F0"
       },
       "surface-selected": {
         "$type": "color",
-        "$value": "#DCEAE5"
+        "$value": "#D1E1DA"
       },
       "text-primary": {
         "$type": "color",
@@ -178,7 +206,7 @@
       },
       "on-accent": {
         "$type": "color",
-        "$value": "#FFFFFF"
+        "$value": "#F2F5F0"
       },
       "border": {
         "$type": "color",
@@ -448,5 +476,16 @@
     "type": "A DTCG-inspired JSON data source; validate consumers before claiming complete format compatibility.",
     "motion": "Platform gestures and compositor transitions are not implemented by these values.",
     "name": "Floe is product; Flow is spatial navigation; IceBear is creator; Nival is reserved for possible future ecosystem."
+  },
+  "theme-policy": {
+    "default": "dark",
+    "modes": [
+      "dark",
+      "light"
+    ],
+    "light-mode": "Soft Arctic daylight, no pure #fff surfaces; dark ink and mineral fog replaces stark white.",
+    "preference": "Per-user explicit setting; optionally follow operating system when reliable, but never change without user control.",
+    "scope": "Floe shell UI and supported themeable tools only; existing applications retain their own preferences.",
+    "accessibility": "Body/small text AA 4.5:1 or greater on its rendered surface; focus indicator perceivable, touch targets 44dp minimum; reduced motion supported."
   }
 }
