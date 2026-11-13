@@ -139,3 +139,8 @@ After the user restarted and signed into the ARM64 UTM guest, KWrite and Kate we
 ## Search settings in the ARM64 guest (2026-11-13)
 
 Flow settings and quick settings are discoverable in search. The guest configuration built and activated, and the restarted Quickshell accepted both new actions through IPC. The search results and dispatch are covered by the local Python tests. Selecting each result in the guest UI still needs verification.
+
+
+## Keyboard navigation in the bottom switcher (2026-11-13)
+
+The bottom switcher scrolls horizontally to keep the focused space, Group member or Group control visible. The ARM64 VM build succeeded; with ten real windows open, tabbing beyond the initially visible cards scrolled to the focused card. Temporary test windows were closed afterwards. Group controls and touch scrolling still need interactive verification.

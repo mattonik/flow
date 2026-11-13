@@ -497,8 +497,14 @@ ShellRoot {
                 }
                 Text { visible: root.displaySpaces.length === 0; text: "No open spaces"; color: "#91a59d" }
                 Flickable {
+                    id: spaceScroller
                     width: parent.width; height: 180; contentWidth: windowRow.width; contentHeight: height
                     boundsBehavior: Flickable.StopAtBounds; clip: true
+                    function ensureVisible(item) {
+                        const left = item.mapToItem(windowRow, 0, 0).x
+                        if (left < contentX) contentX = left
+                        else if (left + item.width > contentX + width) contentX = Math.min(contentWidth - width, left + item.width - width)
+                    }
                     Row {
                         id: windowRow; spacing: 8
                         Repeater {
@@ -509,6 +515,8 @@ ShellRoot {
                                 width: modelData.members.length > 1 ? modelData.members.length * 136 - 4 : 200
                                 spacing: 4
                                 FlowButton {
+                                    id: spaceButton
+                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(spaceButton)
                                     width: parent.width; height: modelData.members.length > 1 ? 50 : 90
                                     text: (modelData.active ? "●  " : "") + modelData.label.slice(0, 35) + (modelData.members.length > 1 ? "  ·  Group" : "")
                                     Accessible.name: "Switch to " + modelData.label
@@ -519,7 +527,9 @@ ShellRoot {
                                     Repeater {
                                         model: parent.parent.modelData.members
                                         FlowButton {
+                                            id: memberButton
                                             required property var modelData
+                                            onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberButton)
                                             width: 132; implicitHeight: 36
                                             text: (modelData.active ? "● " : "") + modelData.label.slice(0, 14)
                                             Accessible.name: "Focus " + modelData.label + " in group"
@@ -528,7 +538,9 @@ ShellRoot {
                                     }
                                 }
                                 FlowButton {
+                                    id: renameButton
                                     visible: !!spaceCard.modelData.group_id
+                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(renameButton)
                                     width: 132; implicitHeight: 32; text: "Rename Group"
                                     onClicked: { root.renameGroupId = spaceCard.modelData.group_id; groupName.forceActiveFocus() }
                                 }
@@ -537,13 +549,14 @@ ShellRoot {
                                     width: parent.width; spacing: 4
                                     TextField {
                                         id: groupName
+                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(groupName)
                                         width: parent.width - 68; height: 36; maximumLength: 80
                                         text: spaceCard.modelData.label
                                         placeholderText: "Group name"
                                         Accessible.name: "Group name"
                                         onAccepted: root.renameGroup(spaceCard.modelData.group_id, text)
                                     }
-                                    FlowButton { width: 64; implicitHeight: 36; text: "Save"; onClicked: root.renameGroup(spaceCard.modelData.group_id, groupName.text) }
+                                    FlowButton { id: saveGroupName; onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(saveGroupName); width: 64; implicitHeight: 36; text: "Save"; onClicked: root.renameGroup(spaceCard.modelData.group_id, groupName.text) }
                                 }
                             }
                         }
