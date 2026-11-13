@@ -264,3 +264,7 @@ Recovery of snapshots without Groups now avoids reordering when a live pinned ap
 If saved metadata contains multiple Group IDs for the same apps, the pin controller now treats the Group as unavailable instead of selecting one. A read-only ARM64 guest check used the real Writing Group windows and temporary in-memory duplicate records: pinning and focus were rejected without compositor actions. Unit tests cover pinning, focusing and availability.
 
 The switcher also labels pinned Groups before their name so the status remains visible when a long name is elided. The installed ARM64 guest showed the label after pinning, and removed it after unpinning; the original workspace order and focus were restored.
+
+## Targeted Group layout control (2026-11-13)
+
+The switcher now sends the selected Group ID when changing tabs or stack, and the controller rechecks the active workspace, focused member and membership immediately before the Niri action. An isolated ARM64 guest test rejected a wrong ID and switched a disposable Group to tabs and back while preserving the original workspace, focus and pins. The installed switcher also changed the Writing Group to tabs and back. Unit tests cover changed focus, workspace and membership. Niri's focused-column toggle is a separate IPC request, so a focus change after the final check remains a race.

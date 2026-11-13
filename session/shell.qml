@@ -623,7 +623,7 @@ ShellRoot {
                                         width: 132; implicitHeight: 44; text: "Tabs / stack"
                                         enabled: spaceCard.modelData.active
                                         Accessible.name: "Toggle tabs or stack for " + spaceCard.modelData.label
-                                        onClicked: root.spaceAction("group-view")
+                                        onClicked: root.spaceAction("group-view", spaceCard.modelData.group_id)
                                     }
                                 }
                                 FlowButton {

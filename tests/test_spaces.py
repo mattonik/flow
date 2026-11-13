@@ -204,7 +204,8 @@ class SpacesTest(unittest.TestCase):
                "members": ["terminal", "files"], "window_id": 1, "window_ids": [1, 2], "session": "session"}
         pins = [pin]
 
-        result = spaces.run(pins, "group-view", None, self.ws, self.windows, "session", groups)
+        with patch.object(spaces, "snapshot", return_value=(self.ws, self.windows)):
+            result = spaces.run(pins, "group-view", "group-1", self.ws, self.windows, "session", groups)
 
         command.assert_called_once_with("action", "toggle-column-tabbed-display")
         self.assertEqual(pins, [pin])
@@ -223,7 +224,27 @@ class SpacesTest(unittest.TestCase):
         ]
         for windows, groups in cases:
             with self.subTest(groups=groups, window_count=len(windows)), self.assertRaisesRegex(ValueError, "saved two-app Group"):
-                spaces.run([], "group-view", None, self.ws, windows, "session", groups)
+                spaces.run([], "group-view", "group-1", self.ws, windows, "session", groups)
+        command.assert_not_called()
+
+    @patch.object(spaces, "command")
+    def test_group_view_rejects_a_stale_target_or_changed_state(self, command):
+        self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        group = {"id": "group-1", "label": "Work", "members": ["terminal", "files"]}
+        with self.assertRaisesRegex(ValueError, "active saved"):
+            spaces.run([], "group-view", "other-group", self.ws, self.windows, "session", [group])
+        with self.assertRaisesRegex(ValueError, "active saved"):
+            spaces.run([], "group-view", None, self.ws, self.windows, "session", [group])
+        separated = [self.windows[0], window(2, "files", 2)]
+        replaced = [window(3, "terminal", 1), self.windows[1]]
+        cases = [({**self.ws, "id": 2}, self.windows),
+                 ({**self.ws, "active_window_id": 1}, self.windows),
+                 (self.ws, separated), (self.ws, replaced)]
+        for workspace, windows in cases:
+            with self.subTest(workspace=workspace, windows=windows), \
+                 patch.object(spaces, "snapshot", return_value=(workspace, windows)), \
+                 self.assertRaisesRegex(ValueError, "Group or focus changed"):
+                spaces.run([], "group-view", "group-1", self.ws, self.windows, "session", [group])
         command.assert_not_called()
 
     @patch.object(spaces, "command")

@@ -186,8 +186,16 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
         pin_group(pins, matches[0], workspace, windows, socket, groups)
     elif op == "group-view":
         active = next((space for space in display_spaces(workspace, windows, groups) if space["active"]), None)
-        if not active or not active["group_id"]:
-            raise ValueError("Select a saved two-app Group first")
+        if not arg or not active or active["group_id"] != arg:
+            raise ValueError("Select the active saved two-app Group first")
+        current_workspace, current_windows = snapshot()
+        current = next((space for space in display_spaces(current_workspace, current_windows, groups) if space["active"]), None)
+        if (current_workspace["id"] != workspace["id"]
+                or current_workspace.get("active_window_id") != workspace.get("active_window_id")
+                or not current or current["group_id"] != arg
+                or {w["id"] for w in current["members"]} != {w["id"] for w in active["members"]}):
+            raise ValueError("Group or focus changed; try again")
+        # shortcut: Niri toggles only the focused column; use a targeted action if it becomes available.
         command("action", "toggle-column-tabbed-display")
     elif op in ("unpin", "focus", "left", "right"):
         index = next((i for i, p in enumerate(pins) if p["id"] == arg), None)
