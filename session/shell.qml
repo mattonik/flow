@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtCore as Core
 import Quickshell
 import Quickshell.Io
+import Quickshell.Services.Pipewire
 import Quickshell.Wayland
 
 ShellRoot {
@@ -11,24 +12,13 @@ ShellRoot {
     property bool settingsOpen: false
     property bool editPins: false
     property bool quickSettingsOpen: false
-    property string volumeStatus: "Checking audio…"
+    readonly property var audioSink: Pipewire.ready ? Pipewire.defaultAudioSink : null
+    readonly property bool audioAvailable: !!(audioSink && audioSink.audio)
+    readonly property string volumeStatus: !Pipewire.ready ? "Checking audio…" : !audioAvailable ? "Audio unavailable" :
+        Math.round(audioSink.audio.volume * 100) + "%" + (audioSink.audio.muted ? " · muted" : "")
     property string networkStatus: "Checking network…"
     property string quickError: ""
-    function refreshQuickSettings() {
-        if (!audioStatus.running) audioStatus.running = true
-        if (!networkStatusProcess.running) networkStatusProcess.running = true
-    }
-    Process {
-        id: audioStatus
-        command: ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                const match = this.text.match(/Volume:\s*([0-9.]+)/)
-                root.volumeStatus = match ? Math.round(Number(match[1]) * 100) + "%" + (this.text.indexOf("[MUTED]") >= 0 ? " · muted" : "") : "Audio unavailable"
-            }
-        }
-        onExited: (code, status) => { if (code !== 0) root.volumeStatus = "Audio unavailable" }
-    }
+    PwObjectTracker { objects: root.audioSink ? [root.audioSink] : [] }
     Process {
         id: networkStatusProcess
         command: ["nmcli", "-t", "-f", "CONNECTIVITY", "general"]
@@ -38,11 +28,7 @@ ShellRoot {
         } }
         onExited: (code, status) => { if (code !== 0) root.networkStatus = "Network unavailable" }
     }
-    Process {
-        id: audioControl
-        onExited: (code, status) => { root.quickError = code === 0 ? "" : "Audio control unavailable"; root.refreshQuickSettings() }
-    }
-    Timer { interval: 4000; running: root.quickSettingsOpen; repeat: true; triggeredOnStart: true; onTriggered: root.refreshQuickSettings() }
+    Timer { interval: 4000; running: root.quickSettingsOpen; repeat: true; triggeredOnStart: true; onTriggered: if (!networkStatusProcess.running) networkStatusProcess.running = true }
     function toggleQuickSettings() {
         if (!quickSettingsOpen) {
             appMenuOpen = false
@@ -53,9 +39,10 @@ ShellRoot {
         quickSettingsOpen = !quickSettingsOpen
     }
     function changeVolume(value) {
-        if (audioControl.running) return
-        audioControl.command = value === "mute" ? ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"] : ["wpctl", "set-volume", "--limit", "1.0", "@DEFAULT_AUDIO_SINK@", value]
-        audioControl.running = true
+        if (!audioAvailable) { quickError = "Audio control unavailable"; return }
+        quickError = ""
+        if (value === "mute") audioSink.audio.muted = !audioSink.audio.muted
+        else audioSink.audio.volume = Math.max(0, Math.min(1, audioSink.audio.volume + value))
     }
     property bool appMenuOpen: false
     property bool appMenuFocusChanged: false
@@ -665,9 +652,9 @@ ShellRoot {
                 Text { text: "Output volume: " + root.volumeStatus; color: "#d7e5df"; font.pixelSize: 14 }
                 Row {
                     spacing: 6
-                    FlowButton { width: 70; implicitHeight: 42; text: "− 5%"; Accessible.name: "Decrease volume"; onClicked: root.changeVolume("5%-") }
-                    FlowButton { width: 70; implicitHeight: 42; text: "+ 5%"; Accessible.name: "Increase volume"; onClicked: root.changeVolume("5%+") }
-                    FlowButton { width: 110; implicitHeight: 42; text: "Mute / unmute"; onClicked: root.changeVolume("mute") }
+                    FlowButton { width: 70; implicitHeight: 44; text: "− 5%"; Accessible.name: "Decrease volume"; enabled: root.audioAvailable; onClicked: root.changeVolume(-0.05) }
+                    FlowButton { width: 70; implicitHeight: 44; text: "+ 5%"; Accessible.name: "Increase volume"; enabled: root.audioAvailable; onClicked: root.changeVolume(0.05) }
+                    FlowButton { width: 110; implicitHeight: 44; text: "Mute / unmute"; enabled: root.audioAvailable; onClicked: root.changeVolume("mute") }
                 }
                 Text { visible: root.quickError !== ""; text: root.quickError; color: "#f1baaa"; font.pixelSize: 12 }
                 FlowButton { width: 90; implicitHeight: 38; text: "Close"; onClicked: root.quickSettingsOpen = false }

@@ -169,3 +169,8 @@ Search now includes closed pins and sends pin and window focus requests through 
 ## Plain-text shell labels and project license (2026-11-13)
 
 The shared Flow button text and dynamic error and application-name labels explicitly render plain text. The intentionally styled Desk heading remains rich text. In the ARM64 guest a real window with a markup-shaped title appeared literally in the bottom switcher; the NixOS configuration built and activated. Regression checks cover the protected renderers. The user selected the MIT License for Flow; third-party software and assets keep their own licenses. Other app-menu interactions and touch were not retested.
+
+
+## Live output audio via PipeWire (2026-11-13)
+
+Quick Settings now reads and updates the default audio sink through Quickshell's tracked PipeWire service instead of polling `wpctl`; network polling remains unchanged. A read-only Quickshell probe passed in the ARM64 guest. The NixOS build activated and the shell restarted without closing apps. An external 30% → 40% change appeared in the panel; keyboard +5% and mute gave 45% muted, confirmed by `wpctl`. The original 30% unmuted state was restored. Mouse, −5%, missing/reconnected devices, physical touch and power/performance are not yet tested. See [ADR 0001](engineering/ADR-0001-audio-service.md).
