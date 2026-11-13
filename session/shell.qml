@@ -787,6 +787,15 @@ ShellRoot {
                                 onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(openGroupMember)
                                 onClicked: root.spaceAction("open-group-member", modelData.id)
                             }
+                            FlowButton {
+                                id: rejoinGroup
+                                visible: modelData.can_rejoin
+                                width: Math.min(parent.width, 200); implicitHeight: 44; text: "Rejoin Group"
+                                Accessible.name: "Rejoin Group for " + modelData.label
+                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(rejoinGroup)
+                                onClicked: root.spaceAction("rejoin-group", modelData.id)
+                            }
                         }
                     }
                 }

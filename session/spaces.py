@@ -144,6 +144,32 @@ def pin_group(pins, group, workspace, windows, socket, groups):
                  "group_id": group["id"], "session": socket})
 
 
+def rejoin_pair(group, workspace, windows, pins):
+    matches = [[w for w in windows if w.get("app_id") == app] for app in group["members"]]
+    if any(len(found) != 1 for found in matches):
+        raise ValueError("Group apps are missing or ambiguous")
+    pair = [found[0] for found in matches]
+    if not all(eligible(w, workspace, windows) for w in pair):
+        raise ValueError("Both Group apps must be single tiled windows on this workspace")
+    left, right = sorted(pair, key=lambda w: w["layout"]["pos_in_scrolling_layout"][0])
+    left_col = left["layout"]["pos_in_scrolling_layout"][0]
+    right_col = right["layout"]["pos_in_scrolling_layout"][0]
+    if right_col != left_col + 1:
+        raise ValueError("Place the Group apps in adjacent columns before rejoining")
+    claims = [pin for pin in pins if set(group["members"]) & set(pin.get("members", [pin.get("app_id")]))]
+    if len(claims) > 1 or any(pin.get("group_id") != group["id"] or
+                              set(pin.get("members", [])) != set(group["members"]) for pin in claims):
+        raise ValueError("Unpin conflicting apps before rejoining")
+    if claims and any(w.get("workspace_id") == workspace["id"] and not w.get("is_floating")
+                      and (w.get("layout", {}).get("pos_in_scrolling_layout") or [0])[0] > right_col for w in windows):
+        raise ValueError("Move the pinned Group apps to the end before rejoining")
+    pinned_apps = {app for pin in pins if pin not in claims for app in pin.get("members", [pin.get("app_id")])}
+    if any(w.get("workspace_id") == workspace["id"] and w.get("app_id") in pinned_apps
+           and (w.get("layout", {}).get("pos_in_scrolling_layout") or [0])[0] > right_col for w in windows):
+        raise ValueError("Move other pinned spaces left before rejoining")
+    return left, right
+
+
 def run(pins, op, arg, workspace, windows, socket, groups=()):
     for pin in pins:
         if "group_id" in pin:
@@ -157,7 +183,35 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
             focused = next((w for w in pair or [] if w["id"] == workspace.get("active_window_id")), None)
             if focused:
                 pin["last_focused_app"] = focused["app_id"]
-    if op == "open-group-member":
+    if op == "rejoin-group":
+        matches = [group for group in groups if group.get("id") == arg]
+        if len(matches) != 1:
+            raise ValueError("Saved Group no longer exists or is ambiguous")
+        group = matches[0]
+        pair = rejoin_pair(group, workspace, windows, pins)
+        current_workspace, current_windows = snapshot()
+        current_pair = rejoin_pair(group, current_workspace, current_windows, pins)
+        if (current_workspace["id"] != workspace["id"]
+                or current_workspace.get("active_window_id") != workspace.get("active_window_id")
+                or [(w["id"], w["layout"]["pos_in_scrolling_layout"]) for w in current_pair]
+                != [(w["id"], w["layout"]["pos_in_scrolling_layout"]) for w in pair]):
+            raise ValueError("Group or focus changed; try again")
+        member = next(w for w in current_pair if w["app_id"] == group["members"][1])
+        direction = "right" if member["id"] == current_pair[0]["id"] else "left"
+        # shortcut: Niri's targeted action can consume a neighbor after a race; use consume-only by ID when available.
+        command("action", "consume-or-expel-window-" + direction, "--id", member["id"])
+        workspace, windows = snapshot()
+        check = {"group_id": group["id"], "members": group["members"], "session": ""}
+        joined = group_windows(check, workspace, windows, socket, groups)
+        if (not joined or {w["id"] for w in joined} != {w["id"] for w in pair}
+                or joined[0]["layout"]["pos_in_scrolling_layout"][1] >= joined[1]["layout"]["pos_in_scrolling_layout"][1]):
+            raise ValueError("Could not confirm Group rejoin; saved Group remains. Check the windows before retrying")
+        for pin in pins:
+            if pin.get("group_id") == group["id"]:
+                pin["session"], pin["window_ids"] = socket, [w["id"] for w in joined]
+                focused = next((w for w in joined if w["app_id"] == pin.get("last_focused_app")), joined[0])
+                pin["window_id"] = focused["id"]
+    elif op == "open-group-member":
         matches = [group for group in groups if group.get("id") == arg]
         if len(matches) != 1:
             raise ValueError("Saved Group no longer exists or is ambiguous")
@@ -348,7 +402,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
         command("action", "focus-window", "--id", window["id"])
     elif op != "refresh":
         raise ValueError("Unknown action")
-    if op not in ("focus", "focus-window", "stack", "unstack", "group-view", "create-group", "dissolve-group", "open-group-member"):
+    if op not in ("focus", "focus-window", "stack", "unstack", "group-view", "create-group", "dissolve-group", "open-group-member", "rejoin-group"):
         reconcile(pins, workspace, windows, socket, groups)
     return [{"id": p["id"], "label": p["label"], "kind": "group" if "members" in p else "app", "group_id": p.get("group_id"),
              "available": bool(pin_window(p, workspace, windows, socket, groups))} for p in pins]
@@ -397,13 +451,16 @@ def display_spaces(workspace, windows, groups=()):
 
 def incomplete_groups(workspace, windows, groups, pins):
     """Describe retained Groups without guessing missing window identities."""
-    visible = {space["group_id"] for space in display_spaces(workspace, windows, groups)}
+    workspace_ids = {w.get("workspace_id") for w in windows if w.get("workspace_id") is not None}
+    visible = {space["group_id"] for ident in workspace_ids
+               for space in display_spaces({"id": ident}, windows, groups)}
     result = []
     for group in groups:
         if group["id"] in visible:
             continue
         candidates = [[w for w in windows if w.get("app_id") == app] for app in group["members"]]
         missing = [app for app, found in zip(group["members"], candidates) if not found]
+        can_rejoin = False
         if any(len(found) > 1 for found in candidates):
             status = "Multiple windows match a Group app; resolve duplicates."
         elif any(found and found[0].get("workspace_id") != workspace["id"] for found in candidates):
@@ -411,13 +468,17 @@ def incomplete_groups(workspace, windows, groups, pins):
         elif missing:
             status = ("Both apps are closed." if len(missing) == 2 else "A Group app is closed.")
         else:
-            status = ("Unpin this Group, then tile and stack its apps to rejoin."
-                      if any(pin.get("group_id") == group["id"] for pin in pins)
-                      else "Tile and stack the apps to rejoin this Group.")
+            try:
+                rejoin_pair(group, workspace, windows, pins)
+                can_rejoin = True
+                status = "Both apps are open; rejoin them as a Group."
+            except ValueError as exc:
+                status = str(exc) + "."
         can_open = bool(missing) and not any(len(found) > 1 or
                        (found and found[0].get("workspace_id") != workspace["id"]) for found in candidates)
         result.append({"id": group["id"], "label": group["label"], "status": status,
-                       "can_open": can_open, "missing_app": missing[0] if can_open else ""})
+                       "can_open": can_open, "can_rejoin": can_rejoin,
+                       "missing_app": missing[0] if can_open else ""})
     return result
 
 
@@ -452,7 +513,7 @@ def run_locked(state):
                 if len(sys.argv) > 1 and sys.argv[1] == "dissolve-group":
                     raise ValueError("Could not confirm Group update; if it remains saved, stack its apps and retry") from exc
                 raise ValueError("Could not confirm Group update; check the Group state before retrying") from exc
-        if len(sys.argv) > 1 and sys.argv[1] in ("dissolve-group", "open-group-member"):
+        if len(sys.argv) > 1 and sys.argv[1] in ("dissolve-group", "open-group-member", "rejoin-group"):
             workspace, windows = snapshot()
         if before != json.dumps(pins, sort_keys=True):
             with tempfile.NamedTemporaryFile("w", dir=state, delete=False) as tmp:

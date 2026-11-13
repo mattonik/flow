@@ -78,9 +78,9 @@ class SpacesTest(unittest.TestCase):
         only_one = [self.windows[0]]
         entry = spaces.incomplete_groups(self.ws, only_one, [group], [])[0]
         self.assertEqual((entry["id"], entry["missing_app"], entry["can_open"]), ("g", "files", True))
-        entry = spaces.incomplete_groups(self.ws, self.windows, [group], [{"group_id": "g"}])[0]
+        entry = spaces.incomplete_groups(self.ws, self.windows, [group], [{"group_id": "g", "members": group["members"]}])[0]
         self.assertFalse(entry["can_open"])
-        self.assertIn("Unpin", entry["status"])
+        self.assertTrue(entry["can_rejoin"])
         duplicate = only_one + [window(3, "terminal", 2)]
         entry = spaces.incomplete_groups(self.ws, duplicate, [group], [])[0]
         self.assertFalse(entry["can_open"])
@@ -91,6 +91,61 @@ class SpacesTest(unittest.TestCase):
         self.assertIn("another workspace", entry["status"])
         self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
         self.assertEqual(spaces.incomplete_groups(self.ws, self.windows, [group], []), [])
+        other_workspace = [{**w, "workspace_id": 2} for w in self.windows]
+        self.assertEqual(spaces.incomplete_groups(self.ws, other_workspace, [group], []), [])
+
+    @patch.object(spaces, "command")
+    def test_rejoin_preserves_pinned_group_identity_and_focus(self, command):
+        group = {"id": "g", "label": "Work", "members": ["terminal", "files"]}
+        pin = {"id": "pin", "group_id": "g", "label": "Work", "members": group["members"],
+               "app_id": "terminal", "window_id": 1, "window_ids": [1, 99], "session": "old",
+               "last_focused_app": "terminal"}
+        joined = [window(1, "terminal", 1), window(2, "files", 1)]
+        joined[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        with patch.object(spaces, "snapshot", side_effect=[(self.ws, self.windows), (self.ws, joined)]):
+            result = spaces.run([pin], "rejoin-group", "g", self.ws, self.windows, "session", [group])
+        command.assert_called_once_with("action", "consume-or-expel-window-left", "--id", 2)
+        self.assertTrue(result[0]["available"])
+        self.assertEqual((pin["id"], pin["group_id"], pin["last_focused_app"], pin["window_ids"]),
+                         ("pin", "g", "terminal", [1, 2]))
+        self.assertEqual(group["members"], ["terminal", "files"])
+
+    @patch.object(spaces, "command")
+    def test_rejoin_uses_saved_member_order_when_columns_are_reversed(self, command):
+        group = {"id": "g", "label": "Work", "members": ["files", "terminal"]}
+        joined = [window(1, "terminal", 1), window(2, "files", 1)]
+        joined[0]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        with patch.object(spaces, "snapshot", side_effect=[(self.ws, self.windows), (self.ws, joined)]):
+            spaces.run([], "rejoin-group", "g", self.ws, self.windows, "session", [group])
+        command.assert_called_once_with("action", "consume-or-expel-window-right", "--id", 1)
+
+    @patch.object(spaces, "command")
+    def test_rejoin_rejects_unsafe_layouts_before_compositor_action(self, command):
+        group = {"id": "g", "label": "Work", "members": ["terminal", "files"]}
+        pinned = {"id": "pin", "group_id": "g", "members": group["members"], "app_id": "terminal"}
+        cases = [([window(1, "terminal", 1)], [], "missing or ambiguous"),
+                 (self.windows + [window(3, "terminal", 3)], [], "missing or ambiguous"),
+                 ([window(1, "terminal", 1), window(2, "files", 3)], [], "adjacent"),
+                 ([window(1, "terminal", 1), {**window(2, "files", 2), "is_floating": True}], [], "tiled"),
+                 ([window(1, "terminal", 1), {**window(2, "files", 2), "workspace_id": 2}], [], "workspace"),
+                 (self.windows, [{"id": "other", "app_id": "terminal"}], "conflicting"),
+                 (self.windows + [window(3, "other", 3)], [pinned], "end")]
+        for windows, pins, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                spaces.run(pins, "rejoin-group", "g", self.ws, windows, "session", [group])
+        command.assert_not_called()
+
+    @patch.object(spaces, "command")
+    def test_rejoin_rechecks_focus_and_preserves_group_if_action_fails(self, command):
+        group = {"id": "g", "label": "Work", "members": ["terminal", "files"]}
+        with patch.object(spaces, "snapshot", return_value=({**self.ws, "active_window_id": 1}, self.windows)), \
+             self.assertRaisesRegex(ValueError, "focus changed"):
+            spaces.run([], "rejoin-group", "g", self.ws, self.windows, "session", [group])
+        command.assert_not_called()
+        with patch.object(spaces, "snapshot", side_effect=[(self.ws, self.windows), (self.ws, self.windows)]), \
+             self.assertRaisesRegex(ValueError, "saved Group remains"):
+            spaces.run([], "rejoin-group", "g", self.ws, self.windows, "session", [group])
+        self.assertEqual(group["members"], ["terminal", "files"])
 
     @patch.object(spaces, "command")
     @patch.object(spaces.time, "sleep")

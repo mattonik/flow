@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -185,9 +186,50 @@ def main():
             assert any(s.get('group_id') == new_id for s in created['spaces'])
             cli(env, 'restore.py', 'rename-group', new_id, 'New Group')
             assert saved()[0]['id'] == new_id and saved()[0]['label'] == 'New Group'
+            def separate_pair():
+                niri('action', 'focus-window', '--id', ids[1])
+                niri('action', 'expel-window-from-column')
+                wait(lambda: grouped(False), 'separated Group members')
+            def rejoin_pair():
+                niri('action', 'focus-window', '--id', ids[0])
+                focused_id = focus().get('active_window_id')
+                cli(env, 'spaces.py', 'rejoin-group', new_id)
+                members = wait(lambda: grouped(True), 'rejoined Group members')
+                assert focus().get('active_window_id') == focused_id
+                assert saved()[0]['id'] == new_id
+                ordered = sorted(members, key=lambda w: w['layout']['pos_in_scrolling_layout'][1])
+                assert [w['app_id'] for w in ordered] == saved()[0]['members']
+                assert any(s.get('group_id') == new_id for s in cli(env, 'spaces.py', 'refresh')['spaces'])
+            separate_pair()
+            niri('action', 'focus-window', '--id', ids[0])
+            niri('action', 'move-column-right')
+            wait(lambda: pair()[0]['layout']['pos_in_scrolling_layout'][0] >
+                 pair()[1]['layout']['pos_in_scrolling_layout'][0], 'reversed Group members')
+            rejoin_pair()
             pin2 = cli(env, 'spaces.py', 'pin-group', new_id)['pins'][0]
             assert pin2['group_id'] == new_id
-            cli(env, 'spaces.py', 'unpin', pin2['id'])
+            pin_id = pin2['id']
+            separate_pair()
+            rejoin_pair()
+            pins_after_rejoin = cli(env, 'spaces.py', 'refresh')['pins']
+            assert len(pins_after_rejoin) == 1 and pins_after_rejoin[0]['id'] == pin_id
+            assert pins_after_rejoin[0]['group_id'] == new_id
+            niri('action', 'close-window', '--id', ids[1])
+            wait(lambda: not any(w.get('app_id') == apps[1] for w in checked()), 'closed Group member')
+            data = Path(tmp) / 'data'
+            (data / 'applications').mkdir(parents=True)
+            (data / 'applications' / (apps[1] + '.desktop')).write_text(
+                '[Desktop Entry]\nType=Application\nName=Flow test\nExec=' +
+                shutil.which('foot') + ' --app-id ' + apps[1] + '\n')
+            launch_env = dict(env, XDG_DATA_HOME=str(data), XDG_DATA_DIRS=str(data))
+            incomplete = cli(launch_env, 'spaces.py', 'refresh')['incomplete_groups']
+            assert any(g['id'] == new_id and g['can_open'] for g in incomplete)
+            cli(launch_env, 'spaces.py', 'open-group-member', new_id)
+            wins = wait(pair, 'reopened Group member')
+            ids[1] = wins[1]['id']
+            rejoin_pair()
+            assert cli(env, 'spaces.py', 'refresh')['pins'][0]['id'] == pin_id
+            cli(env, 'spaces.py', 'unpin', pin_id)
             assert saved()[0]['id'] == new_id
             cli(env, 'spaces.py', 'dissolve-group', new_id)
             wait(lambda: grouped(False), 'new Group dissolved')
@@ -195,8 +237,15 @@ def main():
             unchanged()
             result = {'result': 'pass', 'migration': True, 'snapshot_unchanged': True,
                       'legacy_group_rename_pin_unpin_dissolve': True,
-                      'new_group_create_rename_pin_unpin_dissolve': True}
+                      'new_group_create_rename_rejoin_pin_unpin_dissolve': True,
+                      'pinned_group_rejoin_preserves_pin': True, 'missing_member_reopened_and_rejoined': True}
     finally:
+        try:
+            for w in read('windows'):
+                if w.get('app_id') in apps:
+                    niri('action', 'close-window', '--id', w['id'])
+        except (OSError, subprocess.SubprocessError):
+            pass
         for process in processes:
             try:
                 if process.poll() is None:
