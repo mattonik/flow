@@ -164,3 +164,8 @@ In the ARM64 VM, a ten-space switcher showed its paging controls; keyboard activ
 ## Reopen pinned spaces from search (2026-11-13)
 
 Search now includes closed pins and sends pin and window focus requests through the shell, which displays action errors in the Desk. In the ARM64 VM, selecting the existing Home pin focused Files; a temporary terminal pin remained searchable after its window closed and selecting it reopened the terminal. A request for a nonexistent pin displayed an error. The temporary pin and terminal were removed.
+
+
+## Plain-text shell labels and project license (2026-11-13)
+
+The shared Flow button text and dynamic error and application-name labels explicitly render plain text. The intentionally styled Desk heading remains rich text. In the ARM64 guest a real window with a markup-shaped title appeared literally in the bottom switcher; the NixOS configuration built and activated. Regression checks cover the protected renderers. The user selected the MIT License for Flow; third-party software and assets keep their own licenses. Other app-menu interactions and touch were not retested.

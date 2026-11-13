@@ -283,7 +283,7 @@ ShellRoot {
         Keys.onEnterPressed: control.clicked()
         implicitHeight: 58
         contentItem: Text {
-            text: control.text; color: "#d7e5df"; font.pixelSize: 14; elide: Text.ElideRight
+            text: control.text; textFormat: Text.PlainText; color: "#d7e5df"; font.pixelSize: 14; elide: Text.ElideRight
             horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
         }
         background: Rectangle {
@@ -409,7 +409,7 @@ ShellRoot {
                         FlowButton { width: 200; text: "Pin current app · Super P"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("pin") }
                         FlowButton { visible: root.pins.length > 0; width: 100; text: root.editPins ? "Done" : "Edit pins"; onClicked: root.editPins = !root.editPins }
                     }
-                    Text { visible: root.spacesError !== ""; text: root.spacesError; color: "#f1baaa"; wrapMode: Text.Wrap; width: parent.width; font.pixelSize: 14 }
+                    Text { visible: root.spacesError !== ""; text: root.spacesError; textFormat: Text.PlainText; color: "#f1baaa"; wrapMode: Text.Wrap; width: parent.width; font.pixelSize: 14 }
                     Text { text: "TOOLS"; color: "#91a59d"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
                     Flow {
                         width: parent.width
@@ -457,7 +457,7 @@ ShellRoot {
                             FlowButton { id: saveSession; width: 180; text: "Save session"; enabled: !recoveryProcess.running && !spacesProcess.running; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(saveSession); onClicked: { recoveryProcess.command = ["flow-recovery", "save"]; recoveryProcess.running = true } }
                             FlowButton { id: restoreSession; width: 180; text: "Restore session"; enabled: !recoveryProcess.running && !spacesProcess.running; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(restoreSession); onClicked: { root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
                         }
-                        Text { visible: root.recoveryMessage !== ""; text: root.recoveryMessage; color: "#b8ddcb"; width: parent.width; wrapMode: Text.Wrap }
+                        Text { visible: root.recoveryMessage !== ""; text: root.recoveryMessage; textFormat: Text.PlainText; color: "#b8ddcb"; width: parent.width; wrapMode: Text.Wrap }
                     }
                     Text { text: "Tab to navigate · Esc or Super H to return"; color: "#788d84"; font.pixelSize: 12 }
                 }
@@ -509,7 +509,7 @@ ShellRoot {
                             onClicked: spaceScroller.contentX = Math.min(spaceScroller.contentWidth - spaceScroller.width, spaceScroller.contentX + spaceScroller.width * 0.8)
                         }
                     }
-                    Text { text: root.spacesError; color: "#f1baaa" }
+                    Text { text: root.spacesError; textFormat: Text.PlainText; color: "#f1baaa" }
                 }
                 Text { visible: root.displaySpaces.length === 0; text: "No open spaces"; color: "#91a59d" }
                 Flickable {
@@ -612,8 +612,8 @@ ShellRoot {
                     contentWidth: width; contentHeight: menuColumn.implicitHeight; clip: true
                     Column {
                         id: menuColumn; width: parent.width; spacing: 8
-                        Text { text: root.appMenu ? root.appMenu.name : "Application"; color: "#edf5f0"; font.bold: true; font.pixelSize: 18 }
-                        Text { visible: root.appMenuError !== ""; text: root.appMenuError; color: "#f1baaa"; width: parent.width; wrapMode: Text.Wrap }
+                        Text { text: root.appMenu ? root.appMenu.name : "Application"; textFormat: Text.PlainText; color: "#edf5f0"; font.bold: true; font.pixelSize: 18 }
+                        Text { visible: root.appMenuError !== ""; text: root.appMenuError; textFormat: Text.PlainText; color: "#f1baaa"; width: parent.width; wrapMode: Text.Wrap }
                         Text { visible: root.appMenuFocusChanged; text: "Application focus changed. Close this menu to update it."; color: "#f1baaa"; width: parent.width; wrapMode: Text.Wrap }
                         Text {
                             visible: !root.appMenu || root.currentAppItems().length === 0
