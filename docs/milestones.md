@@ -319,3 +319,7 @@ The Island actions and bottom switcher handle now have named button semantics an
 ## Dismiss Apps and search (2026-11-13)
 
 Apps and combined search now use Fuzzel's on-demand keyboard focus so clicking an app outside closes the launcher. While either is open, the Island's Apps control becomes **Close** and dismisses it without starting a duplicate. In the ARM64 guest, both launchers closed by clicking the Island control and by clicking outside over Files; Apps search accepted keyboard input. Clicking empty compositor background, physical touch and screen-reader use were not tested.
+
+## Desk controls and overlays (2026-11-13)
+
+Settings switches now include their labels in the same keyboard-focusable control. Apps and Notifications open above the Desk and return to it when dismissed; choosing an application leaves the Desk and starts it. In the ARM64 guest, both labels were clicked and their settings restored, both overlays opened and closed over the Desk, and a disposable Foot terminal launched from Apps and was closed. The NixOS build and ARM64 spaces check passed. Physical touch and screen-reader behavior remain untested.

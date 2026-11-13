@@ -55,7 +55,7 @@ ShellRoot {
     function toggleNotifications() {
         if (!notificationsOpen) {
             quickSettingsOpen = false; appMenuOpen = false; openMenuWhenReady = false
-            switcherOpen = false; deskOpen = false
+            switcherOpen = false
             if (overviewOpen) Quickshell.execDetached(["niri", "msg", "action", "close-overview"])
         }
         notificationsOpen = !notificationsOpen
@@ -300,7 +300,6 @@ ShellRoot {
         openMenuWhenReady = false
         appMenuOpen = false
         switcherOpen = false
-        deskOpen = false
         launcherActive = true
         appsLauncher.running = true
     }
@@ -353,8 +352,14 @@ ShellRoot {
     component FlowSwitch: Switch {
         id: toggle
         focusPolicy: Qt.StrongFocus
-        implicitWidth: 56; implicitHeight: 44
+        implicitWidth: contentItem.implicitWidth; implicitHeight: 44
+        contentItem: Text {
+            text: toggle.text; textFormat: Text.PlainText; color: floeTheme.textPrimary
+            font.pixelSize: 14; font.family: floeTheme.interfaceFont
+            leftPadding: toggle.indicator.width + 12; verticalAlignment: Text.AlignVCenter
+        }
         indicator: Rectangle {
+            x: 0; y: (toggle.height - height) / 2
             width: 56; height: 44; radius: 10; color: "transparent"
             border.width: toggle.activeFocus ? 2 : 0; border.color: floeTheme.focus
             Rectangle {
@@ -395,6 +400,7 @@ ShellRoot {
             else { root.spacesError = "No pinned space at that position"; root.deskOpen = true }
         }
         function toggle(): void { root.toggleDesk() }
+        function leave(): void { root.deskOpen = false }
         function switcher(): void { root.toggleSwitcher() }
         function overview(): void {
             const action = root.deskOpen ? "open-overview" : "toggle-overview"
@@ -411,7 +417,7 @@ ShellRoot {
         color: floeTheme.canvas
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+        WlrLayershell.keyboardFocus: root.notificationsOpen ? WlrKeyboardFocus.None : root.launcherActive ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive
 
         Rectangle {
             anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; anchors.topMargin: 8
@@ -552,11 +558,13 @@ ShellRoot {
                                         if (root.settingsOpen) Qt.callLater(function() { deskScroller.ensureVisible(menuSwitch) })
                                         return
                                     }
-                                    root.deskOpen = false
                                     if (modelData === "Apps") root.openApps()
                                     else if (modelData === "Notifications") root.toggleNotifications()
-                                    else if (modelData === "Files") Quickshell.execDetached(["nautilus"])
-                                    else if (modelData === "Overview") Quickshell.execDetached(["niri", "msg", "action", "open-overview"])
+                                    else {
+                                        root.deskOpen = false
+                                        if (modelData === "Files") Quickshell.execDetached(["nautilus"])
+                                        else if (modelData === "Overview") Quickshell.execDetached(["niri", "msg", "action", "open-overview"])
+                                    }
                                 }
                             }
                         }
@@ -564,32 +572,21 @@ ShellRoot {
                     Column {
                         visible: root.settingsOpen; width: parent.width; spacing: 12
                         Text { text: "SETTINGS"; color: floeTheme.textMuted; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
-                        Row {
-                            spacing: 12
-                            FlowSwitch {
-                                id: appearanceSwitch
-                                checked: appearancePreferences.lightMode
-                                Accessible.name: "Use Arctic Daylight light mode"
-                                onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(appearanceSwitch)
-                                onToggled: { appearancePreferences.lightMode = checked; appearancePreferences.sync() }
-                            }
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: appearancePreferences.lightMode ? "Arctic Daylight · Light" : "Polar Night · Dark"
-                                color: floeTheme.textPrimary
-                                font.pixelSize: 14
-                            }
+                        FlowSwitch {
+                            id: appearanceSwitch
+                            text: appearancePreferences.lightMode ? "Arctic Daylight · Light" : "Polar Night · Dark"
+                            checked: appearancePreferences.lightMode
+                            Accessible.name: "Use Arctic Daylight light mode"
+                            onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(appearanceSwitch)
+                            onToggled: { appearancePreferences.lightMode = checked; appearancePreferences.sync() }
                         }
-                        Row {
-                            spacing: 12
-                            FlowSwitch {
-                                id: menuSwitch
-                                checked: menuPreferences.appMenuEnabled
-                                Accessible.name: "Experimental application menu"
-                                onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(menuSwitch)
-                                onToggled: { menuPreferences.appMenuEnabled = checked; menuPreferences.sync(); root.appMenuOpen = false }
-                            }
-                            Text { anchors.verticalCenter: parent.verticalCenter; text: "Experimental application menu"; color: floeTheme.textPrimary; font.pixelSize: 14 }
+                        FlowSwitch {
+                            id: menuSwitch
+                            text: "Experimental application menu"
+                            checked: menuPreferences.appMenuEnabled
+                            Accessible.name: text
+                            onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(menuSwitch)
+                            onToggled: { menuPreferences.appMenuEnabled = checked; menuPreferences.sync(); root.appMenuOpen = false }
                         }
                         Text { text: "SESSION RECOVERY"; color: floeTheme.textMuted; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
                         Text { text: "Save your documents, then save the current window list before restarting."; color: floeTheme.textMuted; width: parent.width; wrapMode: Text.Wrap }
