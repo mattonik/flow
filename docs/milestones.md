@@ -268,3 +268,7 @@ The switcher also labels pinned Groups before their name so the status remains v
 ## Targeted Group layout control (2026-11-13)
 
 The switcher now sends the selected Group ID when changing tabs or stack, and the controller rechecks the active workspace, focused member and membership immediately before the Niri action. An isolated ARM64 guest test rejected a wrong ID and switched a disposable Group to tabs and back while preserving the original workspace, focus and pins. The installed switcher also changed the Writing Group to tabs and back. Unit tests cover changed focus, workspace and membership. Niri's focused-column toggle is a separate IPC request, so a focus change after the final check remains a race.
+
+## Niri side-by-side primitives (2026-11-13)
+
+The repeatable [disposable-window smoke test](../tests/niri_group_layout_smoke.py) exercised Niri 26.04's window-ID-targeted stack, split and sizing actions in the ARM64 guest. Both half-width columns measured 636 logical pixels, focus stayed on the intended member, and original windows, workspace, focus and pins were unchanged. This verifies compositor primitives only; Flow does not yet treat two columns as one Group or reflow automatically.
