@@ -50,6 +50,8 @@ class NiriState:
             self.windows[window["id"]] = window
             if window.get("is_focused"):
                 self._set_focus(window["id"])
+            elif self.focused_window_id == window["id"]:
+                self._set_focus(None)
         elif name == "WindowClosed":
             ident = data.get("id")
             if not _valid_id(ident):

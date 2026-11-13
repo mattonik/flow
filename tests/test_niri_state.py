@@ -35,6 +35,13 @@ class NiriStateTest(unittest.TestCase):
         self.assertTrue(self.state.apply({"WindowClosed": {"id": 2}}))
         self.assertNotIn(2, self.state.windows)
 
+    def test_unfocused_window_update_clears_its_stale_focus(self):
+        self.load_snapshot()
+        self.assertTrue(self.state.apply({"WindowOpenedOrChanged": {"window": window(1)}}))
+        self.assertIsNone(self.state.focused_window_id)
+        self.assertFalse(self.state.windows[1]["is_focused"])
+        self.assertFalse(self.state.windows[2]["is_focused"])
+
     def test_focus_event_clears_previous_focus_and_updates_workspace(self):
         self.load_snapshot()
         self.assertTrue(self.state.apply({"WindowFocusChanged": {"id": 2}}))
