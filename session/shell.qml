@@ -411,26 +411,30 @@ ShellRoot {
                         spacing: 8
                         Repeater {
                             model: root.pins
-                            Row {
+                            Flow {
                                 required property var modelData
                                 required property int index
+                                width: Math.min(parent.width, root.editPins ? 321 : 180)
                                 spacing: 3
                                 FlowButton {
+                                    id: pinnedSpaceButton
+                                    onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(pinnedSpaceButton)
                                     width: 180; text: (index + 1) + "  " + (modelData.label.length > 15 ? modelData.label.slice(0, 15) + "…" : modelData.label) + (modelData.available ? "" : modelData.kind === "group" ? " · Unavailable" : " · Open")
                                     enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"
                                     Accessible.name: (modelData.available ? "Focus " : modelData.kind === "group" ? "Unavailable Group " : "Open ") + modelData.label
                                     onClicked: root.spaceAction("focus", modelData.id)
                                 }
-                                FlowButton { visible: root.editPins; width: 44; text: "‹"; Accessible.name: "Move " + modelData.label + " left"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("left", modelData.id) }
-                                FlowButton { visible: root.editPins; width: 44; text: "›"; Accessible.name: "Move " + modelData.label + " right"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("right", modelData.id) }
-                                FlowButton { visible: root.editPins; width: 44; text: "×"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; Accessible.name: "Unpin " + modelData.label; onClicked: root.spaceAction("unpin", modelData.id) }
+                                FlowButton { id: pinLeftButton; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(pinLeftButton); visible: root.editPins; width: 44; text: "‹"; Accessible.name: "Move " + modelData.label + " left"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("left", modelData.id) }
+                                FlowButton { id: pinRightButton; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(pinRightButton); visible: root.editPins; width: 44; text: "›"; Accessible.name: "Move " + modelData.label + " right"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("right", modelData.id) }
+                                FlowButton { id: unpinButton; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(unpinButton); visible: root.editPins; width: 44; text: "×"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; Accessible.name: "Unpin " + modelData.label; onClicked: root.spaceAction("unpin", modelData.id) }
                             }
                         }
                     }
-                    Row {
+                    Flow {
+                        width: parent.width
                         spacing: 8
-                        FlowButton { width: 200; text: "Pin current space · Super P"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("pin") }
-                        FlowButton { visible: root.pins.length > 0; width: 100; text: root.editPins ? "Done" : "Edit pins"; onClicked: root.editPins = !root.editPins }
+                        FlowButton { id: pinCurrentButton; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(pinCurrentButton); width: 200; text: "Pin current space · Super P"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("pin") }
+                        FlowButton { id: editPinsButton; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(editPinsButton); visible: root.pins.length > 0; width: 100; text: root.editPins ? "Done" : "Edit pins"; onClicked: root.editPins = !root.editPins }
                     }
                     Row {
                         visible: root.spacesError !== ""; width: parent.width; spacing: 8
@@ -505,33 +509,49 @@ ShellRoot {
     PanelWindow {
         visible: root.switcherOpen
         anchors { bottom: true; left: true; right: true }
-        implicitHeight: Math.min(screen.height - 16, (width < 500 ? 350 : 300) + (switcherSpacesError.visible ? switcherSpacesError.implicitHeight + 8 : 0)); color: "#101a18"; exclusionMode: ExclusionMode.Ignore
+        implicitHeight: Math.min(screen.height - 16, Math.max(300, switcherContent.implicitHeight + 24)); color: "#101a18"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
         FocusScope {
             anchors.fill: parent; focus: true
             Keys.onEscapePressed: root.switcherOpen = false
+            Flickable {
+                id: switcherScroller
+                anchors.fill: parent; anchors.margins: 12; clip: true
+                contentWidth: width; contentHeight: switcherContent.implicitHeight
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                function ensureVisible(item) {
+                    const top = item.mapToItem(switcherContent, 0, 0).y
+                    if (top < contentY) contentY = top
+                    else if (top + item.height > contentY + height) contentY = Math.max(0, Math.min(contentHeight - height, top + item.height - height))
+                }
             Column {
-                anchors.fill: parent; anchors.margins: 12; spacing: 8
-                Row {
-                    spacing: 12
+                id: switcherContent
+                width: switcherScroller.width; spacing: 8
+                Flow {
+                    width: parent.width; spacing: 12
                     Text { text: "OPEN SPACES  ·  " + root.displaySpaces.length; color: "#b8ddcb"; font.bold: true; font.pixelSize: 13 }
                     Text { text: "Select a space or app · Esc to close"; color: "#91a59d"; font.pixelSize: 13 }
                 }
                 Flow {
                     width: parent.width; spacing: 8
-                    FlowButton { width: 160; implicitHeight: 44; text: "Stack with next"; onClicked: root.spaceAction("stack") }
-                    FlowButton { width: 160; implicitHeight: 44; text: "Separate stack"; onClicked: root.spaceAction("unstack") }
-                    FlowButton { width: 130; implicitHeight: 44; text: "Live overview"; onClicked: { root.switcherOpen = false; Quickshell.execDetached(["niri", "msg", "action", "open-overview"]) } }
+                    FlowButton { id: stackButton; onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(stackButton); width: 160; implicitHeight: 44; text: "Stack with next"; onClicked: root.spaceAction("stack") }
+                    FlowButton { id: unstackButton; onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(unstackButton); width: 160; implicitHeight: 44; text: "Separate stack"; onClicked: root.spaceAction("unstack") }
+                    FlowButton { id: overviewButton; onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(overviewButton); width: 130; implicitHeight: 44; text: "Live overview"; onClicked: { root.switcherOpen = false; Quickshell.execDetached(["niri", "msg", "action", "open-overview"]) } }
                     Row {
                         visible: spaceScroller.contentWidth > spaceScroller.width
                         spacing: 6
                         FlowButton {
+                            id: previousSpaces
+                            onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(previousSpaces)
                             width: 44; implicitHeight: 44; text: "‹"; Accessible.name: "Show earlier spaces"
                             enabled: spaceScroller.contentX > 0; opacity: enabled ? 1 : 0.4
                             onClicked: spaceScroller.contentX = Math.max(0, spaceScroller.contentX - spaceScroller.width * 0.8)
                         }
                         FlowButton {
+                            id: nextSpaces
+                            onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(nextSpaces)
                             width: 44; implicitHeight: 44; text: "›"; Accessible.name: "Show later spaces"
                             enabled: spaceScroller.contentX < spaceScroller.contentWidth - spaceScroller.width; opacity: enabled ? 1 : 0.4
                             onClicked: spaceScroller.contentX = Math.min(spaceScroller.contentWidth - spaceScroller.width, spaceScroller.contentX + spaceScroller.width * 0.8)
@@ -541,7 +561,7 @@ ShellRoot {
                         id: switcherSpacesError
                         visible: root.spacesError !== ""; width: parent.width; spacing: 8
                         Text { text: root.spacesError; textFormat: Text.PlainText; color: "#f1baaa"; wrapMode: Text.Wrap; width: parent.width - dismissSwitcherSpacesError.width - 8 }
-                        FlowButton { id: dismissSwitcherSpacesError; width: 96; implicitHeight: 44; text: "Dismiss"; Accessible.name: "Dismiss spaces error"; onClicked: root.spacesError = "" }
+                        FlowButton { id: dismissSwitcherSpacesError; onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(dismissSwitcherSpacesError); width: 96; implicitHeight: 44; text: "Dismiss"; Accessible.name: "Dismiss spaces error"; onClicked: root.spacesError = "" }
                     }
                 }
                 Text { visible: root.displaySpaces.length === 0; text: "No open spaces"; color: "#91a59d" }
@@ -550,6 +570,7 @@ ShellRoot {
                     width: parent.width; height: 180; contentWidth: windowRow.width; contentHeight: height
                     boundsBehavior: Flickable.StopAtBounds; clip: true
                     function ensureVisible(item) {
+                        switcherScroller.ensureVisible(item)
                         const left = item.mapToItem(windowRow, 0, 0).x
                         if (left < contentX) contentX = left
                         else if (left + item.width > contentX + width) contentX = Math.min(contentWidth - width, left + item.width - width)
@@ -595,6 +616,8 @@ ShellRoot {
                                         onClicked: { root.renameGroupId = spaceCard.modelData.group_id; groupName.forceActiveFocus() }
                                     }
                                     FlowButton {
+                                        id: groupViewButton
+                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(groupViewButton)
                                         width: 132; implicitHeight: 44; text: "Tabs / stack"
                                         enabled: spaceCard.modelData.active
                                         Accessible.name: "Toggle tabs or stack for " + spaceCard.modelData.label
@@ -619,6 +642,7 @@ ShellRoot {
                         }
                     }
                 }
+            }
             }
         }
     }

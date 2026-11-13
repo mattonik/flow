@@ -25,7 +25,7 @@ class ShellTextTest(unittest.TestCase):
         self.assertEqual(qml.count('Accessible.name: "Dismiss spaces error"'), 2)
         self.assertEqual(qml.count('onClicked: root.spacesError = ""'), 2)
         self.assertGreaterEqual(qml.count('implicitHeight: 44; text: "Dismiss"'), 2)
-        self.assertIn('switcherSpacesError.visible ? switcherSpacesError.implicitHeight + 8 : 0', qml)
+        self.assertIn('switcherContent.implicitHeight', qml)
 
 
 if __name__ == "__main__":
