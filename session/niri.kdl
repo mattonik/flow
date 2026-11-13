@@ -17,6 +17,7 @@ binds {
     Super+I { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "quick"; }
     Super+M { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "menu"; }
     Super+K { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "search"; }
+    Super+Shift+K { spawn "@keyboard@"; }
     Super+P { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "pin"; }
     Super+1 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "focus" "1"; }
     Super+2 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "focus" "2"; }

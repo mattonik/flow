@@ -44,6 +44,15 @@ def rename_group(path, group_id, label):
     write_snapshot(path, data)
 
 
+def pinned_apps(pins):
+    if not isinstance(pins, list) or any(not isinstance(pin, dict) or not isinstance(pin.get("app_id"), str)
+            or ("members" in pin and (not isinstance(pin["members"], list)
+                or len(pin["members"]) != 2 or not all(isinstance(app, str) and app for app in pin["members"])
+                or len(set(pin["members"])) != 2)) for pin in pins):
+        raise ValueError("Invalid pinned spaces; recovery was not started")
+    return {app for pin in pins for app in pin.get("members", [pin["app_id"]])}
+
+
 def save(path, workspace, windows, session=None):
     current = [w for w in windows if w.get("workspace_id") == workspace["id"]]
     current.sort(key=lambda w: w.get("layout", {}).get("pos_in_scrolling_layout") or [99999, 0])
@@ -320,11 +329,9 @@ def main():
         dirs = (os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share"), *os.environ.get("XDG_DATA_DIRS", "/run/current-system/sw/share:/usr/share").split(":"))
         pins_path = path.parent / "spaces.json"
         pins = json.loads(pins_path.read_text()) if pins_path.exists() else []
-        if not isinstance(pins, list) or any(not isinstance(pin, dict) or not isinstance(pin.get("app_id"), str) for pin in pins):
-            raise ValueError("Invalid pinned spaces; recovery was not started")
         report, count = restore(data, workspace, windows, dirs,
                                 lambda desktop: subprocess.run(["gio", "launch", str(desktop)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL),
-                                spaces.snapshot, spaces.command, pinned={pin["app_id"] for pin in pins}, session=spaces.session_id())
+                                spaces.snapshot, spaces.command, pinned=pinned_apps(pins), session=spaces.session_id())
         print(json.dumps({"message": f"Restored {count} windows." + (" " + "; ".join(report) if report else "")}))
     else:
         raise ValueError("Unknown recovery action")

@@ -29,12 +29,39 @@ let
     export GI_TYPELIB_PATH="${pkgs.glib}/lib/girepository-1.0:${pkgs.gobject-introspection}/lib/girepository-1.0''${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
     exec ${pkgs.python3.withPackages (p: [ p.pygobject3 ])}/bin/python3 ${../session/search.py}
   '';
+  wifiSettings = pkgs.writeShellScriptBin "flow-wifi-settings" ''
+    export XDG_CURRENT_DESKTOP=GNOME
+    export XDG_DATA_DIRS="${pkgs.gnome-control-center}/share:''${XDG_DATA_DIRS:-/run/current-system/sw/share:/usr/share}"
+    export PATH="${lib.makeBinPath [ pkgs.gnome-control-center ]}:$PATH"
+    exec ${lib.getExe pkgs.gnome-control-center} wifi
+  '';
+  keyboard = pkgs.writeShellScriptBin "flow-keyboard" ''
+    umask 077
+    session="''${XDG_SESSION_ID:-$WAYLAND_DISPLAY}"
+    session="$(printf '%s' "$session" | ${pkgs.coreutils}/bin/tr -c '[:alnum:]_.-' '_')"
+    pidfile="$XDG_RUNTIME_DIR/flow-keyboard-$session.pid"
+    exec 9>"$pidfile.lock"
+    ${pkgs.util-linux}/bin/flock -x 9
+    if [ -r "$pidfile" ]; then
+      read -r keyboard_pid < "$pidfile" || true
+      owner="$(${pkgs.procps}/bin/ps -o uid= -p "$keyboard_pid" 2>/dev/null | ${pkgs.coreutils}/bin/tr -d '[:space:]')"
+      process="$(${pkgs.procps}/bin/ps -o comm= -p "$keyboard_pid" 2>/dev/null | ${pkgs.coreutils}/bin/tr -d '[:space:]')"
+      if [ "$owner" = "$(${pkgs.coreutils}/bin/id -u)" ] && [ "$process" = "wvkbd-mobintl" ]; then
+        kill -RTMIN "$keyboard_pid"
+        exit 0
+      fi
+      rm -f "$pidfile"
+    fi
+    ${lib.getExe pkgs.wvkbd} -L 200 -H 280 9>&- &
+    printf '%s\n' "$!" > "$pidfile"
+  '';
   niriConfig = pkgs.replaceVars ../session/niri.kdl {
     terminal = lib.getExe pkgs.foot;
     lock = lib.getExe pkgs.swaylock;
     idle = lib.getExe pkgs.swayidle;
     shell = lib.getExe pkgs.quickshell;
     shellConfig = "/etc/flow/shell.qml";
+    keyboard = lib.getExe keyboard;
   };
 in {
   options.services.flow.enable = lib.mkEnableOption "the experimental Flow session";
@@ -44,7 +71,7 @@ in {
     hardware.graphics.enable = true;
     security.polkit.enable = true;
     environment.systemPackages = with pkgs; [
-      foot fuzzel quickshell swaylock firefox nautilus networkmanagerapplet spaces launcher appmenu
+      foot fuzzel quickshell swaylock firefox nautilus gnome-control-center networkmanagerapplet spaces launcher appmenu keyboard wvkbd wifiSettings
       xwayland-satellite mesa-demos wayland-utils recovery search wireplumber networkmanager
     ];
     environment.etc."niri/config.kdl".source = niriConfig;

@@ -72,6 +72,117 @@ class SpacesTest(unittest.TestCase):
         self.assertNotIn(shown["label"], {"Work", "Other"})
 
     @patch.object(spaces, "command")
+    def test_pin_group_records_members_and_orders_its_stack_as_one_destination(self, command):
+        self.windows[0]["layout"]["pos_in_scrolling_layout"] = [2, 1]
+        self.windows[1]["layout"]["pos_in_scrolling_layout"] = [2, 2]
+        groups = [{"id": "group-1", "label": "Work", "members": ["terminal", "files"]}]
+        result = spaces.run(self.pins, "pin", None, self.ws, self.windows, "session", groups)
+        pin = self.pins[0]
+        self.assertEqual((pin["group_id"], pin["members"], pin["window_ids"]),
+                         ("group-1", ["terminal", "files"], [1, 2]))
+        self.assertEqual(result[0]["kind"], "group")
+        self.assertTrue(result[0]["available"])
+        command.assert_any_call("action", "move-column-to-index", 1)
+        self.assertEqual([w["id"] for w in spaces.group_windows(pin, self.ws, self.windows, "session", groups)], [1, 2])
+
+    @patch.object(spaces, "command")
+    def test_pin_active_group_uses_saved_identity_with_reversed_member_order(self, command):
+        self.windows[0]["layout"]["pos_in_scrolling_layout"] = [2, 2]
+        self.windows[1]["layout"]["pos_in_scrolling_layout"] = [2, 1]
+        self.ws["active_window_id"] = 1
+        groups = [{"id": "group-1", "label": "Work", "members": ["files", "terminal"]}]
+        spaces.run(self.pins, "pin", None, self.ws, self.windows, "session", groups)
+        self.assertEqual(self.pins[0]["members"], ["files", "terminal"])
+        self.assertEqual(self.pins[0]["window_ids"], [2, 1])
+        command.assert_any_call("action", "move-column-to-index", 1)
+
+    def test_group_pin_rejects_missing_ambiguous_or_modified_groups(self):
+        self.windows[0]["layout"]["pos_in_scrolling_layout"] = [1, 1]
+        self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        groups = [{"id": "group-1", "label": "Work", "members": ["terminal", "files"]}]
+        for current_groups in ([], [{**groups[0], "members": ["terminal", "other"]}]):
+            with self.subTest(groups=current_groups), patch.object(spaces, "command") as command:
+                with self.assertRaises(ValueError):
+                    spaces.run([], "pin-group", "group-1", self.ws, self.windows, "session", current_groups)
+                command.assert_not_called()
+        duplicate = self.windows + [window(3, "terminal", 2)]
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            spaces.run([], "pin-group", "group-1", self.ws, duplicate, "session", groups)
+
+    def test_pinned_group_becomes_unavailable_if_the_stack_changes(self):
+        pin = {"id": "group-pin", "group_id": "group-1", "label": "Work", "app_id": "terminal",
+               "members": ["terminal", "files"], "window_id": 1, "window_ids": [1, 2], "session": "session"}
+        groups = [{"id": "group-1", "label": "Work", "members": ["files", "terminal"]}]
+        self.windows[1]["layout"]["pos_in_scrolling_layout"] = [3, 1]
+        self.assertIsNone(spaces.pin_window(pin, self.ws, self.windows, "session", groups))
+        self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        self.assertIsNotNone(spaces.pin_window(pin, self.ws, self.windows, "new-session", groups))
+        self.windows[0]["workspace_id"] = 2
+        self.assertIsNone(spaces.pin_window(pin, self.ws, self.windows, "new-session", groups))
+        self.assertIsNone(spaces.pin_window(pin, self.ws, self.windows, "session", [{"id": "group-1", "label": "Work",
+                                                                                      "members": ["terminal", "other"]}]))
+
+    @patch.object(spaces, "command")
+    def test_unpin_removes_group_metadata_without_touching_windows(self, command):
+        pin = {"id": "group-pin", "group_id": "group-1", "label": "Work", "app_id": "terminal",
+               "members": ["terminal", "files"], "window_id": 1, "window_ids": [1, 2], "session": "session"}
+        pins = [pin]
+        spaces.run(pins, "unpin", "group-pin", self.ws, self.windows, "session")
+        self.assertEqual(pins, [])
+        command.assert_not_called()
+
+    @patch.object(spaces, "command")
+    @patch.object(spaces.subprocess, "run")
+    def test_focus_unavailable_group_never_launches_or_moves_members(self, launch, command):
+        pin = {"id": "group-pin", "group_id": "group-1", "label": "Work", "app_id": "terminal",
+               "members": ["terminal", "files"], "window_id": 1, "window_ids": [1, 2], "session": "session"}
+        groups = [{"id": "group-1", "label": "Work", "members": ["terminal", "files"]}]
+        with self.assertRaisesRegex(ValueError, "no longer one stack"):
+            spaces.run([pin], "focus", "group-pin", self.ws, self.windows, "session", groups)
+        command.assert_not_called()
+        launch.assert_not_called()
+
+    @patch.object(spaces, "command")
+    def test_group_pin_protects_both_members_from_unstacking(self, command):
+        self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        pins = [{"id": "group-pin", "app_id": "terminal", "members": ["terminal", "files"]}]
+        self.ws["active_window_id"] = 1
+        with self.assertRaisesRegex(ValueError, "Unpin these windows"):
+            spaces.run(pins, "unstack", None, self.ws, self.windows, "session")
+        command.assert_not_called()
+
+    @patch.object(spaces, "command")
+    def test_group_view_toggles_display_without_moving_or_reidentifying_pinned_group(self, command):
+        self.windows[0]["layout"]["pos_in_scrolling_layout"] = [1, 1]
+        self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        groups = [{"id": "group-1", "label": "Work", "members": ["terminal", "files"]}]
+        pin = {"id": "group-pin", "group_id": "group-1", "label": "Work", "app_id": "terminal",
+               "members": ["terminal", "files"], "window_id": 1, "window_ids": [1, 2], "session": "session"}
+        pins = [pin]
+
+        result = spaces.run(pins, "group-view", None, self.ws, self.windows, "session", groups)
+
+        command.assert_called_once_with("action", "toggle-column-tabbed-display")
+        self.assertEqual(pins, [pin])
+        self.assertTrue(result[0]["available"])
+
+    @patch.object(spaces, "command")
+    def test_group_view_rejects_singleton_unsaved_and_ambiguous_groups(self, command):
+        self.windows[0]["layout"]["pos_in_scrolling_layout"] = [1, 1]
+        self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        group = {"id": "group-1", "label": "Work", "members": ["terminal", "files"]}
+        cases = [
+            (self.windows[:1], [group]),
+            (self.windows, []),
+            (self.windows, [group, {**group, "id": "group-2", "label": "Duplicate"}]),
+            (self.windows + [window(3, "terminal", 2)], [group]),
+        ]
+        for windows, groups in cases:
+            with self.subTest(groups=groups, window_count=len(windows)), self.assertRaisesRegex(ValueError, "saved two-app Group"):
+                spaces.run([], "group-view", None, self.ws, windows, "session", groups)
+        command.assert_not_called()
+
+    @patch.object(spaces, "command")
     def test_stack_and_separate_two_unpinned_windows(self, command):
         self.ws["active_window_id"] = 1
         spaces.run([], "stack", None, self.ws, self.windows, "session")

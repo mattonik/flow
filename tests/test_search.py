@@ -28,6 +28,10 @@ class SearchTest(unittest.TestCase):
         self.assertEqual(rows[4][1], ("window", "4"))
         self.assertEqual(rows[3], ("Missing · Pinned space · Open", ("pin", "2")))
 
+    def test_unavailable_group_does_not_offer_to_reopen(self):
+        rows = search.entries({"pins": [{"label": "Work", "id": "g", "kind": "group", "available": False}]}, [])
+        self.assertEqual(rows[2], ("Work · Pinned Group · Unavailable", ("pin", "g")))
+
 
 
 

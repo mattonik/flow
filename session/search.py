@@ -41,7 +41,7 @@ def entries(snapshot, apps, files=()):
     result = [("Flow Settings  ·  Settings", ("settings", "settings")),
               ("Quick Settings  ·  Audio and network", ("settings", "quick_open"))]
     for pin in snapshot.get("pins", []):
-        status = "Pinned space" if pin.get("available") else "Pinned space · Open"
+        status = "Pinned space" if pin.get("available") else "Pinned Group · Unavailable" if pin.get("kind") == "group" else "Pinned space · Open"
         result.append((f"{pin['label']}  ·  {status}", ("pin", pin["id"])))
     for window in snapshot.get("windows", []):
         result.append((f"{window['label']}  ·  Open window  ·  {window['app_id']}", ("window", str(window["id"]))))

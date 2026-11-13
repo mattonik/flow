@@ -405,7 +405,7 @@ ShellRoot {
                         onClicked: root.openSearch()
                     }
                     Text { text: "PINNED SPACES"; color: "#91a59d"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
-                    Text { visible: root.pins.length === 0; text: "Pin the current app to keep its place"; color: "#80948b"; font.pixelSize: 14 }
+                    Text { visible: root.pins.length === 0; text: "Pin the current space to keep its place"; color: "#80948b"; font.pixelSize: 14 }
                     Flow {
                         width: parent.width
                         spacing: 8
@@ -416,9 +416,9 @@ ShellRoot {
                                 required property int index
                                 spacing: 3
                                 FlowButton {
-                                    width: 180; text: (index + 1) + "  " + (modelData.label.length > 15 ? modelData.label.slice(0, 15) + "…" : modelData.label) + (modelData.available ? "" : " · Open")
+                                    width: 180; text: (index + 1) + "  " + (modelData.label.length > 15 ? modelData.label.slice(0, 15) + "…" : modelData.label) + (modelData.available ? "" : modelData.kind === "group" ? " · Unavailable" : " · Open")
                                     enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"
-                                    Accessible.name: (modelData.available ? "Focus " : "Open ") + modelData.label
+                                    Accessible.name: (modelData.available ? "Focus " : modelData.kind === "group" ? "Unavailable Group " : "Open ") + modelData.label
                                     onClicked: root.spaceAction("focus", modelData.id)
                                 }
                                 FlowButton { visible: root.editPins; width: 42; text: "‹"; Accessible.name: "Move " + modelData.label + " left"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("left", modelData.id) }
@@ -429,7 +429,7 @@ ShellRoot {
                     }
                     Row {
                         spacing: 8
-                        FlowButton { width: 200; text: "Pin current app · Super P"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("pin") }
+                        FlowButton { width: 200; text: "Pin current space · Super P"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("pin") }
                         FlowButton { visible: root.pins.length > 0; width: 100; text: root.editPins ? "Done" : "Edit pins"; onClicked: root.editPins = !root.editPins }
                     }
                     Row {
@@ -586,12 +586,20 @@ ShellRoot {
                                         }
                                     }
                                 }
-                                FlowButton {
-                                    id: renameButton
-                                    visible: !!spaceCard.modelData.group_id
-                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(renameButton)
-                                    width: 132; implicitHeight: 32; text: "Rename Group"
-                                    onClicked: { root.renameGroupId = spaceCard.modelData.group_id; groupName.forceActiveFocus() }
+                                Row {
+                                    visible: !!spaceCard.modelData.group_id; spacing: 4
+                                    FlowButton {
+                                        id: renameButton
+                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(renameButton)
+                                        width: 132; implicitHeight: 44; text: "Rename Group"
+                                        onClicked: { root.renameGroupId = spaceCard.modelData.group_id; groupName.forceActiveFocus() }
+                                    }
+                                    FlowButton {
+                                        width: 132; implicitHeight: 44; text: "Tabs / stack"
+                                        enabled: spaceCard.modelData.active
+                                        Accessible.name: "Toggle tabs or stack for " + spaceCard.modelData.label
+                                        onClicked: root.spaceAction("group-view")
+                                    }
                                 }
                                 Row {
                                     visible: !!spaceCard.modelData.group_id && root.renameGroupId === spaceCard.modelData.group_id
@@ -699,6 +707,8 @@ ShellRoot {
                 width: parent.width; spacing: 10
                 Text { text: "QUICK SETTINGS"; color: "#b8ddcb"; font.bold: true; font.pixelSize: 14 }
                 Text { text: "Network: " + root.networkStatus; color: "#d7e5df"; font.pixelSize: 14 }
+                FlowButton { width: parent.width; implicitHeight: 48; text: "Choose Wi-Fi network"; onClicked: { root.quickSettingsOpen = false; Quickshell.execDetached(["flow-wifi-settings"]) } }
+                FlowButton { width: parent.width; implicitHeight: 48; text: "Toggle on-screen keyboard"; Accessible.name: "Toggle on-screen keyboard"; onClicked: { Quickshell.execDetached(["flow-keyboard"]); root.quickSettingsOpen = false } }
                 Text { text: "Output volume: " + root.volumeStatus; color: "#d7e5df"; font.pixelSize: 14 }
                 Row {
                     spacing: 6

@@ -271,10 +271,21 @@ class RecoveryTest(unittest.TestCase):
         report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), action)
         self.assertEqual((report, count), ([], 2))
         self.assertNotIn("consume-window-into-column", str(action.call_args_list))
-        pinned_action = Mock()
-        report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), pinned_action, pinned={"one"})
-        self.assertIn("pinned", report[0])
-        self.assertNotIn("move-column-to-index", [call.args[1] for call in pinned_action.call_args_list])
+        for app in ("one", "two"):
+            with self.subTest(pinned_member=app):
+                pinned_action = Mock()
+                report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), pinned_action, pinned={app})
+                self.assertIn("pinned", report[0])
+                self.assertNotIn("move-column-to-index", [call.args[1] for call in pinned_action.call_args_list])
+
+    def test_group_pin_protects_both_members_during_session_restore(self):
+        pins = [{"app_id": "one", "members": ["one", "two"]}]
+        self.assertEqual(restore.pinned_apps(pins), {"one", "two"})
+        self.assertEqual(restore.pinned_apps([{"app_id": "one"}]), {"one"})
+        with self.assertRaisesRegex(ValueError, "Invalid pinned spaces"):
+            restore.pinned_apps([{"app_id": "one", "members": "two"}])
+        with self.assertRaisesRegex(ValueError, "Invalid pinned spaces"):
+            restore.pinned_apps([{"app_id": "one", "members": ["one", []]}])
 
     def test_live_saved_or_unsaved_pin_blocks_the_new_ordering_pass(self):
         saved = {"version": 1, "windows": [

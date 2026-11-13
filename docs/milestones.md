@@ -216,3 +216,11 @@ In the ARM64 guest, opening and closing Desk and Niri Overview left four existin
 The same guest also focused the existing Firefox, Kate and Files windows in turn through Niri IPC, moved right from Files to Firefox and left back to Files, and restored the original focus. This checks real application focus and Niri's horizontal actions, not the full touch-navigation journey.
 
 After temporary media-test packages brought the guest to 97% inode usage, `nix-store --optimise` completed successfully and reduced usage to 31% by hard-linking duplicate store files. No system generations were removed.
+
+## Manual keyboard, Wi-Fi settings and pinned Groups (2026-11-13)
+
+Flow adds a manual wvkbd toggle in Quick Settings and on `Super+Shift+K`. On the ARM64 guest, simulated pointer clicks on a larger landscape keyboard entered a lowercase letter, Shift plus the uppercase letter, and Enter in a disposable terminal; an isolated toggle test showed, hid and showed the keyboard, and the installed Quick Settings control showed and hid it. Physical touch, automatic appearance, portrait and compositor shortcuts remain unverified.
+
+Quick Settings opens GNOME's existing Wi-Fi panel with process-local environment adjustments. The installed control was activated with a simulated pointer and the guest displayed its no-adapter state. Actual Wi-Fi scanning, secrets and connection require wireless hardware. The existing connection-profile editor remains available.
+
+A saved, uniquely identifiable two-app Group can be pinned, focused and reordered as one column, or unpinned without closing its apps. In the guest, an isolated three-window test pinned and moved a real Group, focused it, rejected unstack while pinned and unpinned it. A manual Tabs / stack action switched its Niri tile heights while preserving Group identity and pin membership. The installed switcher control also changed an existing Group to tabs and back, restoring its original window sizes. Automatic orientation adaptation, side-by-side Group layout, missing-member relaunch and multiple displays remain open.

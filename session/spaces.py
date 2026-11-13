@@ -61,12 +61,53 @@ def eligible(window, workspace, windows):
                (other.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0] == pos[0]) == 1
 
 
-def reconcile(pins, workspace, windows, socket):
+def group_windows(pin, workspace, windows, socket, groups=()):
+    members = pin.get("members")
+    if (not isinstance(members, list) or len(members) != 2
+            or not all(isinstance(app, str) and app for app in members) or len(set(members)) != 2):
+        return None
+    group_id = pin.get("group_id")
+    saved = [g for g in groups if g.get("id") == group_id]
+    if not isinstance(group_id, str) or len(saved) != 1 or set(saved[0].get("members", [])) != set(members):
+        return None
+    if pin.get("session") == socket:
+        ids = pin.get("window_ids", [])
+        if len(ids) != 2:
+            return None
+        pair = [next((w for w in windows if w["id"] == ident and w.get("app_id") == app), None)
+                for app, ident in zip(members, ids)]
+    else:
+        pair = []
+        for app in members:
+            matches = [w for w in windows if w.get("app_id") == app]
+            pair.append(matches[0] if len(matches) == 1 else None)
+    if any(not w or w.get("workspace_id") != workspace["id"] or w.get("is_floating")
+           or not w.get("layout", {}).get("pos_in_scrolling_layout") for w in pair):
+        return None
+    positions = [w["layout"]["pos_in_scrolling_layout"] for w in pair]
+    column = positions[0][0]
+    if positions[1][0] != column or sum(w.get("workspace_id") == workspace["id"] and not w.get("is_floating")
+            and (w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0] == column for w in windows) != 2:
+        return None
+    if any(sum(w.get("app_id") == app for w in windows) != 1 for app in members):
+        return None
+    return pair
+
+
+def pin_window(pin, workspace, windows, socket, groups=()):
+    if "members" in pin:
+        pair = group_windows(pin, workspace, windows, socket, groups)
+        return pair[0] if pair else None
+    window = resolve(pin, windows, socket)
+    return window if eligible(window, workspace, windows) else None
+
+
+def reconcile(pins, workspace, windows, socket, groups=()):
     # shortcut: absent or ambiguous apps have no physical placeholder; use compositor-backed placeholders when available.
-    resolved = [resolve(pin, windows, socket) for pin in pins]
+    resolved = [pin_window(pin, workspace, windows, socket, groups) for pin in pins]
     active = workspace.get("active_window_id")
     # One unavailable pin must not prevent the remaining live pins from keeping their order.
-    desired = [w for w in resolved if w and eligible(w, workspace, windows)]
+    desired = [w for w in resolved if w]
     if all(w["layout"]["pos_in_scrolling_layout"][0] == i for i, w in enumerate(desired, 1)):
         return
     try:
@@ -78,15 +119,59 @@ def reconcile(pins, workspace, windows, socket):
             command("action", "focus-window", "--id", active)
 
 
-def run(pins, op, arg, workspace, windows, socket):
+def pin_group(pins, group, workspace, windows, socket):
+    members = group.get("members", [])
+    if len(members) != 2 or len(set(members)) != 2:
+        raise ValueError("Select a saved two-app Group")
+    pair = []
+    for app in members:
+        matches = [w for w in windows if w.get("app_id") == app]
+        pair.append(matches[0] if len(matches) == 1 else None)
+    candidate = {"group_id": group["id"], "members": members,
+                 "window_ids": [w["id"] for w in pair if w], "session": socket}
+    if len(pair) != 2 or any(not w for w in pair) or not group_windows(candidate, workspace, windows, socket, [group]):
+        raise ValueError("Saved Group is unavailable, ambiguous, or no longer one stack")
+    if any(set(members) & set(p.get("members", [p.get("app_id")])) for p in pins):
+        raise ValueError("A Group member is already pinned")
+    pins.append({"id": uuid.uuid4().hex, "label": group["label"], "app_id": members[0],
+                 "window_id": pair[0]["id"], "members": members, "window_ids": [w["id"] for w in pair],
+                 "group_id": group["id"], "session": socket})
+
+
+def run(pins, op, arg, workspace, windows, socket, groups=()):
     if op == "pin":
         window = next((w for w in windows if w["id"] == workspace.get("active_window_id")), None)
-        if not eligible(window, workspace, windows):
+        if not window:
             raise ValueError("Select one non-floating app window to pin")
-        if any(p["app_id"] == window["app_id"] for p in pins):
-            raise ValueError("This app is already pinned")
-        pins.append({"id": uuid.uuid4().hex, "label": window.get("title") or window["app_id"],
-                     "app_id": window["app_id"], "window_id": window["id"], "session": socket})
+        if window.get("is_floating"):
+            raise ValueError("Select one non-floating app window to pin")
+        pos = window.get("layout", {}).get("pos_in_scrolling_layout")
+        stack = [w for w in windows if w.get("workspace_id") == workspace["id"] and not w.get("is_floating")
+                 and pos and (w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0] == pos[0]]
+        if len(stack) > 1:
+            apps = [w.get("app_id") for w in stack]
+            matches = [g for g in groups if set(g.get("members", [])) == set(apps)]
+            if len(matches) != 1:
+                raise ValueError("Save this two-app stack as a Group before pinning it")
+            pin_group(pins, matches[0], workspace, windows, socket)
+            window = None
+        if window:
+            if not eligible(window, workspace, windows):
+                raise ValueError("Select one non-floating app window to pin")
+            if any(window["app_id"] in p.get("members", [p["app_id"]]) for p in pins):
+                raise ValueError("This app is already pinned")
+            pins.append({"id": uuid.uuid4().hex, "label": window.get("title") or window["app_id"],
+                         "app_id": window["app_id"], "window_id": window["id"], "session": socket})
+    elif op == "pin-group":
+        matches = [g for g in groups if g.get("id") == arg]
+        if len(matches) != 1:
+            raise ValueError("Select a saved two-app Group")
+        pin_group(pins, matches[0], workspace, windows, socket)
+    elif op == "group-view":
+        active = next((space for space in display_spaces(workspace, windows, groups) if space["active"]), None)
+        if not active or not active["group_id"]:
+            raise ValueError("Select a saved two-app Group first")
+        command("action", "toggle-column-tabbed-display")
     elif op in ("unpin", "focus", "left", "right"):
         index = next((i for i, p in enumerate(pins) if p["id"] == arg), None)
         if index is None:
@@ -95,8 +180,15 @@ def run(pins, op, arg, workspace, windows, socket):
             pins.pop(index)
         elif op == "focus":
             pin = pins[index]
-            window = resolve(pin, windows, socket)
-            if not window and not any(w.get("app_id") == pin["app_id"] for w in windows):
+            window = pin_window(pin, workspace, windows, socket, groups)
+            if "members" in pin:
+                if not window:
+                    raise ValueError("This pinned Group is unavailable or no longer one stack")
+                pair = group_windows(pin, workspace, windows, socket, groups)
+                pin["session"], pin["window_id"], pin["window_ids"] = socket, window["id"], [w["id"] for w in pair]
+                command("action", "focus-window", "--id", window["id"])
+                command("action", "close-overview")
+            elif not window and not any(w.get("app_id") == pin["app_id"] for w in windows):
                 dirs = (os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share"),
                         *os.environ.get("XDG_DATA_DIRS", "/run/current-system/sw/share:/usr/share").split(":"))
                 desktop = desktop_file(pin["app_id"], dirs)
@@ -115,11 +207,12 @@ def run(pins, op, arg, workspace, windows, socket):
                     if any(w.get("app_id") == pin["app_id"] for w in windows):
                         break
                 window = resolve(pin, windows, socket)
-            if not eligible(window, workspace, windows):
+            if "members" not in pin and not eligible(window, workspace, windows):
                 raise ValueError("This pinned app is unavailable or ambiguous")
-            pin["session"], pin["window_id"] = socket, window["id"]
-            command("action", "focus-window", "--id", window["id"])
-            command("action", "close-overview")
+            if "members" not in pin:
+                pin["session"], pin["window_id"] = socket, window["id"]
+                command("action", "focus-window", "--id", window["id"])
+                command("action", "close-overview")
         else:
             target = index + (-1 if op == "left" else 1)
             if 0 <= target < len(pins):
@@ -138,7 +231,7 @@ def run(pins, op, arg, workspace, windows, socket):
             raise ValueError("Select a single window with one single window to its right")
         if op == "unstack" and len(pair) != 2:
             raise ValueError("Select a stack containing exactly two windows")
-        if any(w.get("app_id") == pin.get("app_id") for pin in pins for w in pair):
+        if any(w.get("app_id") in pin.get("members", [pin.get("app_id")]) for pin in pins for w in pair):
             raise ValueError("Unpin these windows before stacking or separating")
         command("action", "consume-window-into-column" if op == "stack" else "expel-window-from-column")
     elif op == "focus-window":
@@ -148,10 +241,10 @@ def run(pins, op, arg, workspace, windows, socket):
         command("action", "focus-window", "--id", window["id"])
     elif op != "refresh":
         raise ValueError("Unknown action")
-    if op not in ("focus", "focus-window", "stack", "unstack"):
-        reconcile(pins, workspace, windows, socket)
-    return [{"id": p["id"], "label": p["label"],
-             "available": eligible(resolve(p, windows, socket), workspace, windows)} for p in pins]
+    if op not in ("focus", "focus-window", "stack", "unstack", "group-view"):
+        reconcile(pins, workspace, windows, socket, groups)
+    return [{"id": p["id"], "label": p["label"], "kind": "group" if "members" in p else "app",
+             "available": bool(pin_window(p, workspace, windows, socket, groups))} for p in pins]
 
 
 def saved_groups(path):
@@ -207,13 +300,19 @@ def main():
         workspace, windows = snapshot()
         before = json.dumps(pins, sort_keys=True)
         socket = session_id()
+        groups = saved_groups(state / "session.json")
         for pin in pins:
+            if "members" in pin:
+                pair = group_windows(pin, workspace, windows, socket, groups)
+                if pair and (pin.get("session") != socket or pin.get("window_ids") != [w["id"] for w in pair]):
+                    pin["session"], pin["window_id"], pin["window_ids"] = socket, pair[0]["id"], [w["id"] for w in pair]
+                continue
             window = resolve(pin, windows, socket)
             if window and (pin.get("session") != socket or pin.get("window_id") != window["id"]):
                 pin["session"], pin["window_id"] = socket, window["id"]
         result = run(pins, sys.argv[1] if len(sys.argv) > 1 else "refresh",
                      sys.argv[2] if len(sys.argv) > 2 else None, workspace, windows,
-                     socket)
+                     socket, groups)
         if before != json.dumps(pins, sort_keys=True):
             with tempfile.NamedTemporaryFile("w", dir=state, delete=False) as tmp:
                 try:
@@ -229,7 +328,7 @@ def main():
         visible = [{"id": w["id"], "label": w.get("title") or w.get("app_id") or "Application",
                     "app_id": w.get("app_id") or "", "active": w["id"] == workspace.get("active_window_id")}
                    for w in ordered]
-        print(json.dumps({"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows, saved_groups(state / "session.json")), "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
+        print(json.dumps({"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows, groups), "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
 
 
 if __name__ == "__main__":
