@@ -4,30 +4,35 @@ This is a human/agent execution checklist for **Codex on the user's NixOS/UTM gu
 
 ## Before capture
 
-- Check out the currently intended version of \`main\` in the guest and record its commit SHA. Do **not** assume the working tree is clean.
-- Preserve current app work and settings, do not wipe the session or overwrite pinned state.
-- In the guest record \`niri msg -j outputs\`, \`niri msg -j windows\`, \`niri msg -j workspaces\`, \`niri --version\`, Quickshell version, and the current appearance preference. Avoid uploading private window titles or tokens; redact before publishing.
-- Verify a screenshot destination configured in \`screenshot-path\`. Niri's \`screenshot-screen\` action saves the focused output. If using \`niri msg action\`, first run \`niri msg action --help\` for the installed version. Use this action only after confirming its behavior. No external screenshot tool is necessary.
+- Check out the exact assessed commit in an isolated Flow config/state profile and record its SHA. **Do not** use or reset the user’s normal Flow state.
+- Use a disposable Niri workspace and synthetic apps with non-sensitive content; do not close, move, refocus, or otherwise alter real user windows. Never edit or replace real user pins. Keep synthetic pins in the isolated Flow profile only.
+- Before capture, record baseline `niri msg -j outputs`, `niri msg -j windows`, `niri msg -j workspaces`, focused window, Flow pins and Group membership, `niri --version`, Quickshell version, and appearance preference. Avoid private window titles or tokens; redact before publishing.
+- Verify a screenshot destination configured in `screenshot-path`. Niri's `screenshot-screen` action saves the focused output. If using `niri msg action`, first run `niri msg action --help` for the installed version. Use this action only after confirming its behavior. No external screenshot tool is necessary.
 - Use three disposable apps (e.g. Foot, Kate and Files) with non-sensitive content. One two-window Group makes the focus-menu test meaningful.
+
+## After capture
+
+- Re-read windows, workspaces, focused window, Flow pins and Group membership. Confirm real windows, focus, user pins and Groups match the baseline. If any differ, stop and restore only from the isolated test profile; do not overwrite user state.
+- Confirm the test profile and synthetic apps/workspace are removed or clearly retained as test artifacts; leave the user’s normal Flow state untouched.
 
 ## Required matrix
 
-For each logical size 1280×800, 1024×768, 430×932 (portrait), 320×512 (stress case), and each \`Polar Night\` and \`Arctic Daylight\` theme:
+For each logical size 1280×800, 1024×768, 430×932 (portrait), 320×512 (stress case), and each `Polar Night` and `Arctic Daylight` theme:
 
-1. **Desk:** 3 pins, long labels, short labels, search focused, settings opened, scroll at bottom and at top.
-2. **Island:** normal Work view; verify actual collision with top-left app trigger when experimental app menu is enabled.
+1. **Desk:** 3 synthetic pins, long labels, short labels, search focused using its separate `Super+K` shortcut, settings opened, scroll at bottom and at top.
+2. **Island:** normal Work view; the fresh default has the experimental app-menu trigger hidden. Separately enable the opt-in menu and verify collision with its top-left trigger.
 3. **Focused app menu:** command menu closed and open; changed focus while popup is open, stale-action message and dismissal.
 4. **Quick Settings:** output/network state, media control if available, focus ring; note width and safe margins.
 5. **Notifications:** empty, and one synthetic notification with a long title and actions.
-6. **Overview:** actual Niri \`Super+O\` surface with live window textures; separately capture Floe \`Super+Tab\` text-based switcher.
+6. **Overview:** actual Niri `Super+O` surface with live window textures; separately capture Floe `Super+Tab` text-based switcher.
 7. **Desk continuity:** return from Overview to Work, compare focused window ID and Group member selection before/after.
-8. **Accessibility:** Tab order, focus outlines, 200% text scaling, 44px touch targets where available. Actual screen-reader and physical touch remain separate acceptance journeys.
+8. **Accessibility:** Tab order, focus outlines, 200% text scaling, 44px touch targets where available. Verify menu/switcher open and close preserve and restore app/member focus; changing Text to Buttons alone is insufficient. Actual screen-reader and physical touch remain separate acceptance journeys.
 
 For notched devices also record the cutout geometry and ensure controls never appear beneath it. A simulated notch is not physical-device validation.
 
 ## Evidence template per screenshot
 
-\`\`\`text
+```text
 Commit:
 NixOS/Niri/Quickshell versions:
 Logical output size and scale:
@@ -39,7 +44,7 @@ Space / Group (synthetic identifiers):
 File:
 Observed defects:
 Difference from desired behavior:
-\`\`\`
+```
 
 Store only privacy-safe screenshots in an auditable test artifact, never change private workspace state solely to make demos look good. A successful static test does not replace visual acceptance.
 
