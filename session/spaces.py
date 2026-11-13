@@ -157,7 +157,47 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
             focused = next((w for w in pair or [] if w["id"] == workspace.get("active_window_id")), None)
             if focused:
                 pin["last_focused_app"] = focused["app_id"]
-    if op in ("create-group", "dissolve-group"):
+    if op == "open-group-member":
+        matches = [group for group in groups if group.get("id") == arg]
+        if len(matches) != 1:
+            raise ValueError("Saved Group no longer exists or is ambiguous")
+        members = matches[0]["members"]
+        current_workspace, current_windows = snapshot()
+        if current_workspace["id"] != workspace["id"]:
+            raise ValueError("Workspace changed; Group was not opened")
+        candidates = [[w for w in current_windows if w.get("app_id") == app] for app in members]
+        if any(len(found) > 1 for found in candidates):
+            raise ValueError("Group has multiple windows for an app; resolve duplicates before retrying")
+        if any(found and found[0].get("workspace_id") != workspace["id"] for found in candidates):
+            raise ValueError("A Group app is on another workspace; move it back before retrying")
+        missing = [app for app, found in zip(members, candidates) if not found]
+        if not missing:
+            raise ValueError("Both Group apps are open; stack them to rejoin the Group")
+        app = missing[0]
+        dirs = (os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share"),
+                *os.environ.get("XDG_DATA_DIRS", "/run/current-system/sw/share:/usr/share").split(":"))
+        desktop = desktop_file(app, dirs)
+        if not desktop:
+            raise ValueError("No matching installed application for the missing Group app")
+        try:
+            subprocess.run(["gio", "launch", str(desktop)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ValueError("Could not open the missing Group app") from exc
+        for _ in range(30):
+            time.sleep(0.5)
+            current_workspace, current_windows = snapshot()
+            if current_workspace["id"] != workspace["id"]:
+                raise ValueError("Workspace changed while opening the Group app; check before retrying")
+            found = [w for w in current_windows if w.get("app_id") == app]
+            if len(found) > 1:
+                raise ValueError("Multiple windows opened; resolve duplicates before retrying")
+            if found:
+                if found[0].get("workspace_id") != workspace["id"]:
+                    raise ValueError("The Group app opened on another workspace; move it back before retrying")
+                break
+        else:
+            raise ValueError("The Group app did not appear; it may still open later, so check before retrying")
+    elif op in ("create-group", "dissolve-group"):
         active = next((space for space in display_spaces(workspace, windows, groups) if space["active"]), None)
         if not active or len(active["members"]) != 2:
             raise ValueError("Select a stack of two apps first")
@@ -308,7 +348,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
         command("action", "focus-window", "--id", window["id"])
     elif op != "refresh":
         raise ValueError("Unknown action")
-    if op not in ("focus", "focus-window", "stack", "unstack", "group-view", "create-group", "dissolve-group"):
+    if op not in ("focus", "focus-window", "stack", "unstack", "group-view", "create-group", "dissolve-group", "open-group-member"):
         reconcile(pins, workspace, windows, socket, groups)
     return [{"id": p["id"], "label": p["label"], "kind": "group" if "members" in p else "app", "group_id": p.get("group_id"),
              "available": bool(pin_window(p, workspace, windows, socket, groups))} for p in pins]
@@ -355,6 +395,32 @@ def display_spaces(workspace, windows, groups=()):
     return result
 
 
+def incomplete_groups(workspace, windows, groups, pins):
+    """Describe retained Groups without guessing missing window identities."""
+    visible = {space["group_id"] for space in display_spaces(workspace, windows, groups)}
+    result = []
+    for group in groups:
+        if group["id"] in visible:
+            continue
+        candidates = [[w for w in windows if w.get("app_id") == app] for app in group["members"]]
+        missing = [app for app, found in zip(group["members"], candidates) if not found]
+        if any(len(found) > 1 for found in candidates):
+            status = "Multiple windows match a Group app; resolve duplicates."
+        elif any(found and found[0].get("workspace_id") != workspace["id"] for found in candidates):
+            status = "A Group app is on another workspace."
+        elif missing:
+            status = ("Both apps are closed." if len(missing) == 2 else "A Group app is closed.")
+        else:
+            status = ("Unpin this Group, then tile and stack its apps to rejoin."
+                      if any(pin.get("group_id") == group["id"] for pin in pins)
+                      else "Tile and stack the apps to rejoin this Group.")
+        can_open = bool(missing) and not any(len(found) > 1 or
+                       (found and found[0].get("workspace_id") != workspace["id"]) for found in candidates)
+        result.append({"id": group["id"], "label": group["label"], "status": status,
+                       "can_open": can_open, "missing_app": missing[0] if can_open else ""})
+    return result
+
+
 def run_locked(state):
     path = state / "spaces.json"
     with (state / "spaces.lock").open("a") as lock:
@@ -386,7 +452,7 @@ def run_locked(state):
                 if len(sys.argv) > 1 and sys.argv[1] == "dissolve-group":
                     raise ValueError("Could not confirm Group update; if it remains saved, stack its apps and retry") from exc
                 raise ValueError("Could not confirm Group update; check the Group state before retrying") from exc
-        if len(sys.argv) > 1 and sys.argv[1] == "dissolve-group":
+        if len(sys.argv) > 1 and sys.argv[1] in ("dissolve-group", "open-group-member"):
             workspace, windows = snapshot()
         if before != json.dumps(pins, sort_keys=True):
             with tempfile.NamedTemporaryFile("w", dir=state, delete=False) as tmp:
@@ -403,7 +469,9 @@ def run_locked(state):
         visible = [{"id": w["id"], "label": w.get("title") or w.get("app_id") or "Application",
                     "app_id": w.get("app_id") or "", "active": w["id"] == workspace.get("active_window_id")}
                    for w in ordered]
-        print(json.dumps({"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows, groups), "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
+        print(json.dumps({"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows, groups),
+                          "incomplete_groups": incomplete_groups(workspace, windows, groups, pins),
+                          "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
 
 
 def main():

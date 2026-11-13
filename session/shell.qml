@@ -183,6 +183,7 @@ ShellRoot {
     onSwitcherOpenChanged: if (!switcherOpen) renameGroupId = ""
     property var windows: []
     property var displaySpaces: []
+    property var incompleteGroups: []
     property var pins: []
     property string spacesError: ""
     property var pendingSpaceActions: []
@@ -223,6 +224,7 @@ ShellRoot {
                     } else {
                         if (JSON.stringify(root.windows) !== JSON.stringify(result.windows)) root.windows = result.windows
                         if (JSON.stringify(root.displaySpaces) !== JSON.stringify(result.spaces)) root.displaySpaces = result.spaces
+                        if (JSON.stringify(root.incompleteGroups) !== JSON.stringify(result.incomplete_groups || [])) root.incompleteGroups = result.incomplete_groups || []
                         if (JSON.stringify(root.pins) !== JSON.stringify(result.pins)) root.pins = result.pins
                         if (result.action !== "refresh") root.spacesError = ""
                         if (result.action === "focus" || result.action === "focus-window") { root.deskOpen = false; root.switcherOpen = false }
@@ -310,17 +312,37 @@ ShellRoot {
     component FlowButton: Button {
         id: control
         focusPolicy: Qt.StrongFocus
+        hoverEnabled: true
         Keys.onReturnPressed: control.clicked()
         Keys.onEnterPressed: control.clicked()
         implicitHeight: 58
         contentItem: Text {
-            text: control.text; textFormat: Text.PlainText; color: floeTheme.textPrimary; font.pixelSize: 14; font.family: floeTheme.interfaceFont; elide: Text.ElideRight
+            text: control.text; textFormat: Text.PlainText; color: control.enabled ? floeTheme.textPrimary : floeTheme.textMuted; font.pixelSize: 14; font.family: floeTheme.interfaceFont; elide: Text.ElideRight
             horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
         }
         background: Rectangle {
-            radius: 12; color: control.down ? floeTheme.surfaceSelected : floeTheme.surface
+            radius: 12; color: !control.enabled ? floeTheme.surfaceRaised : control.down || control.hovered ? floeTheme.surfaceSelected : floeTheme.surface
             border.width: control.activeFocus ? 2 : 1
-            border.color: control.activeFocus ? floeTheme.focus : floeTheme.border
+            border.color: control.activeFocus ? floeTheme.focus : control.enabled && (control.down || control.hovered) ? floeTheme.borderStrong : floeTheme.border
+        }
+    }
+    component FlowSwitch: Switch {
+        id: toggle
+        focusPolicy: Qt.StrongFocus
+        implicitWidth: 56; implicitHeight: 44
+        indicator: Rectangle {
+            width: 56; height: 44; radius: 10; color: "transparent"
+            border.width: toggle.activeFocus ? 2 : 0; border.color: floeTheme.focus
+            Rectangle {
+                anchors.centerIn: parent; width: 48; height: 28; radius: 14
+                color: toggle.checked ? floeTheme.accent : floeTheme.surfaceRaised
+                border.color: floeTheme.border; border.width: 1
+                Rectangle {
+                    x: toggle.checked ? parent.width - width - 4 : 4; anchors.verticalCenter: parent.verticalCenter
+                    width: 20; height: 20; radius: 10
+                    color: toggle.checked ? floeTheme.onAccent : floeTheme.textMuted
+                }
+            }
         }
     }
 
@@ -409,7 +431,33 @@ ShellRoot {
                         id: searchButton
                         onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(searchButton)
                         width: Math.min(parent.width, 590)
-                        text: "⌕   Search apps and open spaces   ·   Super K"
+                        text: "Search apps and open spaces"
+                        Accessible.name: text
+                        contentItem: Item {
+                            Text {
+                                id: searchGlyph
+                                anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+                                text: "⌕"; textFormat: Text.PlainText; color: floeTheme.accent
+                                font.pixelSize: 20; font.family: floeTheme.interfaceFont
+                            }
+                            Text {
+                                anchors.left: searchGlyph.right; anchors.leftMargin: 12
+                                anchors.right: searchShortcut.left; anchors.rightMargin: 8
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: searchButton.text; textFormat: Text.PlainText; elide: Text.ElideRight
+                                color: floeTheme.textPrimary; font.pixelSize: 14; font.family: floeTheme.interfaceFont
+                            }
+                            Rectangle {
+                                id: searchShortcut
+                                anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                                width: 70; height: 28; radius: 6
+                                color: floeTheme.surfaceRaised; border.color: floeTheme.border
+                                Text {
+                                    anchors.centerIn: parent; text: "Super K"; textFormat: Text.PlainText
+                                    color: floeTheme.textSecondary; font.pixelSize: 12; font.family: floeTheme.technicalFont
+                                }
+                            }
+                        }
                         onClicked: root.openSearch()
                     }
                     Text { text: "PINNED SPACES"; color: floeTheme.textMuted; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
@@ -481,7 +529,7 @@ ShellRoot {
                         Text { text: "SETTINGS"; color: floeTheme.textMuted; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
                         Row {
                             spacing: 12
-                            Switch {
+                            FlowSwitch {
                                 id: appearanceSwitch
                                 checked: appearancePreferences.lightMode
                                 Accessible.name: "Use Arctic Daylight light mode"
@@ -497,7 +545,7 @@ ShellRoot {
                         }
                         Row {
                             spacing: 12
-                            Switch {
+                            FlowSwitch {
                                 id: menuSwitch
                                 checked: menuPreferences.appMenuEnabled
                                 Accessible.name: "Experimental application menu"
@@ -694,6 +742,37 @@ ShellRoot {
                                     FlowButton { id: saveGroupName; onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(saveGroupName); width: 64; implicitHeight: 44; text: "Save"; onClicked: root.renameGroup(spaceCard.modelData.group_id, groupName.text) }
                                     FlowButton { id: cancelGroupName; onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(cancelGroupName); width: 64; implicitHeight: 44; text: "Cancel"; Accessible.name: "Cancel Group rename"; onClicked: { root.renameGroupId = ""; renameButton.forceActiveFocus() } }
                                 }
+                            }
+                        }
+                    }
+                }
+                Column {
+                    visible: root.incompleteGroups.length > 0
+                    width: parent.width; spacing: 8
+                    Text { text: "GROUPS NEEDING ATTENTION"; color: floeTheme.textSecondary; font.bold: true; font.pixelSize: 13; font.family: floeTheme.interfaceFont }
+                    Repeater {
+                        model: root.incompleteGroups
+                        Column {
+                            required property var modelData
+                            width: parent.width; spacing: 4
+                            Text {
+                                width: parent.width; text: modelData.label; textFormat: Text.PlainText
+                                color: floeTheme.textPrimary; font.bold: true; font.pixelSize: 14; font.family: floeTheme.interfaceFont
+                                wrapMode: Text.WrapAnywhere
+                            }
+                            Text {
+                                width: parent.width; text: modelData.status; textFormat: Text.PlainText
+                                color: floeTheme.textSecondary; font.pixelSize: 14; font.family: floeTheme.interfaceFont
+                                wrapMode: Text.WrapAnywhere
+                            }
+                            FlowButton {
+                                id: openGroupMember
+                                visible: modelData.can_open
+                                width: Math.min(parent.width, 200); implicitHeight: 44; text: "Open missing app"
+                                Accessible.name: "Open missing app for " + modelData.label
+                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(openGroupMember)
+                                onClicked: root.spaceAction("open-group-member", modelData.id)
                             }
                         }
                     }

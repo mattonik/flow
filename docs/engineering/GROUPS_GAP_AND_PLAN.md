@@ -2,7 +2,7 @@
 
 Status: implementation plan, 2026-11-13. This document describes the work needed to meet the [Flow Master Specification](../Flow_MASTER_SPEC_v1.1.md), not a claim that those features already work. The [contextual Group guidance](../Flow_contextual_menus_groups.md) and [reuse-first reference atlas](REUSE_FIRST_REFERENCE_ATLAS.md) also apply. NixOS, Niri and Quickshell remain the committed stack; the Flow controller and its public API must be toolkit-independent.
 
-**Progress:** M1 is in progress. Explicit two-app Group creation, independent registry migration, rename, pin and dissolve are implemented and have passed isolated backend tests. Missing-member repair, complete shell-restart and reboot journeys, and physical touch remain open. M2–M5 are not implemented; the Niri stack/split/size primitives have been tested independently, without claiming a Flow side-by-side Group.
+**Progress:** M1 is in progress. Explicit two-app Group creation, independent registry migration, rename, pin and dissolve are implemented and have passed isolated backend tests. The switcher now reports incomplete Groups and can explicitly open a missing member; manually rejoining the stack, complete shell-restart and reboot journeys, and physical touch remain open. M2–M5 are not implemented; the Niri stack/split/size primitives have been tested independently, without claiming a Flow side-by-side Group.
 
 ## Where we are
 
@@ -14,7 +14,7 @@ Recorded ARM64 UTM guest evidence includes real two-app stacks, member focus, Gr
 
 | Requirement | Actual status | Remaining work |
 |---|---|---|
-| Independent Group identity and lifecycle | Partial. Two-app stacks can be explicitly created, renamed, pinned and dissolved using an independent registry. Missing-member metadata survives, but the Group can disappear from the switcher and has no complete repair path. | Provide visible missing-member recovery and verify the lifecycle across shell restart and full reboot. |
+| Independent Group identity and lifecycle | Partial. Two-app stacks can be explicitly created, renamed, pinned and dissolved using an independent registry. Missing-member metadata survives and the switcher reports incomplete Groups; it can open an absent app, but rejoining is manual. | Complete the manual rejoin journey and verify the lifecycle across shell restart and full reboot. |
 | One logical destination | Partial. A two-app stack in one Niri column is shown and pinned as one destination. | Preserve one destination, order and last member focus when a Group spans columns; distinguish that explicit layout from intentional ungrouping. |
 | Membership | Partial. Exactly two distinct, globally unambiguous app IDs are supported. | Add/remove/reorder members and handle multiple windows of the same app without guessing identities; support larger Groups as a separately tested extension. |
 | Arrangement | Partial. Manual Niri tab/stack works for a saved active Group. | Side-by-side landscape, portrait stacking, adjustable ratios, saved layout and orientation-driven reflow. Preserve IDs and application state during transitions. |

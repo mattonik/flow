@@ -284,3 +284,10 @@ This is partial M1: missing Groups have no complete repair UI, and a newly creat
 ## Merged theme startup fix (2026-11-13)
 
 The concurrent Floe theme integration initially failed to start Quickshell in the guest because its generated QML did not import the module providing the `color` type. The generator now emits the QtQuick import. The rebuilt ARM64 guest started Quickshell, showed its island and the migrated Writing Group, and retained the running apps. This is a startup and Group-switcher check, not full light/dark, portrait or accessibility validation of the theme.
+
+
+## Floe controls and incomplete Groups (2026-11-13)
+
+The shell uses semantic hover, pressed and disabled button colors, a clearer Desk search control, and keyboard-focusable 56 × 44 logical-pixel appearance switches. The ARM64 UTM guest rendered the updated Desk in Arctic Daylight and Polar Night, switched by keyboard, and retained the light preference through a shell restart. The existing Writing Group remained in the switcher. Third-party app appearance and full-system theming remain separate.
+
+The switcher now reports incomplete Groups. A missing member may be opened via its exact desktop entry; the user must then stack the apps, unpinning first if necessary. Duplicate app windows, apps on another workspace, missing launchers and timeouts are reported without moving windows or deleting Group metadata. An isolated ARM64 guest test used real Gio and disposable Foot windows to reopen one absent app and verified the original windows, focus, workspace, Group and pin state were unchanged. The incomplete-Group switcher control itself has not yet been exercised end-to-end in the installed shell. Automated tests, the ARM64 Nix check and NixOS build passed. Physical touch, full restart recovery, automatic rejoining and adaptive Groups remain open.

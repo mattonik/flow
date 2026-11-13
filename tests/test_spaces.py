@@ -73,6 +73,105 @@ class SpacesTest(unittest.TestCase):
         self.assertIsNone(shown["group_id"])
         self.assertNotIn(shown["label"], {"Work", "Other"})
 
+    def test_incomplete_groups_report_missing_split_ambiguous_and_other_workspace(self):
+        group = {"id": "g", "label": "Work", "members": ["terminal", "files"]}
+        only_one = [self.windows[0]]
+        entry = spaces.incomplete_groups(self.ws, only_one, [group], [])[0]
+        self.assertEqual((entry["id"], entry["missing_app"], entry["can_open"]), ("g", "files", True))
+        entry = spaces.incomplete_groups(self.ws, self.windows, [group], [{"group_id": "g"}])[0]
+        self.assertFalse(entry["can_open"])
+        self.assertIn("Unpin", entry["status"])
+        duplicate = only_one + [window(3, "terminal", 2)]
+        entry = spaces.incomplete_groups(self.ws, duplicate, [group], [])[0]
+        self.assertFalse(entry["can_open"])
+        self.assertIn("Multiple", entry["status"])
+        other = [{**self.windows[0], "workspace_id": 2}]
+        entry = spaces.incomplete_groups(self.ws, other, [group], [])[0]
+        self.assertFalse(entry["can_open"])
+        self.assertIn("another workspace", entry["status"])
+        self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        self.assertEqual(spaces.incomplete_groups(self.ws, self.windows, [group], []), [])
+
+    @patch.object(spaces, "command")
+    @patch.object(spaces.time, "sleep")
+    @patch.object(spaces.subprocess, "run")
+    def test_open_missing_group_member_uses_exact_desktop_and_does_not_move_windows(self, launch, sleep, command):
+        group = {"id": "g", "label": "Work", "members": ["terminal", "files"]}
+        windows = [self.windows[0]]
+        with tempfile.TemporaryDirectory() as directory:
+            apps = Path(directory) / "applications"
+            apps.mkdir()
+            desktop = apps / "files.desktop"
+            desktop.touch()
+            with patch.dict(spaces.os.environ, {"XDG_DATA_HOME": directory, "XDG_DATA_DIRS": directory}), \
+                 patch.object(spaces, "snapshot", side_effect=[(self.ws, windows), (self.ws, self.windows)]):
+                spaces.run([], "open-group-member", "g", self.ws, windows, "session", [group])
+        launch.assert_called_once_with(["gio", "launch", str(desktop)], check=True,
+                                       stdout=spaces.subprocess.DEVNULL, stderr=spaces.subprocess.DEVNULL)
+        command.assert_not_called()
+        self.assertEqual(group["members"], ["terminal", "files"])
+
+    @patch.object(spaces, "command")
+    @patch.object(spaces.subprocess, "run")
+    def test_open_group_member_rejects_ambiguous_or_off_workspace_without_launch(self, launch, command):
+        group = {"id": "g", "label": "Work", "members": ["terminal", "files"]}
+        cases = [([self.windows[0], window(3, "terminal", 2)], "duplicates"),
+                 ([{**self.windows[0], "workspace_id": 2}], "another workspace"),
+                 (self.windows, "Both Group apps are open")]
+        for windows, message in cases:
+            with self.subTest(message=message), patch.object(spaces, "snapshot", return_value=(self.ws, windows)), \
+                 self.assertRaisesRegex(ValueError, message):
+                spaces.run([], "open-group-member", "g", self.ws, windows, "session", [group])
+        launch.assert_not_called()
+        command.assert_not_called()
+
+    @patch.object(spaces, "command")
+    @patch.object(spaces.time, "sleep")
+    @patch.object(spaces.subprocess, "run")
+    def test_open_group_member_timeout_warns_app_may_still_open(self, launch, sleep, command):
+        group = {"id": "g", "label": "Work", "members": ["terminal", "files"]}
+        windows = [self.windows[0]]
+        with tempfile.TemporaryDirectory() as directory:
+            apps = Path(directory) / "applications"
+            apps.mkdir()
+            (apps / "files.desktop").touch()
+            with patch.dict(spaces.os.environ, {"XDG_DATA_HOME": directory, "XDG_DATA_DIRS": directory}), \
+                 patch.object(spaces, "snapshot", return_value=(self.ws, windows)), \
+                 self.assertRaisesRegex(ValueError, "may still open later"):
+                spaces.run([], "open-group-member", "g", self.ws, windows, "session", [group])
+        launch.assert_called_once()
+        command.assert_not_called()
+
+    @patch.object(spaces, "command")
+    @patch.object(spaces.time, "sleep")
+    @patch.object(spaces.subprocess, "run")
+    def test_open_group_member_stops_if_workspace_changes_after_launch(self, launch, sleep, command):
+        group = {"id": "g", "label": "Work", "members": ["terminal", "files"]}
+        windows = [self.windows[0]]
+        with tempfile.TemporaryDirectory() as directory:
+            apps = Path(directory) / "applications"
+            apps.mkdir()
+            (apps / "files.desktop").touch()
+            with patch.dict(spaces.os.environ, {"XDG_DATA_HOME": directory, "XDG_DATA_DIRS": directory}), \
+                 patch.object(spaces, "snapshot", side_effect=[(self.ws, windows), ({"id": 2}, windows)]), \
+                 self.assertRaisesRegex(ValueError, "Workspace changed.*check before retrying"):
+                spaces.run([], "open-group-member", "g", self.ws, windows, "session", [group])
+        launch.assert_called_once()
+        command.assert_not_called()
+
+    @patch.object(spaces, "command")
+    @patch.object(spaces.subprocess, "run")
+    def test_open_group_member_requires_exact_installed_desktop_entry(self, launch, command):
+        group = {"id": "g", "label": "Work", "members": ["terminal", "files"]}
+        windows = [self.windows[0]]
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.dict(spaces.os.environ, {"XDG_DATA_HOME": directory, "XDG_DATA_DIRS": directory}), \
+             patch.object(spaces, "snapshot", return_value=(self.ws, windows)), \
+             self.assertRaisesRegex(ValueError, "No matching installed application"):
+            spaces.run([], "open-group-member", "g", self.ws, windows, "session", [group])
+        launch.assert_not_called()
+        command.assert_not_called()
+
     @patch.object(spaces, "command")
     def test_pin_group_records_members_and_orders_its_stack_as_one_destination(self, command):
         self.windows[0]["layout"]["pos_in_scrolling_layout"] = [2, 1]
