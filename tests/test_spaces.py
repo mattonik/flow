@@ -110,6 +110,23 @@ class SpacesTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ambiguous"):
             spaces.run([], "pin-group", "group-1", self.ws, duplicate, "session", groups)
 
+    @patch.object(spaces, "command")
+    def test_ambiguous_group_identity_cannot_be_pinned_or_focused(self, command):
+        self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        groups = [{"id": "group-1", "label": "Work", "members": ["terminal", "files"]},
+                  {"id": "group-2", "label": "Other", "members": ["files", "terminal"]}]
+        pins = []
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            spaces.run(pins, "pin-group", "group-1", self.ws, self.windows, "session", groups)
+        self.assertEqual(pins, [])
+        pin = {"id": "pin", "group_id": "group-1", "label": "Work", "app_id": "terminal",
+               "members": ["terminal", "files"], "window_ids": [1, 2], "session": "session"}
+        self.assertIsNone(spaces.group_windows(pin, self.ws, self.windows, "session", groups))
+        with self.assertRaisesRegex(ValueError, "unavailable"):
+            spaces.run([pin], "focus", "pin", self.ws, self.windows, "session", groups)
+        self.assertFalse(spaces.run([pin], "refresh", None, self.ws, self.windows, "session", groups)[0]["available"])
+        command.assert_not_called()
+
     def test_pinned_group_becomes_unavailable_if_the_stack_changes(self):
         pin = {"id": "group-pin", "group_id": "group-1", "label": "Work", "app_id": "terminal",
                "members": ["terminal", "files"], "window_id": 1, "window_ids": [1, 2], "session": "session"}

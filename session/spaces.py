@@ -68,7 +68,9 @@ def group_windows(pin, workspace, windows, socket, groups=()):
         return None
     group_id = pin.get("group_id")
     saved = [g for g in groups if g.get("id") == group_id]
-    if not isinstance(group_id, str) or len(saved) != 1 or set(saved[0].get("members", [])) != set(members):
+    matching_members = [g for g in groups if set(g.get("members", [])) == set(members)]
+    if (not isinstance(group_id, str) or len(saved) != 1 or len(matching_members) != 1
+            or matching_members[0].get("id") != group_id):
         return None
     if pin.get("session") == socket:
         ids = pin.get("window_ids", [])
@@ -121,7 +123,7 @@ def reconcile(pins, workspace, windows, socket, groups=()):
             command("action", "focus-window", "--id", active)
 
 
-def pin_group(pins, group, workspace, windows, socket):
+def pin_group(pins, group, workspace, windows, socket, groups):
     members = group.get("members", [])
     if len(members) != 2 or len(set(members)) != 2:
         raise ValueError("Select a saved two-app Group")
@@ -131,7 +133,7 @@ def pin_group(pins, group, workspace, windows, socket):
         pair.append(matches[0] if len(matches) == 1 else None)
     candidate = {"group_id": group["id"], "members": members,
                  "window_ids": [w["id"] for w in pair if w], "session": socket}
-    if len(pair) != 2 or any(not w for w in pair) or not group_windows(candidate, workspace, windows, socket, [group]):
+    if len(pair) != 2 or any(not w for w in pair) or not group_windows(candidate, workspace, windows, socket, groups):
         raise ValueError("Saved Group is unavailable, ambiguous, or no longer one stack")
     if any(set(members) & set(p.get("members", [p.get("app_id")])) for p in pins):
         raise ValueError("A Group member is already pinned")
@@ -168,7 +170,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
             matches = [g for g in groups if set(g.get("members", [])) == set(apps)]
             if len(matches) != 1:
                 raise ValueError("Save this two-app stack as a Group before pinning it")
-            pin_group(pins, matches[0], workspace, windows, socket)
+            pin_group(pins, matches[0], workspace, windows, socket, groups)
             window = None
         if window:
             if not eligible(window, workspace, windows):
@@ -181,7 +183,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
         matches = [g for g in groups if g.get("id") == arg]
         if len(matches) != 1:
             raise ValueError("Select a saved two-app Group")
-        pin_group(pins, matches[0], workspace, windows, socket)
+        pin_group(pins, matches[0], workspace, windows, socket, groups)
     elif op == "group-view":
         active = next((space for space in display_spaces(workspace, windows, groups) if space["active"]), None)
         if not active or not active["group_id"]:
