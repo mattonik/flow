@@ -17,7 +17,7 @@ The recorded test environment is an Apple Silicon Mac running UTM 5.0.8, QEMU AR
 | F-009 Island/system | Partial | Island, quick settings, lock and a temporary notification inbox exist. The connection-profile editor opens from Quick Settings; Flow Wi-Fi selection, durable notification history and independent availability across all contexts are not established. |
 | F-010 Real accounts | Open | Two-user and guest isolation and switching have not been verified. |
 | F-011 Display hotplug | Open | No verified external-display disconnect and reconnect journey. |
-| F-012 Portal correctness | Open | The guest's portal broker is active and owns its session D-Bus name. The representative file chooser, screenshot, screenshare, clipboard and drag/drop matrix is not verified. |
+| F-012 Portal correctness | Partial | The guest's portal broker is active and owns its session D-Bus name. A disposable unsandboxed chooser request returned the selected test-file URI, and a second request returned a cancel response. Sandboxed file access, saving, screenshots, screenshare, clipboard and drag/drop remain unverified. |
 | F-013 Audio/peripherals | Open | Volume control was exercised; a Bluetooth headset and microphone were not tested on physical hardware. |
 | F-014 Figma day | Open | No recorded Figma workload, screenshare or browser-load test. |
 | F-015 Development day | Open | Terminal and editors run, but the native-host development, container and VM workflow is not verified. |

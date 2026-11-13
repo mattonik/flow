@@ -48,7 +48,9 @@ The interactive chooser and screen-share scenarios remain untested. Avoid changi
 
 Using `/Applications/UTM.app/Contents/MacOS/utmctl` without opening or manipulating the VM GUI, `utmctl list` and `utmctl status "Flow NixOS"` reported the existing VM as `started`. `utmctl file pull` successfully read the guest's `/etc/os-release` (NixOS 26.11, build `26.11.20261107.f4a03c0`), and `utmctl ip-address` returned guest addresses. This confirms basic QGA file and network queries only.
 
-Using absolute guest command paths and the logged-in user's session environment, `systemctl --user is-active xdg-desktop-portal.service` returned `active`, and `busctl --user status org.freedesktop.portal.Desktop` showed an owner running xdg-desktop-portal 1.22.1 as that user. `busctl --user tree` showed the desktop portal object. This checks service and D-Bus availability, not backend selection or any chooser, capture, or permission flow. The next check is a disposable file chooser request, followed by the other interactive scenarios above.
+Using absolute guest command paths and the logged-in user's session environment, `systemctl --user is-active xdg-desktop-portal.service` returned `active`, and `busctl --user status org.freedesktop.portal.Desktop` showed an owner running xdg-desktop-portal 1.22.1 as that user. `busctl --user tree` showed the desktop portal object. The GTK and GNOME portal services were also active.
+
+A disposable unsandboxed Gio client requested `FileChooser.OpenFile`. The Nautilus chooser appeared and Escape returned response code 1. A second request provided a NUL-terminated temporary directory, and keyboard selection returned success and exactly the URI of the disposable test file. The first probe omitted the required NUL terminator and opened Home instead; the corrected request opened the test directory. The cancel probe did not record whether the returned URI array was empty. These checks do not establish sandbox permissions, file reading, save, capture, or touch behavior. Continue with a sandboxed app and the other interactive scenarios above.
 
 ## References
 
