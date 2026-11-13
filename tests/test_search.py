@@ -23,11 +23,27 @@ class SearchTest(unittest.TestCase):
         data = {"pins": [{"label": "Work", "id": "1", "available": True}, {"label": "Missing", "id": "2", "available": False}],
                 "windows": [{"label": "My\nDocument", "id": 4, "app_id": "editor"}]}
         rows = search.entries(data, [app, hidden])
-        self.assertEqual([r[1][0] for r in rows], ["settings", "settings", "pin", "window", "app"])
-        self.assertEqual(rows[3][0], "My Document · Open window · editor")
-        self.assertEqual(rows[3][1], ("window", "4"))
+        self.assertEqual([r[1][0] for r in rows], ["settings", "settings", "pin", "pin", "window", "app"])
+        self.assertEqual(rows[4][0], "My Document · Open window · editor")
+        self.assertEqual(rows[4][1], ("window", "4"))
+        self.assertEqual(rows[3], ("Missing · Pinned space · Open", ("pin", "2")))
 
 
+
+
+    def test_search_routes_pin_and_window_focus_through_the_shell(self):
+        gio = SimpleNamespace(AppInfo=SimpleNamespace(get_all=lambda: []))
+        repository = SimpleNamespace(Gio=gio, GLib=SimpleNamespace(Error=RuntimeError))
+        snapshot = '{"pins":[{"label":"Work","id":"pin-id","available":false}],"windows":[{"label":"Notes","id":4,"app_id":"notes"}]}'
+        for index, action, target in ((2, "focus_pin", "pin-id"), (3, "focus_window", "4")):
+            with self.subTest(action=action), \
+                 patch.dict(sys.modules, {"gi": SimpleNamespace(repository=repository), "gi.repository": repository}), \
+                 patch.object(search, "recent_files", return_value=[]), \
+                 patch.object(search.subprocess, "check_output", return_value=snapshot), \
+                 patch.object(search.subprocess, "run", side_effect=[SimpleNamespace(returncode=0, stdout=str(index)), None]) as run:
+                search.main()
+                self.assertEqual(run.call_args.args[0], ["quickshell", "ipc", "-p", "/etc/flow/shell.qml", "call", "desk", action, target])
+                self.assertTrue(run.call_args.kwargs["check"])
 
     def test_recent_files_are_local_readable_and_within_the_users_home(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -159,3 +159,8 @@ Search can list readable, existing recent files under the current user's home us
 ## Switcher and recent-file search checks (2026-11-13)
 
 In the ARM64 VM, a ten-space switcher showed its paging controls; keyboard activation of the later-spaces control moved to the end and updated the arrows' enabled states. A temporary local document and isolated recent-file history appeared in search, and selecting the result opened its contents in Kate. Temporary test windows and files were removed. Reverse paging by mouse, touch and naturally populated recent-file history remain unverified.
+
+
+## Reopen pinned spaces from search (2026-11-13)
+
+Search now includes closed pins and sends pin and window focus requests through the shell, which displays action errors in the Desk. In the ARM64 VM, selecting the existing Home pin focused Files; a temporary terminal pin remained searchable after its window closed and selecting it reopened the terminal. A request for a nonexistent pin displayed an error. The temporary pin and terminal were removed.

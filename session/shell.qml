@@ -311,6 +311,8 @@ ShellRoot {
         function apps(): void { root.openApps() }
         function search(): void { root.openSearch() }
         function pin(): void { root.spaceAction("pin") }
+        function focus_pin(id: string): void { root.spaceAction("focus", id) }
+        function focus_window(id: string): void { root.spaceAction("focus-window", id) }
         function focus(index: int): void {
             if (index > 0 && index <= root.pins.length) root.spaceAction("focus", root.pins[index - 1].id)
             else { root.spacesError = "No pinned space at that position"; root.deskOpen = true }

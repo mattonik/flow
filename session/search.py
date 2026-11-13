@@ -41,8 +41,8 @@ def entries(snapshot, apps, files=()):
     result = [("Flow Settings  ·  Settings", ("settings", "settings")),
               ("Quick Settings  ·  Audio and network", ("settings", "quick_open"))]
     for pin in snapshot.get("pins", []):
-        if pin.get("available"):
-            result.append((f"{pin['label']}  ·  Pinned space", ("pin", pin["id"])))
+        status = "Pinned space" if pin.get("available") else "Pinned space · Open"
+        result.append((f"{pin['label']}  ·  {status}", ("pin", pin["id"])))
     for window in snapshot.get("windows", []):
         result.append((f"{window['label']}  ·  Open window  ·  {window['app_id']}", ("window", str(window["id"]))))
     for path in files:
@@ -75,10 +75,10 @@ def main():
             value.launch([], None)
         elif kind == "file":
             Gio.AppInfo.launch_default_for_uri(value, None)
-        elif kind == "settings":
-            subprocess.run(["quickshell", "ipc", "-p", "/etc/flow/shell.qml", "call", "desk", value], check=True)
         else:
-            subprocess.run(["flow-spaces", "focus" if kind == "pin" else "focus-window", value], check=True)
+            action = {"settings": value, "pin": "focus_pin", "window": "focus_window"}[kind]
+            args = ["quickshell", "ipc", "-p", "/etc/flow/shell.qml", "call", "desk", action]
+            subprocess.run(args + ([value] if kind != "settings" else []), check=True)
     except (ValueError, OSError, subprocess.SubprocessError, GLib.Error) as exc:
         print(f"Flow search: {exc}", file=sys.stderr)
 
