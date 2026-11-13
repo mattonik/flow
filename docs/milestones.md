@@ -262,3 +262,5 @@ Recovery of snapshots without Groups now avoids reordering when a live pinned ap
 ## Ambiguous Group identity (2026-11-13)
 
 If saved metadata contains multiple Group IDs for the same apps, the pin controller now treats the Group as unavailable instead of selecting one. A read-only ARM64 guest check used the real Writing Group windows and temporary in-memory duplicate records: pinning and focus were rejected without compositor actions. Unit tests cover pinning, focusing and availability.
+
+The switcher also labels pinned Groups before their name so the status remains visible when a long name is elided. The installed ARM64 guest showed the label after pinning, and removed it after unpinning; the original workspace order and focus were restored.

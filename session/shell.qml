@@ -590,8 +590,8 @@ ShellRoot {
                                     id: spaceButton
                                     onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(spaceButton)
                                     width: parent.width; height: modelData.members.length > 1 ? 50 : 90
-                                    text: (modelData.active ? "●  " : "") + modelData.label.slice(0, 35) + (modelData.members.length > 1 ? "  ·  Group" : "")
-                                    Accessible.name: "Switch to " + modelData.label
+                                    text: (modelData.active ? "●  " : "") + (spaceCard.groupPin ? "Pinned · " : "") + modelData.label.slice(0, 35) + (modelData.members.length > 1 ? "  ·  Group" : "")
+                                    Accessible.name: "Switch to " + modelData.label + (spaceCard.groupPin ? ", pinned Group" : "")
                                     onClicked: root.spaceAction("focus-window", String(modelData.id))
                                 }
                                 Row {
