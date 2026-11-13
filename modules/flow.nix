@@ -22,7 +22,7 @@ let
   launcher = pkgs.writeShellScriptBin "flow-apps" ''
     user_name="$(${pkgs.coreutils}/bin/id -un)"
     export XDG_DATA_DIRS="''${XDG_DATA_DIRS:+$XDG_DATA_DIRS:}$HOME/.nix-profile/share:$HOME/.local/state/nix/profile/share:/etc/profiles/per-user/$user_name/share:/nix/var/nix/profiles/default/share:/run/current-system/sw/share:/usr/local/share:/usr/share"
-    exec ${lib.getExe pkgs.fuzzel} "$@"
+    exec ${lib.getExe pkgs.fuzzel} --keyboard-focus=on-demand --override=main.exit-on-keyboard-focus-loss=yes "$@"
   '';
   search = pkgs.writeShellScriptBin "flow-search" ''
     user_name="$(${pkgs.coreutils}/bin/id -un)"

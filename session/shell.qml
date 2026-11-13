@@ -270,24 +270,39 @@ ShellRoot {
         if (deskOpen) spaceAction("refresh")
     }
 
+    property bool launcherActive: false
+    Process { id: appsLauncher; command: ["flow-apps"]; onExited: launcherDismissDelay.restart() }
+    Process { id: searchLauncher; command: ["flow-search"]; onExited: launcherDismissDelay.restart() }
+    // shortcut: retain the open state for 500ms after exit to handle Island clicks; replace with lifecycle IPC if needed.
+    Timer { id: launcherDismissDelay; interval: 500; onTriggered: if (!appsLauncher.running && !searchLauncher.running) root.launcherActive = false }
+    function closeLauncher() {
+        launcherDismissDelay.stop()
+        launcherActive = false
+        if (appsLauncher.running) appsLauncher.running = false
+        if (searchLauncher.running) searchLauncher.running = false
+    }
     function openSearch() {
+        if (launcherActive || appsLauncher.running || searchLauncher.running) { closeLauncher(); return }
         notificationsOpen = false
         quickSettingsOpen = false
         openMenuWhenReady = false
         appMenuOpen = false
         deskOpen = false
         switcherOpen = false
-        Quickshell.execDetached(["flow-search"])
+        launcherActive = true
+        searchLauncher.running = true
     }
 
     function openApps() {
+        if (launcherActive || appsLauncher.running || searchLauncher.running) { closeLauncher(); return }
         notificationsOpen = false
         quickSettingsOpen = false
         openMenuWhenReady = false
         appMenuOpen = false
         switcherOpen = false
         deskOpen = false
-        Quickshell.execDetached(["flow-apps"])
+        launcherActive = true
+        appsLauncher.running = true
     }
 
     function toggleSwitcher() {
@@ -1046,7 +1061,15 @@ ShellRoot {
             Row {
                 anchors.centerIn: parent; spacing: 8
                 IslandButton { width: 48; implicitHeight: 44; text: "floe."; Accessible.name: "Open Floe desk"; onClicked: root.toggleDesk() }
-                IslandButton { width: 44; implicitHeight: 44; text: "Apps"; Accessible.name: "Open apps"; onClicked: root.openApps() }
+                IslandButton {
+                    property bool closeOnRelease: false
+                    width: 64; implicitHeight: 44
+                    text: root.launcherActive ? "Close" : "Apps"
+                    Accessible.name: root.launcherActive ? "Close search and apps" : "Open apps"
+                    onPressed: closeOnRelease = root.launcherActive
+                    onClicked: { if (closeOnRelease) root.closeLauncher(); else root.openApps(); closeOnRelease = false }
+                    onCanceled: closeOnRelease = false
+                }
                 Text { text: Qt.formatTime(clock.date, "hh:mm"); color: floeTheme.textPrimary; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter }
                 IslandButton { width: 44; implicitHeight: 44; text: "◉"; Accessible.name: "Notifications"; onClicked: root.toggleNotifications() }
                 IslandButton { width: 44; implicitHeight: 44; text: "⚙"; Accessible.name: "Quick settings"; onClicked: root.toggleQuickSettings() }

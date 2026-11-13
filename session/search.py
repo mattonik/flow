@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 from urllib.parse import unquote, urlsplit
@@ -62,7 +63,8 @@ def main():
     home = Path.home()
     history = Path(os.environ.get("XDG_DATA_HOME") or home / ".local/share") / "recently-used.xbel"
     choices = entries(snapshot, Gio.AppInfo.get_all(), recent_files(history, home))
-    result = subprocess.run(["fuzzel", "--dmenu", "--index", "--only-match", "--prompt", "Search: "],
+    result = subprocess.run(["fuzzel", "--keyboard-focus=on-demand", "--override=main.exit-on-keyboard-focus-loss=yes",
+                             "--dmenu", "--index", "--only-match", "--prompt", "Search: "],
                             input="".join(label + "\n" for label, _ in choices), text=True, capture_output=True)
     if result.returncode != 0:
         return
@@ -84,4 +86,6 @@ def main():
 
 
 if __name__ == "__main__":
+    # subprocess.run cleans up Fuzzel when the shell terminates this search.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     main()

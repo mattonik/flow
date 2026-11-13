@@ -46,6 +46,8 @@ class SearchTest(unittest.TestCase):
                  patch.object(search.subprocess, "check_output", return_value=snapshot), \
                  patch.object(search.subprocess, "run", side_effect=[SimpleNamespace(returncode=0, stdout=str(index)), None]) as run:
                 search.main()
+                self.assertEqual(run.call_args_list[0].args[0][:3],
+                                 ["fuzzel", "--keyboard-focus=on-demand", "--override=main.exit-on-keyboard-focus-loss=yes"])
                 self.assertEqual(run.call_args.args[0], ["quickshell", "ipc", "-p", "/etc/flow/shell.qml", "call", "desk", action, target])
                 self.assertTrue(run.call_args.kwargs["check"])
 

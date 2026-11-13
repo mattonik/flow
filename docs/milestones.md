@@ -315,3 +315,7 @@ The switcher offers **Repair Group layout** when a saved side-by-side pair is se
 The ARM64 guest's isolated side-by-side smoke test inserted a disposable window between a pinned Group's members, repaired the pair, and retained the pin, a neighboring pin, original focus and real session state. The NixOS build, ARM64 check and 152 host tests passed. The installed shell rendered the updated Island and switcher, and keyboard shortcuts opened and closed the switcher and Quick Settings. The new repair button was not independently exercised in the installed UI; physical touch, screen readers and automatic adaptation remain unverified.
 
 The Island actions and bottom switcher handle now have named button semantics and 44-pixel touch targets. Quick Settings keeps horizontal margins on narrow outputs and wraps its controls. Island keyboard access still relies on the existing shell shortcuts and Desk; the persistent Island does not take keyboard focus from apps.
+
+## Dismiss Apps and search (2026-11-13)
+
+Apps and combined search now use Fuzzel's on-demand keyboard focus so clicking an app outside closes the launcher. While either is open, the Island's Apps control becomes **Close** and dismisses it without starting a duplicate. In the ARM64 guest, both launchers closed by clicking the Island control and by clicking outside over Files; Apps search accepted keyboard input. Clicking empty compositor background, physical touch and screen-reader use were not tested.
