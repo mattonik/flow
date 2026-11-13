@@ -4,6 +4,7 @@ import QtCore as Core
 import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Pipewire
+import Quickshell.Services.Notifications
 import Quickshell.Wayland
 
 ShellRoot {
@@ -12,6 +13,7 @@ ShellRoot {
     property bool settingsOpen: false
     property bool editPins: false
     property bool quickSettingsOpen: false
+    property bool notificationsOpen: false
     readonly property var audioSink: Pipewire.ready ? Pipewire.defaultAudioSink : null
     readonly property bool audioAvailable: !!(audioSink && audioSink.audio)
     readonly property string volumeStatus: !Pipewire.ready ? "Checking audio…" : !audioAvailable ? "Audio unavailable" :
@@ -19,6 +21,16 @@ ShellRoot {
     property string networkStatus: "Checking network…"
     property string quickError: ""
     PwObjectTracker { objects: root.audioSink ? [root.audioSink] : [] }
+    NotificationServer {
+        id: notificationServer
+        actionsSupported: true
+        bodyMarkupSupported: false
+        keepOnReload: false
+        onNotification: notification => {
+            notification.tracked = true
+            if (trackedNotifications.count > 20) trackedNotifications.get(0).dismiss()
+        }
+    }
     Process {
         id: networkStatusProcess
         command: ["nmcli", "-t", "-f", "CONNECTIVITY", "general"]
@@ -29,7 +41,16 @@ ShellRoot {
         onExited: (code, status) => { if (code !== 0) root.networkStatus = "Network unavailable" }
     }
     Timer { interval: 4000; running: root.quickSettingsOpen; repeat: true; triggeredOnStart: true; onTriggered: if (!networkStatusProcess.running) networkStatusProcess.running = true }
+    function toggleNotifications() {
+        if (!notificationsOpen) {
+            quickSettingsOpen = false; appMenuOpen = false; openMenuWhenReady = false
+            switcherOpen = false; deskOpen = false
+            if (overviewOpen) Quickshell.execDetached(["niri", "msg", "action", "close-overview"])
+        }
+        notificationsOpen = !notificationsOpen
+    }
     function toggleQuickSettings() {
+        notificationsOpen = false
         if (!quickSettingsOpen) {
             appMenuOpen = false
             openMenuWhenReady = false
@@ -225,6 +246,7 @@ ShellRoot {
     }
     Timer { interval: niriEvents.running ? 30000 : 3000; running: true; repeat: true; triggeredOnStart: true; onTriggered: root.spaceAction("refresh") }
     function toggleDesk() {
+        notificationsOpen = false
         quickSettingsOpen = false
         switcherOpen = false
         appMenuOpen = false
@@ -235,6 +257,7 @@ ShellRoot {
     }
 
     function openSearch() {
+        notificationsOpen = false
         quickSettingsOpen = false
         openMenuWhenReady = false
         appMenuOpen = false
@@ -244,6 +267,7 @@ ShellRoot {
     }
 
     function openApps() {
+        notificationsOpen = false
         quickSettingsOpen = false
         openMenuWhenReady = false
         appMenuOpen = false
@@ -253,6 +277,7 @@ ShellRoot {
     }
 
     function toggleSwitcher() {
+        notificationsOpen = false
         quickSettingsOpen = false
         if (switcherOpen) { switcherOpen = false; return }
         deskOpen = false
@@ -402,12 +427,12 @@ ShellRoot {
                         width: parent.width
                         spacing: 12
                         Repeater {
-                            model: ["Apps", "Files", "Overview", "Settings", "Return to work"]
+                            model: ["Apps", "Files", "Overview", "Notifications", "Settings", "Return to work"]
                             FlowButton {
                                 id: toolButton
                                 required property string modelData
                                 onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(toolButton)
-                                width: modelData === "Return to work" ? 145 : 100
+                                width: modelData === "Return to work" ? 145 : modelData === "Notifications" ? 130 : 100
                                 text: modelData
                                 onClicked: {
                                     if (modelData === "Settings") {
@@ -417,6 +442,7 @@ ShellRoot {
                                     }
                                     root.deskOpen = false
                                     if (modelData === "Apps") root.openApps()
+                                    else if (modelData === "Notifications") root.toggleNotifications()
                                     else if (modelData === "Files") Quickshell.execDetached(["nautilus"])
                                     else if (modelData === "Overview") Quickshell.execDetached(["niri", "msg", "action", "open-overview"])
                                 }
@@ -662,8 +688,64 @@ ShellRoot {
         }
     }
     PanelWindow {
+        visible: root.notificationsOpen
         anchors.top: true
-        implicitWidth: 270; implicitHeight: 44; margins.top: 8
+        implicitWidth: Math.min(420, screen.width - 24); implicitHeight: Math.min(notificationColumn.implicitHeight + 24, screen.height - 80)
+        margins.top: 60
+        color: "#17201e"; exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: root.notificationsOpen ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+        FocusScope {
+            anchors.fill: parent; focus: root.notificationsOpen
+            Keys.onEscapePressed: root.notificationsOpen = false
+        ScrollView {
+            anchors.fill: parent; anchors.margins: 12; clip: true
+            Column {
+                id: notificationColumn; width: parent.width; spacing: 8
+                Row {
+                    width: parent.width; spacing: 8
+                    Text { text: "NOTIFICATIONS"; color: "#b8ddcb"; font.bold: true; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
+                    FlowButton { width: 66; implicitHeight: 44; text: "Close"; onClicked: root.notificationsOpen = false }
+                }
+                Text { visible: notificationServer.trackedNotifications.count === 0; text: "No notifications"; color: "#91a59d" }
+                Repeater {
+                    model: notificationServer.trackedNotifications
+                    delegate: Rectangle {
+                        required property var modelData
+                        required property int index
+                        visible: root.notificationsOpen || index === notificationServer.trackedNotifications.count - 1
+                        width: notificationColumn.width; implicitHeight: cardColumn.implicitHeight + 20
+                        radius: 12; color: "#202d29"; border.color: "#3a4d45"
+                        Column {
+                            id: cardColumn; anchors.fill: parent; anchors.margins: 10; spacing: 5
+                            Row {
+                                width: parent.width; spacing: 8
+                                Text { width: parent.width - dismiss.width - 8; text: modelData.appName + " · " + modelData.summary; textFormat: Text.PlainText; color: "#edf5f0"; font.bold: true; wrapMode: Text.Wrap }
+                                FlowButton { id: dismiss; width: 44; implicitHeight: 44; text: "×"; Accessible.name: "Dismiss notification"; onClicked: modelData.dismiss() }
+                            }
+                            Text { visible: modelData.body !== ""; width: parent.width; text: modelData.body; textFormat: Text.PlainText; color: "#c4d2cb"; wrapMode: Text.Wrap }
+                            Flow {
+                                width: parent.width; spacing: 6
+                                Repeater {
+                                    model: modelData.actions
+                                    delegate: FlowButton {
+                                        required property var modelData
+                                        width: Math.min(200, implicitWidth); implicitHeight: 44
+                                        text: modelData.text; Accessible.name: modelData.text
+                                        onClicked: modelData.invoke()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        }
+    }
+    PanelWindow {
+        anchors.top: true
+        implicitWidth: 316; implicitHeight: 44; margins.top: 8
         color: "transparent"
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
@@ -676,6 +758,7 @@ ShellRoot {
                 Text { text: "Apps"; color: "#ecf2f0"; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter
                     MouseArea { anchors.fill: parent; onClicked: root.openApps() } }
                 Text { text: Qt.formatTime(clock.date, "hh:mm"); color: "#ecf2f0"; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter }
+                FlowButton { width: 38; implicitHeight: 34; text: "◉"; Accessible.name: "Notifications"; onClicked: root.toggleNotifications() }
                 FlowButton { width: 38; implicitHeight: 34; text: "⚙"; Accessible.name: "Quick settings"; onClicked: root.toggleQuickSettings() }
             }
         }

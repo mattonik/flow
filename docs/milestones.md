@@ -174,3 +174,8 @@ The shared Flow button text and dynamic error and application-name labels explic
 ## Live output audio via PipeWire (2026-11-13)
 
 Quick Settings now reads and updates the default audio sink through Quickshell's tracked PipeWire service instead of polling `wpctl`; network polling remains unchanged. A read-only Quickshell probe passed in the ARM64 guest. The NixOS build activated and the shell restarted without closing apps. An external 30% → 40% change appeared in the panel; keyboard +5% and mute gave 45% muted, confirmed by `wpctl`. The original 30% unmuted state was restored. Mouse, −5%, missing/reconnected devices, physical touch and power/performance are not yet tested. See [ADR 0001](engineering/ADR-0001-audio-service.md).
+
+
+## Coordinated service prototypes (2026-11-13)
+
+A Quickshell notification inbox prototype is built into the guest session and received a test D-Bus notification; it only retains up to 20 active notifications in memory and has no automatic alerts, persistent history or DND. The guest build succeeded, but the host was locked before visual interaction and lock-screen checks could be completed. A separate read-only Quickshell Networking probe observed the NetworkManager backend, full connectivity and two connected wired devices in the ARM64 guest; the existing network UI was not replaced. A standalone Niri event-state projection passed unit tests and matched initial guest window/workspace IDs and focus against separate snapshots; it is not yet connected to Flow's runtime. Touch, network changes and restart/reconnect are unverified. See ADRs 0002–0004.
