@@ -164,7 +164,7 @@ ShellRoot {
                     }
                     if (event.OverviewOpenedOrClosed) {
                         root.overviewOpen = event.OverviewOpenedOrClosed.is_open
-                        if (root.overviewOpen) { root.appMenuOpen = false; root.openMenuWhenReady = false; root.switcherOpen = false; root.quickSettingsOpen = false }
+                        if (root.overviewOpen) { root.deskOpen = false; root.notificationsOpen = false; root.appMenuOpen = false; root.openMenuWhenReady = false; root.switcherOpen = false; root.quickSettingsOpen = false }
                     }
                 } catch (e) {}
             }
