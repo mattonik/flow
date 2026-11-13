@@ -47,6 +47,12 @@ class FloeThemeTest(unittest.TestCase):
             p = TOKENS["semantic"][mode]
             self.assertGreaterEqual(contrast(p["accent"]["$value"], p["on-accent"]["$value"]), 4.5)
 
+    def test_switch_handle_contrasts_with_active_track(self):
+        for mode in ("dark", "light"):
+            p = TOKENS["semantic"][mode]
+            with self.subTest(mode=mode):
+                self.assertGreaterEqual(contrast(p["accent"]["$value"], p["surface-raised"]["$value"]), 3.0)
+
     def test_international_font_policy(self):
         families = TOKENS["typography"]["family"]
         self.assertEqual(families["interface"]["$value"][0], "Noto Sans")

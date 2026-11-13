@@ -340,7 +340,7 @@ ShellRoot {
                 Rectangle {
                     x: toggle.checked ? parent.width - width - 4 : 4; anchors.verticalCenter: parent.verticalCenter
                     width: 20; height: 20; radius: 10
-                    color: toggle.checked ? floeTheme.onAccent : floeTheme.textMuted
+                    color: toggle.checked ? floeTheme.surfaceRaised : floeTheme.textMuted
                 }
             }
         }
@@ -431,6 +431,7 @@ ShellRoot {
                         id: searchButton
                         onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(searchButton)
                         width: Math.min(parent.width, 590)
+                        leftPadding: 18; rightPadding: 18
                         text: "Search apps and open spaces"
                         Accessible.name: text
                         contentItem: Item {
@@ -438,7 +439,7 @@ ShellRoot {
                                 id: searchGlyph
                                 anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
                                 text: "⌕"; textFormat: Text.PlainText; color: floeTheme.accent
-                                font.pixelSize: 20; font.family: floeTheme.interfaceFont
+                                font.pixelSize: 26; font.family: floeTheme.interfaceFont
                             }
                             Text {
                                 anchors.left: searchGlyph.right; anchors.leftMargin: 12
@@ -489,7 +490,19 @@ ShellRoot {
                     Flow {
                         width: parent.width
                         spacing: 8
-                        FlowButton { id: pinCurrentButton; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(pinCurrentButton); width: 200; text: "Pin current space · Super P"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("pin") }
+                        FlowButton {
+                            id: pinCurrentButton
+                            onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(pinCurrentButton)
+                            width: Math.min(parent.width, 216); text: "Pin current space · Super P"
+                            contentItem: Text {
+                                text: "Pin current space · <span style=\"font-family:'" + floeTheme.technicalFont + "'\">Super P</span>"
+                                textFormat: Text.RichText; color: pinCurrentButton.enabled ? floeTheme.textPrimary : floeTheme.textMuted
+                                font.pixelSize: 14; font.family: floeTheme.interfaceFont
+                                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
+                            }
+                            enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"
+                            onClicked: root.spaceAction("pin")
+                        }
                         FlowButton { id: editPinsButton; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(editPinsButton); visible: root.pins.length > 0; width: 100; text: root.editPins ? "Done" : "Edit pins"; onClicked: root.editPins = !root.editPins }
                     }
                     Row {
@@ -563,7 +576,7 @@ ShellRoot {
                         }
                         Text { visible: root.recoveryMessage !== ""; text: root.recoveryMessage; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
                     }
-                    Text { text: "Tab to navigate · Esc or Super H to return"; color: floeTheme.textMuted; font.pixelSize: 12 }
+                    Text { text: "<span style=\"font-family:'" + floeTheme.technicalFont + "'\">Tab</span> to navigate · <span style=\"font-family:'" + floeTheme.technicalFont + "'\">Esc</span> or <span style=\"font-family:'" + floeTheme.technicalFont + "'\">Super H</span> to return"; textFormat: Text.RichText; color: floeTheme.textMuted; font.pixelSize: 12 }
                 }
             }
         }
@@ -604,7 +617,7 @@ ShellRoot {
                 Flow {
                     width: parent.width; spacing: 12
                     Text { text: "OPEN SPACES  ·  " + root.displaySpaces.length; color: floeTheme.accent; font.bold: true; font.pixelSize: 13 }
-                    Text { text: "Select a space or app · Esc to close"; color: floeTheme.textMuted; font.pixelSize: 13 }
+                    Text { text: "Select a space or app · <span style=\"font-family:'" + floeTheme.technicalFont + "'\">Esc</span> to close"; textFormat: Text.RichText; color: floeTheme.textMuted; font.pixelSize: 13 }
                 }
                 Flow {
                     width: parent.width; spacing: 8
