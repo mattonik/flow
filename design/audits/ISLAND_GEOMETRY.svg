@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1260" height="755" viewBox="0 0 1260 755" role="img" aria-labelledby="title desc">
+<title id="title">Floe native top-chrome geometry audit: desktop versus tablet</title>
+<desc id="desc">Source-derived rectangles show no collision at 1280 logical pixels but 220 pixels of overlap between the app menu trigger and Island at 320 logical pixels. A separate Desk capsule overlaps the Island.</desc>
+<rect width="1260" height="755" rx="24" fill="#0B1218"/>
+<text x="52" y="54" fill="#EBF1EB" font-family="Noto Sans, sans-serif" font-weight="600" font-size="25">Floe / Top chrome — geometry check</text>
+<text x="52" y="83" fill="#9DB2B4" font-family="Noto Sans, sans-serif" font-size="15">Current QML dimensions • schematic overlays, NOT actual VM screenshots</text>
+<!-- desktop screen: 1280x720 scaled .60 -->
+<text x="52" y="135" fill="#BDDAD1" font-family="Noto Sans, sans-serif" font-size="18">Desktop / 1280 logical px</text>
+<rect x="52" y="153" width="768" height="432" rx="13" fill="#1C2D36" stroke="#78969A" stroke-width="2"/>
+<!-- menu x 8, width 220 scaled .6 -->
+<rect x="56.8" y="159" width="132" height="26.4" rx="9" fill="#476770" stroke="#BDDAD1" stroke-width="1"/>
+<text x="65" y="176" fill="#EBF1EB" font-family="Noto Sans, sans-serif" font-size="11">App commands · 220</text>
+<!-- island x 482, width 316 -->
+<rect x="341.2" y="159" width="189.6" height="26.4" rx="13" fill="#BDDAD1"/>
+<text x="377" y="176" fill="#0B1218" font-family="Noto Sans, sans-serif" font-size="11" font-weight="600">Island · 316</text>
+<text x="78" y="289" fill="#9DB2B4" font-family="Noto Sans, sans-serif" font-size="18">Work / real Niri app space</text>
+<text x="78" y="318" fill="#9DB2B4" font-family="Noto Sans, sans-serif" font-size="13">Menu and Island are separated</text>
+<text x="78" y="344" fill="#9DB2B4" font-family="Noto Sans, sans-serif" font-size="13">Desk adds an additional centered 150px capsule</text>
+<!-- tablet screen x880..1136, 320 scaled .8 -->
+<text x="880" y="135" fill="#BDDAD1" font-family="Noto Sans, sans-serif" font-size="18">Tablet / 320 logical px</text>
+<rect x="880" y="153" width="256" height="409.6" rx="16" fill="#1C2D36" stroke="#78969A" stroke-width="2"/>
+<rect x="886.4" y="159.4" width="176" height="35.2" rx="12" fill="#476770" stroke="#BDDAD1" stroke-width="1"/>
+<rect x="881.6" y="159.4" width="252.8" height="35.2" rx="17" fill="#BDDAD1" opacity=".75"/>
+<rect x="886.4" y="159.4" width="176" height="35.2" rx="12" fill="#F1BAAA" opacity=".82"/>
+<text x="896" y="183" fill="#0B1218" font-family="Noto Sans, sans-serif" font-size="13" font-weight="600">220px overlap</text>
+<text x="898" y="265" fill="#EBF1EB" font-family="Noto Sans, sans-serif" font-size="18">Top controls collide</text>
+<text x="898" y="292" fill="#9DB2B4" font-family="Noto Sans, sans-serif" font-size="12">Fixed 316px Island</text>
+<text x="898" y="316" fill="#9DB2B4" font-family="Noto Sans, sans-serif" font-size="12">220px app trigger</text>
+<text x="898" y="340" fill="#9DB2B4" font-family="Noto Sans, sans-serif" font-size="12">2px side clearance</text>
+<!-- callout -->
+<rect x="52" y="626" width="1084" height="84" rx="17" fill="#263C46"/>
+<text x="78" y="658" fill="#EBF1EB" font-family="Noto Sans, sans-serif" font-size="18" font-weight="600">Design response: one coordinated top plane, multiple responsive layouts</text>
+<text x="78" y="688" fill="#BDDAD1" font-family="Noto Sans, sans-serif" font-size="14">System Island ≠ app menu ≠ Group controls. Resolve geometry and focus before styling details.</text>
+</svg>
