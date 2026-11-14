@@ -60,6 +60,21 @@ class NiriActions:
 
 
 class RecoveryTest(unittest.TestCase):
+    def test_save_warnings_identify_windows_that_need_manual_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            apps = Path(directory) / "applications"
+            apps.mkdir()
+            (apps / "known.desktop").touch()
+            entries = [{"app_id": "known", "column": 1}, {"app_id": "known", "column": 2},
+                       {"app_id": "missing", "column": None}, {"app_id": None, "column": 3}]
+            warnings = restore.recovery_warnings(entries, [directory])
+            self.assertTrue(any("known: multiple windows" in warning for warning in warnings))
+            self.assertTrue(any("missing: no matching" in warning for warning in warnings))
+            self.assertTrue(any("without an application ID" in warning for warning in warnings))
+            self.assertTrue(any("Floating or untiled" in warning for warning in warnings))
+            self.assertFalse(any("known: no matching" in warning for warning in warnings))
+            self.assertEqual(restore.recovery_warnings([{"app_id": "known", "column": 1}], [directory]), [])
+
     def test_save_preserves_existing_snapshot_for_side_by_side_or_pending_group(self):
         ws = {"id": 1, "active_window_id": 1}
         for group in ({"id": "g", "members": ["one", "two"], "layout": "side-by-side"},

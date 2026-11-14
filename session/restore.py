@@ -54,6 +54,21 @@ def pinned_apps(pins):
     return {app for pin in pins for app in pin.get("members", [pin["app_id"]])}
 
 
+def recovery_warnings(entries, dirs):
+    counts = Counter(entry.get("app_id") for entry in entries)
+    warnings = []
+    if any(not isinstance(app, str) or not app for app in counts):
+        warnings.append("Windows without an application ID need manual recovery")
+    for app in sorted(app for app in counts if isinstance(app, str) and app):
+        if counts[app] > 1:
+            warnings.append(f"{app}: multiple windows need manual recovery after restart")
+        if not spaces.desktop_file(app, dirs):
+            warnings.append(f"{app}: no matching installed application; reopen manually")
+    if any(entry.get("column") is None for entry in entries):
+        warnings.append("Floating or untiled windows need manual recovery")
+    return warnings
+
+
 def save(path, workspace, windows, session=None, pins=(), registered=None):
     if registered is not None and any(group.get("layout") == "side-by-side" or group.get("pending_layout")
                                       for group in registered):
@@ -396,7 +411,10 @@ def main():
                     pinned_apps(pins)
                     workspace, windows = spaces.snapshot()
                     count = save(path, workspace, windows, spaces.session_id(), pins, registered)
-                    print(json.dumps({"message": f"Saved {count} open windows. Save documents in each app before restarting."}))
+                    dirs = (os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share"), *os.environ.get("XDG_DATA_DIRS", "/run/current-system/sw/share:/usr/share").split(":"))
+                    warnings = recovery_warnings(json.loads(path.read_text())["windows"], dirs)
+                    print(json.dumps({"message": f"Saved {count} open windows. Save documents in each app before restarting." +
+                                      (" " + "; ".join(warnings) if warnings else "")}))
                 elif op == "rename-group":
                     if len(sys.argv) != 4:
                         raise ValueError("Group name and ID are required")

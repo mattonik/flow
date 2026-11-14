@@ -323,3 +323,7 @@ Apps and combined search now use Fuzzel's on-demand keyboard focus so clicking a
 ## Desk controls and overlays (2026-11-13)
 
 Settings switches now include their labels in the same keyboard-focusable control. Apps and Notifications open above the Desk and return to it when dismissed; choosing an application leaves the Desk and starts it. In the ARM64 guest, both labels were clicked and their settings restored, both overlays opened and closed over the Desk, and a disposable Foot terminal launched from Apps and was closed. The NixOS build and ARM64 spaces check passed. Physical touch and screen-reader behavior remain untested.
+
+## Recovery save warnings (2026-11-14)
+
+Saving a session now reports known reasons a window may need manual recovery after restarting: duplicate or missing application IDs, no exact installed desktop entry, and floating or untiled windows. An isolated-state save against the running ARM64 guest reported five windows without changing the real snapshot; unit tests cover each warning and a recoverable case. These checks cannot tell whether documents are saved or an application will restore its internal state.
