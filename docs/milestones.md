@@ -327,3 +327,9 @@ Settings switches now include their labels in the same keyboard-focusable contro
 ## Recovery save warnings (2026-11-14)
 
 Saving a session now reports known reasons a window may need manual recovery after restarting: duplicate or missing application IDs, no exact installed desktop entry, and floating or untiled windows. An isolated-state save against the running ARM64 guest reported five windows without changing the real snapshot; unit tests cover each warning and a recoverable case. These checks cannot tell whether documents are saved or an application will restore its internal state.
+
+## UTM reboot and storage investigation (2026-11-14)
+
+Before testing, the existing Flow state was archived in the guest and copied to the host; a new session snapshot recorded five open windows. The ARM64 UTM guest's warm reboot reached system shutdown but remained on a black display for over a minute while the QEMU process used approximately four CPU cores. A forced stop followed by a cold start reached the login screen with a new boot ID and no failed system services. The cause of the warm-reboot hang remains unknown, and restoration after login is not yet verified.
+
+The guest's root filesystem is also at 99% inode use. Garbage collection of unreferenced Nix store paths retained all 108 system generations, but freed only about 39,000 inodes; a NixOS rebuild exhausted these and failed before activation. The failed build's unreferenced paths were collected afterward. The recovery-warning change is committed but was not installed into the guest. Address inode capacity while preserving the desired rollback history before attempting another rebuild.
