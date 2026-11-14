@@ -2,8 +2,8 @@
 """Opt-in Niri Group lifecycle integration test using isolated temporary state.
 
 Run from the Flow checkout inside a disposable Niri session:
-    nix shell --inputs-from . nixpkgs#python3 -c python3 tests/niri_group_lifecycle_smoke.py
-Requires Niri, Foot, an empty workspace on the focused output and no concurrent
+    nix shell --inputs-from . nixpkgs#python3 nixpkgs#glib -c python3 tests/niri_group_lifecycle_smoke.py
+Requires Niri, Foot, Gio, an empty workspace on the focused output and no concurrent
 user interaction. The test invokes this checkout's spaces and recovery CLIs
 with a temporary XDG_STATE_HOME, opens only uniquely identified Foot windows,
 and never writes real Flow state. It cleans up its processes and restores the
@@ -62,6 +62,9 @@ def cli(env, file, *args, expect_ok=True):
 def main():
     if not __debug__:
         raise RuntimeError('Run this test without Python optimization')
+    for program in ('niri', 'foot', 'gio'):
+        if not shutil.which(program):
+            raise RuntimeError(f'{program} is required on PATH for this test')
     original = focus()
     original_windows = read('windows')
     real_state = Path(os.environ.get('XDG_STATE_HOME') or Path.home() / '.local/state') / 'flow'
