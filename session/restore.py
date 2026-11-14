@@ -3,6 +3,7 @@
 import json
 import os
 import fcntl
+import hashlib
 from collections import Counter
 from pathlib import Path
 import subprocess
@@ -48,6 +49,65 @@ def groups_unchanged_or_focused(before, after, workspace, windows):
         if not active or new.get("last_focused_app") not in old.get("members", []) or active.get("app_id") != new.get("last_focused_app"):
             return False
     return True
+
+
+def saved_order_matches(entries, restored, workspace, windows):
+    current = [w for w in windows if w.get("workspace_id") == workspace["id"]]
+    if len(restored) != len(entries) or {w["id"] for _, w in restored} != {w["id"] for w in current}:
+        return False
+    rows = Counter()
+    for entry, saved_window in restored:
+        column = entry.get("column")
+        if not isinstance(column, int) or isinstance(column, bool) or column < 1:
+            return False
+        rows[column] += 1
+        live = next((w for w in current if w["id"] == saved_window["id"]), None)
+        if not live or live.get("is_floating") or live.get("layout", {}).get("pos_in_scrolling_layout") != [column, rows[column]]:
+            return False
+    return True
+
+
+def automatic(op, path):
+    runtime = Path(os.environ["XDG_RUNTIME_DIR"])
+    marker = runtime / ("flow-recovery-" + hashlib.sha256(spaces.session_id().encode()).hexdigest())
+    with marker.with_suffix(".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        state = marker.read_text() if marker.exists() else ""
+        if op == "auto-pause":
+            marker.write_text("blocked")
+            return {"message": "Save session to start automatic recovery."}
+        if op == "auto-ready":
+            marker.write_text("ready")
+            return {"message": "Automatic session recovery is ready."}
+        if op == "auto-start":
+            if state:
+                return {"message": "Automatic session recovery is ready."} if state == "ready" else {"error": "Automatic saving is paused; review and save the session."}
+            marker.write_text("blocked")
+            if path.exists():
+                result = subprocess.run([sys.executable, __file__, "restore"], capture_output=True, text=True)
+                try:
+                    output = json.loads(result.stdout)
+                except json.JSONDecodeError:
+                    return {"error": "Automatic recovery failed; the saved session was preserved."}
+                message = output.get("message", "")
+                if result.returncode or not (message.startswith("Restored ") and message.endswith(" windows.")):
+                    return {"error": (output.get("error") or message or "Automatic recovery failed") + " Automatic saving is paused; review and save the session."}
+            marker.write_text("ready")
+            return {"message": "Automatic session recovery is ready."}
+        if state != "ready":
+            return {"error": "Automatic saving is paused; review and save the session."}
+        workspace, windows = spaces.snapshot()
+        if not any(w.get("workspace_id") == workspace["id"] for w in windows):
+            return {"message": "Automatic saving skipped an empty workspace."}
+        result = subprocess.run([sys.executable, __file__, "auto-save-checked"], capture_output=True, text=True)
+        try:
+            output = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            marker.write_text("blocked")
+            return {"error": "Automatic saving failed; the saved session was preserved."}
+        if result.returncode or output.get("error"):
+            marker.write_text("blocked")
+        return output
 
 
 def write_snapshot(path, data):
@@ -267,7 +327,8 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
             for index, (_, window) in enumerate(restored, 1):
                 current, live = checked_snapshot()
                 if any(w.get("workspace_id") == workspace_id and w.get("app_id") in pinned for w in live):
-                    report.append("Pinned spaces keep their positions; session order needs manual recovery")
+                    if not saved_order_matches(entries, restored, current, live):
+                        report.append("Pinned spaces keep their positions; session order needs manual recovery")
                     break
                 action("action", "focus-window", "--id", window["id"])
                 current, live = checked_snapshot()
@@ -390,7 +451,8 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 if destinations:
                     workspace, live = checked_snapshot()
                     if any(w.get("workspace_id") == workspace_id and w.get("app_id") in pinned for w in live):
-                        report.append("Pinned spaces keep their positions; session order needs manual recovery")
+                        if not saved_order_matches(entries, restored, workspace, live):
+                            report.append("Pinned spaces keep their positions; session order needs manual recovery")
                         destinations = []
                     else:
                         valid = all(group_column_matches(ids, workspace, live) if ids else
@@ -427,23 +489,31 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
 def main():
     path = state_path()
     op = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if op in ("auto-start", "auto-save", "auto-ready", "auto-pause"):
+        print(json.dumps(automatic(op, path)))
+        return
     if op == "status":
         print(json.dumps({"saved": path.exists()}))
         return
-    if op in ("save", "rename-group", "restore"):
+    if op in ("save", "auto-save-checked", "rename-group", "restore"):
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         with (path.parent / "session.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             with (path.parent / "spaces.lock").open("a") as spaces_lock:
                 fcntl.flock(spaces_lock, fcntl.LOCK_EX)
                 registered = group_store.load(path.parent)
-                if op == "save":
+                if op in ("save", "auto-save-checked"):
                     pins_path = path.parent / "spaces.json"
                     pins = json.loads(pins_path.read_text()) if pins_path.exists() else []
                     pinned_apps(pins)
                     workspace, windows = spaces.snapshot()
-                    count = save(path, workspace, windows, spaces.session_id(), pins, registered)
                     dirs = (os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share"), *os.environ.get("XDG_DATA_DIRS", "/run/current-system/sw/share:/usr/share").split(":"))
+                    if op == "auto-save-checked":
+                        entries = [{"app_id": w.get("app_id"), "column": None if w.get("is_floating") else (w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0]} for w in windows if w.get("workspace_id") == workspace["id"]]
+                        warnings = recovery_warnings(entries, dirs)
+                        if not entries or warnings:
+                            raise ValueError("Automatic saving paused; the saved session was preserved. " + "; ".join(warnings))
+                    count = save(path, workspace, windows, spaces.session_id(), pins, registered)
                     warnings = recovery_warnings(json.loads(path.read_text())["windows"], dirs)
                     print(json.dumps({"message": f"Saved {count} open windows. Save documents in each app before restarting." +
                                       (" " + "; ".join(warnings) if warnings else "")}))

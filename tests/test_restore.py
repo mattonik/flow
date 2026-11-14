@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "session"))
 spec = importlib.util.spec_from_file_location("restore", Path(__file__).parents[1] / "session/restore.py")
@@ -60,6 +60,67 @@ class NiriActions:
 
 
 class RecoveryTest(unittest.TestCase):
+    def test_saved_order_matches_only_complete_exact_layout(self):
+        ws = {"id": 1}
+        a, b, c = window(1, "a", 1), window(2, "b", 2), window(3, "c", 2)
+        c["layout"]["pos_in_scrolling_layout"] = [2, 2]
+        entries = [{"column": 1}, {"column": 2}, {"column": 2}]
+        restored = list(zip(entries, [a, b, c]))
+        self.assertTrue(restore.saved_order_matches(entries, restored, ws, [a, b, c]))
+        self.assertFalse(restore.saved_order_matches(entries, restored, ws, [a, b, c, window(4, "d", 3)]))
+        self.assertFalse(restore.saved_order_matches(entries, restored, ws, [a, c, b | {"layout": {"pos_in_scrolling_layout": [3, 1]}}]))
+        self.assertFalse(restore.saved_order_matches(entries, restored[:-1], ws, [a, b, c]))
+
+    def test_automatic_save_rejects_ambiguous_windows_without_overwriting_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"XDG_STATE_HOME": directory}), \
+                patch.object(sys, "argv", ["flow-recovery", "auto-save-checked"]), \
+                patch.object(restore.group_store, "load", return_value=[]), \
+                patch.object(restore.spaces, "snapshot", return_value=({"id": 1}, [window(1, "app", 1), window(2, "app", 2)])), \
+                patch.object(restore.spaces, "desktop_file", return_value=Path("/tmp/app.desktop")):
+            path = Path(directory) / "flow/session.json"
+            path.parent.mkdir()
+            path.write_text("previous snapshot")
+            with self.assertRaisesRegex(ValueError, "saved session was preserved"):
+                restore.main()
+            self.assertEqual(path.read_text(), "previous snapshot")
+
+    def test_automatic_start_restores_only_once_per_compositor_session(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \
+                patch.object(restore.spaces, "session_id", return_value="session"), \
+                patch.object(restore.subprocess, "run", return_value=Mock(returncode=0, stdout='{"message":"Restored 2 windows."}')) as run:
+            path = Path(directory) / "session.json"
+            path.write_text("saved")
+            self.assertIn("ready", restore.automatic("auto-start", path)["message"])
+            self.assertIn("ready", restore.automatic("auto-start", path)["message"])
+            self.assertEqual(run.call_count, 1)
+
+    def test_automatic_recovery_preserves_snapshot_after_partial_restore(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \
+                patch.object(restore.spaces, "session_id", return_value="session"), \
+                patch.object(restore.subprocess, "run", return_value=Mock(returncode=0, stdout=json.dumps({"message": "Restored 2 windows. Session order needs manual recovery"}))) as run:
+            path = Path(directory) / "session.json"
+            path.write_text("saved")
+            self.assertIn("paused", restore.automatic("auto-start", path)["error"])
+            self.assertIn("paused", restore.automatic("auto-start", path)["error"])
+            self.assertIn("paused", restore.automatic("auto-save", path)["error"])
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(path.read_text(), "saved")
+
+    def test_automatic_save_skips_empty_and_pauses_after_failure(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \
+                patch.object(restore.spaces, "session_id", return_value="session"), \
+                patch.object(restore.spaces, "snapshot", return_value=({"id": 1}, [])) as snapshot, \
+                patch.object(restore.subprocess, "run", return_value=Mock(returncode=1, stdout='{"error":"unsafe"}')) as run:
+            path = Path(directory) / "session.json"
+            path.write_text("saved")
+            restore.automatic("auto-ready", path)
+            self.assertIn("empty", restore.automatic("auto-save", path)["message"])
+            run.assert_not_called()
+            snapshot.return_value = ({"id": 1}, [window(1, "app", 1)])
+            self.assertEqual(restore.automatic("auto-save", path)["error"], "unsafe")
+            self.assertIn("paused", restore.automatic("auto-save", path)["error"])
+            self.assertEqual(path.read_text(), "saved")
+
     def test_recovery_accepts_only_matching_group_focus_updates(self):
         old = [{"id": "g", "label": "Writing", "members": ["one", "two"]}]
         new = [{**old[0], "last_focused_app": "one"}]
@@ -252,6 +313,17 @@ class RecoveryTest(unittest.TestCase):
                                         pinned={"pin"})
         self.assertEqual(count, 1)
         self.assertTrue(any("Pinned spaces keep" in message for message in report))
+        self.assertNotIn("move-column-to-index", [call.args[1] for call in actions.call_args_list])
+
+    def test_pinned_layout_already_in_saved_order_needs_no_manual_recovery(self):
+        ws = {"id": 1, "active_window_id": 1}
+        windows = [window(1, "pin", 1), window(2, "one", 2), window(3, "two", 2)]
+        windows[2]["layout"]["pos_in_scrolling_layout"] = [2, 2]
+        saved = {"version": 1, "windows": [{"app_id": "pin", "column": 1},
+                                                {"app_id": "one", "column": 2}, {"app_id": "two", "column": 2}]}
+        actions = Mock()
+        report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions, pinned={"pin"})
+        self.assertEqual((report, count), ([], 3))
         self.assertNotIn("move-column-to-index", [call.args[1] for call in actions.call_args_list])
 
     def test_single_window_recovery_stops_if_a_pin_appears_before_move(self):

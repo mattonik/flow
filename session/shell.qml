@@ -100,6 +100,7 @@ ShellRoot {
         id: menuPreferences
         location: "file://" + (Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config") + "/flow-settings.ini"
         property bool appMenuEnabled: false
+        property bool autoRecovery: false
     }
     property var appMenuPath: []
     function currentAppItems() {
@@ -178,6 +179,7 @@ ShellRoot {
     }
     Timer { id: eventReconnect; interval: 5000; onTriggered: if (!niriEvents.running) niriEvents.running = true }
     property string recoveryMessage: ""
+    property bool autoRecoveryBlocked: true
     property string renameGroupId: ""
     property bool switcherOpen: false
     onSwitcherOpenChanged: if (!switcherOpen) renameGroupId = ""
@@ -241,6 +243,11 @@ ShellRoot {
                 try {
                     const result = JSON.parse(this.text)
                     root.recoveryMessage = result.error || result.message || "Recovery unavailable"
+                    if (recoveryProcess.command[1] === "auto-start" || recoveryProcess.command[1] === "auto-save" || recoveryProcess.command[1] === "auto-ready") {
+                        root.autoRecoveryBlocked = !!result.error
+                        if (result.error) { root.deskOpen = true; root.settingsOpen = true; Qt.callLater(function() { deskScroller.ensureVisible(recoveryStatus) }) }
+                    }
+                    if (recoveryProcess.command[1] === "save" && !result.error && menuPreferences.autoRecovery) autoReadyTimer.restart()
                     if (recoveryProcess.command[1] === "rename-group") {
                         root.spacesError = result.error || ""
                         if (!result.error) root.renameGroupId = ""
@@ -248,6 +255,30 @@ ShellRoot {
                     if (!result.error) refreshAfterEvent.restart()
                 } catch (e) { root.recoveryMessage = "Could not read recovery result" }
             }
+        }
+    }
+    Timer {
+        id: autoStartTimer; interval: 3000
+        Component.onCompleted: if (menuPreferences.autoRecovery) start()
+        onTriggered: {
+            if (!menuPreferences.autoRecovery) return
+            if (recoveryProcess.running || spacesProcess.running) { restart(); return }
+            recoveryProcess.command = ["flow-recovery", "auto-start"]; recoveryProcess.running = true
+        }
+    }
+    Timer {
+        id: autoReadyTimer; interval: 200
+        onTriggered: {
+            if (!menuPreferences.autoRecovery) return
+            if (recoveryProcess.running || spacesProcess.running) { restart(); return }
+            recoveryProcess.command = ["flow-recovery", "auto-ready"]; recoveryProcess.running = true
+        }
+    }
+    Timer {
+        interval: 30000; running: menuPreferences.autoRecovery; repeat: true
+        onTriggered: {
+            if (root.autoRecoveryBlocked || recoveryProcess.running || spacesProcess.running || root.pendingSpaceActions.length) return
+            recoveryProcess.command = ["flow-recovery", "auto-save"]; recoveryProcess.running = true
         }
     }
     Timer {
@@ -589,13 +620,26 @@ ShellRoot {
                             onToggled: { menuPreferences.appMenuEnabled = checked; menuPreferences.sync(); root.appMenuOpen = false }
                         }
                         Text { text: "SESSION RECOVERY"; color: floeTheme.textMuted; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
+                        FlowSwitch {
+                            id: autoRecoverySwitch
+                            text: "Automatically save and restore session"
+                            checked: menuPreferences.autoRecovery
+                            enabled: !recoveryProcess.running && !spacesProcess.running
+                            Accessible.name: text
+                            onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(autoRecoverySwitch)
+                            onToggled: {
+                                menuPreferences.autoRecovery = checked; menuPreferences.sync()
+                                root.autoRecoveryBlocked = true
+                                if (checked) { recoveryProcess.command = ["flow-recovery", "auto-pause"]; recoveryProcess.running = true }
+                            }
+                        }
                         Text { text: "Save your documents, then save the current window list before restarting."; color: floeTheme.textMuted; width: parent.width; wrapMode: Text.Wrap }
                         Flow {
                             width: parent.width; spacing: 8
                             FlowButton { id: saveSession; width: 180; text: "Save session"; enabled: !recoveryProcess.running && !spacesProcess.running; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(saveSession); onClicked: { recoveryProcess.command = ["flow-recovery", "save"]; recoveryProcess.running = true } }
                             FlowButton { id: restoreSession; width: 180; text: "Restore session"; enabled: !recoveryProcess.running && !spacesProcess.running; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(restoreSession); onClicked: { root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
                         }
-                        Text { visible: root.recoveryMessage !== ""; text: root.recoveryMessage; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
+                        Text { id: recoveryStatus; visible: root.recoveryMessage !== ""; text: root.recoveryMessage; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
                     }
                     Text { text: "<span style=\"font-family:'" + floeTheme.technicalFont + "'\">Tab</span> to navigate · <span style=\"font-family:'" + floeTheme.technicalFont + "'\">Esc</span> or <span style=\"font-family:'" + floeTheme.technicalFont + "'\">Super H</span> to return"; textFormat: Text.RichText; color: floeTheme.textMuted; font.pixelSize: 12 }
                 }
