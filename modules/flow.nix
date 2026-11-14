@@ -41,6 +41,10 @@ let
     export PATH="${lib.makeBinPath [ pkgs.gnome-control-center ]}:$PATH"
     exec ${lib.getExe pkgs.gnome-control-center} wifi
   '';
+  kdeSettings = pkgs.writeShellScriptBin "systemsettings" ''
+    export QML2_IMPORT_PATH="${lib.makeSearchPath "lib/qt-6/qml" [ pkgs.qt6.qtpositioning pkgs.qt6.qtlocation pkgs.kdePackages.kirigami-addons pkgs.kdePackages.kdeclarative ]}''${QML2_IMPORT_PATH:+:$QML2_IMPORT_PATH}"
+    exec ${lib.getExe pkgs.kdePackages.systemsettings} "$@"
+  '';
   keyboard = pkgs.writeShellScriptBin "flow-keyboard" ''
     umask 077
     session="''${XDG_SESSION_ID:-$WAYLAND_DISPLAY}"
@@ -87,10 +91,10 @@ in {
       emoji = [ "Noto Color Emoji" ];
     };
     security.polkit.enable = true;
-    environment.systemPackages = with pkgs; [
+    environment.systemPackages = (with pkgs; [
       foot fuzzel quickshell swaylock firefox nautilus gnome-control-center networkmanagerapplet spaces launcher appmenu keyboard wvkbd wifiSettings
       xwayland-satellite mesa-demos wayland-utils recovery search wireplumber networkmanager
-    ];
+    ]) ++ lib.optionals config.services.desktopManager.plasma6.enable [ (lib.hiPrio kdeSettings) ];
     environment.etc."niri/config.kdl".source = niriConfig;
     environment.etc."flow/shell.qml".source = ../session/shell.qml;
     environment.etc."flow/FloeTheme.qml".source = ../session/FloeTheme.qml;
