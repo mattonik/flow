@@ -18,6 +18,38 @@ def state_path():
     return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "flow" / "session.json"
 
 
+def pins_unchanged_or_rebound(before, after, session, windows):
+    if len(before) != len(after):
+        return False
+    for old, new in zip(before, after):
+        if old == new:
+            continue
+        if "members" in old or old.get("session") == session or new.get("session") != session:
+            return False
+        if {k: v for k, v in old.items() if k not in ("session", "window_id")} != {
+                k: v for k, v in new.items() if k not in ("session", "window_id")}:
+            return False
+        matches = [w for w in windows if w.get("app_id") == old.get("app_id")]
+        if len(matches) != 1 or matches[0].get("id") != new.get("window_id"):
+            return False
+    return True
+
+
+def groups_unchanged_or_focused(before, after, workspace, windows):
+    if len(before) != len(after):
+        return False
+    for old, new in zip(before, after):
+        if old == new:
+            continue
+        if {k: v for k, v in old.items() if k != "last_focused_app"} != {
+                k: v for k, v in new.items() if k != "last_focused_app"}:
+            return False
+        active = next((w for w in windows if w.get("id") == workspace.get("active_window_id")), None)
+        if not active or new.get("last_focused_app") not in old.get("members", []) or active.get("app_id") != new.get("last_focused_app"):
+            return False
+    return True
+
+
 def write_snapshot(path, data):
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as tmp:
@@ -429,8 +461,6 @@ def main():
                     pins_path = path.parent / "spaces.json"
                     pins = json.loads(pins_path.read_text()) if pins_path.exists() else []
                     pinned_apps(pins)
-                    original_registered = json.dumps(registered, sort_keys=True)
-                    original_pins = json.dumps(pins, sort_keys=True)
                     session = spaces.session_id()
         if op == "restore":
             def checked_state():
@@ -441,10 +471,11 @@ def main():
                         now_groups = group_store.load(path.parent)
                         now_pins = json.loads(pins_path.read_text()) if pins_path.exists() else []
                         pinned_apps(now_pins)
-                        if (path.read_bytes() != original_snapshot or json.dumps(now_groups, sort_keys=True) != original_registered
-                                or json.dumps(now_pins, sort_keys=True) != original_pins):
+                        current = spaces.snapshot()
+                        if (path.read_bytes() != original_snapshot or not groups_unchanged_or_focused(registered, now_groups, *current)
+                                or not pins_unchanged_or_rebound(pins, now_pins, session, current[1])):
                             raise ValueError("Session, Groups or pinned spaces changed; session recovery stopped")
-                        return spaces.snapshot()
+                        return current
             def launch(desktop):
                 current, _ = checked_state()
                 if current["id"] != workspace["id"]:

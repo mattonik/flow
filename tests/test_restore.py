@@ -60,6 +60,26 @@ class NiriActions:
 
 
 class RecoveryTest(unittest.TestCase):
+    def test_recovery_accepts_only_matching_group_focus_updates(self):
+        old = [{"id": "g", "label": "Writing", "members": ["one", "two"]}]
+        new = [{**old[0], "last_focused_app": "one"}]
+        ws, windows = {"id": 1, "active_window_id": 1}, [window(1, "one", 1), window(2, "two", 1)]
+        self.assertTrue(restore.groups_unchanged_or_focused(old, new, ws, windows))
+        self.assertFalse(restore.groups_unchanged_or_focused(old, [{**new[0], "label": "Other"}], ws, windows))
+        self.assertFalse(restore.groups_unchanged_or_focused(old, [{**new[0], "last_focused_app": "two"}], ws, windows))
+        self.assertFalse(restore.groups_unchanged_or_focused(old, [], ws, windows))
+
+    def test_recovery_accepts_only_unambiguous_rebinding_of_old_session_pin(self):
+        old = [{"id": "pin", "app_id": "files", "label": "Home", "session": "old", "window_id": 9}]
+        new = [{**old[0], "session": "current", "window_id": 2}]
+        windows = [window(2, "files", 1)]
+        self.assertTrue(restore.pins_unchanged_or_rebound(old, new, "current", windows))
+        self.assertFalse(restore.pins_unchanged_or_rebound(old, new, "current", windows + [window(3, "files", 2)]))
+        self.assertFalse(restore.pins_unchanged_or_rebound(old, [{**new[0], "label": "Other"}], "current", windows))
+        self.assertFalse(restore.pins_unchanged_or_rebound(old, [{**new[0], "window_id": 3}], "current", windows))
+        self.assertFalse(restore.pins_unchanged_or_rebound([{**old[0], "session": "current"}], new, "current", windows))
+        self.assertFalse(restore.pins_unchanged_or_rebound(old, [], "current", windows))
+
     def test_save_warnings_identify_windows_that_need_manual_recovery(self):
         with tempfile.TemporaryDirectory() as directory:
             apps = Path(directory) / "applications"
