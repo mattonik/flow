@@ -178,12 +178,49 @@ class RecoveryTest(unittest.TestCase):
             with self.subTest(group=group):
                 launch, action = Mock(), Mock()
                 before = json.dumps(windows, sort_keys=True)
-                with self.assertRaisesRegex(ValueError, "cannot safely restore.*resolve it manually"):
+                with self.assertRaisesRegex(ValueError, "cannot safely restore|incomplete or changed"):
                     restore.restore(saved, ws, windows, [], launch, lambda: (ws, windows), action,
                                     registered=[group])
                 launch.assert_not_called()
                 action.assert_not_called()
                 self.assertEqual(json.dumps(windows, sort_keys=True), before)
+
+    def test_unpinned_side_group_snapshot_and_recovery(self):
+        ws = {"id": 1, "active_window_id": 2}
+        windows = [window(1, "one", 1), window(2, "two", 2)]
+        group = {"id": "g", "label": "Work", "members": ["one", "two"], "layout": "side-by-side"}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.json"
+            restore.save(path, ws, windows, "current", registered=[group])
+            saved = json.loads(path.read_text())
+            self.assertEqual(saved["groups"], [group])
+            self.assertEqual([e["column"] for e in saved["windows"]], [1, 2])
+            actions = Mock()
+            report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                            session="current", registered=[group])
+            self.assertEqual((report, count), ([], 2))
+            actions.assert_any_call("action", "set-window-width", "--id", 1, "50%")
+            actions.assert_any_call("action", "set-window-width", "--id", 2, "50%")
+            before = path.read_bytes()
+            with self.assertRaisesRegex(ValueError, "snapshot was not replaced"):
+                restore.save(path, ws, windows, "current", pins=[{"app_id": "one"}], registered=[group])
+            self.assertEqual(path.read_bytes(), before)
+            with self.assertRaisesRegex(ValueError, "cannot safely restore"):
+                restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), Mock(),
+                                pinned={"one"}, session="current", registered=[group])
+
+    def test_side_group_recovery_does_not_resize_wrong_order(self):
+        ws = {"id": 1, "active_window_id": 1}
+        windows = [window(1, "one", 2), window(2, "two", 1)]
+        group = {"id": "g", "label": "Work", "members": ["one", "two"], "layout": "side-by-side"}
+        saved = {"version": 1, "groups": [group], "windows": [{"app_id": "one", "column": 1},
+                                                                    {"app_id": "two", "column": 2}]}
+        actions = Mock()
+        report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                        session="current", registered=[group])
+        self.assertEqual(count, 2)
+        self.assertTrue(any("manual recovery" in message for message in report))
+        self.assertNotIn("set-window-width", [call.args[1] for call in actions.call_args_list])
 
     def test_snapshot_order_and_focus(self):
         with tempfile.TemporaryDirectory() as directory:

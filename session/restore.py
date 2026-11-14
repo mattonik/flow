@@ -162,9 +162,14 @@ def recovery_warnings(entries, dirs):
 
 
 def save(path, workspace, windows, session=None, pins=(), registered=None):
-    if registered is not None and any(group.get("layout") == "side-by-side" or group.get("pending_layout")
-                                      for group in registered):
-        raise ValueError("Stack side-by-side Groups and finish layout changes before saving the session; the snapshot was not replaced")
+    side_groups = [g for g in registered or [] if g.get("layout") == "side-by-side"]
+    if any(g.get("pending_layout") for g in registered or []):
+        raise ValueError("Finish Group layout changes before saving; the snapshot was not replaced")
+    for group in side_groups:
+        candidate = {"group_id": group["id"], "members": group["members"], "session": None}
+        if (any(set(group["members"]) & set(p.get("members", [p.get("app_id")])) for p in pins)
+                or not spaces.group_windows(candidate, workspace, windows, session, registered)):
+            raise ValueError("Unpin and check side-by-side Groups before saving; the snapshot was not replaced")
     current = [w for w in windows if w.get("workspace_id") == workspace["id"]]
     current.sort(key=lambda w: w.get("layout", {}).get("pos_in_scrolling_layout") or [99999, 0])
     entries = [{"app_id": w.get("app_id"), "window_id": w["id"], "label": w.get("title") or w.get("app_id") or "Unknown application",
@@ -176,6 +181,8 @@ def save(path, workspace, windows, session=None, pins=(), registered=None):
     live_counts = Counter(w.get("app_id") for w in windows)
     for group in previous:
         apps = group["members"]
+        if group in side_groups:
+            continue
         if any(live_counts[app] > 1 or live_counts[app] != sum(e["app_id"] == app for e in entries) for app in apps):
             raise ValueError("Saved Group members are ambiguous or on another workspace; session was not replaced")
         if all(live_counts[app] == 1 for app in apps):
@@ -214,7 +221,7 @@ def save(path, workspace, windows, session=None, pins=(), registered=None):
     for entry in entries:
         if entry["column"] is not None:
             columns.setdefault(entry["column"], []).append(entry)
-    groups = []
+    groups = list(side_groups)
     for members in columns.values():
         apps = [entry["app_id"] for entry in members]
         if len(apps) != 2 or not all(isinstance(app, str) and app and app_counts[app] == 1 for app in apps):
@@ -224,6 +231,8 @@ def save(path, workspace, windows, session=None, pins=(), registered=None):
             groups.append({**matches[0], "members": apps})
         elif registered is None:
             groups.append({"id": uuid.uuid4().hex, "label": " + ".join(entry["label"] for entry in members), "members": apps})
+    if side_groups and len(groups) != len(side_groups):
+        raise ValueError("Mixed stacked and side-by-side Groups cannot yet be saved; the snapshot was not replaced")
     for pin in pins:
         matches = [g for g in previous if g["id"] == pin.get("group_id")]
         if len(matches) == 1 and not any(g["id"] == matches[0]["id"]
@@ -235,15 +244,25 @@ def save(path, workspace, windows, session=None, pins=(), registered=None):
 
 def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=time.sleep, pinned=(), session=None,
             pinned_groups=(), registered=None):
-    if registered is not None and any(group.get("layout") == "side-by-side" or group.get("pending_layout")
-                                      for group in registered):
-        raise ValueError("Session recovery cannot safely restore a side-by-side or transitioning Group yet; keep its layout and resolve it manually")
+    side_groups = [g for g in registered or [] if g.get("layout") == "side-by-side"]
+    if (any(g.get("pending_layout") for g in registered or []) or
+            any(set(g["members"]) & (set(pinned) | pinned_apps(list(pinned_groups))) for g in side_groups)):
+        raise ValueError("Session recovery cannot safely restore a pinned or transitioning side-by-side Group yet; keep its layout and resolve it manually")
     if data.get("version") != 1 or not isinstance(data.get("windows"), list):
         raise ValueError("Unsupported or invalid saved session")
     entries = data["windows"]
     saved_groups = data.get("groups", []) if isinstance(data.get("groups", []), list) else []
     if any(not isinstance(e, dict) or not isinstance(e.get("app_id"), (str, type(None))) for e in entries):
         raise ValueError("Saved session includes a window without an application ID")
+    for group in side_groups:
+        matching = [g for g in saved_groups if isinstance(g, dict) and g.get("id") == group["id"]
+                    and g.get("members") == group["members"] and g.get("layout") == "side-by-side"]
+        pair = [[e for e in entries if e.get("app_id") == app] for app in group["members"]]
+        if (len(matching) != 1 or any(len(found) != 1 for found in pair)
+                or not isinstance(pair[0][0].get("column"), int) or isinstance(pair[0][0].get("column"), bool)
+                or pair[0][0]["column"] < 1
+                or pair[1][0].get("column") != pair[0][0]["column"] + 1):
+            raise ValueError("Saved side-by-side Group is incomplete or changed; session recovery stopped")
     ids = [e["app_id"] for e in entries]
     app_counts = Counter(ids)
     window_ids = Counter(e.get("window_id") for e in entries if isinstance(e.get("window_id"), int))
@@ -253,6 +272,8 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
         if isinstance(column, int) and not isinstance(column, bool) and column > 0:
             columns.setdefault(column, []).append(entry)
     groups = [group for group in columns.values() if len(group) > 1]
+    if side_groups and groups:
+        raise ValueError("Mixed stacked and side-by-side Groups require manual recovery")
     group_ids = {id(entry) for group in groups for entry in group}
     report, restored = [], []
     original = workspace.get("active_window_id")
@@ -323,7 +344,31 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
         restored.append((entry, matches[0]))
     desired_focus = next((w["id"] for e, w in restored if e.get("focused")), original)
     try:
-        if not groups:
+        if side_groups:
+            current, live = checked_snapshot()
+            if not saved_order_matches(entries, restored, current, live):
+                report.append("Side-by-side Group order needs manual recovery")
+            else:
+                for group in side_groups:
+                    candidate = {"group_id": group["id"], "members": group["members"], "session": None}
+                    pair = spaces.group_windows(candidate, current, live, session or "", registered)
+                    if not pair:
+                        report.append("Side-by-side Group is unavailable or ambiguous; check manually")
+                        continue
+                    ids = [w["id"] for w in pair]
+                    active = current.get("active_window_id")
+                    for ident in ids:
+                        current, live = checked_snapshot()
+                        pair = spaces.group_windows(candidate, current, live, session or "", registered)
+                        if not pair or [w["id"] for w in pair] != ids or current.get("active_window_id") != active:
+                            report.append("Side-by-side Group changed during recovery; check manually")
+                            break
+                        action("action", "set-window-width", "--id", ident, "50%")
+                    current, live = checked_snapshot()
+                    pair = spaces.group_windows(candidate, current, live, session or "", registered)
+                    if not pair or [w["id"] for w in pair] != ids or current.get("active_window_id") != active:
+                        report.append("Side-by-side Group changed during recovery; check manually")
+        elif not groups:
             for index, (_, window) in enumerate(restored, 1):
                 current, live = checked_snapshot()
                 if any(w.get("workspace_id") == workspace_id and w.get("app_id") in pinned for w in live):

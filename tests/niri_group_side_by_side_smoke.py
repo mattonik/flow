@@ -190,6 +190,31 @@ def main():
             if not group_space(created, group_id):
                 raise RuntimeError("Created Group was not shown as one switcher space")
 
+            # Exercise recovery while the Group is unpinned and has two columns.
+            cli(cli_env, "group-layout", group_id)
+            recovery_path = CODE / "restore.py"
+            def recover(op):
+                process = subprocess.run([sys.executable, str(recovery_path), op], env=cli_env,
+                                         text=True, capture_output=True, timeout=30)
+                value = json.loads(process.stdout)
+                if process.returncode or value.get("error"):
+                    raise RuntimeError(f"Recovery {op} failed: {value}")
+                return value
+            recover("save")
+            snapshot = json.loads((temporary_state / "session.json").read_text())
+            if snapshot["groups"][0].get("layout") != "side-by-side":
+                raise RuntimeError("Side-by-side layout was not saved")
+            for ident in ids[:2]:
+                niri("action", "set-window-width", "--id", ident, "100%")
+            restored = recover("restore")
+            if restored.get("message") != "Restored 3 windows.":
+                raise RuntimeError(f"Side-by-side recovery was incomplete: {restored}")
+            actual_widths = [w["layout"]["tile_size"][0] for w in test_windows()[:2]]
+            if not all(0.3 * output["width"] < width <= 0.55 * output["width"] for width in actual_widths):
+                raise RuntimeError(f"Recovery did not restore side-by-side widths: {actual_widths}")
+            cli(cli_env, "group-layout", group_id)
+            (temporary_state / "session.json").unlink()
+
             group_pin = cli(cli_env, "pin-group", group_id)
             pin = pinned(group_pin, group_id)
             if not pin:
@@ -303,7 +328,7 @@ def main():
             result = {"result": "pass", "niri": niri("version").strip(), "group_id": group_id,
                       "pin_id": pin_id, "neighbor_pin_id": neighbor_pin_id, "window_ids": ids,
                       "side_by_side_widths": widths, "focus_preserved": True, "logical_navigation": True,
-                      "separated_group_repaired": True}
+                      "separated_group_repaired": True, "unpinned_side_recovery": True}
             if (temporary_state / "session.json").exists():
                 raise RuntimeError("Layout changes unexpectedly wrote a temporary session snapshot")
     finally:
