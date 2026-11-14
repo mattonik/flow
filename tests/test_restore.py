@@ -141,6 +141,43 @@ class RecoveryTest(unittest.TestCase):
         self.assertFalse(restore.pins_unchanged_or_rebound([{**old[0], "session": "current"}], new, "current", windows))
         self.assertFalse(restore.pins_unchanged_or_rebound(old, [], "current", windows))
 
+    def test_group_pin_rebind_requires_matching_group_windows_and_focus(self):
+        group = {"id": "g", "label": "Work", "members": ["one", "two"], "layout": "side-by-side"}
+        old = [{"id": "p", "group_id": "g", "label": "Work", "app_id": "one", "members": ["one", "two"],
+                "session": "old", "window_id": 10, "window_ids": [10, 11], "last_focused_app": "one"}]
+        new = [{**old[0], "session": "current", "window_id": 1, "window_ids": [1, 2], "last_focused_app": "two"}]
+        ws, windows = {"id": 1, "active_window_id": 2}, [window(1, "one", 1), window(2, "two", 2)]
+        self.assertTrue(restore.pins_unchanged_or_rebound(old, new, "current", windows, ws, [group]))
+        self.assertFalse(restore.pins_unchanged_or_rebound(old, [{**new[0], "window_ids": [2, 1]}], "current", windows, ws, [group]))
+        self.assertFalse(restore.pins_unchanged_or_rebound(old, [{**new[0], "label": "Changed"}], "current", windows, ws, [group]))
+        self.assertFalse(restore.pins_unchanged_or_rebound(old, new, "current", windows + [window(3, "one", 3)], ws, [group]))
+        self.assertFalse(restore.pins_unchanged_or_rebound(old, new, "current", windows, {"id": 1, "active_window_id": 1}, [group]))
+        self.assertFalse(restore.pins_unchanged_or_rebound([{**old[0], "session": "current"}], new, "current", windows, ws, [group]))
+
+    def test_pinned_side_group_and_neighbor_preserve_snapshot_order(self):
+        ws = {"id": 1, "active_window_id": 3}
+        windows = [window(1, "neighbor", 1), window(2, "one", 2), window(3, "two", 3)]
+        group = {"id": "g", "label": "Work", "members": ["one", "two"], "layout": "side-by-side"}
+        pins = [{"id": "n", "app_id": "neighbor"}, {"id": "p", "group_id": "g", "app_id": "one", "members": ["one", "two"]}]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.json"
+            restore.save(path, ws, windows, "current", pins=pins, registered=[group])
+            saved = json.loads(path.read_text())
+            actions = Mock()
+            report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                            pinned={"neighbor", "one", "two"}, pinned_groups=pins,
+                                            session="current", registered=[group])
+            self.assertEqual((report, count), ([], 3))
+            self.assertNotIn("move-column-to-index", [call.args[1] for call in actions.call_args_list])
+            actions.assert_any_call("action", "set-window-width", "--id", 2, "50%")
+            before = path.read_bytes()
+            with self.assertRaisesRegex(ValueError, "snapshot was not replaced"):
+                restore.save(path, ws, windows, "current", pins=pins + [{"app_id": "two"}], registered=[group])
+            self.assertEqual(path.read_bytes(), before)
+            with self.assertRaisesRegex(ValueError, "conflicting pins"):
+                restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), Mock(),
+                                pinned_groups=pins + [{"app_id": "two"}], session="current", registered=[group])
+
     def test_save_warnings_identify_windows_that_need_manual_recovery(self):
         with tempfile.TemporaryDirectory() as directory:
             apps = Path(directory) / "applications"

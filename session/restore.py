@@ -19,13 +19,29 @@ def state_path():
     return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "flow" / "session.json"
 
 
-def pins_unchanged_or_rebound(before, after, session, windows):
+def pins_unchanged_or_rebound(before, after, session, windows, workspace=None, groups=()):
     if len(before) != len(after):
         return False
     for old, new in zip(before, after):
         if old == new:
             continue
-        if "members" in old or old.get("session") == session or new.get("session") != session:
+        if "members" in old:
+            excluded = ("session", "window_id", "window_ids", "last_focused_app")
+            if ({k: v for k, v in old.items() if k not in excluded} != {k: v for k, v in new.items() if k not in excluded}
+                    or not workspace or new.get("session") != session):
+                return False
+            candidate = {"group_id": old.get("group_id"), "members": old["members"], "session": None}
+            pair = spaces.group_windows(candidate, workspace, windows, session, groups)
+            if not pair or new.get("window_ids") != [w["id"] for w in pair] or new.get("window_id") not in new["window_ids"]:
+                return False
+            if old.get("session") == session and any(old.get(k) != new.get(k) for k in ("window_id", "window_ids")):
+                return False
+            if old.get("last_focused_app") != new.get("last_focused_app"):
+                active = next((w for w in pair if w["id"] == workspace.get("active_window_id")), None)
+                if not active or new.get("last_focused_app") != active.get("app_id"):
+                    return False
+            continue
+        if old.get("session") == session or new.get("session") != session:
             return False
         if {k: v for k, v in old.items() if k not in ("session", "window_id")} != {
                 k: v for k, v in new.items() if k not in ("session", "window_id")}:
@@ -161,15 +177,22 @@ def recovery_warnings(entries, dirs):
     return warnings
 
 
+def valid_side_pins(group, pins):
+    claims = [p for p in pins if set(group["members"]) & set(p.get("members", [p.get("app_id")]))]
+    return not claims or (len(claims) == 1 and claims[0].get("group_id") == group["id"]
+                          and claims[0].get("members") == group["members"]
+                          and claims[0].get("app_id") == group["members"][0])
+
+
 def save(path, workspace, windows, session=None, pins=(), registered=None):
     side_groups = [g for g in registered or [] if g.get("layout") == "side-by-side"]
     if any(g.get("pending_layout") for g in registered or []):
         raise ValueError("Finish Group layout changes before saving; the snapshot was not replaced")
     for group in side_groups:
         candidate = {"group_id": group["id"], "members": group["members"], "session": None}
-        if (any(set(group["members"]) & set(p.get("members", [p.get("app_id")])) for p in pins)
+        if (not valid_side_pins(group, pins)
                 or not spaces.group_windows(candidate, workspace, windows, session, registered)):
-            raise ValueError("Unpin and check side-by-side Groups before saving; the snapshot was not replaced")
+            raise ValueError("Check side-by-side Groups and pins before saving; the snapshot was not replaced")
     current = [w for w in windows if w.get("workspace_id") == workspace["id"]]
     current.sort(key=lambda w: w.get("layout", {}).get("pos_in_scrolling_layout") or [99999, 0])
     entries = [{"app_id": w.get("app_id"), "window_id": w["id"], "label": w.get("title") or w.get("app_id") or "Unknown application",
@@ -246,8 +269,10 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
             pinned_groups=(), registered=None):
     side_groups = [g for g in registered or [] if g.get("layout") == "side-by-side"]
     if (any(g.get("pending_layout") for g in registered or []) or
-            any(set(g["members"]) & (set(pinned) | pinned_apps(list(pinned_groups))) for g in side_groups)):
-        raise ValueError("Session recovery cannot safely restore a pinned or transitioning side-by-side Group yet; keep its layout and resolve it manually")
+            any(not valid_side_pins(g, pinned_groups) or
+                (set(g["members"]) & set(pinned) and not any(p.get("group_id") == g["id"] for p in pinned_groups))
+                for g in side_groups)):
+        raise ValueError("Session recovery cannot safely restore conflicting pins or a transitioning Group; keep its layout and resolve it manually")
     if data.get("version") != 1 or not isinstance(data.get("windows"), list):
         raise ValueError("Unsupported or invalid saved session")
     entries = data["windows"]
@@ -588,7 +613,7 @@ def main():
                         pinned_apps(now_pins)
                         current = spaces.snapshot()
                         if (path.read_bytes() != original_snapshot or not groups_unchanged_or_focused(registered, now_groups, *current)
-                                or not pins_unchanged_or_rebound(pins, now_pins, session, current[1])):
+                                or not pins_unchanged_or_rebound(pins, now_pins, session, current[1], current[0], now_groups)):
                             raise ValueError("Session, Groups or pinned spaces changed; session recovery stopped")
                         return current
             def launch(desktop):
