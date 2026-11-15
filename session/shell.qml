@@ -190,7 +190,7 @@ ShellRoot {
     property string spacesError: ""
     property var pendingSpaceActions: []
     function renameGroup(id, label) {
-        if (recoveryProcess.running || spacesProcess.running) { spacesError = "Wait for the current action"; return }
+        if (recoveryProcess.running || spacesProcess.running || pendingSpaceActions.length) { spacesError = "Wait for the current action"; return }
         recoveryProcess.command = ["flow-recovery", "rename-group", id, label]
         recoveryProcess.running = true
     }
@@ -777,6 +777,8 @@ ShellRoot {
                                         id: renameButton
                                         onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(renameButton)
                                         width: 132; implicitHeight: 44; text: "Rename Group"
+                                        Accessible.name: "Rename Group " + spaceCard.modelData.label
+                                        enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                         onClicked: { groupName.text = spaceCard.modelData.label; root.renameGroupId = spaceCard.modelData.group_id; groupName.forceActiveFocus() }
                                     }
                                     FlowButton {
@@ -832,8 +834,8 @@ ShellRoot {
                                         Accessible.name: "Group name"
                                         onAccepted: root.renameGroup(spaceCard.modelData.group_id, text)
                                     }
-                                    FlowButton { id: saveGroupName; onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(saveGroupName); width: 64; implicitHeight: 44; text: "Save"; onClicked: root.renameGroup(spaceCard.modelData.group_id, groupName.text) }
-                                    FlowButton { id: cancelGroupName; onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(cancelGroupName); width: 64; implicitHeight: 44; text: "Cancel"; Accessible.name: "Cancel Group rename"; onClicked: { root.renameGroupId = ""; renameButton.forceActiveFocus() } }
+                                    FlowButton { id: saveGroupName; onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(saveGroupName); width: 64; implicitHeight: 44; text: "Save"; Accessible.name: "Save name for Group " + spaceCard.modelData.label; enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length; onClicked: root.renameGroup(spaceCard.modelData.group_id, groupName.text) }
+                                    FlowButton { id: cancelGroupName; onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(cancelGroupName); width: 64; implicitHeight: 44; text: "Cancel"; Accessible.name: "Cancel rename for Group " + spaceCard.modelData.label; onClicked: { root.renameGroupId = ""; renameButton.forceActiveFocus() } }
                                 }
                             }
                         }
