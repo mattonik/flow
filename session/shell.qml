@@ -347,6 +347,13 @@ ShellRoot {
         spaceAction("refresh")
     }
 
+    function showOverview(action = "open-overview") {
+        closeLauncher()
+        deskOpen = false
+        switcherOpen = false
+        Quickshell.execDetached(["niri", "msg", "action", action])
+    }
+
     // Floe's appearance preference is per-user and does not change app/window state.
     FloeTheme { id: floeTheme; light: appearancePreferences.lightMode }
     Core.Settings {
@@ -378,6 +385,36 @@ ShellRoot {
             color: islandButton.down || islandButton.hovered ? floeTheme.surfaceSelected : "transparent"
             border.width: islandButton.activeFocus ? 2 : 0
             border.color: floeTheme.focus
+        }
+    }
+    SystemClock { id: clock; precision: SystemClock.Minutes }
+    component SystemIsland: Rectangle {
+        implicitWidth: islandControls.implicitWidth + 16; implicitHeight: 44
+        radius: height / 2; color: floeTheme.canvas; border.color: floeTheme.border
+        Row {
+            id: islandControls
+            anchors.centerIn: parent; spacing: 8
+            IslandButton {
+                width: 48; implicitHeight: 44; text: "floe."
+                Accessible.name: root.deskOpen ? "Return to work" : "Open Floe Desk"
+                onClicked: root.toggleDesk()
+            }
+            IslandButton {
+                property bool closeOnRelease: false
+                width: 64; implicitHeight: 44
+                text: root.launcherActive ? "Close" : "Apps"
+                Accessible.name: root.launcherActive ? "Close search and apps" : "Open apps"
+                onPressed: closeOnRelease = root.launcherActive
+                onClicked: { if (closeOnRelease) root.closeLauncher(); else root.openApps(); closeOnRelease = false }
+                onCanceled: closeOnRelease = false
+            }
+            Text {
+                width: 48; horizontalAlignment: Text.AlignHCenter; anchors.verticalCenter: parent.verticalCenter
+                text: Qt.formatTime(clock.date, "hh:mm"); color: floeTheme.textPrimary
+                font.pixelSize: 14; font.family: floeTheme.technicalFont
+            }
+            IslandButton { width: 44; implicitHeight: 44; text: "◉"; Accessible.name: "Notifications"; onClicked: root.toggleNotifications() }
+            IslandButton { width: 44; implicitHeight: 44; text: "⚙"; Accessible.name: "Quick settings"; onClicked: root.toggleQuickSettings() }
         }
     }
     component FlowSwitch: Switch {
@@ -434,10 +471,7 @@ ShellRoot {
         function leave(): void { root.deskOpen = false }
         function switcher(): void { root.toggleSwitcher() }
         function overview(): void {
-            const action = root.deskOpen ? "open-overview" : "toggle-overview"
-            root.deskOpen = false
-            root.switcherOpen = false
-            Quickshell.execDetached(["niri", "msg", "action", action])
+            root.showOverview(root.deskOpen ? "open-overview" : "toggle-overview")
         }
     }
 
@@ -450,16 +484,13 @@ ShellRoot {
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: root.notificationsOpen ? WlrKeyboardFocus.None : root.launcherActive ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive
 
-        Rectangle {
-            anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; anchors.topMargin: 8
-            width: 150; height: 36; radius: 18; color: floeTheme.surface; border.color: floeTheme.border
-            Text { anchors.centerIn: parent; text: "floe.  ···"; color: floeTheme.accent; font.bold: true; font.family: floeTheme.brandFont }
-            MouseArea { anchors.fill: parent; onClicked: root.deskOpen = false }
-        }
         FocusScope {
             anchors.fill: parent
             focus: true
             Keys.onEscapePressed: root.deskOpen = false
+            SystemIsland {
+                anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; anchors.topMargin: 8
+            }
             Flickable {
                 id: deskScroller
                 function ensureVisible(item) {
@@ -468,15 +499,15 @@ ShellRoot {
                     else if (top + item.height > contentY + height)
                         contentY = Math.min(contentHeight - height, top + item.height - height)
                 }
-                anchors.fill: parent
+                anchors.fill: parent; anchors.topMargin: 60
                 contentWidth: width
-                contentHeight: Math.max(height, deskContent.implicitHeight + 120)
+                contentHeight: Math.max(height, deskContent.implicitHeight + 40)
                 boundsBehavior: Flickable.StopAtBounds
                 clip: true
                 Column {
                     id: deskContent
                     x: (parent.width - width) / 2
-                    y: Math.max(70, (parent.height - height) / 2)
+                    y: Math.max(20, (parent.height - height) / 2)
                     width: Math.max(200, Math.min(parent.width - 48, 910))
                     spacing: 16
                     Text { text: "FLOE / YOUR DESK"; color: floeTheme.focus; font.bold: true; font.letterSpacing: 2; font.pixelSize: 13 }
@@ -591,10 +622,10 @@ ShellRoot {
                                     }
                                     if (modelData === "Apps") root.openApps()
                                     else if (modelData === "Notifications") root.toggleNotifications()
+                                    else if (modelData === "Overview") root.showOverview()
                                     else {
                                         root.deskOpen = false
                                         if (modelData === "Files") Quickshell.execDetached(["nautilus"])
-                                        else if (modelData === "Overview") Quickshell.execDetached(["niri", "msg", "action", "open-overview"])
                                     }
                                 }
                             }
@@ -646,20 +677,27 @@ ShellRoot {
             }
         }
     }
-    // shortcut: window titles stand in for live previews until compositor capture is available.
     PanelWindow {
-        visible: !root.deskOpen && !root.switcherOpen && !root.appMenuOpen && !root.overviewOpen
+        visible: !root.deskOpen && !root.switcherOpen && !root.appMenuOpen && !root.launcherActive
         anchors.bottom: true
-        implicitWidth: 100; implicitHeight: 44
+        implicitWidth: navigationControls.implicitWidth; implicitHeight: 44; margins.bottom: 8
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
-        FlowButton {
-            anchors.fill: parent; implicitHeight: 44; text: ""; Accessible.name: "Open spaces and apps"
-            background: Rectangle { color: "transparent" }
-            contentItem: Item { Rectangle { anchors.centerIn: parent; width: 64; height: 5; radius: 3; color: floeTheme.accent } }
-            onClicked: root.toggleSwitcher()
+        Row {
+            id: navigationControls
+            spacing: 8
+            FlowButton {
+                width: 104; implicitHeight: 44
+                text: root.overviewOpen ? "Desk" : "Overview"
+                onClicked: {
+                    if (root.overviewOpen) root.toggleDesk()
+                    else root.showOverview()
+                }
+            }
+            FlowButton { width: 76; implicitHeight: 44; text: "Spaces"; onClicked: root.toggleSwitcher() }
         }
     }
+    // shortcut: window titles stand in for live previews until compositor capture is available.
     PanelWindow {
         visible: root.switcherOpen
         anchors { bottom: true; left: true; right: true }
@@ -692,7 +730,8 @@ ShellRoot {
                     width: parent.width; spacing: 8
                     FlowButton { id: stackButton; onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(stackButton); width: 160; implicitHeight: 44; text: "Stack with next"; onClicked: root.spaceAction("stack") }
                     FlowButton { id: unstackButton; onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(unstackButton); width: 160; implicitHeight: 44; text: "Separate stack"; onClicked: root.spaceAction("unstack") }
-                    FlowButton { id: overviewButton; onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(overviewButton); width: 130; implicitHeight: 44; text: "Live overview"; onClicked: { root.switcherOpen = false; Quickshell.execDetached(["niri", "msg", "action", "open-overview"]) } }
+                    FlowButton { id: overviewButton; onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(overviewButton); width: 130; implicitHeight: 44; text: "Live overview"; onClicked: root.showOverview() }
+                    FlowButton { id: closeSwitcher; onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(closeSwitcher); width: 76; implicitHeight: 44; text: "Close"; Accessible.name: "Close Spaces switcher"; onClicked: root.switcherOpen = false }
                     Row {
                         visible: spaceScroller.contentWidth > spaceScroller.width
                         spacing: 6
@@ -905,9 +944,12 @@ ShellRoot {
     }
     // shortcut: only published accessibility menus are shown; add toolkit-specific bridges when verified.
     PanelWindow {
+        id: appMenuTrigger
         visible: menuPreferences.appMenuEnabled && !root.deskOpen && !root.overviewOpen && root.appMenu && !root.appMenuOpen
         anchors { top: true; left: true }
-        implicitWidth: 220; implicitHeight: 44; margins.top: 8; margins.left: 8
+        implicitWidth: 220; implicitHeight: 44; margins.left: 8
+        // Leave 8px between the left trigger and the centered Island on the shared row.
+        margins.top: screen && screen.width < workIsland.implicitWidth + 2 * (implicitWidth + margins.left + 8) ? 60 : 8
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         FlowButton {
@@ -927,7 +969,8 @@ ShellRoot {
             anchors.fill: parent; focus: true
             Keys.onEscapePressed: root.appMenuOpen = false
             Rectangle {
-                x: 8; y: 8; width: Math.min(390, parent.width - 16); height: Math.min(menuColumn.implicitHeight + 32, parent.height - 16)
+                x: 8; y: appMenuTrigger.margins.top + appMenuTrigger.implicitHeight + 8
+                width: Math.min(390, parent.width - 16); height: Math.min(menuColumn.implicitHeight + 32, parent.height - y - 8)
                 radius: 16; color: floeTheme.surface; border.color: floeTheme.border
                 Flickable {
                     anchors.fill: parent; anchors.margins: 16
@@ -1094,30 +1137,13 @@ ShellRoot {
         }
     }
     PanelWindow {
+        id: workIsland
+        visible: !root.deskOpen
         anchors.top: true
-        implicitWidth: 316; implicitHeight: 44; margins.top: 8
+        implicitWidth: workIslandContent.implicitWidth; implicitHeight: workIslandContent.implicitHeight; margins.top: 8
         color: "transparent"
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
-        Rectangle {
-            anchors.fill: parent; radius: 22; color: floeTheme.canvas; border.color: floeTheme.border
-            Row {
-                anchors.centerIn: parent; spacing: 8
-                IslandButton { width: 48; implicitHeight: 44; text: "floe."; Accessible.name: "Open Floe desk"; onClicked: root.toggleDesk() }
-                IslandButton {
-                    property bool closeOnRelease: false
-                    width: 64; implicitHeight: 44
-                    text: root.launcherActive ? "Close" : "Apps"
-                    Accessible.name: root.launcherActive ? "Close search and apps" : "Open apps"
-                    onPressed: closeOnRelease = root.launcherActive
-                    onClicked: { if (closeOnRelease) root.closeLauncher(); else root.openApps(); closeOnRelease = false }
-                    onCanceled: closeOnRelease = false
-                }
-                Text { text: Qt.formatTime(clock.date, "hh:mm"); color: floeTheme.textPrimary; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter }
-                IslandButton { width: 44; implicitHeight: 44; text: "◉"; Accessible.name: "Notifications"; onClicked: root.toggleNotifications() }
-                IslandButton { width: 44; implicitHeight: 44; text: "⚙"; Accessible.name: "Quick settings"; onClicked: root.toggleQuickSettings() }
-            }
-        }
-        SystemClock { id: clock; precision: SystemClock.Minutes }
+        SystemIsland { id: workIslandContent; anchors.fill: parent }
     }
 }
