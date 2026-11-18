@@ -35,3 +35,9 @@ The shell listens to Niri focus and workspace active-window events and keeps an 
 The master spec marks the contextual menu as an approved hypothesis, whereas the design note calls its UX direction approved. Treat the focus and separation principles as the supplied direction while retaining prototype validation and implementation status as open; no finalized D-Bus contract or cross-toolkit support is implied.
 
 The smallest next contract to investigate is a read-only, versioned snapshot of the current session's spaces and active application, plus a focus request restricted to the trusted shell. Define stable identity, caller authorization, event ordering, reconnection and structured errors before publishing a D-Bus interface; do not expose window-control capabilities to ordinary applications by default. These are design questions, not implemented method names or security guarantees.
+
+## Native navigation and Group checks (2026-11-18)
+
+On a fresh ARM64 NixOS UTM 5.0.9 QEMU guest, Niri 26.04 and Quickshell 0.3.2 loaded the shell at commit `15d6014`. At 1280×800, two disposable Foot windows remained open through pointer navigation from Work to Niri Overview, then Desk and Return to work. The focused window ID remained 3, and window IDs 2 and 3 remained present. The shell log exposed an application-menu placement binding loop in the preceding build, fixed in `15d6014`.
+
+The disposable Group layout, side-by-side, and lifecycle smoke scripts passed. They exercised stack and split, Group identity, focus, pinning, neighboring pin preservation, side-by-side repair and recovery, migration, missing-member reopening, and dissolution. These are scripted single-display checks. Physical touch, portrait layouts, interrupted transitions, full reboot recovery, and accelerated renderer validation remain open.
