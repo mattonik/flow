@@ -949,7 +949,7 @@ ShellRoot {
         anchors { top: true; left: true }
         implicitWidth: 220; implicitHeight: 44; margins.left: 8
         // Leave 8px between the left trigger and the centered Island on the shared row.
-        margins.top: screen && screen.width < workIsland.implicitWidth + 2 * (implicitWidth + margins.left + 8) ? 60 : 8
+        margins.top: screen && screen.width < workIslandContent.implicitWidth + 472 ? 60 : 8
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         FlowButton {
