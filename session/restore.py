@@ -404,15 +404,23 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                             break
                         action("action", "set-window-width", "--id", ident,
                                f"{round((ratio if index == 0 else 1 - ratio) * 100, 2):g}%")
-                    current, live = checked_snapshot()
-                    pair = spaces.group_windows(candidate, current, live, session or "", registered)
-                    if not pair or [w["id"] for w in pair] != ids or current.get("active_window_id") != active:
-                        report.append("Side-by-side Group changed during recovery; check manually")
-                    else:
+                    # Niri acknowledges width requests before the client commits its new size.
+                    wait(0.2)
+                    for attempt in range(11):
+                        current, live = checked_snapshot()
+                        pair = spaces.group_windows(candidate, current, live, session or "", registered)
+                        if not pair or [w["id"] for w in pair] != ids or current.get("active_window_id") != active:
+                            report.append("Side-by-side Group changed during recovery; check manually")
+                            break
                         widths = [w.get("layout", {}).get("tile_size", [0])[0] for w in pair]
-                        if all(isinstance(width, (int, float)) and width > 0 for width in widths):
-                            if abs(widths[0] / sum(widths) - ratio) > 0.05:
-                                report.append("Application size constraints prevented recovery of Group proportions")
+                        if not all(isinstance(width, (int, float)) and width > 0 for width in widths):
+                            break
+                        if abs(widths[0] / sum(widths) - ratio) <= 0.05:
+                            break
+                        if attempt == 10:
+                            report.append("Application size constraints prevented recovery of Group proportions")
+                        else:
+                            wait(0.1)
         elif not groups:
             for index, (_, window) in enumerate(restored, 1):
                 current, live = checked_snapshot()

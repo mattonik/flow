@@ -192,7 +192,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
     if op == "repair-side-group":
         repair_side_group(arg, workspace, windows, groups, pins)
         return [{"id": p["id"], "label": p["label"], "kind": "group" if "members" in p else "app",
-                 "group_id": p.get("group_id"), "available": bool(pin_window(p, workspace, windows, socket, groups))}
+                 "group_id": p.get("group_id"), "display": p.get("display"), "available": bool(pin_window(p, workspace, windows, socket, groups))}
                 for p in pins]
     if op in ("pin", "pin-group", "left", "right", "create-group", "stack", "unstack") and has_side_layout(workspace, windows, groups):
         raise ValueError("Return side-by-side Groups to a stack before changing pins or Groups")
@@ -484,7 +484,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
     if op not in ("focus", "focus-window", "focus-member", "navigate", "stack", "unstack", "group-view", "create-group", "dissolve-group", "open-group-member", "rejoin-group"):
         reconcile(pins, workspace, windows, socket, groups)
     return [{"id": p["id"], "label": p["label"], "kind": "group" if "members" in p else "app", "group_id": p.get("group_id"),
-             "available": bool(pin_window(p, workspace, windows, socket, groups))} for p in pins]
+             "display": p.get("display"), "available": bool(pin_window(p, workspace, windows, socket, groups))} for p in pins]
 
 
 def saved_groups(path):
@@ -768,11 +768,18 @@ def change_group_layout(state, groups, pins, group_id, workspace, windows, socke
                     f"{round((ratio if index == 0 else 1 - ratio) * 100, 2)}%" if target == "side-by-side" else "100%")
             checked(target)
         if target == "side-by-side":
-            pair = checked(target)
-            widths = [w.get("layout", {}).get("tile_size", [0])[0] for w in pair]
-            if all(isinstance(width, (int, float)) and width > 0 for width in widths):
-                if abs(widths[0] / sum(widths) - ratio) > 0.05:
+            # Allow clients to commit the sizes requested by Niri.
+            time.sleep(0.2)
+            for attempt in range(11):
+                pair = checked(target)
+                widths = [w.get("layout", {}).get("tile_size", [0])[0] for w in pair]
+                if not all(isinstance(width, (int, float)) and width > 0 for width in widths):
+                    break
+                if abs(widths[0] / sum(widths) - ratio) <= 0.05:
+                    break
+                if attempt == 10:
                     raise ValueError("Application size constraints prevent the saved proportions")
+                time.sleep(0.1)
         group["layout"] = target
         group.pop("pending_layout", None)
         group_store.write(state / "groups.json", groups)

@@ -243,6 +243,12 @@ class RecoveryTest(unittest.TestCase):
             report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), Mock(),
                                         session="current", registered=[group])
             self.assertIn("Application size constraints prevented recovery of Group proportions", report)
+            def finish_resize(_):
+                windows[0]["layout"]["tile_size"] = [650, 700]
+                windows[1]["layout"]["tile_size"] = [350, 700]
+            report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), Mock(),
+                                        wait=finish_resize, session="current", registered=[group])
+            self.assertEqual(report, [])
             saved["groups"][0]["side_ratio"] = 0
             actions.reset_mock()
             with self.assertRaisesRegex(ValueError, "proportions"):
