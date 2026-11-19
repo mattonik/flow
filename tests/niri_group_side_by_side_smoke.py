@@ -354,6 +354,37 @@ def main():
             recover("restore")
             wait_for(lambda: group_pair(lambda ws: ws[0]["layout"]["tile_size"][0] > ws[1]["layout"]["tile_size"][0] * 1.5), "recovered custom proportions")
             (temporary_state / "session.json").unlink()
+            cli(cli_env, "toggle-auto-layout", group_id)
+            original_transform = read("outputs")[original["output"]]["logical"]["transform"]
+            if original_transform != "Normal":
+                raise RuntimeError("Automatic layout smoke test requires an unrotated display")
+            shell = subprocess.Popen(["quickshell", "-p", "/etc/flow/shell.qml"], env=cli_env,
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                niri("output", original["output"], "transform", "90")
+                wait_for(lambda: read("outputs")[original["output"]]["logical"]["height"] > read("outputs")[original["output"]]["logical"]["width"], "portrait output")
+                active_before = focus().get("active_window_id")
+                wait_for(lambda: group_pair(lambda ws: ws[0]["layout"]["pos_in_scrolling_layout"][0] == ws[1]["layout"]["pos_in_scrolling_layout"][0]), "automatic portrait stack")
+                portrait = cli(cli_env, "refresh")
+                if not group_space(portrait, group_id) or focus().get("active_window_id") != active_before or not pinned(portrait, group_id, pin_id):
+                    raise RuntimeError("Portrait transition changed Group, pin, or focus")
+                niri("output", original["output"], "transform", "normal")
+                wait_for(lambda: read("outputs")[original["output"]]["logical"]["width"] > read("outputs")[original["output"]]["logical"]["height"], "landscape output")
+                wait_for(lambda: group_pair(lambda ws: ws[0]["layout"]["pos_in_scrolling_layout"][0] + 1 == ws[1]["layout"]["pos_in_scrolling_layout"][0] and ws[0]["layout"]["tile_size"][0] > ws[1]["layout"]["tile_size"][0] * 1.5), "automatic landscape proportions")
+                landscape = cli(cli_env, "refresh")
+                if not group_space(landscape, group_id) or focus().get("active_window_id") != active_before or not pinned(landscape, group_id, pin_id):
+                    raise RuntimeError("Landscape transition changed Group, pin, or focus")
+            finally:
+                shell.terminate()
+                shell.wait(timeout=5)
+                niri("output", original["output"], "transform", "normal")
+            cli(cli_env, "group-layout", group_id)
+            if saved_groups(tmp)[0].get("auto_layout"):
+                raise RuntimeError("Manual layout did not turn off automatic layout")
+            cli(cli_env, "auto-layout")
+            if not group_pair(lambda ws: ws[0]["layout"]["pos_in_scrolling_layout"][0] == ws[1]["layout"]["pos_in_scrolling_layout"][0]):
+                raise RuntimeError("Automatic layout overrode a manual choice")
+            cli(cli_env, "group-layout", group_id)
             cli(cli_env, "unpin", pin_id)
             before = [(w["id"], w["layout"]["pos_in_scrolling_layout"]) for w in test_windows()]
             focused = focus().get("active_window_id")
@@ -368,7 +399,7 @@ def main():
                       "pin_id": pin_id, "neighbor_pin_id": neighbor_pin_id, "window_ids": ids,
                       "side_by_side_widths": widths, "focus_preserved": True, "logical_navigation": True,
                       "separated_group_repaired": True, "unpinned_side_recovery": True,
-                      "pinned_side_recovery": True, "side_by_side_dissolved": True}
+                      "pinned_side_recovery": True, "side_by_side_dissolved": True, "automatic_rotation": True, "manual_override": True}
             if (temporary_state / "session.json").exists():
                 raise RuntimeError("Layout changes unexpectedly wrote a temporary session snapshot")
     finally:

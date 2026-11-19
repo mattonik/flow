@@ -32,6 +32,7 @@ def validate(data):
            or len(set(g["members"])) != 2
            or any(key in g and g[key] not in ("stack", "side-by-side")
                   for key in ("layout", "pending_layout"))
+           or ("auto_layout" in g and not isinstance(g["auto_layout"], bool))
            or ("side_ratio" in g and (isinstance(g["side_ratio"], bool) or not isinstance(g["side_ratio"], (int, float)) or not 0 < g["side_ratio"] < 1))
            or ("last_focused_app" in g and g["last_focused_app"] not in g["members"])
            or ("pending_layout" in g and g["pending_layout"] == g.get("layout", "stack")) for g in groups):

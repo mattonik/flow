@@ -530,7 +530,7 @@ def display_spaces(workspace, windows, groups=(), pins=()):
                 selected = next((w for w in joined if w["active"]),
                                 next((w for w in joined if w["app_id"] == last), joined[0]))
                 result.append({"id": selected["id"], "label": group["label"], "group_id": group["id"],
-                               "group_layout": "side-by-side", "active": any(w["active"] for w in joined), "members": joined})
+                               "group_layout": "side-by-side", "auto_layout": group.get("auto_layout", False), "active": any(w["active"] for w in joined), "members": joined})
                 skip.add(index + 1)
                 break
         else:
@@ -550,6 +550,7 @@ def display_spaces(workspace, windows, groups=(), pins=()):
             selected = next((w for w in members if w["app_id"] == last), selected)
         result.append({"id": selected["id"], "label": group["label"] if group else " + ".join(w["label"] for w in members),
                        "group_id": group["id"] if group else None, "group_layout": "stack" if group else None,
+                       "auto_layout": group.get("auto_layout", False) if group else False,
                        "active": any(w["active"] for w in members), "members": members})
     return result
 
@@ -765,11 +766,17 @@ def change_group_layout(state, groups, pins, group_id, workspace, windows, socke
             command("action", "set-window-width", "--id", ident,
                     f"{round((ratio if index == 0 else 1 - ratio) * 100, 2)}%" if target == "side-by-side" else "100%")
             checked(target)
+        if target == "side-by-side":
+            pair = checked(target)
+            widths = [w.get("layout", {}).get("tile_size", [0])[0] for w in pair]
+            if all(isinstance(width, (int, float)) and width > 0 for width in widths):
+                if abs(widths[0] / sum(widths) - ratio) > 0.05:
+                    raise ValueError("Application size constraints prevent the saved proportions")
         group["layout"] = target
         group.pop("pending_layout", None)
         group_store.write(state / "groups.json", groups)
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
-        raise ValueError("Group layout change interrupted; check the windows and choose Finish layout change") from exc
+        raise ValueError(f"Group layout change interrupted: {exc}. Check the windows and choose Finish layout change") from exc
 
 
 def run_locked(state):
@@ -799,7 +806,34 @@ def run_locked(state):
             run(pins, op, arg, workspace, windows, socket, groups)
             workspace, windows = snapshot()
             result = run(pins, "refresh", None, workspace, windows, socket, groups)
+        elif op == "toggle-auto-layout":
+            active = next((space for space in display_spaces(workspace, windows, groups, pins)
+                           if space["active"] and space.get("group_id") == arg), None)
+            matches = [group for group in groups if group["id"] == arg]
+            if not active or len(matches) != 1:
+                raise ValueError("Select the active saved Group first")
+            matches[0]["auto_layout"] = not matches[0].get("auto_layout", False)
+            result = run(pins, "refresh", None, workspace, windows, socket, groups)
+        elif op == "auto-layout":
+            active = next((space for space in display_spaces(workspace, windows, groups, pins)
+                           if space["active"] and space.get("auto_layout")), None)
+            if active:
+                outputs = json.loads(command("-j", "outputs"))
+                logical = outputs.get(workspace.get("output"), {}).get("logical")
+                if not logical or not logical.get("width") or not logical.get("height"):
+                    raise ValueError("Cannot determine output size for automatic Group layout")
+                target = "stack" if logical["height"] > logical["width"] else "side-by-side"
+                if active["group_layout"] != target:
+                    change_group_layout(state, groups, pins, active["group_id"], workspace, windows, socket)
+                    workspace, windows = snapshot()
+                    before_groups = json.dumps(groups, sort_keys=True)
+            result = run(pins, "refresh", None, workspace, windows, socket, groups)
         elif op in ("group-layout", "resume-group-layout"):
+            if op == "group-layout":
+                for group in groups:
+                    if group["id"] == arg and group.get("auto_layout"):
+                        group["auto_layout"] = False
+                        group_store.write(state / "groups.json", groups)
             change_group_layout(state, groups, pins, arg, workspace, windows, socket, op == "resume-group-layout")
             workspace, windows = snapshot()
             before_groups = json.dumps(groups, sort_keys=True)

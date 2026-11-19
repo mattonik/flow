@@ -222,7 +222,7 @@ ShellRoot {
                     const result = JSON.parse(this.text)
                     if (result.error) {
                         root.spacesError = result.error
-                        if (spacesProcess.command[1] !== "refresh" && !root.switcherOpen) root.deskOpen = true
+                        if (spacesProcess.command[1] !== "refresh" && spacesProcess.command[1] !== "auto-layout" && !root.switcherOpen) root.deskOpen = true
                     } else {
                         if (JSON.stringify(root.windows) !== JSON.stringify(result.windows)) root.windows = result.windows
                         if (JSON.stringify(root.displaySpaces) !== JSON.stringify(result.spaces)) root.displaySpaces = result.spaces
@@ -290,6 +290,11 @@ ShellRoot {
         }
     }
     Timer { interval: niriEvents.running ? 30000 : 3000; running: true; repeat: true; triggeredOnStart: true; onTriggered: root.spaceAction("refresh") }
+    Timer {
+        interval: 2000; repeat: true
+        running: root.displaySpaces.some(space => space.active && space.auto_layout)
+        onTriggered: if (!root.deskOpen && !root.switcherOpen && !root.overviewOpen && !root.launcherActive && !root.appMenuOpen && !root.quickSettingsOpen && !root.notificationsOpen && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length) root.spaceAction("auto-layout")
+    }
     function toggleDesk() {
         notificationsOpen = false
         quickSettingsOpen = false
@@ -839,6 +844,16 @@ ShellRoot {
                                     Accessible.name: text + " Group " + spaceCard.modelData.label
                                     enabled: spaceCard.modelData.active && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                     onClicked: root.spaceAction("group-layout", spaceCard.modelData.group_id)
+                                }
+                                FlowButton {
+                                    id: autoLayoutButton
+                                    visible: !!spaceCard.modelData.group_id
+                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(autoLayoutButton)
+                                    width: parent.width; implicitHeight: 44
+                                    text: spaceCard.modelData.auto_layout ? "Automatic layout: on" : "Automatic layout: off"
+                                    Accessible.name: text + " for " + spaceCard.modelData.label
+                                    enabled: spaceCard.modelData.active && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    onClicked: root.spaceAction("toggle-auto-layout", spaceCard.modelData.group_id)
                                 }
                                 FlowButton {
                                     id: groupPinButton
