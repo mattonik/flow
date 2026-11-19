@@ -30,6 +30,17 @@ class GroupLayoutTest(unittest.TestCase):
         self.assertEqual(result[0]["id"], 12)
         self.assertEqual([w["app_id"] for w in result[1]["members"]], ["other"])
 
+    def test_dissolve_side_by_side_keeps_windows_and_rejects_pins(self):
+        registry = [dict(self.group)]
+        with patch.object(spaces, "snapshot", return_value=(self.ws, self.windows)), \
+             patch.object(spaces, "command") as command:
+            with self.assertRaisesRegex(ValueError, "Unpin"):
+                spaces.run([{"group_id": "g", "members": ["a", "b"]}], "dissolve-group", "g", self.ws, self.windows, "s", registry)
+            spaces.run([], "dissolve-group", "g", self.ws, self.windows, "s", registry)
+            self.assertEqual(registry, [])
+            self.assertEqual([w["id"] for w in self.windows], [11, 12, 13])
+            command.assert_not_called()
+
     def test_side_by_side_projection_rejects_ambiguous_or_incomplete_members(self):
         cases = {
             "duplicate": self.windows + [window(14, "a", 4)],

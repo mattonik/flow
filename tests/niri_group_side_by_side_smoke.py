@@ -338,11 +338,22 @@ def main():
             if not any(p.get("id") == neighbor_pin_id and p.get("available") for p in stacked["pins"]):
                 raise RuntimeError("Neighboring pin was lost or became unavailable after stacking")
 
+            cli(cli_env, "group-layout", group_id)
+            cli(cli_env, "unpin", pin_id)
+            before = [(w["id"], w["layout"]["pos_in_scrolling_layout"]) for w in test_windows()]
+            focused = focus().get("active_window_id")
+            dissolved = cli(cli_env, "dissolve-group", group_id)
+            after = [(w["id"], w["layout"]["pos_in_scrolling_layout"]) for w in test_windows()]
+            if before != after or focus().get("active_window_id") != focused or saved_groups(tmp):
+                raise RuntimeError("Dissolving side-by-side changed windows or focus")
+            if group_space(dissolved, group_id):
+                raise RuntimeError("Dissolved Group remains in the switcher")
+
             result = {"result": "pass", "niri": niri("version").strip(), "group_id": group_id,
                       "pin_id": pin_id, "neighbor_pin_id": neighbor_pin_id, "window_ids": ids,
                       "side_by_side_widths": widths, "focus_preserved": True, "logical_navigation": True,
                       "separated_group_repaired": True, "unpinned_side_recovery": True,
-                      "pinned_side_recovery": True}
+                      "pinned_side_recovery": True, "side_by_side_dissolved": True}
             if (temporary_state / "session.json").exists():
                 raise RuntimeError("Layout changes unexpectedly wrote a temporary session snapshot")
     finally:

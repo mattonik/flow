@@ -855,9 +855,9 @@ ShellRoot {
                                     visible: !!spaceCard.modelData.group_id
                                     onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(dissolveGroupButton)
                                     width: parent.width; implicitHeight: 44
-                                    text: spaceCard.modelData.group_layout === "side-by-side" ? "Stack to dissolve" : spaceCard.groupPin ? "Unpin to dissolve" : "Dissolve Group"
+                                    text: spaceCard.groupPin ? "Unpin to dissolve" : "Dissolve Group"
                                     Accessible.name: text + " " + spaceCard.modelData.label
-                                    enabled: spaceCard.modelData.active && spaceCard.modelData.group_layout !== "side-by-side" && !spaceCard.groupPin && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    enabled: spaceCard.modelData.active && !spaceCard.groupPin && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                     onClicked: root.spaceAction("dissolve-group", spaceCard.modelData.group_id)
                                 }
                                 Row {

@@ -194,7 +194,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
         return [{"id": p["id"], "label": p["label"], "kind": "group" if "members" in p else "app",
                  "group_id": p.get("group_id"), "available": bool(pin_window(p, workspace, windows, socket, groups))}
                 for p in pins]
-    if op in ("pin", "pin-group", "left", "right", "create-group", "dissolve-group", "stack", "unstack") and has_side_layout(workspace, windows, groups):
+    if op in ("pin", "pin-group", "left", "right", "create-group", "stack", "unstack") and has_side_layout(workspace, windows, groups):
         raise ValueError("Return side-by-side Groups to a stack before changing pins or Groups")
     for group in groups:
         candidate = {"group_id": group["id"], "members": group["members"], "session": None}
@@ -317,7 +317,11 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
             raise ValueError("Group or focus changed; try again")
         if op == "create-group":
             groups.append({"id": uuid.uuid4().hex, "label": " + ".join(w["label"] for w in active["members"]), "members": apps})
+        elif active.get("group_layout") == "side-by-side":
+            groups.remove(next(g for g in groups if g["id"] == arg))
         else:
+            if has_side_layout(current_workspace, current_windows, groups):
+                raise ValueError("Return side-by-side Groups to a stack before changing Groups")
             column = next(w for w in current_windows if w["id"] == workspace["active_window_id"])["layout"]["pos_in_scrolling_layout"][0]
             pinned_apps = {app for pin in pins for app in pin.get("members", [pin.get("app_id")])}
             if any(w.get("workspace_id") == workspace["id"] and not w.get("is_floating") and w.get("app_id") in pinned_apps
