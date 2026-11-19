@@ -222,6 +222,29 @@ class RecoveryTest(unittest.TestCase):
                 action.assert_not_called()
                 self.assertEqual(json.dumps(windows, sort_keys=True), before)
 
+    def test_side_group_snapshot_recovers_custom_widths(self):
+        ws = {"id": 1, "active_window_id": 2}
+        windows = [window(1, "one", 1), window(2, "two", 2)]
+        windows[0]["layout"]["tile_size"] = [650, 700]
+        windows[1]["layout"]["tile_size"] = [350, 700]
+        group = {"id": "g", "label": "Work", "members": ["one", "two"], "layout": "side-by-side"}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.json"
+            restore.save(path, ws, windows, "current", registered=[group])
+            saved = json.loads(path.read_text())
+            self.assertEqual(saved["groups"][0]["side_ratio"], 0.65)
+            actions = Mock()
+            restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                            session="current", registered=[group])
+            actions.assert_any_call("action", "set-window-width", "--id", 1, "65%")
+            actions.assert_any_call("action", "set-window-width", "--id", 2, "35%")
+            saved["groups"][0]["side_ratio"] = 0
+            actions.reset_mock()
+            with self.assertRaisesRegex(ValueError, "proportions"):
+                restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                session="current", registered=[group])
+            actions.assert_not_called()
+
     def test_unpinned_side_group_snapshot_and_recovery(self):
         ws = {"id": 1, "active_window_id": 2}
         windows = [window(1, "one", 1), window(2, "two", 2)]

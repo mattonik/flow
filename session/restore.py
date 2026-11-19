@@ -244,7 +244,15 @@ def save(path, workspace, windows, session=None, pins=(), registered=None):
     for entry in entries:
         if entry["column"] is not None:
             columns.setdefault(entry["column"], []).append(entry)
-    groups = list(side_groups)
+    groups = []
+    for group in side_groups:
+        candidate = {"group_id": group["id"], "members": group["members"], "session": None}
+        pair = spaces.group_windows(candidate, workspace, windows, session, registered)
+        widths = [w.get("layout", {}).get("tile_size", [0])[0] for w in pair]
+        saved = dict(group)
+        if all(isinstance(width, (int, float)) and width > 0 for width in widths):
+            saved["side_ratio"] = widths[0] / sum(widths)
+        groups.append(saved)
     for members in columns.values():
         apps = [entry["app_id"] for entry in members]
         if len(apps) != 2 or not all(isinstance(app, str) and app and app_counts[app] == 1 for app in apps):
@@ -282,6 +290,10 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
     for group in side_groups:
         matching = [g for g in saved_groups if isinstance(g, dict) and g.get("id") == group["id"]
                     and g.get("members") == group["members"] and g.get("layout") == "side-by-side"]
+        if len(matching) == 1:
+            ratio = matching[0].get("side_ratio", 0.5)
+            if isinstance(ratio, bool) or not isinstance(ratio, (int, float)) or not 0 < ratio < 1:
+                raise ValueError("Invalid saved Group proportions; recovery stopped")
         pair = [[e for e in entries if e.get("app_id") == app] for app in group["members"]]
         if (len(matching) != 1 or any(len(found) != 1 for found in pair)
                 or not isinstance(pair[0][0].get("column"), int) or isinstance(pair[0][0].get("column"), bool)
@@ -382,13 +394,16 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                         continue
                     ids = [w["id"] for w in pair]
                     active = current.get("active_window_id")
-                    for ident in ids:
+                    saved_group = next(g for g in saved_groups if g.get("id") == group["id"])
+                    ratio = saved_group.get("side_ratio", 0.5)
+                    for index, ident in enumerate(ids):
                         current, live = checked_snapshot()
                         pair = spaces.group_windows(candidate, current, live, session or "", registered)
                         if not pair or [w["id"] for w in pair] != ids or current.get("active_window_id") != active:
                             report.append("Side-by-side Group changed during recovery; check manually")
                             break
-                        action("action", "set-window-width", "--id", ident, "50%")
+                        action("action", "set-window-width", "--id", ident,
+                               f"{round((ratio if index == 0 else 1 - ratio) * 100, 2):g}%")
                     current, live = checked_snapshot()
                     pair = spaces.group_windows(candidate, current, live, session or "", registered)
                     if not pair or [w["id"] for w in pair] != ids or current.get("active_window_id") != active:

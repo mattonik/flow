@@ -345,6 +345,15 @@ def main():
             cli(cli_env, "group-layout", group_id)
             cli(cli_env, "group-layout", group_id)
             wait_for(lambda: group_pair(lambda ws: ws[0]["layout"]["tile_size"][0] > ws[1]["layout"]["tile_size"][0] * 1.5), "restored Group proportions")
+            recover("save")
+            saved = json.loads((temporary_state / "session.json").read_text())
+            if not 0.60 < saved["groups"][0].get("side_ratio", 0) < 0.70:
+                raise RuntimeError("Custom proportions were not saved")
+            for ident in ids[:2]:
+                niri("action", "set-window-width", "--id", ident, "50%")
+            recover("restore")
+            wait_for(lambda: group_pair(lambda ws: ws[0]["layout"]["tile_size"][0] > ws[1]["layout"]["tile_size"][0] * 1.5), "recovered custom proportions")
+            (temporary_state / "session.json").unlink()
             cli(cli_env, "unpin", pin_id)
             before = [(w["id"], w["layout"]["pos_in_scrolling_layout"]) for w in test_windows()]
             focused = focus().get("active_window_id")
