@@ -93,6 +93,37 @@ class GroupLayoutTest(unittest.TestCase):
                 self.assertEqual(pins[0]["window_ids"], [11, 12])
                 self.assertEqual(pins[0]["window_id"], 12)
 
+    def test_custom_side_proportions_survive_stack_and_resume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            group = dict(self.group)
+            registry = [group]
+            self.windows[0]["layout"]["tile_size"] = [650, 700]
+            self.windows[1]["layout"]["tile_size"] = [350, 700]
+            groups.write(state / "groups.json", registry)
+
+            def action(*args):
+                if args[1] == "consume-or-expel-window-left":
+                    self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+                elif args[1] == "consume-or-expel-window-right":
+                    self.windows[1]["layout"]["pos_in_scrolling_layout"] = [2, 1]
+                elif args[1] == "set-window-width" and args[-1] == "65.0%":
+                    raise OSError("interrupted")
+
+            with patch.object(spaces, "snapshot", side_effect=lambda: (self.ws, self.windows)), \
+                 patch.object(spaces, "command", side_effect=action):
+                spaces.change_group_layout(state, registry, [], "g", self.ws, self.windows, "s")
+                self.assertEqual(groups.load(state)[0]["side_ratio"], 0.65)
+                with self.assertRaisesRegex(ValueError, "interrupted"):
+                    spaces.change_group_layout(state, registry, [], "g", self.ws, self.windows, "s")
+            self.assertEqual(groups.load(state)[0]["pending_layout"], "side-by-side")
+            actions = []
+            with patch.object(spaces, "snapshot", side_effect=lambda: (self.ws, self.windows)), \
+                 patch.object(spaces, "command", side_effect=lambda *args: actions.append(args)):
+                spaces.change_group_layout(state, registry, [], "g", self.ws, self.windows, "s", resume=True)
+            self.assertEqual([args[-1] for args in actions], ["65.0%", "35.0%"])
+            self.assertEqual(groups.load(state)[0]["side_ratio"], 0.65)
+
     def test_action_failure_keeps_pending_registry_for_resume(self):
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory)

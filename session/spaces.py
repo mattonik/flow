@@ -747,6 +747,10 @@ def change_group_layout(state, groups, pins, group_id, workspace, windows, socke
         raise ValueError("Restore the saved Group member order before changing layout")
     checked(source if current_source else target)
     if not resume:
+        if source == "side-by-side":
+            widths = [w.get("layout", {}).get("tile_size", [0])[0] for w in current_source]
+            if all(isinstance(width, (int, float)) and width > 0 for width in widths):
+                group["side_ratio"] = round(widths[0] / sum(widths), 4)
         group["pending_layout"] = target
         group_store.write(state / "groups.json", groups)
     try:
@@ -755,9 +759,11 @@ def change_group_layout(state, groups, pins, group_id, workspace, windows, socke
             command("action", "consume-or-expel-window-right" if target == "side-by-side"
                     else "consume-or-expel-window-left", "--id", ids[1])
             checked(target)
-        for ident in (ids if target == "side-by-side" else ids[:1]):
+        ratio = group.get("side_ratio", 0.5)
+        for index, ident in enumerate(ids if target == "side-by-side" else ids[:1]):
             checked(target)
-            command("action", "set-window-width", "--id", ident, "50%" if target == "side-by-side" else "100%")
+            command("action", "set-window-width", "--id", ident,
+                    f"{round((ratio if index == 0 else 1 - ratio) * 100, 2)}%" if target == "side-by-side" else "100%")
             checked(target)
         group["layout"] = target
         group.pop("pending_layout", None)

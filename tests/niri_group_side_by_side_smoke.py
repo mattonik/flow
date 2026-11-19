@@ -339,6 +339,12 @@ def main():
                 raise RuntimeError("Neighboring pin was lost or became unavailable after stacking")
 
             cli(cli_env, "group-layout", group_id)
+            for ident, width in zip(ids[:2], ("65%", "35%")):
+                niri("action", "set-window-width", "--id", ident, width)
+            wait_for(lambda: group_pair(lambda ws: ws[0]["layout"]["tile_size"][0] > ws[1]["layout"]["tile_size"][0] * 1.5), "custom Group proportions")
+            cli(cli_env, "group-layout", group_id)
+            cli(cli_env, "group-layout", group_id)
+            wait_for(lambda: group_pair(lambda ws: ws[0]["layout"]["tile_size"][0] > ws[1]["layout"]["tile_size"][0] * 1.5), "restored Group proportions")
             cli(cli_env, "unpin", pin_id)
             before = [(w["id"], w["layout"]["pos_in_scrolling_layout"]) for w in test_windows()]
             focused = focus().get("active_window_id")
