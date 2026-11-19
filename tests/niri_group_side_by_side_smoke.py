@@ -228,6 +228,9 @@ def main():
             if len(neighbors) != 1:
                 raise RuntimeError("Could not pin the neighboring disposable app")
             neighbor_pin_id = neighbors[0]["id"]
+            saved_pins = json.loads((temporary_state / "spaces.json").read_text())
+            if {p["id"]: p.get("display") for p in saved_pins} != {pin_id: original["output"], neighbor_pin_id: original["output"]}:
+                raise RuntimeError("Pins did not record their output")
             niri("action", "focus-window", "--id", ids[0])
 
             focused_id = focus().get("active_window_id")

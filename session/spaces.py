@@ -159,7 +159,7 @@ def pin_group(pins, group, workspace, windows, socket, groups):
     focused = next((w for w in pair if w["id"] == workspace.get("active_window_id")), pair[0])
     pins.append({"id": uuid.uuid4().hex, "label": group["label"], "app_id": members[0],
                  "window_id": focused["id"], "last_focused_app": focused["app_id"], "members": members, "window_ids": [w["id"] for w in pair],
-                 "group_id": group["id"], "session": socket})
+                 "group_id": group["id"], "session": socket, "display": workspace.get("output")})
 
 
 def rejoin_pair(group, workspace, windows, pins):
@@ -358,7 +358,8 @@ def run(pins, op, arg, workspace, windows, socket, groups=()):
             if any(window["app_id"] in p.get("members", [p["app_id"]]) for p in pins):
                 raise ValueError("This app is already pinned")
             pins.append({"id": uuid.uuid4().hex, "label": window.get("title") or window["app_id"],
-                         "app_id": window["app_id"], "window_id": window["id"], "session": socket})
+                         "app_id": window["app_id"], "window_id": window["id"], "session": socket,
+                         "display": workspace.get("output")})
     elif op == "pin-group":
         matches = [g for g in groups if g.get("id") == arg]
         if len(matches) != 1:

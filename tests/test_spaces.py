@@ -104,6 +104,18 @@ class SpacesTest(unittest.TestCase):
         self.assertNotIn("close-window", str(command.call_args_list))
 
     @patch.object(spaces, "command")
+    def test_new_app_and_group_pins_record_the_focused_output(self, command):
+        ws = {**self.ws, "output": "Virtual-1"}
+        spaces.run(self.pins, "pin", None, ws, self.windows, "session")
+        self.assertEqual(self.pins[0]["display"], "Virtual-1")
+        self.pins.clear()
+        stacked = [window(1, "terminal", 1), window(2, "files", 1)]
+        stacked[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        group = {"id": "g", "label": "Work", "members": ["terminal", "files"]}
+        spaces.run(self.pins, "pin-group", "g", ws, stacked, "session", [group])
+        self.assertEqual(self.pins[0]["display"], "Virtual-1")
+
+    @patch.object(spaces, "command")
     def test_switcher_only_focuses_current_workspace_windows(self, command):
         spaces.run([], "focus-window", "2", self.ws, self.windows, "session")
         command.assert_called_once_with("action", "focus-window", "--id", 2)
