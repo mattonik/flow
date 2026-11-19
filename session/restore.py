@@ -408,6 +408,11 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                     pair = spaces.group_windows(candidate, current, live, session or "", registered)
                     if not pair or [w["id"] for w in pair] != ids or current.get("active_window_id") != active:
                         report.append("Side-by-side Group changed during recovery; check manually")
+                    else:
+                        widths = [w.get("layout", {}).get("tile_size", [0])[0] for w in pair]
+                        if all(isinstance(width, (int, float)) and width > 0 for width in widths):
+                            if abs(widths[0] / sum(widths) - ratio) > 0.05:
+                                report.append("Application size constraints prevented recovery of Group proportions")
         elif not groups:
             for index, (_, window) in enumerate(restored, 1):
                 current, live = checked_snapshot()
