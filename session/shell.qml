@@ -292,7 +292,7 @@ ShellRoot {
     Timer { interval: niriEvents.running ? 30000 : 3000; running: true; repeat: true; triggeredOnStart: true; onTriggered: root.spaceAction("refresh") }
     Timer {
         interval: 2000; repeat: true
-        running: root.displaySpaces.some(space => space.active && space.auto_layout)
+        running: root.displaySpaces.some(space => space.auto_layout)
         onTriggered: if (!root.deskOpen && !root.switcherOpen && !root.overviewOpen && !root.launcherActive && !root.appMenuOpen && !root.quickSettingsOpen && !root.notificationsOpen && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length) root.spaceAction("auto-layout")
     }
     function toggleDesk() {

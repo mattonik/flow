@@ -358,6 +358,7 @@ def main():
             original_transform = read("outputs")[original["output"]]["logical"]["transform"]
             if original_transform != "Normal":
                 raise RuntimeError("Automatic layout smoke test requires an unrotated display")
+            niri("action", "focus-window", "--id", ids[2])
             shell = subprocess.Popen(["quickshell", "-p", "/etc/flow/shell.qml"], env=cli_env,
                                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             try:
@@ -378,6 +379,7 @@ def main():
                 shell.terminate()
                 shell.wait(timeout=5)
                 niri("output", original["output"], "transform", "normal")
+            niri("action", "focus-window", "--id", ids[0])
             cli(cli_env, "group-layout", group_id)
             if saved_groups(tmp)[0].get("auto_layout"):
                 raise RuntimeError("Manual layout did not turn off automatic layout")
@@ -399,7 +401,7 @@ def main():
                       "pin_id": pin_id, "neighbor_pin_id": neighbor_pin_id, "window_ids": ids,
                       "side_by_side_widths": widths, "focus_preserved": True, "logical_navigation": True,
                       "separated_group_repaired": True, "unpinned_side_recovery": True,
-                      "pinned_side_recovery": True, "side_by_side_dissolved": True, "automatic_rotation": True, "manual_override": True}
+                      "pinned_side_recovery": True, "side_by_side_dissolved": True, "automatic_rotation": True, "unfocused_group_focus_preserved": True, "manual_override": True}
             if (temporary_state / "session.json").exists():
                 raise RuntimeError("Layout changes unexpectedly wrote a temporary session snapshot")
     finally:

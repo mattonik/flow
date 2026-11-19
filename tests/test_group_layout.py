@@ -127,9 +127,10 @@ class GroupLayoutTest(unittest.TestCase):
             self.assertEqual(groups.load(state)[0]["side_ratio"], 0.65)
 
     def test_automatic_layout_uses_focused_output_geometry(self):
-        ws = {**self.ws, "output": "test"}
-        for width, height, expected in ((800, 1200, True), (1200, 800, False)):
-            with self.subTest(width=width), tempfile.TemporaryDirectory() as directory:
+        for width, height, active, expected in ((800, 1200, 11, True), (1200, 800, 11, False),
+                                                  (800, 1200, 13, True)):
+            ws = {**self.ws, "output": "test", "active_window_id": active}
+            with self.subTest(width=width, active=active), tempfile.TemporaryDirectory() as directory:
                 state = Path(directory)
                 group = {**self.group, "auto_layout": True}
                 groups.write(state / "groups.json", [group])

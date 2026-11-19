@@ -703,7 +703,7 @@ def repair_side_group(group_id, workspace, windows, groups, pins):
         raise ValueError("Side-by-side repair interrupted; inspect the windows and retry") from exc
 
 
-def change_group_layout(state, groups, pins, group_id, workspace, windows, socket, resume=False):
+def change_group_layout(state, groups, pins, group_id, workspace, windows, socket, resume=False, allow_unfocused=False):
     matches = [group for group in groups if group.get("id") == group_id]
     if len(matches) != 1:
         raise ValueError("Saved Group no longer exists or is ambiguous")
@@ -727,7 +727,7 @@ def change_group_layout(state, groups, pins, group_id, workspace, windows, socke
     pair = pair_for(source, workspace, windows) or (pair_for(target, workspace, windows) if resume else None)
     if not pair:
         raise ValueError("Group layout is unavailable or ambiguous; check both apps")
-    if not resume and workspace.get("active_window_id") not in {w["id"] for w in pair}:
+    if not resume and not allow_unfocused and workspace.get("active_window_id") not in {w["id"] for w in pair}:
         raise ValueError("Select the Group before changing its layout")
     ids = [w["id"] for w in pair]
     active = workspace.get("active_window_id")
@@ -815,16 +815,18 @@ def run_locked(state):
             matches[0]["auto_layout"] = not matches[0].get("auto_layout", False)
             result = run(pins, "refresh", None, workspace, windows, socket, groups)
         elif op == "auto-layout":
-            active = next((space for space in display_spaces(workspace, windows, groups, pins)
-                           if space["active"] and space.get("auto_layout")), None)
-            if active:
+            automatic = [space for space in display_spaces(workspace, windows, groups, pins)
+                         if space.get("auto_layout")]
+            if automatic:
                 outputs = json.loads(command("-j", "outputs"))
                 logical = outputs.get(workspace.get("output"), {}).get("logical")
                 if not logical or not logical.get("width") or not logical.get("height"):
                     raise ValueError("Cannot determine output size for automatic Group layout")
                 target = "stack" if logical["height"] > logical["width"] else "side-by-side"
-                if active["group_layout"] != target:
-                    change_group_layout(state, groups, pins, active["group_id"], workspace, windows, socket)
+                changed = next((space for space in automatic if space["group_layout"] != target), None)
+                if changed:
+                    change_group_layout(state, groups, pins, changed["group_id"], workspace, windows, socket,
+                                        allow_unfocused=True)
                     workspace, windows = snapshot()
                     before_groups = json.dumps(groups, sort_keys=True)
             result = run(pins, "refresh", None, workspace, windows, socket, groups)
