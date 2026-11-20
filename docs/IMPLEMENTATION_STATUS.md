@@ -96,4 +96,10 @@ Each display record in `spaces.json` keeps a `number`: 0 is Main, external displ
 
 With Super+number reverted to the focused display's pins, the test fails. Physical key presses were not sent: the guest has no input-injection tool, and the installed Niri configuration points at the installed shell.
 
+### Resizing Group members
+
+In the switcher, each app in a side-by-side Group shows its share of the Group's width with *−* and *+* controls. A step moves 10% of the width to or from the next app (the previous one, for the last app) and never leaves an app below 15%; a step that would is disabled and refused. Requested widths are checked against what the apps commit: if an app's size limits refuse, the Group saves the closest size and says so. Proportions are saved with the Group and reapplied when it returns to side-by-side. Stack heights are not adjustable yet.
+
+`niri_group_resize_smoke.py` passed in the guest with three Foot windows: 33/33/33 became 43/33/24 after a wider and a narrower step, matching the saved proportions. A step below the minimum share was not offered and was refused. Stacking and returning to side-by-side restored 43/33/24. With saving disabled, the test fails. The switcher showed the shares and disabled the steps that would go below the minimum.
+
 Limitations: The changes run from a development copy, not an installed NixOS generation. An older generation cannot read a version 2 pin file and reports *Invalid saved spaces* without changing it; restore `spaces.v1.json` to roll back. Touch, physical rotation and real hotplug remain open.

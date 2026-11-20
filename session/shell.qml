@@ -955,6 +955,34 @@ ShellRoot {
                                                     onClicked: root.spaceAction("remove-from-group", String(memberColumn.modelData.id))
                                                 }
                                             }
+                                            Row {
+                                                // Width within a side-by-side Group; each step trades width with the next app.
+                                                visible: memberColumn.grouped && memberColumn.space.group_layout === "side-by-side" && !!memberColumn.space.shares
+                                                spacing: 4
+                                                FlowButton {
+                                                    id: memberNarrowerButton
+                                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberNarrowerButton)
+                                                    width: 44; implicitHeight: 44; text: "−"
+                                                    enabled: !!(memberColumn.space.can_narrow && memberColumn.space.can_narrow[memberColumn.index]) && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                    Accessible.name: "Make " + memberColumn.modelData.label + " narrower in Group " + memberColumn.space.label
+                                                    onClicked: root.spaceAction("member-narrower", String(memberColumn.modelData.id))
+                                                }
+                                                Text {
+                                                    width: 44; height: 44
+                                                    text: memberColumn.space.shares ? memberColumn.space.shares[memberColumn.index] + "%" : ""
+                                                    textFormat: Text.PlainText; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                                                    color: floeTheme.textMuted; font.pixelSize: 13; font.family: floeTheme.technicalFont
+                                                    Accessible.name: memberColumn.modelData.label + " uses " + text + " of the Group's width"
+                                                }
+                                                FlowButton {
+                                                    id: memberWiderButton
+                                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberWiderButton)
+                                                    width: 44; implicitHeight: 44; text: "+"
+                                                    enabled: !!(memberColumn.space.can_widen && memberColumn.space.can_widen[memberColumn.index]) && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                    Accessible.name: "Make " + memberColumn.modelData.label + " wider in Group " + memberColumn.space.label
+                                                    onClicked: root.spaceAction("member-wider", String(memberColumn.modelData.id))
+                                                }
+                                            }
                                         }
                                     }
                                 }

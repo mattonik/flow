@@ -12,6 +12,8 @@ import groups as group_store
 import pin_store
 
 MAX_MEMBERS = group_store.MAX_MEMBERS
+RESIZE_STEP = 0.1  # share of the Group's width moved per Narrower/Wider step
+MIN_SHARE = 0.15  # no member is made narrower than this share of the Group
 valid_members = group_store.valid_members
 
 
@@ -304,6 +306,29 @@ def measured_ratios(found):
     return widths if all(isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 for v in widths) else None
 
 
+def can_resize(shares, index, direction):
+    """Whether one Narrower (-1) or Wider (+1) step fits; width is traded with the next app, or the previous."""
+    neighbor = index + 1 if index + 1 < len(shares) else index - 1
+    step = 100 * RESIZE_STEP
+    return min(shares[index] + direction * step, shares[neighbor] - direction * step) >= 100 * MIN_SHARE - 0.5
+
+
+def settled_ratios(ids, ratios, workspace_id):
+    """Wait briefly for clients to commit requested widths; return the windows, or None if they refuse."""
+    time.sleep(0.2)
+    for attempt in range(11):
+        ws, live = snapshot()
+        found = [next((w for w in live if w.get("id") == ident), None) for ident in ids]
+        if ws["id"] != workspace_id or not all(found):
+            raise ValueError("Group changed while resizing; check the windows")
+        widths = measured_ratios(found)
+        if not widths or all(abs(w / sum(widths) - r) <= 0.05 for w, r in zip(widths, ratios)):
+            return found
+        if attempt < 10:
+            time.sleep(0.1)
+    return None
+
+
 def neighbor_to_add(group, found, workspace, windows, groups, pins):
     """The single standalone window right after the Group, if it may safely join."""
     if len(group["members"]) >= MAX_MEMBERS:
@@ -559,6 +584,30 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
         group_store.remap_ratios(group, [w["app_id"] for w in moved])
         update_group_pins(pins, group, live_moved, socket)
         remember_focus({"group_id": group["id"]}, member)
+    elif op in ("member-wider", "member-narrower"):
+        group, found, index = group_of_window(groups, arg, workspace, windows, socket)
+        if group.get("layout") != "side-by-side":
+            raise ValueError("Only apps side by side can be resized")
+        measured = measured_ratios(found)
+        values = [w / sum(measured) for w in measured] if measured else group_store.ratios(group)
+        # Width comes from the next app, or the previous one for the last app.
+        neighbor = index + 1 if index + 1 < len(found) else index - 1
+        step = RESIZE_STEP if op == "member-wider" else -RESIZE_STEP
+        values[index], values[neighbor] = values[index] + step, values[neighbor] - step
+        if min(values[index], values[neighbor]) < MIN_SHARE - 1e-6:
+            raise ValueError("That app is already as wide as it can be" if step > 0
+                             else "That app is already as narrow as it can be")
+        for member in (found[index], found[neighbor]):
+            command("action", "set-window-width", "--id", member["id"],
+                    f"{round(values[found.index(member)] * 100, 2)}%")
+        settled = settled_ratios([w["id"] for w in found], values, workspace["id"])
+        if not settled:
+            actual = measured_ratios([next(w for w in snapshot()[1] if w["id"] == m["id"]) for m in found])
+            if actual:
+                group_store.set_ratios(group, actual)
+            raise ValueError("An app's size limits prevent that width; the Group keeps the closest size")
+        group_store.set_ratios(group, values)
+        remember_focus({"group_id": group["id"]}, found[index])
     elif op == "adopt-group-order":
         group = find_group(groups, arg)
         if group.get("pending_layout"):
@@ -714,7 +763,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
     here = local_pins(pins, display)
     if op not in ("focus", "focus-window", "focus-member", "navigate", "stack", "unstack", "group-view", "create-group",
                   "dissolve-group", "open-group-member", "rejoin-group", "add-to-group", "remove-from-group",
-                  "member-left", "member-right", "adopt-group-order"):
+                  "member-left", "member-right", "adopt-group-order", "member-wider", "member-narrower"):
         reconcile(here, workspace, windows, socket, groups)
     return [describe(p) for p in here]
 
@@ -779,9 +828,14 @@ def display_spaces(workspace, windows, groups=(), pins=()):
                 last = pin.get("last_focused_app") or group.get("last_focused_app")
                 selected = next((w for w in joined if w["active"]),
                                 next((w for w in joined if w["app_id"] == last), joined[0]))
+                widths = measured_ratios(found)
+                shares = [round(100 * w / sum(widths)) for w in widths] if widths else \
+                    [round(100 * r) for r in group_store.ratios(group)]
                 result.append({"id": selected["id"], "label": group["label"], "group_id": group["id"],
                                "group_layout": "side-by-side", "auto_layout": group.get("auto_layout", False),
-                               "active": any(w["active"] for w in joined), "members": joined})
+                               "active": any(w["active"] for w in joined), "members": joined,
+                               "shares": shares, "can_widen": [can_resize(shares, i, 1) for i in range(n)],
+                               "can_narrow": [can_resize(shares, i, -1) for i in range(n)]})
                 skip.update(range(index + 1, index + n))
                 break
         else:
@@ -1312,7 +1366,7 @@ def run_locked(state):
                     raise ValueError("Could not confirm Group update; if it remains saved, stack its apps and retry") from exc
                 raise ValueError("Could not confirm Group update; check the Group state before retrying") from exc
         if op in ("dissolve-group", "open-group-member", "rejoin-group", "add-to-group", "remove-from-group",
-                  "member-left", "member-right"):
+                  "member-left", "member-right", "member-wider", "member-narrower"):
             workspace, windows = snapshot()
         if before != json.dumps([pins, displays, 2], sort_keys=True):
             pin_store.write(path, pins, displays, version)
