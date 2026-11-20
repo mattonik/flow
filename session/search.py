@@ -44,6 +44,11 @@ def entries(snapshot, apps, files=()):
     for pin in snapshot.get("pins", []):
         status = "Pinned space" if pin.get("available") else "Pinned Group · Unavailable" if pin.get("kind") == "group" else "Pinned space · Open"
         result.append((f"{pin['label']}  ·  {status}", ("pin", pin["id"])))
+    for pin in snapshot.get("other_pins", []):
+        # Pins of a disconnected display are listed only while their window is open somewhere.
+        if pin.get("display_state") == "connected" or pin.get("available"):
+            where = pin.get("display_label") or "another display"
+            result.append((f"{pin['label']}  ·  Pinned on {where}", ("pin", pin["id"])))
     for window in snapshot.get("windows", []):
         result.append((f"{window['label']}  ·  Open window  ·  {window['app_id']}", ("window", str(window["id"]))))
     for path in files:

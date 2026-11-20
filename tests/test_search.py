@@ -35,6 +35,14 @@ class SearchTest(unittest.TestCase):
 
 
 
+    def test_other_display_pins_are_labeled_and_closed_disconnected_pins_hidden(self):
+        rows = search.entries({"other_pins": [
+            {"label": "Terminal", "id": "t", "display_state": "connected", "display_label": "Dell U2723QE", "available": True},
+            {"label": "Notes", "id": "n", "display_state": "disconnected", "display_label": "Studio", "available": True},
+            {"label": "Gone", "id": "g", "display_state": "disconnected", "display_label": "Studio", "available": False}]}, [])
+        self.assertEqual([row for row in rows if row[1][0] == "pin"],
+                         [("Terminal · Pinned on Dell U2723QE", ("pin", "t")), ("Notes · Pinned on Studio", ("pin", "n"))])
+
     def test_search_routes_pin_and_window_focus_through_the_shell(self):
         gio = SimpleNamespace(AppInfo=SimpleNamespace(get_all=lambda: []))
         repository = SimpleNamespace(Gio=gio, GLib=SimpleNamespace(Error=RuntimeError))

@@ -327,7 +327,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
 
     def describe(p):
         return {"id": p["id"], "label": p.get("label", ""), "kind": "group" if "members" in p else "app",
-                "group_id": p.get("group_id"), "display": p.get("display"),
+                "group_id": p.get("group_id"), "display": p.get("display"), "size": len(p.get("members") or [1]),
                 "available": bool(pin_window(p, workspace, windows, socket, groups))}
 
     if op == "repair-side-group":
@@ -1052,7 +1052,7 @@ def other_pins(pins, display, displays, connected, ambiguous, workspaces, window
                           (displays.get(key, {}).get("label") if key else None) or "No display"
         live = any(pin_window(pin, ws, windows, socket, groups) for ws in workspaces)
         result.append({"id": pin["id"], "label": pin["label"], "kind": "group" if "members" in pin else "app",
-                       "group_id": pin.get("group_id"), "display": key, "display_label": labels[key],
+                       "size": len(pin.get("members") or [1]), "group_id": pin.get("group_id"), "display": key, "display_label": labels[key],
                        "display_state": state, "available": live})
     return result
 

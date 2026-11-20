@@ -220,8 +220,8 @@ def main():
             if not pin:
                 raise RuntimeError("Group pin is unavailable")
             pin_id = pin["id"]
-            if pin.get("display") != original["output"]:
-                raise RuntimeError("Group pin output missing from the switcher data")
+            if not pin.get("display") or pin["display"] != group_pin["display"]["key"]:
+                raise RuntimeError("Group pin display missing from the switcher data")
 
             # Pin a separate neighboring app so layout changes must preserve its identity and availability.
             niri("action", "focus-window", "--id", ids[2])
@@ -230,18 +230,19 @@ def main():
             if len(neighbors) != 1:
                 raise RuntimeError("Could not pin the neighboring disposable app")
             neighbor_pin_id = neighbors[0]["id"]
-            if neighbors[0].get("display") != original["output"]:
-                raise RuntimeError("App pin output missing from the switcher data")
+            display_key = neighbor_pin["display"]["key"]
+            if not display_key or neighbors[0].get("display") != display_key:
+                raise RuntimeError("App pin display missing from the switcher data")
             saved_pins = json.loads((temporary_state / "spaces.json").read_text())
-            if {p["id"]: p.get("display") for p in saved_pins} != {pin_id: original["output"], neighbor_pin_id: original["output"]}:
-                raise RuntimeError("Pins did not record their output")
-            for pin in saved_pins:
-                pin.pop("display", None)
-            (temporary_state / "spaces.json").write_text(json.dumps(saved_pins))
+            if {p["id"]: p.get("display") for p in saved_pins["pins"]} != {pin_id: display_key, neighbor_pin_id: display_key}:
+                raise RuntimeError("Pins did not record their display")
+            # Rewrite the pins as a version 1 list without displays, then confirm migration.
+            legacy = [{k: v for k, v in pin.items() if k != "display"} for pin in saved_pins["pins"]]
+            (temporary_state / "spaces.json").write_text(json.dumps(legacy))
             cli(cli_env, "refresh")
             migrated = json.loads((temporary_state / "spaces.json").read_text())
-            if {p["id"]: p.get("display") for p in migrated} != {pin_id: original["output"], neighbor_pin_id: original["output"]}:
-                raise RuntimeError("Live legacy pins were not assigned to their output")
+            if {p["id"]: p.get("display") for p in migrated["pins"]} != {pin_id: display_key, neighbor_pin_id: display_key}:
+                raise RuntimeError("Legacy pins were not assigned to their display")
             niri("action", "focus-window", "--id", ids[0])
 
             focused_id = focus().get("active_window_id")
@@ -373,7 +374,8 @@ def main():
             if original_transform != "Normal":
                 raise RuntimeError("Automatic layout smoke test requires an unrotated display")
             niri("action", "focus-window", "--id", ids[2])
-            shell = subprocess.Popen(["quickshell", "-p", "/etc/flow/shell.qml"], env=cli_env,
+            # FLOW_SHELL selects a development shell; its flow-spaces must come first on PATH.
+            shell = subprocess.Popen(["quickshell", "-p", os.environ.get("FLOW_SHELL", "/etc/flow/shell.qml")], env=cli_env,
                                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             try:
                 niri("output", original["output"], "transform", "90")

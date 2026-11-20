@@ -187,6 +187,10 @@ ShellRoot {
     property var displaySpaces: []
     property var incompleteGroups: []
     property var pins: []
+    // Pins owned by other, disconnected or unidentified displays; Super+number uses only `pins`.
+    property var otherPins: []
+    property string displayLabel: ""
+    property int displayCount: 1
     property string spacesError: ""
     property var pendingSpaceActions: []
     function renameGroup(id, label) {
@@ -228,6 +232,9 @@ ShellRoot {
                         if (JSON.stringify(root.displaySpaces) !== JSON.stringify(result.spaces)) root.displaySpaces = result.spaces
                         if (JSON.stringify(root.incompleteGroups) !== JSON.stringify(result.incomplete_groups || [])) root.incompleteGroups = result.incomplete_groups || []
                         if (JSON.stringify(root.pins) !== JSON.stringify(result.pins)) root.pins = result.pins
+                        if (JSON.stringify(root.otherPins) !== JSON.stringify(result.other_pins || [])) root.otherPins = result.other_pins || []
+                        root.displayLabel = result.display ? result.display.label : ""
+                        root.displayCount = result.display_count || 1
                         if (result.action !== "refresh") root.spacesError = ""
                         if (result.action === "focus" || result.action === "focus-window") { root.deskOpen = false; root.switcherOpen = false }
                         else if (result.action === "pin") root.deskOpen = true
@@ -558,7 +565,10 @@ ShellRoot {
                         }
                         onClicked: root.openSearch()
                     }
-                    Text { text: "PINNED SPACES"; color: floeTheme.textMuted; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
+                    Text {
+                        text: "PINNED SPACES" + (root.displayCount > 1 && root.displayLabel ? "  ·  " + root.displayLabel.toUpperCase() : "")
+                        textFormat: Text.PlainText; color: floeTheme.textMuted; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12
+                    }
                     Text { visible: root.pins.length === 0; text: "Pin the current space to keep its place"; color: floeTheme.textMuted; font.pixelSize: 14 }
                     Flow {
                         width: parent.width
@@ -568,19 +578,76 @@ ShellRoot {
                             Flow {
                                 required property var modelData
                                 required property int index
-                                width: Math.min(parent.width, root.editPins ? 321 : 180)
+                                width: Math.min(parent.width, root.editPins ? 381 : 240)
                                 spacing: 3
                                 FlowButton {
                                     id: pinnedSpaceButton
                                     onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(pinnedSpaceButton)
-                                    width: 180; text: (index + 1) + "  " + (modelData.label.length > 15 ? modelData.label.slice(0, 15) + "…" : modelData.label) + (modelData.available ? "" : modelData.kind === "group" ? " · Unavailable" : " · Open")
+                                    width: 240; implicitHeight: 64
+                                    text: modelData.label
+                                    property string detail: !modelData.available ? (modelData.kind === "group" ? "Unavailable" : "Open")
+                                        : modelData.kind === "group" ? modelData.size + " apps in this space" : "Always here"
+                                    contentItem: Row {
+                                        spacing: 12; leftPadding: 4
+                                        Text {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: (index < 9 ? "0" : "") + (index + 1); textFormat: Text.PlainText
+                                            color: floeTheme.accent; font.bold: true; font.pixelSize: 13; font.family: floeTheme.technicalFont
+                                        }
+                                        Column {
+                                            anchors.verticalCenter: parent.verticalCenter; width: 180
+                                            Text { width: parent.width; text: pinnedSpaceButton.text; textFormat: Text.PlainText; elide: Text.ElideRight; color: floeTheme.textPrimary; font.bold: true; font.pixelSize: 14; font.family: floeTheme.interfaceFont }
+                                            Text { width: parent.width; text: pinnedSpaceButton.detail; textFormat: Text.PlainText; elide: Text.ElideRight; color: floeTheme.textMuted; font.pixelSize: 12; font.family: floeTheme.interfaceFont }
+                                        }
+                                    }
                                     enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"
-                                    Accessible.name: (modelData.available ? "Focus " : modelData.kind === "group" ? "Unavailable Group " : "Open ") + modelData.label
+                                    Accessible.name: (modelData.available ? "Focus " : modelData.kind === "group" ? "Unavailable Group " : "Open ") + modelData.label + ", pinned space " + (index + 1)
                                     onClicked: root.spaceAction("focus", modelData.id)
                                 }
                                 FlowButton { id: pinLeftButton; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(pinLeftButton); visible: root.editPins; width: 44; text: "‹"; Accessible.name: "Move " + modelData.label + " left"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("left", modelData.id) }
                                 FlowButton { id: pinRightButton; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(pinRightButton); visible: root.editPins; width: 44; text: "›"; Accessible.name: "Move " + modelData.label + " right"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("right", modelData.id) }
                                 FlowButton { id: unpinButton; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(unpinButton); visible: root.editPins; width: 44; text: "×"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; Accessible.name: "Unpin " + modelData.label; onClicked: root.spaceAction("unpin", modelData.id) }
+                            }
+                        }
+                    }
+                    Text {
+                        visible: root.otherPins.length > 0
+                        text: root.displayCount > 1 ? "OTHER DISPLAYS" : "PINNED ON OTHER DISPLAYS"
+                        color: floeTheme.textMuted; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12
+                    }
+                    Flow {
+                        visible: root.otherPins.length > 0
+                        width: parent.width
+                        spacing: 8
+                        Repeater {
+                            model: root.otherPins
+                            Flow {
+                                required property var modelData
+                                width: Math.min(parent.width, 381); spacing: 3
+                                FlowButton {
+                                    id: otherPinButton
+                                    onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(otherPinButton)
+                                    width: 240; implicitHeight: 64; text: modelData.label
+                                    property string detail: modelData.display_label + (modelData.display_state === "connected" ? ""
+                                        : modelData.display_state === "unassigned" ? " · not assigned"
+                                        : modelData.display_state === "ambiguous" ? " · cannot be told apart" : " · disconnected")
+                                    enabled: (modelData.display_state === "connected" || modelData.available) && (!spacesProcess.running || spacesProcess.command[1] === "refresh")
+                                    contentItem: Column {
+                                        leftPadding: 4; topPadding: 10
+                                        Text { width: 220; text: otherPinButton.text; textFormat: Text.PlainText; elide: Text.ElideRight; color: otherPinButton.enabled ? floeTheme.textPrimary : floeTheme.textMuted; font.bold: true; font.pixelSize: 14; font.family: floeTheme.interfaceFont }
+                                        Text { width: 220; text: otherPinButton.detail; textFormat: Text.PlainText; elide: Text.ElideRight; color: floeTheme.textMuted; font.pixelSize: 12; font.family: floeTheme.interfaceFont }
+                                    }
+                                    Accessible.name: (modelData.display_state === "connected" ? "Go to " : "Focus ") + modelData.label + " on " + otherPinButton.detail
+                                    onClicked: root.spaceAction("focus", modelData.id)
+                                }
+                                FlowButton {
+                                    id: movePinHereButton
+                                    onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(movePinHereButton)
+                                    width: 132; implicitHeight: 64; text: "Pin here"
+                                    Accessible.name: "Pin " + modelData.label + " on this display instead"
+                                    enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"
+                                    onClicked: root.spaceAction("move-pin-here", modelData.id)
+                                }
                             }
                         }
                     }
@@ -781,7 +848,7 @@ ShellRoot {
                                 id: spaceCard
                                 required property var modelData
                                 property var groupPin: root.pins.find(p => p.kind === "group" && p.group_id === modelData.group_id) || null
-                                width: modelData.members.length > 1 ? modelData.members.length * 136 - 4 : 200
+                                width: modelData.members.length > 1 ? modelData.members.length * 144 - 4 : 200
                                 spacing: 4
                                 FlowButton {
                                     id: spaceButton
@@ -795,20 +862,55 @@ ShellRoot {
                                     visible: modelData.members.length > 1; spacing: 4
                                     Repeater {
                                         model: parent.parent.modelData.members
-                                        FlowButton {
-                                            id: memberButton
+                                        Column {
+                                            id: memberColumn
                                             required property var modelData
-                                            onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberButton)
-                                            width: 132; implicitHeight: 44
-                                            text: (modelData.active ? "● " : "") + modelData.label.slice(0, 14)
-                                            Accessible.name: "Focus " + modelData.label + " in group"
-                                            onClicked: root.spaceAction("focus-window", String(modelData.id))
+                                            required property int index
+                                            property var space: spaceCard.modelData
+                                            property bool grouped: !!space.group_id
+                                            spacing: 2
+                                            FlowButton {
+                                                id: memberButton
+                                                onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberButton)
+                                                width: 140; implicitHeight: 44
+                                                text: (memberColumn.modelData.active ? "● " : "") + memberColumn.modelData.label.slice(0, 14)
+                                                Accessible.name: "Focus " + memberColumn.modelData.label + " in group"
+                                                onClicked: root.spaceAction("focus-window", String(memberColumn.modelData.id))
+                                            }
+                                            Row {
+                                                visible: memberColumn.grouped; spacing: 4
+                                                FlowButton {
+                                                    id: memberLeftButton
+                                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberLeftButton)
+                                                    width: 44; implicitHeight: 44; text: memberColumn.space.group_layout === "side-by-side" ? "‹" : "↑"
+                                                    enabled: memberColumn.index > 0 && !memberColumn.space.order_changed && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                    Accessible.name: "Move " + memberColumn.modelData.label + " earlier in Group " + memberColumn.space.label
+                                                    onClicked: root.spaceAction("member-left", String(memberColumn.modelData.id))
+                                                }
+                                                FlowButton {
+                                                    id: memberRightButton
+                                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberRightButton)
+                                                    width: 44; implicitHeight: 44; text: memberColumn.space.group_layout === "side-by-side" ? "›" : "↓"
+                                                    enabled: memberColumn.index < memberColumn.space.members.length - 1 && !memberColumn.space.order_changed && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                    Accessible.name: "Move " + memberColumn.modelData.label + " later in Group " + memberColumn.space.label
+                                                    onClicked: root.spaceAction("member-right", String(memberColumn.modelData.id))
+                                                }
+                                                FlowButton {
+                                                    id: memberRemoveButton
+                                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberRemoveButton)
+                                                    width: 44; implicitHeight: 44; text: "×"
+                                                    visible: !!memberColumn.space.can_remove
+                                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                    Accessible.name: "Remove " + memberColumn.modelData.label + " from Group " + memberColumn.space.label + "; the app stays open"
+                                                    onClicked: root.spaceAction("remove-from-group", String(memberColumn.modelData.id))
+                                                }
+                                            }
                                         }
                                     }
                                 }
                                 FlowButton {
                                     id: createGroupButton
-                                    visible: spaceCard.modelData.members.length === 2 && !spaceCard.modelData.group_id
+                                    visible: spaceCard.modelData.members.length >= 2 && spaceCard.modelData.members.length <= 4 && !spaceCard.modelData.group_id
                                     onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(createGroupButton)
                                     width: parent.width; implicitHeight: 44; text: "Create Group"
                                     Accessible.name: "Create Group from " + spaceCard.modelData.label
@@ -836,8 +938,26 @@ ShellRoot {
                                     }
                                 }
                                 FlowButton {
+                                    id: addMemberButton
+                                    visible: !!spaceCard.modelData.can_add
+                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(addMemberButton)
+                                    width: parent.width; implicitHeight: 44; text: "Add " + (spaceCard.modelData.add_label || "next app").slice(0, 24) + " to Group"
+                                    Accessible.name: "Add the next space, " + spaceCard.modelData.add_label + ", to Group " + spaceCard.modelData.label
+                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    onClicked: root.spaceAction("add-to-group", spaceCard.modelData.group_id)
+                                }
+                                FlowButton {
+                                    id: keepOrderButton
+                                    visible: !!spaceCard.modelData.order_changed
+                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(keepOrderButton)
+                                    width: parent.width; implicitHeight: 44; text: "Keep new app order"
+                                    Accessible.name: "Keep the new app order for Group " + spaceCard.modelData.label
+                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    onClicked: root.spaceAction("adopt-group-order", spaceCard.modelData.group_id)
+                                }
+                                FlowButton {
                                     id: groupLayoutButton
-                                    visible: !!spaceCard.modelData.group_id && spaceCard.modelData.members.length === 2
+                                    visible: !!spaceCard.modelData.group_id
                                     onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(groupLayoutButton)
                                     width: parent.width; implicitHeight: 44
                                     text: spaceCard.modelData.group_layout === "side-by-side" ? "Stack" : "Side by side"
@@ -940,6 +1060,15 @@ ShellRoot {
                                 enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                 onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(resumeGroupLayout)
                                 onClicked: root.spaceAction("resume-group-layout", modelData.id)
+                            }
+                            FlowButton {
+                                id: adoptGroupOrder
+                                visible: modelData.can_adopt_order
+                                width: Math.min(parent.width, 220); implicitHeight: 44; text: "Keep current order"
+                                Accessible.name: "Keep the current app order for Group " + modelData.label
+                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(adoptGroupOrder)
+                                onClicked: root.spaceAction("adopt-group-order", modelData.id)
                             }
                             FlowButton {
                                 id: repairGroupLayout
