@@ -28,6 +28,15 @@ binds {
     Super+7 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "focus" "7"; }
     Super+8 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "focus" "8"; }
     Super+9 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "focus" "9"; }
+    Super+Alt+1 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "display_digit" "1"; }
+    Super+Alt+2 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "display_digit" "2"; }
+    Super+Alt+3 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "display_digit" "3"; }
+    Super+Alt+4 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "display_digit" "4"; }
+    Super+Alt+5 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "display_digit" "5"; }
+    Super+Alt+6 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "display_digit" "6"; }
+    Super+Alt+7 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "display_digit" "7"; }
+    Super+Alt+8 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "display_digit" "8"; }
+    Super+Alt+9 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "display_digit" "9"; }
     Super+Return { spawn "@terminal@"; }
     Super+L allow-when-locked=true { spawn "@lock@" "-c" "0b1015"; }
     Super+Left { spawn "@spaces@" "navigate" "left"; }

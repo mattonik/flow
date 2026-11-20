@@ -127,8 +127,9 @@ class MoveToDisplayTest(unittest.TestCase):
     def test_lists_connected_displays_in_screen_order(self):
         self.setup({"DP-1": [[8]], "eDP-1": [[7]]}, focused=7)
         result = self.invoke("refresh")
-        self.assertEqual(result["displays"], [{"key": LAPTOP_KEY, "label": "BOE Panel", "current": True},
-                                              {"key": MONITOR_KEY, "label": "Dell U2723QE", "current": False}])
+        self.assertEqual(result["displays"], [
+            {"key": LAPTOP_KEY, "label": "BOE Panel", "name": "Main", "number": 0, "current": True},
+            {"key": MONITOR_KEY, "label": "Dell U2723QE", "name": "External 1", "number": 1, "current": False}])
 
 
 if __name__ == "__main__":

@@ -152,3 +152,60 @@ def swap(pins, pin_id, direction, key):
     if 0 <= target < len(local):
         a, b = local[position], local[target]
         pins[a], pins[b] = pins[b], pins[a]
+
+
+INTERNAL_CONNECTORS = ("eDP", "LVDS", "DSI")
+
+
+def assign_numbers(displays, order):
+    """Give displays user-stable numbers in place: 0 is Main, external displays count from 1.
+
+    ``order`` lists the connected display keys in screen order. A number, once given, stays with its
+    display record while it is disconnected; only the user changes it (see ``make_main``). The first
+    Main is a built-in panel when one is connected, otherwise the first display in screen order.
+    """
+    seen = set()
+    for key in sorted(displays):
+        number = displays[key].get("number")
+        if not isinstance(number, int) or isinstance(number, bool) or number < 0 or number in seen:
+            displays[key].pop("number", None)
+        else:
+            seen.add(number)
+    if 0 not in seen and order:
+        internal = [k for k in order if str(displays[k].get("connector", "")).startswith(INTERNAL_CONNECTORS)]
+        main = (internal or order)[0]
+        seen.discard(displays[main].get("number"))
+        displays[main]["number"] = 0
+        seen.add(0)
+    for key in order:
+        if "number" not in displays[key]:
+            number = next(n for n in range(1, len(seen) + 2) if n not in seen)
+            displays[key]["number"] = number
+            seen.add(number)
+
+
+def display_name(record):
+    number = (record or {}).get("number")
+    if number == 0:
+        return "Main"
+    return f"External {number}" if isinstance(number, int) else "Display"
+
+
+def by_number(displays, number):
+    return next((key for key, record in displays.items() if record.get("number") == number), None)
+
+
+def make_main(displays, key):
+    """Make a display Main; the previous Main takes its number."""
+    if key not in displays:
+        raise ValueError("That display is not known")
+    previous = by_number(displays, 0)
+    if previous == key:
+        raise ValueError("This is already the main display")
+    number = displays[key].get("number")
+    displays[key]["number"] = 0
+    if previous:
+        if isinstance(number, int):
+            displays[previous]["number"] = number
+        else:
+            displays[previous].pop("number", None)

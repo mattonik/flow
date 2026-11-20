@@ -1174,6 +1174,7 @@ def other_pins(pins, display, displays, connected, ambiguous, workspaces, window
         live = any(pin_window(pin, ws, windows, socket, groups) for ws in workspaces)
         result.append({"id": pin["id"], "label": pin["label"], "kind": "group" if "members" in pin else "app",
                        "size": len(pin.get("members") or [1]), "group_id": pin.get("group_id"), "display": key, "display_label": labels[key],
+                       "display_name": pin_store.display_name(displays.get(key)) if key else "",
                        "display_state": state, "available": live})
     return result
 
@@ -1198,6 +1199,8 @@ def run_locked(state):
             return places[0] if len(places) == 1 else None
 
         pin_store.migrate(pins, displays, version, connected, locate)
+        screen_order = [connected[name]["key"] for name in sorted(connected, key=lambda n: output_order(outputs, n))]
+        pin_store.assign_numbers(displays, screen_order)
 
         def here(ws):
             record = connected.get(ws.get("output"))
@@ -1206,6 +1209,25 @@ def run_locked(state):
         display = here(workspace)
         op = sys.argv[1] if len(sys.argv) > 1 else "refresh"
         arg = sys.argv[2] if len(sys.argv) > 2 else None
+        if op == "focus-number":
+            # "D:S" — pinned space S of display number D (0 is Main), as typed with Super or Super+Alt.
+            try:
+                number, index = (int(part) for part in (arg or "").split(":"))
+            except ValueError:
+                raise ValueError("Choose a display and pinned space number") from None
+            key = pin_store.by_number(displays, number)
+            name = "The main display" if number == 0 else f"External {number}"
+            if key is None:
+                raise ValueError(f"{name} has not been connected" if number else "No main display is set")
+            if pin_store.status(key, connected, ambiguous) != "connected":
+                raise ValueError(f"{name} is not connected")
+            owned = local_pins(pins, key)
+            if not 1 <= index <= len(owned):
+                raise ValueError(f"{name} has no pinned space {index}")
+            op, arg = "focus", owned[index - 1]["id"]
+        elif op == "make-main":
+            pin_store.make_main(displays, arg)
+            op, arg = "refresh", None
         if op == "focus":
             pin = next((p for p in pins if p["id"] == arg), None)
             owner = pin and pin.get("display")
@@ -1303,10 +1325,14 @@ def run_locked(state):
         print(json.dumps({"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows, groups, pins),
                           "incomplete_groups": incomplete_groups(workspace, windows, groups, pins),
                           "other_pins": other_pins(pins, display, displays, connected, ambiguous, workspaces, windows, socket, groups),
-                          "display": {"key": display, "label": record["label"] if record else workspace.get("output") or ""},
+                          "display": {"key": display, "label": record["label"] if record else workspace.get("output") or "",
+                                      "name": pin_store.display_name(displays.get(display)),
+                                      "number": (displays.get(display) or {}).get("number")},
                           "display_count": len(connected),
-                          "displays": [{"key": r["key"], "label": r["label"], "current": r["key"] == display}
-                                       for _, r in sorted(connected.items(), key=lambda item: output_order(outputs, item[0]))],
+                          "displays": [{"key": key, "label": displays[key].get("label", ""),
+                                        "name": pin_store.display_name(displays[key]),
+                                        "number": displays[key].get("number"), "current": key == display}
+                                       for key in screen_order],
                           "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
 
 

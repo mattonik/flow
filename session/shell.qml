@@ -191,8 +191,34 @@ ShellRoot {
     property var otherPins: []
     property string displayLabel: ""
     property int displayCount: 1
-    // Connected displays in screen order: {key, label, current}.
+    // Connected displays in screen order: {key, label, name, number, current}; number 0 is Main.
     property var displays: []
+    property string displayName: ""
+    // Super+Alt, display digit, then space digit: the display digit waits here for the space digit.
+    property int pendingDisplay: -1
+    property string shortcutHint: ""
+    function showShortcutHint(text) { shortcutHint = text; shortcutHintTimer.restart() }
+    function displayDigit(digit) {
+        if (pendingDisplay < 0) {
+            const target = displays.find(d => d.number === digit)
+            if (displays.length && !target) { showShortcutHint("External " + digit + " is not connected"); return }
+            pendingDisplay = digit
+            shortcutHintTimer.stop()
+            shortcutHint = "External " + digit + (target ? " · " + target.label : "") + " — choose a pinned space"
+            displayDigitTimer.restart()
+            return
+        }
+        const display = pendingDisplay
+        pendingDisplay = -1
+        displayDigitTimer.stop()
+        showShortcutHint("External " + display + " · space " + digit)
+        spaceAction("focus-number", display + ":" + digit)
+    }
+    Timer {
+        id: displayDigitTimer; interval: 1500
+        onTriggered: if (root.pendingDisplay >= 0) { root.pendingDisplay = -1; root.showShortcutHint("Display shortcut cancelled") }
+    }
+    Timer { id: shortcutHintTimer; interval: 1800; onTriggered: root.shortcutHint = "" }
     property string spacesError: ""
     property var pendingSpaceActions: []
     function renameGroup(id, label) {
@@ -236,10 +262,11 @@ ShellRoot {
                         if (JSON.stringify(root.pins) !== JSON.stringify(result.pins)) root.pins = result.pins
                         if (JSON.stringify(root.otherPins) !== JSON.stringify(result.other_pins || [])) root.otherPins = result.other_pins || []
                         root.displayLabel = result.display ? result.display.label : ""
+                        root.displayName = result.display ? result.display.name || "" : ""
                         root.displayCount = result.display_count || 1
                         if (JSON.stringify(root.displays) !== JSON.stringify(result.displays || [])) root.displays = result.displays || []
                         if (result.action !== "refresh") root.spacesError = ""
-                        if (result.action === "focus" || result.action === "focus-window" || result.action === "move-to-display") { root.deskOpen = false; root.switcherOpen = false }
+                        if (["focus", "focus-number", "focus-window", "move-to-display"].includes(result.action)) { root.deskOpen = false; root.switcherOpen = false }
                         else if (result.action === "pin") root.deskOpen = true
                     }
                 } catch (e) { root.spacesError = "Could not read pinned spaces" }
@@ -460,6 +487,9 @@ ShellRoot {
 
     IpcHandler {
         target: "desk"
+        // Read-only, for scripted checks of display-shortcut feedback.
+        function shortcut_hint(): string { return root.shortcutHint }
+        function spaces_error(): string { return root.spacesError }
         function menu(): void {
             if (menuPreferences.appMenuEnabled && root.appMenu && !root.deskOpen && !root.overviewOpen) {
                 if (root.appMenuOpen) root.appMenuOpen = false
@@ -478,10 +508,12 @@ ShellRoot {
         function pin(): void { root.spaceAction("pin") }
         function focus_pin(id: string): void { root.spaceAction("focus", id) }
         function focus_window(id: string): void { root.spaceAction("focus-window", id) }
+        // Super+number: pinned space on the main display, from any display.
         function focus(index: int): void {
-            if (index > 0 && index <= root.pins.length) root.spaceAction("focus", root.pins[index - 1].id)
+            if (index > 0 && index <= 9) root.spaceAction("focus-number", "0:" + index)
             else { root.spacesError = "No pinned space at that position"; root.deskOpen = true }
         }
+        function display_digit(digit: int): void { if (digit > 0 && digit <= 9) root.displayDigit(digit) }
         function toggle(): void { root.toggleDesk() }
         function leave(): void { root.deskOpen = false }
         function switcher(): void { root.toggleSwitcher() }
@@ -569,8 +601,14 @@ ShellRoot {
                         onClicked: root.openSearch()
                     }
                     Text {
-                        text: "PINNED SPACES" + (root.displayCount > 1 && root.displayLabel ? "  ·  " + root.displayLabel.toUpperCase() : "")
+                        text: "PINNED SPACES" + (root.displayCount > 1 && root.displayName ? "  ·  " + root.displayName.toUpperCase() + (root.displayLabel ? "  ·  " + root.displayLabel.toUpperCase() : "") : "")
                         textFormat: Text.PlainText; color: floeTheme.textMuted; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12
+                    }
+                    Text {
+                        visible: root.displayCount > 1 && root.displayName !== ""
+                        text: root.displayName === "Main" ? "Super 1–9 open these spaces from any display"
+                            : "Hold Super Alt, press " + root.displayName.replace("External ", "") + ", then a space number"
+                        textFormat: Text.PlainText; color: floeTheme.textMuted; font.pixelSize: 12; font.family: floeTheme.interfaceFont
                     }
                     Text { visible: root.pins.length === 0; text: "Pin the current space to keep its place"; color: floeTheme.textMuted; font.pixelSize: 14 }
                     Flow {
@@ -631,7 +669,7 @@ ShellRoot {
                                     id: otherPinButton
                                     onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(otherPinButton)
                                     width: 240; implicitHeight: 64; text: modelData.label
-                                    property string detail: modelData.display_label + (modelData.display_state === "connected" ? ""
+                                    property string detail: (modelData.display_name ? modelData.display_name + " · " : "") + modelData.display_label + (modelData.display_state === "connected" ? ""
                                         : modelData.display_state === "unassigned" ? " · not assigned"
                                         : modelData.display_state === "ambiguous" ? " · cannot be told apart" : " · disconnected")
                                     enabled: (modelData.display_state === "connected" || modelData.available) && (!spacesProcess.running || spacesProcess.command[1] === "refresh")
@@ -671,6 +709,15 @@ ShellRoot {
                             onClicked: root.spaceAction("pin")
                         }
                         FlowButton { id: editPinsButton; onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(editPinsButton); visible: root.pins.length > 0; width: 100; text: root.editPins ? "Done" : "Edit pins"; onClicked: root.editPins = !root.editPins }
+                        FlowButton {
+                            id: makeMainButton
+                            onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(makeMainButton)
+                            visible: root.displayCount > 1 && root.displayName !== "" && root.displayName !== "Main"
+                            width: 196; text: "Make this the main display"
+                            Accessible.name: "Make " + root.displayLabel + " the main display; Super and a number will open its pinned spaces"
+                            enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"
+                            onClicked: root.spaceAction("make-main", (root.displays.find(d => d.current) || {}).key)
+                        }
                     }
                     Row {
                         visible: root.spacesError !== ""; width: parent.width; spacing: 8
@@ -1306,5 +1353,27 @@ ShellRoot {
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         SystemIsland { id: workIslandContent; anchors.fill: parent }
+    }
+    PanelWindow {
+        // Temporary feedback for display shortcuts; it never takes keyboard focus.
+        visible: root.shortcutHint !== ""
+        anchors.bottom: true
+        margins.bottom: 56
+        implicitWidth: shortcutHintText.implicitWidth + 36; implicitHeight: 44
+        color: "transparent"
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+        Rectangle {
+            anchors.fill: parent; radius: 10
+            color: floeTheme.surfaceRaised; border.width: 1; border.color: floeTheme.borderStrong
+            Text {
+                id: shortcutHintText
+                anchors.centerIn: parent
+                text: root.shortcutHint; textFormat: Text.PlainText
+                color: floeTheme.textPrimary; font.pixelSize: 14; font.family: floeTheme.interfaceFont
+                Accessible.role: Accessible.AlertMessage; Accessible.name: text
+            }
+        }
     }
 }
