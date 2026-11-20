@@ -16,7 +16,7 @@ The recorded test environment is an Apple Silicon Mac running UTM 5.0.8, QEMU AR
 | F-008 Search | Partial | Search covers recent local files within the user’s home folder, Flow settings, quick settings, installed applications, open windows and saved pins, including closed apps. File indexing and commands are missing. The settings shell actions were checked through IPC. A recent-file result from an isolated history was selected in the guest and opened in Kate; naturally populated history and the settings results still need end-to-end validation. |
 | F-009 Island/system | Partial | Island, quick settings, lock and a temporary notification inbox exist. Quick Settings opens GNOME's Wi-Fi panel and the connection-profile editor, and controls one unambiguous MPRIS player. The guest showed the no-adapter Wi-Fi state; real scanning/authentication, durable notification history and independent availability across all contexts remain unverified. |
 | F-010 Real accounts | Open | Two-user and guest isolation and switching have not been verified. |
-| F-011 Display hotplug | Partial | In the guest, a second virtual output was disconnected and reconnected through its DRM connector (2026-11-20). Its pins stayed with it and nothing on the other display was reordered, then the pins came back in order. Physical monitors, docks, connector changes and serial-number identity are unit-tested only. |
+| F-011 Display hotplug | Partial | In the guest, a second virtual output was disconnected and reconnected through its DRM connector (2026-11-20). Its pins stayed with it and nothing on the other display was reordered, then the pins came back in order. A pinned three-app Group and a single app were moved between the two outputs as one destination each. Physical monitors, docks, connector changes and serial-number identity are unit-tested only. |
 | F-012 Portal correctness | Partial | The guest's portal broker is active and owns its session D-Bus name. A disposable unsandboxed chooser request returned the selected test-file URI, and a second request returned a cancel response. Sandboxed file access, saving, screenshots, screenshare, clipboard and drag/drop remain unverified. |
 | F-013 Audio/peripherals | Open | Volume control was exercised; a Bluetooth headset and microphone were not tested on physical hardware. |
 | F-014 Figma day | Open | No recorded Figma workload, screenshare or browser-load test. |
@@ -70,5 +70,17 @@ The VM's GL virtio GPU was given a second scanout: UTM's QEMU arguments now incl
 - Recovery refused a session saved on the other connected display.
 
 With per-display filtering disabled, the test fails. Niri reports both QEMU outputs with the same make and model and no serial; it renames the second to "Unknown". Identity by serial number and connector changes are therefore covered only by unit tests.
+
+### Moving spaces between displays
+
+The switcher's active space offers *Move to* each other connected display. An app, a stack or a whole Group moves as one destination, keeping its member order, focus, window IDs and Group identity. Niri inserts a moved column after the destination's active column, so each Group column is moved with the previous one active there, and a space never lands inside an active side-by-side Group. A pinned space joins the end of the destination's pinned spaces; a pinned side-by-side Group is placed there explicitly, because pin reconciliation is paused beside side-by-side Groups. Saved side-by-side proportions are reapplied on the new output. Niri requests are separate, so an interrupted Group move leaves its first apps on the destination: the error says so, and moving one of the remaining apps again finishes it. A Group that is split in any other way must be repaired first.
+
+`niri_move_display_smoke.py` passed on the two-output guest (Niri 26.04, five disposable Foot windows, isolated state):
+- A pinned three-app side-by-side Group moved to the second display and took its pinned place after that display's own pin, with the same Group, pin, window IDs and focused member.
+- An unpinned app moved there landed after the Group, not inside it.
+- The Group was stacked there and moved back as one column, with its pin and focus.
+- Moving to the display a space is already on was refused.
+
+With the side-by-side anchor disabled, the guest test fails: the moved app lands between the Group's first and second apps. The development shell showed the *Move to* button on the active Group's card. The button itself was not clicked in the guest, since no pointer automation is available there; the backend action it calls is what the smoke test exercises. An interrupted move is covered by unit tests only.
 
 Limitations: The changes run from a development copy, not an installed NixOS generation. An older generation cannot read a version 2 pin file and reports *Invalid saved spaces* without changing it; restore `spaces.v1.json` to roll back. Touch, physical rotation and real hotplug remain open.

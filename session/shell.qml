@@ -191,6 +191,8 @@ ShellRoot {
     property var otherPins: []
     property string displayLabel: ""
     property int displayCount: 1
+    // Connected displays in screen order: {key, label, current}.
+    property var displays: []
     property string spacesError: ""
     property var pendingSpaceActions: []
     function renameGroup(id, label) {
@@ -235,8 +237,9 @@ ShellRoot {
                         if (JSON.stringify(root.otherPins) !== JSON.stringify(result.other_pins || [])) root.otherPins = result.other_pins || []
                         root.displayLabel = result.display ? result.display.label : ""
                         root.displayCount = result.display_count || 1
+                        if (JSON.stringify(root.displays) !== JSON.stringify(result.displays || [])) root.displays = result.displays || []
                         if (result.action !== "refresh") root.spacesError = ""
-                        if (result.action === "focus" || result.action === "focus-window") { root.deskOpen = false; root.switcherOpen = false }
+                        if (result.action === "focus" || result.action === "focus-window" || result.action === "move-to-display") { root.deskOpen = false; root.switcherOpen = false }
                         else if (result.action === "pin") root.deskOpen = true
                     }
                 } catch (e) { root.spacesError = "Could not read pinned spaces" }
@@ -994,6 +997,20 @@ ShellRoot {
                                     Accessible.name: text + " " + spaceCard.modelData.label
                                     enabled: spaceCard.modelData.active && !spaceCard.groupPin && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                     onClicked: root.spaceAction("dissolve-group", spaceCard.modelData.group_id)
+                                }
+                                Repeater {
+                                    // Moving acts on the active space, so the choice appears on that card only.
+                                    model: spaceCard.modelData.active ? root.displays.filter(d => !d.current) : []
+                                    FlowButton {
+                                        id: moveDisplayButton
+                                        required property var modelData
+                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(moveDisplayButton)
+                                        width: spaceCard.width; implicitHeight: 44
+                                        text: "Move to " + modelData.label.slice(0, 22)
+                                        Accessible.name: "Move " + spaceCard.modelData.label + (spaceCard.modelData.group_id ? ", the whole Group," : "") + " to display " + modelData.label
+                                        enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                        onClicked: root.spaceAction("move-to-display", modelData.key)
+                                    }
                                 }
                                 Row {
                                     visible: !!spaceCard.modelData.group_id && root.renameGroupId === spaceCard.modelData.group_id

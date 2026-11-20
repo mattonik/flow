@@ -75,3 +75,97 @@ class FakeNiri:
 
     def layout(self):
         return [[self.apps[i] for i in column] for column in self.columns]
+
+
+class MultiNiri:
+    """Niri with several outputs, each showing one workspace of columns (window IDs, top to bottom).
+
+    Moving a column to another monitor inserts it after that monitor's active column and focuses it,
+    as Niri does; the source monitor activates the column that took its place.
+    """
+
+    def __init__(self, layout, apps, focused, outputs):
+        self.outputs = outputs
+        self.workspace_ids = {name: index for index, name in enumerate(layout, 1)}
+        self.columns = {name: [list(c) for c in columns] for name, columns in layout.items()}
+        self.active = {name: (columns[0][0] if columns else None) for name, columns in self.columns.items()}
+        self.apps = dict(apps)
+        self.focused_output = self.output_of(focused)
+        self.active[self.focused_output] = focused
+        self.widths = {}
+        self.log = []
+        self.fail_on = None
+
+    def output_of(self, ident):
+        return next(name for name, columns in self.columns.items() if any(ident in c for c in columns))
+
+    def column_of(self, name, ident):
+        return next(i for i, column in enumerate(self.columns[name]) if ident in column)
+
+    def workspaces(self):
+        return [{"id": self.workspace_ids[name], "output": name, "is_active": True,
+                 "is_focused": name == self.focused_output, "active_window_id": self.active[name]}
+                for name in self.columns]
+
+    def snapshot(self):
+        windows = []
+        for name, columns in self.columns.items():
+            for c, column in enumerate(columns, 1):
+                for r, ident in enumerate(column, 1):
+                    windows.append({"id": ident, "app_id": self.apps[ident], "title": self.apps[ident],
+                                    "workspace_id": self.workspace_ids[name], "is_floating": False,
+                                    "layout": {"pos_in_scrolling_layout": [c, r],
+                                               "tile_size": [self.widths.get(ident, 50.0) * 10, 700]}})
+        return next(w for w in self.workspaces() if w["is_focused"]), windows
+
+    def display_state(self):
+        return self.outputs, self.workspaces()
+
+    def take_column(self, name, index):
+        column = self.columns[name].pop(index)
+        remaining = self.columns[name]
+        self.active[name] = remaining[max(0, index - 1)][0] if remaining else None
+        return column
+
+    def insert_after_active(self, name, column):
+        active = self.active[name]
+        index = self.column_of(name, active) + 1 if active is not None else 0
+        self.columns[name].insert(index, column)
+        self.active[name] = column[0]
+        self.focused_output = name
+
+    def __call__(self, *args):
+        self.log.append(args)
+        if self.fail_on and self.fail_on(args):
+            raise OSError("Niri stopped")
+        if args[0] != "action":
+            return "{}"
+        name, rest = args[1], args[2:]
+        ident = int(rest[rest.index("--id") + 1]) if "--id" in rest else None
+        if name == "focus-window":
+            self.focused_output = self.output_of(ident)
+            self.active[self.focused_output] = ident
+        elif name == "focus-monitor":
+            self.focused_output = rest[0]
+        elif name == "move-column-to-monitor":
+            source = self.focused_output
+            column = self.take_column(source, self.column_of(source, self.active[source]))
+            self.insert_after_active(rest[0], column)
+        elif name == "move-window-to-monitor":
+            source = self.output_of(ident)
+            index = self.column_of(source, ident)
+            self.columns[source][index].remove(ident)
+            if not self.columns[source][index]:
+                self.columns[source].pop(index)
+            self.insert_after_active(rest[-1], [ident])
+        elif name == "move-column-to-index":
+            out = self.focused_output
+            column = self.columns[out].pop(self.column_of(out, self.active[out]))
+            self.columns[out].insert(int(rest[0]) - 1, column)
+        elif name == "set-window-width":
+            self.widths[ident] = float(rest[-1].rstrip("%"))
+        return ""
+
+    def layout(self):
+        return {name: [[self.apps[i] for i in column] for column in columns]
+                for name, columns in self.columns.items()}

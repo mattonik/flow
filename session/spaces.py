@@ -1038,6 +1038,127 @@ def change_group_layout(state, groups, pins, group_id, workspace, windows, socke
         raise ValueError(f"Group layout change interrupted: {exc}. Check the windows and choose Finish layout change") from exc
 
 
+def move_plan(groups, workspace, destination, windows):
+    """What moving the active space takes: (group, windows to move by column, windows already moved).
+
+    A Group moves whole, in its saved order. A side-by-side Group whose first apps already reached the
+    destination (an interrupted move) continues after them; any other split Group must be repaired first.
+    """
+    active = next((w for w in windows if w["id"] == workspace.get("active_window_id")), None)
+    if not active or active.get("workspace_id") != workspace["id"]:
+        raise ValueError("Select the space to move first")
+    group = next((g for g in groups if active.get("app_id") in g["members"]), None)
+    if not group:
+        if active.get("is_floating") or not position(active):
+            return None, [active], []
+        return None, [column_windows(workspace, windows, position(active)[0])[0]], []
+    if group.get("pending_layout"):
+        raise ValueError("Finish the Group layout change first")
+    found = unique_windows(group["members"], windows)
+    if (not all(found) or any(sum(w.get("app_id") == app for w in windows) != 1 for app in group["members"])
+            or any(w.get("is_floating") or not position(w) for w in found)):
+        raise ValueError("Group apps are missing or ambiguous; repair the Group before moving it")
+    here = [w for w in found if w.get("workspace_id") == workspace["id"]]
+    there = [w for w in found if w.get("workspace_id") == destination["id"]]
+    side = group.get("layout", "stack") == "side-by-side"
+    if len(here) == len(found):
+        split = split_of(found, workspace, windows)
+        if split != (1 if side else len(found)):
+            raise ValueError("Repair the Group before moving it to another display")
+        return group, found if side else found[:1], []
+    if (side and here and len(here) + len(there) == len(found) and found[:len(there)] == there
+            and split_of(there, destination, windows) == 1 and split_of(here, workspace, windows) == 1):
+        return group, here, there
+    raise ValueError("Group apps are on different workspaces; repair the Group before moving it")
+
+
+def move_to_display(pins, groups, target_key, connected, workspaces, workspace, windows, socket):
+    """Move the active app, stack or Group to another connected display as one destination.
+
+    Niri inserts a moved column after the destination's active column, so each column is moved
+    with the previously moved one active there; the space keeps its order and focus. A pinned
+    space joins the end of the destination's pinned spaces. Niri calls are separate requests:
+    an interrupted Group move leaves its first apps on the destination, and moving again finishes it.
+    """
+    target = next((name for name, record in connected.items() if record["key"] == target_key), None)
+    if target is None:
+        raise ValueError("That display is not connected")
+    if target == workspace.get("output"):
+        raise ValueError("This space is already on that display")
+    destination = next((ws for ws in workspaces if ws.get("output") == target and ws.get("is_active")), None)
+    if destination is None:
+        raise ValueError("That display has no active workspace")
+    group, columns, moved = move_plan(groups, workspace, destination, windows)
+    active = workspace.get("active_window_id")
+    ids = {w["id"] for w in moved}
+    for column in columns:
+        ids.update(w["id"] for w in (column_windows(workspace, windows, position(column)[0])
+                                      if position(column) and not column.get("is_floating") else [column]))
+    if group:
+        claims = [p for p in pins if p.get("group_id") == group["id"]]
+    else:
+        claims = [p for p in pins if "members" not in p and (resolve(p, windows, socket) or {}).get("id") in ids]
+    anchor = moved[-1]["id"] if moved else None
+    if anchor is None:
+        # Never insert inside a side-by-side Group that is active on the destination.
+        there = next((space for space in display_spaces(destination, windows, groups, pins) if space["active"]), None)
+        if there and there.get("group_layout") == "side-by-side":
+            anchor = there["members"][-1]["id"]
+    try:
+        for column in columns:
+            if anchor:
+                command("action", "focus-window", "--id", anchor)
+            command("action", "focus-window", "--id", column["id"])
+            if column.get("is_floating") or not position(column):
+                command("action", "move-window-to-monitor", "--id", column["id"], target)
+            else:
+                command("action", "move-column-to-monitor", target)
+            anchor = column["id"]
+        command("action", "focus-window", "--id", active)
+    except (OSError, subprocess.SubprocessError) as exc:
+        if not group or anchor is None:
+            raise
+        raise ValueError(f"Moving the Group stopped part-way: {exc}. Select one of its apps still on this "
+                         "display and move it again") from exc
+    workspace, windows = snapshot()
+    if (workspace.get("output") != target or workspace["id"] != destination["id"]
+            or any(w.get("workspace_id") != destination["id"] for w in windows if w["id"] in ids)
+            or len([w for w in windows if w["id"] in ids]) != len(ids)):
+        raise ValueError("The space did not arrive on that display; check its windows and move it again")
+    ordered = unique_windows(group["members"], windows) if group else []
+    side = bool(group) and group.get("layout", "stack") == "side-by-side"
+    if group and split_of(ordered, workspace, windows) != (1 if side else len(ordered)):
+        raise ValueError("The Group arrived out of order; move it again or repair it on that display")
+    for pin in claims:
+        if pin.get("display") != target_key:
+            pin_store.move_here(pins, pin["id"], target_key)
+    if side:
+        for ident, ratio in zip([w["id"] for w in ordered], group_store.ratios(group)):
+            command("action", "set-window-width", "--id", ident, f"{round(ratio * 100, 2)}%")
+        if claims:
+            # Pin reconciliation is paused beside side-by-side Groups, so place this one explicitly.
+            def width_of(pin):
+                found = group_windows(pin, workspace, windows, socket, groups) if pin.get("group_id") else None
+                return len(found) if found and split_of(found, workspace, windows) == 1 else 1
+
+            width = sum(width_of(p) for p in local_pins(pins, target_key)
+                        if p["id"] != claims[0]["id"] and pin_window(p, workspace, windows, socket, groups))
+            start = position(ordered[0])[0]
+            if start != width + 1:
+                sequence = list(enumerate(ordered))
+                for index, member in (sequence if width + 1 < start else reversed(sequence)):
+                    command("action", "focus-window", "--id", member["id"])
+                    command("action", "move-column-to-index", width + 1 + index)
+                command("action", "focus-window", "--id", active)
+        workspace, windows = snapshot()
+    return workspace, windows
+
+
+def output_order(outputs, name):
+    logical = (outputs.get(name) or {}).get("logical") or {}
+    return logical.get("x", 0), logical.get("y", 0), name
+
+
 def other_pins(pins, display, displays, connected, ambiguous, workspaces, windows, socket, groups):
     """Pins owned by other, disconnected or unidentified displays, with where they stand."""
     labels = {}
@@ -1117,7 +1238,12 @@ def run_locked(state):
             window = resolve(pin, windows, socket)
             if window and (pin.get("session") != socket or pin.get("window_id") != window["id"]):
                 pin["session"], pin["window_id"] = socket, window["id"]
-        if op == "repair-side-group":
+        if op == "move-to-display":
+            workspace, windows = move_to_display(pins, groups, arg, connected, workspaces, workspace, windows, socket)
+            outputs, workspaces = display_state()
+            display = here(workspace)
+            result = run(pins, "refresh", None, workspace, windows, socket, groups, display)
+        elif op == "repair-side-group":
             run(pins, op, arg, workspace, windows, socket, groups, display)
             workspace, windows = snapshot()
             result = run(pins, "refresh", None, workspace, windows, socket, groups, display)
@@ -1179,6 +1305,8 @@ def run_locked(state):
                           "other_pins": other_pins(pins, display, displays, connected, ambiguous, workspaces, windows, socket, groups),
                           "display": {"key": display, "label": record["label"] if record else workspace.get("output") or ""},
                           "display_count": len(connected),
+                          "displays": [{"key": r["key"], "label": r["label"], "current": r["key"] == display}
+                                       for _, r in sorted(connected.items(), key=lambda item: output_order(outputs, item[0]))],
                           "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
 
 
