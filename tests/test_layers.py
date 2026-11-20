@@ -63,6 +63,35 @@ class LayerTest(unittest.TestCase):
         self.assertIn(("action", "set-window-width", "--id", 50, "45%"), self.niri.log)
         self.assertFalse([a for a in self.niri.log if a[:2] == ("action", "move-column-to-index")])
 
+    def test_on_a_portrait_output_a_layer_is_a_bottom_sheet(self):
+        portrait = {"Virtual-1": {"logical": {"x": 0, "y": 0, "width": 800, "height": 1280}}}
+        self.niri("action", "focus-window", "--id", 9)
+        with patch.object(spaces, "display_state", return_value=(portrait, [])):
+            self.run_op("make-layer")
+        self.assertIn(("action", "set-window-width", "--id", 9, "100%"), self.niri.log)
+        self.assertIn(("action", "set-window-height", "--id", 9, "50%"), self.niri.log)
+        self.assertIn(("action", "move-floating-window", "--id", 9, "-x", "0", "-y", "640"), self.niri.log)
+        self.assertNotIn(("action", "center-window", "--id", 9), self.niri.log)
+
+    def test_a_landscape_layer_is_centered_once_its_new_size_is_committed(self):
+        landscape = {"Virtual-1": {"logical": {"x": 0, "y": 0, "width": 1280, "height": 800}}}
+        heights = iter([634, 634, 480])
+        snapshot = self.niri.snapshot
+
+        def settling():
+            ws, windows = snapshot()
+            for w in windows:
+                if w["is_floating"]:
+                    w["layout"]["tile_size"] = [576, next(heights, 480)]
+            return ws, windows
+
+        self.niri("action", "focus-window", "--id", 9)
+        with patch.object(spaces, "display_state", return_value=(landscape, [])), \
+             patch.object(spaces, "snapshot", side_effect=settling):
+            self.run_op("make-layer")
+        self.assertEqual(next(heights, "done"), "done")
+        self.assertIn(("action", "center-window", "--id", 9), self.niri.log)
+
     def test_closing_a_layer_returns_focus_to_the_group_without_moving_anything(self):
         before = self.tiles()
         with self.launch("notes"):

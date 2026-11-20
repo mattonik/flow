@@ -16,6 +16,7 @@ MAX_MEMBERS = group_store.MAX_MEMBERS
 RESIZE_STEP = 0.1  # share of the Group's width moved per Narrower/Wider step
 MIN_SHARE = 0.15  # no member is made narrower than this share of the Group
 LAYER_SIZE = ("45%", "60%")  # a desktop Layer is a compact floating window over the space
+SHEET_HEIGHT = 0.5  # on a portrait output a Layer is a full-width bottom sheet of this height
 valid_members = group_store.valid_members
 
 
@@ -682,7 +683,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
             raise ValueError("Unpin this app before making it a Layer")
         if not eligible(window, workspace, windows):
             raise ValueError("Separate this app from its stack before making it a Layer")
-        float_as_layer(window["id"])
+        float_as_layer(window["id"], layer_output(workspace))
     elif op == "open-layer":
         desktop = desktop_file(arg, data_dirs())
         if not desktop:
@@ -710,7 +711,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
             raise ValueError("The app opened more than one window or opened elsewhere; it was left as it is")
         if not new[0].get("is_floating"):
             # Niri reactivates the column the window was opened from, so closing the Layer returns there.
-            float_as_layer(new[0]["id"])
+            float_as_layer(new[0]["id"], layer_output(workspace))
     elif op == "layer-to-space":
         window = layer_window(arg, workspace, windows)
         command("action", "move-window-to-tiling", "--id", window["id"])
@@ -919,12 +920,41 @@ def layers(workspace, windows):
             for w in windows if w.get("workspace_id") == workspace["id"] and w.get("is_floating")]
 
 
-def float_as_layer(window_id):
-    """Lift one window out of the strip; the columns around it close up and keep their sizes."""
+def layer_output(workspace):
+    """The logical size of the workspace's output, or None when Niri does not report it."""
+    try:
+        logical = (display_state()[0].get(workspace.get("output")) or {}).get("logical") or {}
+    except (OSError, ValueError, subprocess.SubprocessError, AttributeError):
+        return None
+    size = logical.get("width"), logical.get("height")
+    return size if all(isinstance(v, int) and v > 0 for v in size) else None
+
+
+def float_as_layer(window_id, size=None):
+    """Lift one window out of the strip; the columns around it close up and keep their sizes.
+
+    In landscape the Layer is a compact centered window; in portrait it is a bottom sheet across
+    the output, leaving the top of the space in view.
+    """
     command("action", "move-window-to-floating", "--id", window_id)
-    command("action", "set-window-width", "--id", window_id, LAYER_SIZE[0])
-    command("action", "set-window-height", "--id", window_id, LAYER_SIZE[1])
-    command("action", "center-window", "--id", window_id)
+    if size and size[1] > size[0]:
+        command("action", "set-window-width", "--id", window_id, "100%")
+        command("action", "set-window-height", "--id", window_id, f"{round(SHEET_HEIGHT * 100)}%")
+        command("action", "move-floating-window", "--id", window_id, "-x", "0",
+                "-y", str(size[1] - round(size[1] * SHEET_HEIGHT)))
+    else:
+        command("action", "set-window-width", "--id", window_id, LAYER_SIZE[0])
+        command("action", "set-window-height", "--id", window_id, LAYER_SIZE[1])
+        # Niri centers by the window's current size, so wait for the client to commit the new one.
+        expected = size[1] * float(LAYER_SIZE[1].rstrip("%")) / 100 if size else None
+        for _ in range(10):
+            time.sleep(0.1)
+            if expected is None:
+                break
+            tile = next((w.get("layout", {}).get("tile_size") for w in snapshot()[1] if w.get("id") == window_id), None)
+            if tile and abs(tile[1] - expected) <= 16:
+                break
+        command("action", "center-window", "--id", window_id)
     command("action", "focus-window", "--id", window_id)
 
 
