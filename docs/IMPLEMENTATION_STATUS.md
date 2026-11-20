@@ -23,7 +23,7 @@ The recorded test environment is an Apple Silicon Mac running UTM 5.0.8, QEMU AR
 | F-015 Development day | Open | Terminal and editors run, but the native-host development, container and VM workflow is not verified. |
 | F-016 Touch day | Open | A manually invoked on-screen keyboard entered a letter, Shift and Enter into a guest terminal with a simulated pointer. Real touch, automatic text-field activation, rotation and tablet Group testing remain open. |
 | F-017 API app test | Open | No versioned Flow Platform API, non-Qt client or authorization test exists. |
-| F-018 Shell restart | Partial | The shell was restarted without closing guest apps; a recorded before/after pinned-state integrity test is still needed. |
+| F-018 Shell restart | Partial | `niri_shell_restart_smoke.py` (2026-11-20) started a development shell and restarted it with SIGTERM, then SIGKILL. It ran beside a pinned app, a pinned, resized side-by-side Group and an unpinned app, with isolated state. Pins, Groups, window IDs, columns, widths and focus were unchanged from before the first start, and Super+1 and Super+2 still reached both pins. A shell that moves focus on startup fails the test. The installed shell and session, and a restart during a Flow action, were not tested. |
 | F-019 DisplayLink hardware | Open | No named dock or monitor test. |
 | F-020 App menu fallback | Partial | The opt-in AT-SPI experiment showed and invoked Kate commands; native menus are retained. Coverage, same-process ambiguity and the complete fallback journey remain unverified. |
 | F-021 Sync conflict | Open | No sync provider or conflict-resolution journey. |
