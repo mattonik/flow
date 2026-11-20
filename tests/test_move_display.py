@@ -124,6 +124,39 @@ class MoveToDisplayTest(unittest.TestCase):
         self.assertEqual(self.niri.layout()["eDP-1"], [["a"], ["mail"], ["b"], ["c"]])
         self.assertFalse(any(args[1].startswith("move-") for args in self.niri.log if args[0] == "action"))
 
+    def portrait_monitor(self):
+        self.niri.outputs = {**OUTPUTS, "DP-1": {**MONITOR, "logical": {**MONITOR["logical"], "width": 1080, "height": 1920}}}
+
+    def test_a_group_following_orientation_is_stacked_on_a_portrait_display(self):
+        trio = {**self.side_trio(), "auto_layout": True}
+        self.setup({"eDP-1": [[1], [2], [3]], "DP-1": [[8]]}, focused=2, groups=[trio])
+        self.portrait_monitor()
+        with patch.object(spaces.time, "sleep"):
+            result = self.invoke("move-to-display", MONITOR_KEY)
+        self.assertEqual(self.niri.layout()["DP-1"], [["terminal"], ["a", "b", "c"]])
+        self.assertEqual(result["notice"], "Trio was stacked for the portrait Dell U2723QE")
+        saved = json.loads((self.state / "groups.json").read_text())["groups"][0]
+        self.assertEqual((saved["layout"], saved["side_ratios"]), ("stack", [0.5, 0.25, 0.25]))
+        self.assertNotIn("pending_layout", saved)
+
+    def test_a_group_whose_apps_do_not_fit_is_stacked_and_keeps_its_proportions(self):
+        self.setup({"eDP-1": [[1], [2], [3]], "DP-1": [[8]]}, focused=2, groups=[self.side_trio()])
+        self.niri.minimum = {3: 60.0}
+        with patch.object(spaces.time, "sleep"):
+            result = self.invoke("move-to-display", MONITOR_KEY)
+        self.assertEqual(self.niri.layout()["DP-1"], [["terminal"], ["a", "b", "c"]])
+        self.assertEqual(result["notice"], "Trio was stacked to fit Dell U2723QE")
+        saved = json.loads((self.state / "groups.json").read_text())["groups"][0]
+        self.assertEqual(saved["side_ratios"], [0.5, 0.25, 0.25])
+
+    def test_a_manual_side_by_side_group_that_fits_stays_side_by_side_on_portrait(self):
+        self.setup({"eDP-1": [[1], [2], [3]], "DP-1": [[8]]}, focused=2, groups=[self.side_trio()])
+        self.portrait_monitor()
+        with patch.object(spaces.time, "sleep"):
+            result = self.invoke("move-to-display", MONITOR_KEY)
+        self.assertEqual(self.niri.layout()["DP-1"], [["terminal"], ["a"], ["b"], ["c"]])
+        self.assertEqual(result["notice"], "")
+
     def test_lists_connected_displays_in_screen_order(self):
         self.setup({"DP-1": [[8]], "eDP-1": [[7]]}, focused=7)
         result = self.invoke("refresh")

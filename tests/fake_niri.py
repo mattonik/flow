@@ -144,6 +144,7 @@ class MultiNiri:
         self.focused_output = self.output_of(focused)
         self.active[self.focused_output] = focused
         self.widths = {}
+        self.minimum = {}  # an app's minimum width, in percent of its output
         self.log = []
         self.fail_on = None
 
@@ -214,7 +215,17 @@ class MultiNiri:
             column = self.columns[out].pop(self.column_of(out, self.active[out]))
             self.columns[out].insert(int(rest[0]) - 1, column)
         elif name == "set-window-width":
-            self.widths[ident] = float(rest[-1].rstrip("%"))
+            self.widths[ident] = max(float(rest[-1].rstrip("%")), self.minimum.get(ident, 0))
+        elif name.startswith("consume-or-expel-window-"):
+            out, left = self.output_of(ident), name.endswith("left")
+            columns = self.columns[out]
+            c = self.column_of(out, ident)
+            if len(columns[c]) > 1:
+                columns[c].remove(ident)
+                columns.insert(c if left else c + 1, [ident])
+            elif 0 <= (c - 1 if left else c + 1) < len(columns):
+                columns.pop(c)
+                columns[c - 1 if left else c].append(ident)
         return ""
 
     def layout(self):

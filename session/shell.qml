@@ -283,6 +283,7 @@ ShellRoot {
                         root.displayCount = result.display_count || 1
                         if (JSON.stringify(root.displays) !== JSON.stringify(result.displays || [])) root.displays = result.displays || []
                         if (result.action !== "refresh") root.spacesError = ""
+                        if (result.notice) root.showToast(result.notice)
                         if (["focus", "focus-number", "focus-window", "move-to-display"].includes(result.action)) { root.deskOpen = false; root.switcherOpen = false }
                         else if (result.action === "pin") root.deskOpen = true
                     }

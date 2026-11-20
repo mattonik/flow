@@ -81,7 +81,13 @@ The switcher's active space offers *Move to* each other connected display. An ap
 - The Group was stacked there and moved back as one column, with its pin and focus.
 - Moving to the display a space is already on was refused.
 
-With the side-by-side anchor disabled, the guest test fails: the moved app lands between the Group's first and second apps. The development shell showed the *Move to* button on the active Group's card. The button itself was not clicked in the guest, since no pointer automation is available there; the backend action it calls is what the smoke test exercises. An interrupted move is covered by unit tests only.
+With the side-by-side anchor disabled, the guest test fails: the moved app lands between the Group's first and second apps.
+
+A side-by-side Group that no longer fits its new display is stacked instead of being cut off. This happens when its apps refuse their saved proportions there, or when it follows orientation and the display is portrait. A toast says so (*Trio was stacked for the portrait Dell U2723QE*). The saved proportions are kept for when it returns side by side. A Group with a manual layout that fits stays side by side, even in portrait. `niri_move_reflow_smoke.py` rotated the second guest output to portrait and moved a resized three-app Group with automatic layout onto it:
+- It arrived stacked, the toast was shown, and its identity and proportions were kept.
+- Moved back to the landscape display, automatic layout returned it side by side at 43/23/33.
+
+With the reflow disabled, the test fails. The size-refusal case is unit-tested only, because Foot accepts any width. The development shell showed the *Move to* button on the active Group's card. The button itself was not clicked in the guest, since no pointer automation is available there; the backend action it calls is what the smoke test exercises. An interrupted move is covered by unit tests only.
 
 ### Display numbers and shortcuts
 

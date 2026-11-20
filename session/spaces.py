@@ -1295,13 +1295,17 @@ def move_plan(groups, workspace, destination, windows):
     raise ValueError("Group apps are on different workspaces; repair the Group before moving it")
 
 
-def move_to_display(pins, groups, target_key, connected, workspaces, workspace, windows, socket):
+def move_to_display(pins, groups, target_key, connected, workspaces, workspace, windows, socket,
+                    outputs=None, state=None):
     """Move the active app, stack or Group to another connected display as one destination.
 
     Niri inserts a moved column after the destination's active column, so each column is moved
     with the previously moved one active there; the space keeps its order and focus. A pinned
     space joins the end of the destination's pinned spaces. Niri calls are separate requests:
     an interrupted Group move leaves its first apps on the destination, and moving again finishes it.
+    A side-by-side Group that no longer fits there is stacked rather than cut off: when its apps refuse
+    their saved proportions, or when it follows orientation and the destination is portrait. Returns
+    the new focused workspace, its windows, and a notice for the user, or "".
     """
     target = next((name for name, record in connected.items() if record["key"] == target_key), None)
     if target is None:
@@ -1355,9 +1359,24 @@ def move_to_display(pins, groups, target_key, connected, workspaces, workspace, 
     for pin in claims:
         if pin.get("display") != target_key:
             pin_store.move_here(pins, pin["id"], target_key)
+    notice = ""
     if side:
-        for ident, ratio in zip([w["id"] for w in ordered], group_store.ratios(group)):
+        saved = group_store.ratios(group)
+        for ident, ratio in zip([w["id"] for w in ordered], saved):
             command("action", "set-window-width", "--id", ident, f"{round(ratio * 100, 2)}%")
+        logical = ((outputs or {}).get(target) or {}).get("logical") or {}
+        portrait = logical.get("height", 0) > logical.get("width", 0)
+        fits = settled_ratios([w["id"] for w in ordered], saved, workspace["id"])
+        if not fits or (group.get("auto_layout") and portrait):
+            workspace, windows = snapshot()
+            change_group_layout(state, groups, pins, group["id"], workspace, windows, socket, allow_unfocused=True)
+            group_store.set_ratios(group, saved)  # keep the proportions for when it fits side by side again
+            group_store.write(state / "groups.json", groups)
+            side = False
+            label = connected[target]["label"]
+            notice = (f"{group['label']} was stacked to fit {label}" if not fits
+                      else f"{group['label']} was stacked for the portrait {label}")
+    if side:
         if claims:
             # Pin reconciliation is paused beside side-by-side Groups, so place this one explicitly.
             def width_of(pin):
@@ -1373,8 +1392,9 @@ def move_to_display(pins, groups, target_key, connected, workspaces, workspace, 
                     command("action", "focus-window", "--id", member["id"])
                     command("action", "move-column-to-index", width + 1 + index)
                 command("action", "focus-window", "--id", active)
+    if group:
         workspace, windows = snapshot()
-    return workspace, windows
+    return workspace, windows, notice
 
 
 def output_order(outputs, name):
@@ -1443,6 +1463,7 @@ def _run_locked(state):
         display = here(workspace)
         op = sys.argv[1] if len(sys.argv) > 1 else "refresh"
         arg = sys.argv[2] if len(sys.argv) > 2 else None
+        notice = ""
         if op == "focus-number":
             # "D:S" — pinned space S of display number D (0 is Main), as typed with Super or Super+Alt.
             try:
@@ -1495,7 +1516,9 @@ def _run_locked(state):
             if window and (pin.get("session") != socket or pin.get("window_id") != window["id"]):
                 pin["session"], pin["window_id"] = socket, window["id"]
         if op == "move-to-display":
-            workspace, windows = move_to_display(pins, groups, arg, connected, workspaces, workspace, windows, socket)
+            workspace, windows, notice = move_to_display(pins, groups, arg, connected, workspaces, workspace, windows,
+                                                         socket, outputs, state)
+            before_groups = json.dumps(groups, sort_keys=True) if notice else before_groups
             outputs, workspaces = display_state()
             display = here(workspace)
             result = run(pins, "refresh", None, workspace, windows, socket, groups, display)
@@ -1574,6 +1597,7 @@ def _run_locked(state):
                                         "name": pin_store.display_name(displays[key]),
                                         "number": displays[key].get("number"), "current": key == display}
                                        for key in screen_order],
+                          "notice": notice,
                           "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
 
 
