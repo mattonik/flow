@@ -185,6 +185,9 @@ ShellRoot {
     onSwitcherOpenChanged: if (!switcherOpen) renameGroupId = ""
     property var windows: []
     property var displaySpaces: []
+    // Floating windows over this workspace's spaces; they are never spaces themselves.
+    property var layers: []
+    readonly property var activeLayer: layers.find(layer => layer.active) || null
     property var incompleteGroups: []
     property var pins: []
     // Pins owned by other, disconnected or unidentified displays; Super+number uses only `pins`.
@@ -271,6 +274,7 @@ ShellRoot {
                     } else {
                         if (JSON.stringify(root.windows) !== JSON.stringify(result.windows)) root.windows = result.windows
                         if (JSON.stringify(root.displaySpaces) !== JSON.stringify(result.spaces)) root.displaySpaces = result.spaces
+                        if (JSON.stringify(root.layers) !== JSON.stringify(result.layers || [])) root.layers = result.layers || []
                         if (JSON.stringify(root.incompleteGroups) !== JSON.stringify(result.incomplete_groups || [])) root.incompleteGroups = result.incomplete_groups || []
                         if (JSON.stringify(root.pins) !== JSON.stringify(result.pins)) root.pins = result.pins
                         if (JSON.stringify(root.otherPins) !== JSON.stringify(result.other_pins || [])) root.otherPins = result.other_pins || []
@@ -521,6 +525,8 @@ ShellRoot {
         function pin(): void { root.spaceAction("pin") }
         function focus_pin(id: string): void { root.spaceAction("focus", id) }
         function focus_window(id: string): void { root.spaceAction("focus-window", id) }
+        // Open an installed app (desktop ID) as a Layer over the current space.
+        function open_layer(id: string): void { root.spaceAction("open-layer", id) }
         // Super+number: pinned space on the main display, from any display.
         function focus(index: int): void {
             if (index > 0 && index <= 9) root.spaceAction("focus-number", "0:" + index)
@@ -835,7 +841,7 @@ ShellRoot {
     PanelWindow {
         // Work indicator: the focused app of an active Group, and the space's place in this display's Flow.
         id: workIndicatorWindow
-        visible: !root.deskOpen && !root.switcherOpen && !root.overviewOpen && !root.appMenuOpen && !root.launcherActive && !!root.activeSpace
+        visible: !root.deskOpen && !root.switcherOpen && !root.overviewOpen && !root.appMenuOpen && !root.launcherActive && (!!root.activeSpace || !!root.activeLayer)
         anchors { bottom: true; right: true }
         margins { bottom: 8; right: 12 }
         implicitWidth: workIndicator.implicitWidth + 12; implicitHeight: 52
@@ -848,8 +854,32 @@ ShellRoot {
                 id: workIndicator
                 anchors.centerIn: parent; spacing: 4
                 Row {
+                    visible: !!root.activeLayer
+                    spacing: 4
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter; leftPadding: 8; rightPadding: 4
+                        text: "LAYER"; textFormat: Text.PlainText
+                        color: floeTheme.textMuted; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 11; font.family: floeTheme.interfaceFont
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter; rightPadding: 6
+                        text: root.activeLayer ? (root.activeLayer.app_name || root.activeLayer.label).slice(0, 24) : ""
+                        textFormat: Text.PlainText; color: floeTheme.textPrimary; font.bold: true; font.pixelSize: 13; font.family: floeTheme.interfaceFont
+                    }
+                    IslandButton {
+                        width: 104; implicitHeight: 44; text: "Make space"
+                        Accessible.name: "Make this Layer its own space"
+                        onClicked: root.spaceAction("layer-to-space", String(root.activeLayer.id))
+                    }
+                    IslandButton {
+                        width: 64; implicitHeight: 44; text: "Close"
+                        Accessible.name: "Close this Layer; the app is asked to close and the space under it stays as it is"
+                        onClicked: root.spaceAction("close-layer", String(root.activeLayer.id))
+                    }
+                }
+                Row {
                     // Narrow screens keep only the position, so the bottom controls never overlap it.
-                    visible: !!(root.activeSpace && root.activeSpace.group_id) && workIndicatorWindow.screen && workIndicatorWindow.screen.width >= 800
+                    visible: !root.activeLayer && !!(root.activeSpace && root.activeSpace.group_id) && workIndicatorWindow.screen && workIndicatorWindow.screen.width >= 800
                     spacing: 2
                     Text {
                         anchors.verticalCenter: parent.verticalCenter; rightPadding: 6; leftPadding: 8
@@ -882,18 +912,21 @@ ShellRoot {
                     Rectangle { width: 1; height: 24; anchors.verticalCenter: parent.verticalCenter; color: floeTheme.border }
                 }
                 IslandButton {
+                    visible: !root.activeLayer
                     width: 44; implicitHeight: 44; text: "‹"
                     enabled: root.activeSpaceIndex > 0
                     Accessible.name: "Previous space"
                     onClicked: root.spaceAction("navigate", "left")
                 }
                 Text {
+                    visible: !root.activeLayer
                     anchors.verticalCenter: parent.verticalCenter
                     text: (root.activeSpaceIndex < 9 ? "0" : "") + (root.activeSpaceIndex + 1) + " / " + (root.displaySpaces.length < 10 ? "0" : "") + root.displaySpaces.length
                     textFormat: Text.PlainText; color: floeTheme.textPrimary; font.pixelSize: 13; font.family: floeTheme.technicalFont
                     Accessible.name: "Space " + (root.activeSpaceIndex + 1) + " of " + root.displaySpaces.length
                 }
                 IslandButton {
+                    visible: !root.activeLayer
                     width: 44; implicitHeight: 44; text: "›"
                     enabled: root.activeSpaceIndex >= 0 && root.activeSpaceIndex < root.displaySpaces.length - 1
                     Accessible.name: "Next space"
@@ -936,6 +969,15 @@ ShellRoot {
                     FlowButton { id: stackButton; onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(stackButton); width: 160; implicitHeight: 44; text: "Stack with next"; onClicked: root.spaceAction("stack") }
                     FlowButton { id: unstackButton; onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(unstackButton); width: 160; implicitHeight: 44; text: "Separate stack"; onClicked: root.spaceAction("unstack") }
                     FlowButton { id: overviewButton; onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(overviewButton); width: 130; implicitHeight: 44; text: "Live overview"; onClicked: root.showOverview() }
+                    FlowButton {
+                        id: makeLayerButton
+                        onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(makeLayerButton)
+                        width: 120; implicitHeight: 44; text: "Make Layer"
+                        visible: !root.activeLayer
+                        Accessible.name: "Float the focused app as a Layer over its neighbors"
+                        enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                        onClicked: root.spaceAction("make-layer")
+                    }
                     FlowButton { id: closeSwitcher; onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(closeSwitcher); width: 76; implicitHeight: 44; text: "Close"; Accessible.name: "Close Spaces switcher"; onClicked: root.switcherOpen = false }
                     Row {
                         visible: spaceScroller.contentWidth > spaceScroller.width
@@ -960,6 +1002,42 @@ ShellRoot {
                         visible: root.spacesError !== ""; width: parent.width; spacing: 8
                         Text { text: root.spacesError; textFormat: Text.PlainText; color: floeTheme.danger; wrapMode: Text.Wrap; width: parent.width - dismissSwitcherSpacesError.width - 8 }
                         FlowButton { id: dismissSwitcherSpacesError; onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(dismissSwitcherSpacesError); width: 96; implicitHeight: 44; text: "Dismiss"; Accessible.name: "Dismiss spaces error"; onClicked: root.spacesError = "" }
+                    }
+                }
+                Flow {
+                    visible: root.layers.length > 0
+                    width: parent.width; spacing: 8
+                    Text { width: 72; height: 44; verticalAlignment: Text.AlignVCenter; text: "LAYERS"; color: floeTheme.textMuted; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
+                    Repeater {
+                        model: root.layers
+                        Row {
+                            required property var modelData
+                            spacing: 4
+                            FlowButton {
+                                id: layerButton
+                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(layerButton)
+                                width: 180; implicitHeight: 44
+                                text: (modelData.active ? "●  " : "") + (modelData.app_name || modelData.label).slice(0, 24)
+                                Accessible.name: "Focus Layer " + (modelData.app_name || modelData.label)
+                                onClicked: root.spaceAction("focus-window", String(modelData.id))
+                            }
+                            FlowButton {
+                                id: layerSpaceButton
+                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(layerSpaceButton)
+                                width: 112; implicitHeight: 44; text: "Make space"
+                                Accessible.name: "Make Layer " + (modelData.app_name || modelData.label) + " its own space"
+                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                onClicked: root.spaceAction("layer-to-space", String(modelData.id))
+                            }
+                            FlowButton {
+                                id: layerCloseButton
+                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(layerCloseButton)
+                                width: 76; implicitHeight: 44; text: "Close"
+                                Accessible.name: "Close Layer " + (modelData.app_name || modelData.label) + "; the app is asked to close"
+                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                onClicked: root.spaceAction("close-layer", String(modelData.id))
+                            }
+                        }
                     }
                 }
                 Text { visible: root.displaySpaces.length === 0; text: "No open spaces"; color: floeTheme.textMuted }

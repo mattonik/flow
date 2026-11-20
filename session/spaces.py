@@ -15,6 +15,7 @@ import pin_store
 MAX_MEMBERS = group_store.MAX_MEMBERS
 RESIZE_STEP = 0.1  # share of the Group's width moved per Narrower/Wider step
 MIN_SHARE = 0.15  # no member is made narrower than this share of the Group
+LAYER_SIZE = ("45%", "60%")  # a desktop Layer is a compact floating window over the space
 valid_members = group_store.valid_members
 
 
@@ -627,6 +628,57 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
             raise ValueError("An app's size limits prevent that width; the Group keeps the closest size")
         group_store.set_ratios(group, values)
         remember_focus({"group_id": group["id"]}, found[index])
+    elif op == "make-layer":
+        window = next((w for w in windows if w["id"] == workspace.get("active_window_id")), None)
+        if not window or window.get("workspace_id") != workspace["id"]:
+            raise ValueError("Select an app window first")
+        if window.get("is_floating"):
+            raise ValueError("This app is already a Layer")
+        if any(window.get("app_id") in g["members"] for g in groups):
+            raise ValueError("Remove this app from its Group before making it a Layer")
+        if window.get("app_id") in pinned_apps(pins):
+            raise ValueError("Unpin this app before making it a Layer")
+        if not eligible(window, workspace, windows):
+            raise ValueError("Separate this app from its stack before making it a Layer")
+        float_as_layer(window["id"])
+    elif op == "open-layer":
+        desktop = desktop_file(arg, data_dirs())
+        if not desktop:
+            raise ValueError("No matching installed application")
+        expected = {desktop.stem}
+        for line in desktop.read_text(errors="replace").splitlines():
+            if line.startswith("StartupWMClass="):
+                expected.add(line.split("=", 1)[1].strip())
+        known = {w["id"] for w in windows}
+        try:
+            subprocess.run(["gio", "launch", str(desktop)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ValueError("Could not open the application") from exc
+        for _ in range(30):
+            time.sleep(0.5)
+            current, live = snapshot()
+            if current["id"] != workspace["id"]:
+                raise ValueError("Workspace changed while opening the Layer")
+            new = [w for w in live if w["id"] not in known and w.get("app_id") in expected]
+            if new:
+                break
+        else:
+            raise ValueError("The app did not open a new window here; it may already be running elsewhere")
+        if len(new) != 1 or new[0].get("workspace_id") != workspace["id"]:
+            raise ValueError("The app opened more than one window or opened elsewhere; it was left as it is")
+        if not new[0].get("is_floating"):
+            # Niri reactivates the column the window was opened from, so closing the Layer returns there.
+            float_as_layer(new[0]["id"])
+    elif op == "layer-to-space":
+        window = layer_window(arg, workspace, windows)
+        command("action", "move-window-to-tiling", "--id", window["id"])
+        # A space is a full-width column, as Flow opens apps; the Layer's compact size does not carry over.
+        command("action", "set-window-width", "--id", window["id"], "100%")
+        command("action", "reset-window-height", "--id", window["id"])
+        command("action", "focus-window", "--id", window["id"])
+    elif op == "close-layer":
+        window = layer_window(arg, workspace, windows)
+        command("action", "close-window", "--id", window["id"])
     elif op == "adopt-group-order":
         group = find_group(groups, arg)
         if group.get("pending_layout"):
@@ -782,7 +834,8 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
     here = local_pins(pins, display)
     if op not in ("focus", "focus-window", "focus-member", "navigate", "stack", "unstack", "group-view", "create-group",
                   "dissolve-group", "open-group-member", "rejoin-group", "add-to-group", "remove-from-group",
-                  "member-left", "member-right", "adopt-group-order", "member-wider", "member-narrower"):
+                  "member-left", "member-right", "adopt-group-order", "member-wider", "member-narrower",
+                  "make-layer", "open-layer", "layer-to-space", "close-layer"):
         reconcile(here, workspace, windows, socket, groups)
     return [describe(p) for p in here]
 
@@ -816,14 +869,40 @@ def saved_groups(path):
         return []
 
 
+def layers(workspace, windows):
+    """Floating windows on the workspace: Layers over its spaces, never spaces themselves."""
+    return [{"id": w["id"], "label": w.get("title") or w.get("app_id") or "Application",
+             "app_id": w.get("app_id") or "", "app_name": app_name(w.get("app_id")),
+             "active": w["id"] == workspace.get("active_window_id")}
+            for w in windows if w.get("workspace_id") == workspace["id"] and w.get("is_floating")]
+
+
+def float_as_layer(window_id):
+    """Lift one window out of the strip; the columns around it close up and keep their sizes."""
+    command("action", "move-window-to-floating", "--id", window_id)
+    command("action", "set-window-width", "--id", window_id, LAYER_SIZE[0])
+    command("action", "set-window-height", "--id", window_id, LAYER_SIZE[1])
+    command("action", "center-window", "--id", window_id)
+    command("action", "focus-window", "--id", window_id)
+
+
+def layer_window(arg, workspace, windows):
+    window = next((w for w in windows if str(w.get("id")) == str(arg) and w.get("workspace_id") == workspace["id"]
+                   and w.get("is_floating")), None)
+    if not window:
+        raise ValueError("This Layer is no longer open here")
+    return window
+
+
 def display_spaces(workspace, windows, groups=(), pins=()):
-    """Represent each tiled column once; floating windows remain separate."""
-    current = [w for w in windows if w.get("workspace_id") == workspace["id"]]
+    """Represent each tiled column once; floating windows are Layers, not spaces."""
+    current = [w for w in windows if w.get("workspace_id") == workspace["id"]
+               and not w.get("is_floating") and position(w)]
     current.sort(key=lambda w: position(w) or [99999, 0])
     columns = []
     for w in current:
         pos = position(w)
-        key = ("column", pos[0]) if pos and not w.get("is_floating") else ("window", w["id"])
+        key = ("column", pos[0])
         if not columns or columns[-1][0] != key:
             columns.append((key, []))
         columns[-1][1].append({"id": w["id"], "label": w.get("title") or w.get("app_id") or "Application",
@@ -1386,7 +1465,8 @@ def run_locked(state):
                     raise ValueError("Could not confirm Group update; if it remains saved, stack its apps and retry") from exc
                 raise ValueError("Could not confirm Group update; check the Group state before retrying") from exc
         if op in ("dissolve-group", "open-group-member", "rejoin-group", "add-to-group", "remove-from-group",
-                  "member-left", "member-right", "member-wider", "member-narrower"):
+                  "member-left", "member-right", "member-wider", "member-narrower",
+                  "make-layer", "open-layer", "layer-to-space", "close-layer"):
             workspace, windows = snapshot()
         if before != json.dumps([pins, displays, 2], sort_keys=True):
             pin_store.write(path, pins, displays, version)
@@ -1397,6 +1477,7 @@ def run_locked(state):
                    for w in ordered]
         record = connected.get(workspace.get("output"))
         print(json.dumps({"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows, groups, pins),
+                          "layers": layers(workspace, windows),
                           "incomplete_groups": incomplete_groups(workspace, windows, groups, pins),
                           "other_pins": other_pins(pins, display, displays, connected, ambiguous, workspaces, windows, socket, groups),
                           "display": {"key": display, "label": record["label"] if record else workspace.get("output") or "",

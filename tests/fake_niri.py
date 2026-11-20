@@ -9,6 +9,9 @@ class FakeNiri:
         self.output = output
         self.workspace = workspace
         self.widths = {}
+        self.floating = []
+        self.tiled_active = active  # Niri remembers the active column while a floating window has focus
+        self.opened_from = {}  # a new window remembers the column it was opened from
         self.log = []
         self.fail_on = None
 
@@ -23,8 +26,23 @@ class FakeNiri:
                 windows.append({"id": ident, "app_id": self.apps[ident], "title": self.apps[ident],
                                 "workspace_id": self.workspace, "is_floating": False,
                                 "layout": {"pos_in_scrolling_layout": [c, r], "tile_size": [width, 700]}})
+        for ident in self.floating:
+            windows.append({"id": ident, "app_id": self.apps[ident], "title": self.apps[ident],
+                            "workspace_id": self.workspace, "is_floating": True,
+                            "layout": {"pos_in_scrolling_layout": None, "tile_size": [576, 480]}})
         return {"id": self.workspace, "active_window_id": self.active, "output": self.output,
                 "is_focused": True, "is_active": True}, windows
+
+    def after_active_column(self):
+        tiled = [i for column in self.columns for i in column]
+        return self.column_of(self.tiled_active) + 1 if self.tiled_active in tiled else len(self.columns)
+
+    def open_window(self, ident, app):
+        """A new window opens in its own column after the active column, even under a floating window."""
+        self.apps[ident] = app
+        self.columns.insert(self.after_active_column(), [ident])
+        self.opened_from[ident] = self.tiled_active
+        self.active = self.tiled_active = ident
 
     def __call__(self, *args):
         self.log.append(args)
@@ -36,6 +54,39 @@ class FakeNiri:
         ident = int(rest[rest.index("--id") + 1]) if "--id" in rest else self.active
         if name == "focus-window":
             self.active = ident
+            if ident not in self.floating:
+                self.tiled_active = ident
+                self.opened_from.clear()
+        elif name == "move-window-to-floating" and ident not in self.floating:
+            c = self.column_of(ident)
+            self.columns[c].remove(ident)
+            if not self.columns[c]:
+                self.columns.pop(c)
+            self.floating.append(ident)
+            if self.tiled_active == ident:
+                # Niri returns to the column a new window was opened from, else the one taking its place.
+                origin = self.opened_from.get(ident)
+                if origin in [i for column in self.columns for i in column]:
+                    self.tiled_active = origin
+                else:
+                    self.tiled_active = self.columns[min(c, len(self.columns) - 1)][0] if self.columns else None
+        elif name == "move-window-to-tiling" and ident in self.floating:
+            self.floating.remove(ident)
+            self.columns.insert(self.after_active_column(), [ident])
+            if self.active == ident:
+                self.tiled_active = ident
+        elif name == "close-window":
+            if ident in self.floating:
+                self.floating.remove(ident)
+                if self.active == ident:
+                    self.active = self.tiled_active
+            else:
+                c = self.column_of(ident)
+                self.columns[c].remove(ident)
+                if not self.columns[c]:
+                    self.columns.pop(c)
+                if self.active == ident:
+                    self.active = self.tiled_active = self.columns[0][0] if self.columns else None
         elif name.startswith("consume-or-expel-window-"):
             left = name.endswith("left")
             c = self.column_of(ident)
@@ -69,7 +120,7 @@ class FakeNiri:
             t = r + (-1 if name.endswith("up") else 1)
             if 0 <= t < len(column):
                 column[r], column[t] = column[t], column[r]
-        elif name == "set-window-width":
+        elif name == "set-window-width" and ident not in self.floating:
             self.widths[ident] = float(rest[-1].rstrip("%"))
         return ""
 

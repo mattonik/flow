@@ -119,8 +119,10 @@ class SpacesTest(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["id"], 2)
         self.assertEqual([member["id"] for member in result[0]["members"]], [1, 2])
+        # A floating window is a Layer over the space, not a space of its own.
         self.windows[1]["is_floating"] = True
-        self.assertEqual(len(spaces.display_spaces(self.ws, self.windows)), 2)
+        self.assertEqual([s["id"] for s in spaces.display_spaces(self.ws, self.windows)], [1])
+        self.assertEqual([layer["id"] for layer in spaces.layers(self.ws, self.windows)], [2])
 
     def test_saved_group_label_requires_unambiguous_matching_members(self):
         self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
