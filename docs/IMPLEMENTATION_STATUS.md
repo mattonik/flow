@@ -119,4 +119,16 @@ Before relying on Niri, its behavior was checked in the guest. A floating window
 
 The smoke test found that a promoted Layer kept its compact width, which is now reset. An extra refocus step before closing turned out to be unnecessary on real Niri and was removed. Through the development shell's IPC, `open_layer foot.desktop` opened Foot as a centered Layer over a side-by-side Group, and the indicator showed its controls.
 
+### Groups beside other windows of their apps
+
+Before, a second window of any member app, on any workspace, made a Group unrecognizable. Now `groups.json` binds each Group to its window IDs together with the Niri session and the highest window ID seen at the time. In that session a member is its bound window, so other windows of the same app are separate spaces. Bindings are made when a Group is created, an app is added or a missing app is opened, and they are refreshed whenever the Group is recognized. If a bound window closes, only a window opened afterward can stand in, so an older window of the app is never adopted. Opening the missing app binds its new window. A binding from another Niri session is ignored: there, as before, each member app must have a single window, and otherwise the Group shows as needing repair. Older generations ignore the new `bound` field. Session recovery still requires one window per app.
+
+`niri_same_app_smoke.py` passed in the guest with two windows each of two Foot app IDs:
+- A Group formed from one window of each.
+- Side-by-side, resize and stack changes moved only the Group's windows.
+- Closing the Group's editor left a reported gap rather than adopting the other editor.
+- Opening the missing app bound its new window.
+
+With stand-ins allowed from older windows, the test fails.
+
 Limitations: The changes run from a development copy, not an installed NixOS generation. An older generation cannot read a version 2 pin file and reports *Invalid saved spaces* without changing it; restore `spaces.v1.json` to roll back. Touch, physical rotation and real hotplug remain open.
