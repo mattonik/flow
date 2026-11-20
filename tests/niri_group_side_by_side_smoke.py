@@ -235,6 +235,13 @@ def main():
             saved_pins = json.loads((temporary_state / "spaces.json").read_text())
             if {p["id"]: p.get("display") for p in saved_pins} != {pin_id: original["output"], neighbor_pin_id: original["output"]}:
                 raise RuntimeError("Pins did not record their output")
+            for pin in saved_pins:
+                pin.pop("display", None)
+            (temporary_state / "spaces.json").write_text(json.dumps(saved_pins))
+            cli(cli_env, "refresh")
+            migrated = json.loads((temporary_state / "spaces.json").read_text())
+            if {p["id"]: p.get("display") for p in migrated} != {pin_id: original["output"], neighbor_pin_id: original["output"]}:
+                raise RuntimeError("Live legacy pins were not assigned to their output")
             niri("action", "focus-window", "--id", ids[0])
 
             focused_id = focus().get("active_window_id")

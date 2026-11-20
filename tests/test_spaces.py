@@ -1,6 +1,7 @@
 import importlib.util
 import contextlib
 import io
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -116,6 +117,26 @@ class SpacesTest(unittest.TestCase):
         result = spaces.run(self.pins, "pin-group", "g", ws, stacked, "session", [group])
         self.assertEqual(self.pins[0]["display"], "Virtual-1")
         self.assertEqual(result[0]["display"], "Virtual-1")
+
+    def test_legacy_pins_gain_output_once_without_reassigning_existing_owners(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            path = state / "spaces.json"
+            pins = [{"id": "old", "label": "Old", "app_id": "terminal"},
+                    {"id": "owned", "label": "Owned", "app_id": "owned", "display": "Other"},
+                    {"id": "missing", "label": "Missing", "app_id": "missing"}]
+            path.write_text(json.dumps(pins))
+            ws = {**self.ws, "output": "Virtual-1"}
+            with patch.object(sys, "argv", ["flow-spaces", "refresh"]), \
+                 patch.object(spaces, "snapshot", return_value=(ws, self.windows)), \
+                 patch.object(spaces, "session_id", return_value="session"), \
+                 patch.object(spaces.group_store, "load", return_value=[]), \
+                 patch.object(spaces, "command"), contextlib.redirect_stdout(io.StringIO()):
+                spaces.run_locked(state)
+                saved = json.loads(path.read_text())
+                self.assertEqual([p.get("display") for p in saved], ["Virtual-1", "Other", None])
+                spaces.run_locked(state)
+                self.assertEqual(json.loads(path.read_text()), saved)
 
     @patch.object(spaces, "command")
     def test_switcher_only_focuses_current_workspace_windows(self, command):

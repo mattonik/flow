@@ -796,10 +796,14 @@ def run_locked(state):
             raise ValueError("Invalid saved spaces; state was not changed")
         workspace, windows = snapshot()
         before = json.dumps(pins, sort_keys=True)
+        output = workspace.get("output")
         socket = session_id()
         groups = group_store.load(state)
         before_groups = json.dumps(groups, sort_keys=True)
         for pin in pins:
+            if (pin.get("display") is None and isinstance(output, str) and output
+                    and pin_window(pin, workspace, windows, socket, groups)):
+                pin["display"] = output
             if "members" in pin:
                 pair = group_windows(pin, workspace, windows, socket, groups)
                 if pair and (pin.get("session") != socket or pin.get("window_ids") != [w["id"] for w in pair]):
