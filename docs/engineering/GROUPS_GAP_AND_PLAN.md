@@ -2,7 +2,15 @@
 
 Status: implementation plan, 2026-11-13. This document describes the work needed to meet the [Flow Master Specification](../Flow_MASTER_SPEC_v1.1.md), not a claim that those features already work. The [contextual Group guidance](../Flow_contextual_menus_groups.md) and [reuse-first reference atlas](REUSE_FIRST_REFERENCE_ATLAS.md) also apply. NixOS, Niri and Quickshell remain the committed stack; the Flow controller and its public API must be toolkit-independent.
 
-**Progress:** M1 is in progress. Explicit two-app Group creation, independent registry migration, rename, pin and dissolve are implemented and have passed isolated backend tests. The switcher reports incomplete Groups, can open a missing member and can rejoin adjacent single-window members, including a pinned Group at the end of the strip. Complete shell-restart and reboot journeys and physical touch remain open. M2 has an experimental manual stack/side-by-side implementation, exercised with disposable apps in the ARM64 guest; explicit repair of safe separated pairs is available; automatic insertion handling, safe pin reordering, session recovery, touch navigation and full interruption acceptance remain open. M3 has an opt-in, focused-workspace automatic layout path: portrait selects stack and landscape selects side-by-side, with manual override and saved side proportions. Multi-display, Groups on other workspaces, hardware rotation and broader acceptance remain open. M4–M5 remain unimplemented.
+**Progress (2026-11-20):** M1–M3 are implemented and exercised in the ARM64 guest; physical touch, physical rotation and complete reboot journeys remain open. M4 is largely implemented in a development copy:
+- Groups of two to four apps, with add, remove, reorder and resize.
+- Pins owned per display, with user-stable display numbers and Super+Alt display shortcuts.
+- Moving an app, stack or Group between displays as one destination.
+- Disconnect and reconnect of a second output.
+- Layers that leave the space below them unchanged.
+- A shell-restart integrity check.
+
+Each of these passed a guest smoke test on two real Niri outputs, recorded in [implementation status](../IMPLEMENTATION_STATUS.md). Several Groups with windows of the same app, reflow when a moved Group no longer fits, and physical monitors and docks remain open. M5 (touch, the Flow Platform API and release validation) is unimplemented.
 
 ## Where we are
 
