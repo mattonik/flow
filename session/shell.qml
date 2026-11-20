@@ -196,29 +196,42 @@ ShellRoot {
     property string displayName: ""
     // Super+Alt, display digit, then space digit: the display digit waits here for the space digit.
     property int pendingDisplay: -1
-    property string shortcutHint: ""
-    function showShortcutHint(text) { shortcutHint = text; shortcutHintTimer.restart() }
+    property string toast: ""
+    function showToast(text) { toast = text; toastTimer.restart() }
     function displayDigit(digit) {
         if (pendingDisplay < 0) {
             const target = displays.find(d => d.number === digit)
-            if (displays.length && !target) { showShortcutHint("External " + digit + " is not connected"); return }
+            if (displays.length && !target) { showToast("External " + digit + " is not connected"); return }
             pendingDisplay = digit
-            shortcutHintTimer.stop()
-            shortcutHint = "External " + digit + (target ? " · " + target.label : "") + " — choose a pinned space"
+            toastTimer.stop()
+            toast = "External " + digit + (target ? " · " + target.label : "") + " — choose a pinned space"
             displayDigitTimer.restart()
             return
         }
         const display = pendingDisplay
         pendingDisplay = -1
         displayDigitTimer.stop()
-        showShortcutHint("External " + display + " · space " + digit)
+        showToast("External " + display + " · space " + digit)
         spaceAction("focus-number", display + ":" + digit)
     }
     Timer {
         id: displayDigitTimer; interval: 1500
-        onTriggered: if (root.pendingDisplay >= 0) { root.pendingDisplay = -1; root.showShortcutHint("Display shortcut cancelled") }
+        onTriggered: if (root.pendingDisplay >= 0) { root.pendingDisplay = -1; root.showToast("Display shortcut cancelled") }
     }
-    Timer { id: shortcutHintTimer; interval: 1800; onTriggered: root.shortcutHint = "" }
+    Timer { id: toastTimer; interval: 1800; onTriggered: root.toast = "" }
+    // The active space as Work shows it: its place in this display's Flow and, for a Group, the focused app.
+    readonly property int activeSpaceIndex: displaySpaces.findIndex(space => space.active)
+    readonly property var activeSpace: activeSpaceIndex >= 0 ? displaySpaces[activeSpaceIndex] : null
+    property string lastFocusedGroup: ""
+    property var lastFocusedMember: null
+    onActiveSpaceChanged: {
+        const space = activeSpace
+        const member = space && space.group_id ? space.members.find(m => m.active) : null
+        if (member && space.group_id === lastFocusedGroup && lastFocusedMember !== null && member.id !== lastFocusedMember)
+            showToast((member.app_name || member.label).slice(0, 40) + " is now focused" + (menuPreferences.appMenuEnabled ? " · menus updated" : ""))
+        lastFocusedGroup = member ? space.group_id : ""
+        lastFocusedMember = member ? member.id : null
+    }
     property string spacesError: ""
     property var pendingSpaceActions: []
     function renameGroup(id, label) {
@@ -487,8 +500,8 @@ ShellRoot {
 
     IpcHandler {
         target: "desk"
-        // Read-only, for scripted checks of display-shortcut feedback.
-        function shortcut_hint(): string { return root.shortcutHint }
+        // Read-only, for scripted checks of shell feedback.
+        function toast(): string { return root.toast }
         function spaces_error(): string { return root.spacesError }
         function menu(): void {
             if (menuPreferences.appMenuEnabled && root.appMenu && !root.deskOpen && !root.overviewOpen) {
@@ -817,6 +830,76 @@ ShellRoot {
                 }
             }
             FlowButton { width: 76; implicitHeight: 44; text: "Spaces"; onClicked: root.toggleSwitcher() }
+        }
+    }
+    PanelWindow {
+        // Work indicator: the focused app of an active Group, and the space's place in this display's Flow.
+        id: workIndicatorWindow
+        visible: !root.deskOpen && !root.switcherOpen && !root.overviewOpen && !root.appMenuOpen && !root.launcherActive && !!root.activeSpace
+        anchors { bottom: true; right: true }
+        margins { bottom: 8; right: 12 }
+        implicitWidth: workIndicator.implicitWidth + 12; implicitHeight: 52
+        color: "transparent"; exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Overlay
+        Rectangle {
+            anchors.fill: parent; radius: height / 2
+            color: floeTheme.canvas; border.width: 1; border.color: floeTheme.border
+            Row {
+                id: workIndicator
+                anchors.centerIn: parent; spacing: 4
+                Row {
+                    // Narrow screens keep only the position, so the bottom controls never overlap it.
+                    visible: !!(root.activeSpace && root.activeSpace.group_id) && workIndicatorWindow.screen && workIndicatorWindow.screen.width >= 800
+                    spacing: 2
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter; rightPadding: 6; leftPadding: 8
+                        text: "GROUP"; textFormat: Text.PlainText
+                        color: floeTheme.textMuted; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 11; font.family: floeTheme.interfaceFont
+                    }
+                    Repeater {
+                        model: root.activeSpace && root.activeSpace.group_id ? root.activeSpace.members : []
+                        IslandButton {
+                            id: groupFocusButton
+                            required property var modelData
+                            width: Math.min(140, Math.max(72, focusLabel.implicitWidth + 24)); implicitHeight: 44
+                            text: (modelData.app_name || modelData.label).slice(0, 16)
+                            contentItem: Text {
+                                id: focusLabel
+                                text: groupFocusButton.text; textFormat: Text.PlainText; elide: Text.ElideRight
+                                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                                color: groupFocusButton.modelData.active ? floeTheme.textPrimary : floeTheme.textMuted
+                                font.bold: groupFocusButton.modelData.active; font.pixelSize: 13; font.family: floeTheme.interfaceFont
+                            }
+                            background: Rectangle {
+                                radius: 12
+                                color: groupFocusButton.modelData.active ? floeTheme.surfaceSelected : groupFocusButton.hovered ? floeTheme.surface : "transparent"
+                                border.width: groupFocusButton.activeFocus ? 2 : 0; border.color: floeTheme.focus
+                            }
+                            Accessible.name: (modelData.active ? "Focused: " : "Focus ") + modelData.label + " in Group " + root.activeSpace.label
+                            onClicked: if (!modelData.active) root.spaceAction("focus-window", String(modelData.id))
+                        }
+                    }
+                    Rectangle { width: 1; height: 24; anchors.verticalCenter: parent.verticalCenter; color: floeTheme.border }
+                }
+                IslandButton {
+                    width: 44; implicitHeight: 44; text: "‹"
+                    enabled: root.activeSpaceIndex > 0
+                    Accessible.name: "Previous space"
+                    onClicked: root.spaceAction("navigate", "left")
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: (root.activeSpaceIndex < 9 ? "0" : "") + (root.activeSpaceIndex + 1) + " / " + (root.displaySpaces.length < 10 ? "0" : "") + root.displaySpaces.length
+                    textFormat: Text.PlainText; color: floeTheme.textPrimary; font.pixelSize: 13; font.family: floeTheme.technicalFont
+                    Accessible.name: "Space " + (root.activeSpaceIndex + 1) + " of " + root.displaySpaces.length
+                }
+                IslandButton {
+                    width: 44; implicitHeight: 44; text: "›"
+                    enabled: root.activeSpaceIndex >= 0 && root.activeSpaceIndex < root.displaySpaces.length - 1
+                    Accessible.name: "Next space"
+                    onClicked: root.spaceAction("navigate", "right")
+                }
+            }
         }
     }
     // shortcut: window titles stand in for live previews until compositor capture is available.
@@ -1383,11 +1466,11 @@ ShellRoot {
         SystemIsland { id: workIslandContent; anchors.fill: parent }
     }
     PanelWindow {
-        // Temporary feedback for display shortcuts; it never takes keyboard focus.
-        visible: root.shortcutHint !== ""
+        // Temporary feedback for shortcuts and Group focus changes; it never takes keyboard focus.
+        visible: root.toast !== ""
         anchors.bottom: true
         margins.bottom: 56
-        implicitWidth: shortcutHintText.implicitWidth + 36; implicitHeight: 44
+        implicitWidth: toastText.implicitWidth + 36; implicitHeight: 44
         color: "transparent"
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
@@ -1396,9 +1479,9 @@ ShellRoot {
             anchors.fill: parent; radius: 10
             color: floeTheme.surfaceRaised; border.width: 1; border.color: floeTheme.borderStrong
             Text {
-                id: shortcutHintText
+                id: toastText
                 anchors.centerIn: parent
-                text: root.shortcutHint; textFormat: Text.PlainText
+                text: root.toast; textFormat: Text.PlainText
                 color: floeTheme.textPrimary; font.pixelSize: 14; font.family: floeTheme.interfaceFont
                 Accessible.role: Accessible.AlertMessage; Accessible.name: text
             }

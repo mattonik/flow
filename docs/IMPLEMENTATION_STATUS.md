@@ -102,4 +102,10 @@ In the switcher, each app in a side-by-side Group shows its share of the Group's
 
 `niri_group_resize_smoke.py` passed in the guest with three Foot windows: 33/33/33 became 43/33/24 after a wider and a narrower step, matching the saved proportions. A step below the minimum share was not offered and was refused. Stacking and returning to side-by-side restored 43/33/24. With saving disabled, the test fails. The switcher showed the shares and disabled the steps that would go below the minimum.
 
+### Work indicator and Group focus
+
+Following the v1.0 demo, Work shows a small capsule at the bottom right with the active space's place in this display's Flow (*02 / 05*) and previous/next buttons. For an active Group it also shows *Group* and a switch with one button per app, the focused one highlighted. Selecting an app focuses it. When focus moves to another app in the same Group, by the switch, Super+Up/Down or a click, a toast names it (*Foot Client is now focused*, adding *menus updated* when the app menu is enabled). Apps are named from their desktop entry, falling back to the window title. On screens narrower than 800 pixels only the position is shown, so it never overlaps the bottom controls. The capsule hides while Desk, Overview, the switcher, the launcher or an app menu is open.
+
+In the guest, the development shell showed *Group · Foot · Foot Client* and *02 / 02* beside a neighboring app. Super+Down's backend action moved focus to Foot Client, the switch followed, and the toast read *Foot Client is now focused*; the toast was also read back through the shell's IPC. The capsule's buttons were not clicked, since there is no pointer automation in the guest. They call the existing focus and navigation actions.
+
 Limitations: The changes run from a development copy, not an installed NixOS generation. An older generation cannot read a version 2 pin file and reports *Invalid saved spaces* without changing it; restore `spaces.v1.json` to roll back. Touch, physical rotation and real hotplug remain open.

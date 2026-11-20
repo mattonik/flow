@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Experimental Flow pinned spaces and Groups for Niri, scoped to the focused display."""
 import fcntl
+import functools
 import json
 import os
 from pathlib import Path
@@ -47,6 +48,24 @@ def desktop_file(app_id, dirs):
         return None
     filename = app_id if app_id.endswith(".desktop") else app_id + ".desktop"
     return next((p for d in dirs if (p := Path(d) / "applications" / filename).is_file()), None)
+
+
+@functools.lru_cache(maxsize=None)
+def app_name(app_id):
+    """The installed app's display name from its exact desktop entry, or None."""
+    path = desktop_file(app_id, data_dirs())
+    try:
+        lines = path.read_text(errors="replace").splitlines() if path else []
+    except OSError:
+        return None
+    section = None
+    for line in lines:
+        line = line.strip()
+        if line.startswith("["):
+            section = line
+        elif section == "[Desktop Entry]" and line.startswith("Name="):
+            return line[5:].strip()[:60] or None
+    return None
 
 
 def data_dirs():
@@ -808,7 +827,8 @@ def display_spaces(workspace, windows, groups=(), pins=()):
         if not columns or columns[-1][0] != key:
             columns.append((key, []))
         columns[-1][1].append({"id": w["id"], "label": w.get("title") or w.get("app_id") or "Application",
-                              "app_id": w.get("app_id") or "", "active": w["id"] == workspace.get("active_window_id")})
+                              "app_id": w.get("app_id") or "", "app_name": app_name(w.get("app_id")),
+                              "active": w["id"] == workspace.get("active_window_id")})
     result = []
     counts = {app: sum(w.get("app_id") == app for w in windows) for g in groups for app in g["members"]}
     skip = set()

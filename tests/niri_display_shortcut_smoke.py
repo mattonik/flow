@@ -105,7 +105,7 @@ def main():
                 if shell_process.poll() is not None:
                     raise RuntimeError("The development shell exited")
                 try:
-                    return ipc("call", "desk", "shortcut_hint") == ""
+                    return ipc("call", "desk", "toast") == ""
                 except subprocess.CalledProcessError:
                     return False
 
@@ -113,7 +113,7 @@ def main():
             niri("action", "focus-window", "--id", window("m")["id"])
 
             ipc("call", "desk", "display_digit", 1)
-            hint = ipc("call", "desk", "shortcut_hint")
+            hint = ipc("call", "desk", "toast")
             if "External 1" not in hint or not focused_on(first, "m")():
                 raise RuntimeError(f"The display digit moved focus or showed no indicator: {hint!r}")
             ipc("call", "desk", "display_digit", 2)
@@ -126,10 +126,10 @@ def main():
 
             ipc("call", "desk", "display_digit", 1)
             time.sleep(2)
-            if ipc("call", "desk", "shortcut_hint") != "Display shortcut cancelled":
+            if ipc("call", "desk", "toast") != "Display shortcut cancelled":
                 raise RuntimeError("A display digit without a space digit was not cancelled")
             ipc("call", "desk", "display_digit", 2)
-            if "External 2 is not connected" not in ipc("call", "desk", "shortcut_hint"):
+            if "External 2 is not connected" not in ipc("call", "desk", "toast"):
                 raise RuntimeError("An unknown display was not reported")
             time.sleep(0.5)
             if not focused_on(first, "m")():
