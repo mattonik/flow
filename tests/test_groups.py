@@ -15,6 +15,10 @@ import restore
 import spaces
 
 
+OUTPUTS = ({"Virtual-1": {"logical": {"width": 1280, "height": 800}}},
+           [{"id": 1, "output": "Virtual-1", "is_active": True, "is_focused": True}])
+
+
 def window(ident, app, column, row=1):
     return {"id": ident, "app_id": app, "title": app, "workspace_id": 1,
             "is_floating": False, "layout": {"pos_in_scrolling_layout": [column, row]}}
@@ -122,13 +126,15 @@ class GroupRegistryTest(unittest.TestCase):
             ws = {"id": 1, "active_window_id": 1}
             windows = [window(1, "a", 1), window(2, "b", 1, 2)]
             def action(kind, name, *args):
-                self.assertEqual((kind, name, args), ("action", "consume-or-expel-window-right", ("--id", 1)))
-                windows[0]["layout"]["pos_in_scrolling_layout"] = [2, 1]
-                windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 1]
+                # The bottom member is expelled so the separated windows keep the stack's order.
+                self.assertEqual((kind, name, args), ("action", "consume-or-expel-window-right", ("--id", 2)))
+                windows[0]["layout"]["pos_in_scrolling_layout"] = [1, 1]
+                windows[1]["layout"]["pos_in_scrolling_layout"] = [2, 1]
             def invoke(op, *args):
                 with patch.dict(os.environ, {"XDG_STATE_HOME": directory}), patch.object(sys, "argv", ["flow-spaces", op, *args]), \
                      patch.object(spaces, "snapshot", side_effect=lambda: (ws, windows)), \
                      patch.object(spaces, "session_id", return_value="session"), patch.object(spaces, "command", side_effect=action), \
+                     patch.object(spaces, "display_state", return_value=OUTPUTS), \
                      contextlib.redirect_stdout(io.StringIO()) as output:
                     spaces.main()
                 return json.loads(output.getvalue())
@@ -208,11 +214,10 @@ class GroupRegistryTest(unittest.TestCase):
         registered = [{"id": "g", "label": "Work", "members": ["a", "b"]}]
         pins = [{"id": "p", "label": "Pinned", "app_id": "pinned", "window_id": 3}]
         def separate(*args):
-            windows[1]["layout"]["pos_in_scrolling_layout"] = [3, 1]
-            windows[2]["layout"]["pos_in_scrolling_layout"] = [2, 1]
+            windows[2]["layout"]["pos_in_scrolling_layout"] = [3, 1]
         with patch.object(spaces, "snapshot", return_value=(ws, windows)), patch.object(spaces, "command", side_effect=separate) as command:
             spaces.run(pins, "dissolve-group", "g", ws, windows, "session", registered)
-        command.assert_called_once_with("action", "consume-or-expel-window-right", "--id", 1)
+        command.assert_called_once_with("action", "consume-or-expel-window-right", "--id", 2)
         self.assertEqual(windows[0]["layout"]["pos_in_scrolling_layout"], [1, 1])
         self.assertEqual(registered, [])
 
@@ -266,6 +271,7 @@ class GroupRegistryTest(unittest.TestCase):
                  patch.object(spaces, "snapshot", side_effect=lambda: (ws, windows)), \
                  patch.object(spaces, "desktop_file", return_value=Path("/tmp/a.desktop")), \
                  patch.object(spaces, "session_id", return_value="session"), patch.object(spaces, "command"), \
+                 patch.object(restore, "focused_display", return_value=(None, set())), \
                  patch.object(restore.subprocess, "run", side_effect=launch), patch.object(restore.time, "sleep"), \
                  contextlib.redirect_stdout(io.StringIO()):
                 restore.main()
@@ -286,6 +292,7 @@ class GroupRegistryTest(unittest.TestCase):
                  patch.object(spaces, "snapshot", side_effect=lambda: (ws, windows)), \
                  patch.object(spaces, "desktop_file", return_value=Path("/tmp/a.desktop")), \
                  patch.object(spaces, "session_id", return_value="session"), patch.object(spaces, "command") as command, \
+                 patch.object(restore, "focused_display", return_value=(None, set())), \
                  patch.object(restore.subprocess, "run", side_effect=launch), contextlib.redirect_stdout(io.StringIO()), \
                  self.assertRaisesRegex(ValueError, "session recovery stopped"):
                 restore.main()
@@ -301,12 +308,13 @@ class GroupRegistryTest(unittest.TestCase):
             ws = {"id": 1, "active_window_id": 1}
             pair = [window(1, "a", 1), window(2, "b", 1, 2)]
             def separate(*args):
-                pair[0]["layout"]["pos_in_scrolling_layout"] = [2, 1]
-                pair[1]["layout"]["pos_in_scrolling_layout"] = [1, 1]
+                pair[0]["layout"]["pos_in_scrolling_layout"] = [1, 1]
+                pair[1]["layout"]["pos_in_scrolling_layout"] = [2, 1]
             with patch.dict(os.environ, {"XDG_STATE_HOME": directory}), \
                  patch.object(sys, "argv", ["flow-spaces", "dissolve-group", "g"]), \
                  patch.object(spaces, "snapshot", side_effect=lambda: (ws, pair)), \
                  patch.object(spaces, "session_id", return_value="session"), patch.object(spaces, "command", side_effect=separate), \
+                 patch.object(spaces, "display_state", return_value=OUTPUTS), \
                  patch.object(groups.os, "replace", side_effect=OSError("disk full")), \
                  self.assertRaisesRegex(ValueError, "stack its apps and retry"):
                 spaces.main()

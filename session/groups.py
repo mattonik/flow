@@ -22,18 +22,72 @@ def mark_initialized(directory):
     sync_directory(directory)
 
 
+# Side-by-side members share one output; four keeps each usable on a 1280-pixel-wide display.
+MAX_MEMBERS = 4
+
+
+def valid_members(members):
+    return (isinstance(members, list) and 2 <= len(members) <= MAX_MEMBERS
+            and all(isinstance(app, str) and app for app in members) and len(set(members)) == len(members))
+
+
+def _fraction(value):
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and 0 < value < 1
+
+
+def valid_ratios(group):
+    """Side proportions: legacy ``side_ratio`` for two apps, ``side_ratios`` for larger Groups."""
+    if "side_ratio" in group and (len(group["members"]) != 2 or not _fraction(group["side_ratio"])):
+        return False
+    ratios = group.get("side_ratios")
+    return "side_ratios" not in group or (
+        isinstance(ratios, list) and len(ratios) == len(group["members"]) and len(group["members"]) > 2
+        and all(_fraction(r) for r in ratios) and abs(sum(ratios) - 1) <= 0.01)
+
+
+def ratios(group):
+    """Return one width fraction per member, in member order."""
+    n = len(group["members"])
+    if isinstance(group.get("side_ratios"), list) and len(group["side_ratios"]) == n:
+        return list(group["side_ratios"])
+    if n == 2 and "side_ratio" in group:
+        return [group["side_ratio"], 1 - group["side_ratio"]]
+    return [1 / n] * n
+
+
+def set_ratios(group, values):
+    total = sum(values)
+    values = [v / total for v in values]
+    group.pop("side_ratio", None)
+    group.pop("side_ratios", None)
+    if len(values) == 2:
+        group["side_ratio"] = round(values[0], 4)
+    else:
+        group["side_ratios"] = [round(v, 4) for v in values]
+
+
+def remap_ratios(group, members):
+    """Carry saved proportions to a changed membership; new members get an even share."""
+    had = "side_ratio" in group or "side_ratios" in group
+    old = dict(zip(group["members"], ratios(group)))
+    group["members"] = list(members)
+    if had:
+        set_ratios(group, [old.get(app, 1 / len(members)) for app in members])
+    else:
+        group.pop("side_ratio", None)
+        group.pop("side_ratios", None)
+
+
 def validate(data):
     if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("groups"), list):
         raise ValueError("Invalid saved Groups; state was not changed")
     groups = data["groups"]
     if any(not isinstance(g, dict) or not isinstance(g.get("id"), str) or not g["id"]
-           or not isinstance(g.get("label"), str) or not isinstance(g.get("members"), list)
-           or len(g["members"]) != 2 or not all(isinstance(a, str) and a for a in g["members"])
-           or len(set(g["members"])) != 2
+           or not isinstance(g.get("label"), str) or not valid_members(g.get("members"))
            or any(key in g and g[key] not in ("stack", "side-by-side")
                   for key in ("layout", "pending_layout"))
            or ("auto_layout" in g and not isinstance(g["auto_layout"], bool))
-           or ("side_ratio" in g and (isinstance(g["side_ratio"], bool) or not isinstance(g["side_ratio"], (int, float)) or not 0 < g["side_ratio"] < 1))
+           or not valid_ratios(g)
            or ("last_focused_app" in g and g["last_focused_app"] not in g["members"])
            or ("pending_layout" in g and g["pending_layout"] == g.get("layout", "stack")) for g in groups):
         raise ValueError("Invalid saved Groups; state was not changed")

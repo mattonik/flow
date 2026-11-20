@@ -76,6 +76,7 @@ class RecoveryTest(unittest.TestCase):
                 patch.object(sys, "argv", ["flow-recovery", "auto-save-checked"]), \
                 patch.object(restore.group_store, "load", return_value=[]), \
                 patch.object(restore.spaces, "snapshot", return_value=({"id": 1}, [window(1, "app", 1), window(2, "app", 2)])), \
+                patch.object(restore, "focused_display", return_value=(None, set())), \
                 patch.object(restore.spaces, "desktop_file", return_value=Path("/tmp/app.desktop")):
             path = Path(directory) / "flow/session.json"
             path.parent.mkdir()
