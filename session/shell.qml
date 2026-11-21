@@ -16,6 +16,17 @@ ShellRoot {
     property bool editPins: false
     property bool quickSettingsOpen: false
     property bool notificationsOpen: false
+    // The notification the banner shows: the newest that arrived while the panel was closed.
+    property var bannerNotification: null
+    function showBanner(notification) {
+        // A low-urgency notification waits quietly in the panel, with the bell's dot.
+        if (notification.urgency === NotificationUrgency.Low || notificationsOpen) return
+        bannerNotification = notification
+        // A critical one stays until it is dismissed or opened.
+        if (notification.urgency === NotificationUrgency.Critical) bannerTimer.stop()
+        else bannerTimer.restart()
+    }
+    Timer { id: bannerTimer; interval: 5000; onTriggered: root.bannerNotification = null }
     readonly property var audioSink: Pipewire.ready ? Pipewire.defaultAudioSink : null
     readonly property bool audioAvailable: !!(audioSink && audioSink.audio)
     readonly property string volumeStatus: !Pipewire.ready ? "Checking audio…" : !audioAvailable ? "Audio unavailable" :
@@ -39,6 +50,7 @@ ShellRoot {
         keepOnReload: false
         onNotification: notification => {
             notification.tracked = true
+            root.showBanner(notification)
             // Quickshell adds the notification to its model after this handler returns.
             Qt.callLater(root.trimTrackedNotifications)
         }
@@ -57,6 +69,7 @@ ShellRoot {
         overviewPending = false
         spacesOverviewOpen = false   // one surface at a time
         if (!notificationsOpen) {
+            bannerNotification = null   // the panel shows it now
             quickSettingsOpen = false; appMenuOpen = false; openMenuWhenReady = false
             switcherOpen = false
             if (overviewOpen) Quickshell.execDetached(["niri", "msg", "action", "close-overview"])
@@ -1197,6 +1210,8 @@ ShellRoot {
         }
         function quick(): void { root.toggleQuickSettings() }
         function notifications(): void { root.toggleNotifications() }
+        // The summary of the notification the banner shows, or "" when none is on screen.
+        function banner(): string { return notificationBanner.visible ? root.bannerNotification.summary : "" }
         function quick_open(): void { if (!root.quickSettingsOpen) root.toggleQuickSettings() }
         function settings(): void {
             if (!root.deskOpen) root.toggleDesk()
@@ -2962,6 +2977,76 @@ ShellRoot {
                     anchors.bottom: parent.bottom; width: parent.width; height: 1
                     color: Qt.alpha(floeTheme.border, 0.3)
                 }
+            }
+        }
+    }
+    // A banner for a notification that arrives while the panel is closed, as a phone shows one: the
+    // newest, 12 px below the Island, for 5 s (longer while the pointer rests on it), and a critical one
+    // until it is dismissed or opened. A click opens the panel, where its actions are. It never takes the
+    // keyboard, so it cannot pull typing away from an app; the bell opens the panel from the keyboard.
+    PanelWindow {
+        id: notificationBanner
+        readonly property var notification: root.bannerNotification
+        visible: !!notification && notificationServer.trackedNotifications.values.indexOf(notification) >= 0
+            && !root.notificationsOpen && !root.quickSettingsOpen && !root.searchOpen
+        anchors.top: true
+        implicitWidth: Math.max(0, Math.min(370, screen.width - 24))
+        implicitHeight: Math.max(bannerText.implicitHeight, 44) + 24
+        margins.top: 56
+        color: "transparent"; exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+        onVisibleChanged: if (visible && root.motionStandard) bannerEnter.restart()
+        ParallelAnimation {
+            id: bannerEnter
+            NumberAnimation { target: bannerCard; property: "opacity"; from: 0; to: 1; duration: root.motionStandard; easing.type: Easing.BezierSpline; easing.bezierCurve: root.standardCurve }
+            NumberAnimation { target: bannerCard; property: "y"; from: -8; to: 0; duration: root.motionStandard; easing.type: Easing.BezierSpline; easing.bezierCurve: root.standardCurve }
+        }
+        Rectangle {
+            id: bannerCard
+            width: parent.width; height: parent.height; radius: 19
+            color: floeTheme.surface; border.width: 1
+            border.color: bannerArea.containsMouse ? Qt.alpha(floeTheme.accent, 0.6) : Qt.alpha(floeTheme.border, 0.5)
+            Behavior on border.color { ColorAnimation { duration: root.motionQuick } }
+            Accessible.role: Accessible.AlertMessage
+            Accessible.name: notificationBanner.notification ? notificationBanner.notification.appName + ": "
+                + notificationBanner.notification.summary : ""
+            MouseArea {
+                id: bannerArea
+                anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                // The pointer resting on it holds it; leaving gives it the full time again.
+                onContainsMouseChanged: if (containsMouse) bannerTimer.stop()
+                    else if (notificationBanner.notification && notificationBanner.notification.urgency !== NotificationUrgency.Critical) bannerTimer.restart()
+                onClicked: { root.bannerNotification = null; if (!root.notificationsOpen) root.toggleNotifications() }
+            }
+            Column {
+                id: bannerText
+                x: 23; y: 12; width: parent.width - 46 - bannerDismiss.width - 8; spacing: 2
+                SectionLabel {
+                    visible: !!notificationBanner.notification && notificationBanner.notification.appName !== ""
+                    width: parent.width; elide: Text.ElideRight
+                    text: notificationBanner.notification ? notificationBanner.notification.appName.toUpperCase() : ""
+                }
+                Text {
+                    width: parent.width; maximumLineCount: 2; wrapMode: Text.Wrap; elide: Text.ElideRight
+                    text: notificationBanner.notification ? notificationBanner.notification.summary : ""; textFormat: Text.PlainText
+                    color: floeTheme.textPrimary; font.weight: Font.DemiBold; font.pixelSize: 14; font.family: floeTheme.interfaceFont
+                }
+                Text {
+                    visible: text !== ""
+                    width: parent.width; maximumLineCount: 2; wrapMode: Text.Wrap; elide: Text.ElideRight
+                    text: notificationBanner.notification ? notificationBanner.notification.body : ""; textFormat: Text.PlainText
+                    color: floeTheme.textSecondary; font.pixelSize: 13; font.family: floeTheme.interfaceFont
+                }
+            }
+            FlowButton {
+                id: bannerDismiss
+                // The glyph lines up with the panel's dismiss glyphs: 23 px in from the edge, as its rows are.
+                anchors { right: parent.right; rightMargin: 23; top: parent.top; topMargin: 12 }
+                width: 44; implicitHeight: 44; radius: 12; variant: "plain"; glyph: "close"; text: "×"
+                focusPolicy: Qt.NoFocus
+                Accessible.name: "Dismiss notification"
+                onClicked: { const notification = root.bannerNotification; root.bannerNotification = null; if (notification) notification.dismiss() }
             }
         }
     }
