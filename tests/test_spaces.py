@@ -82,19 +82,6 @@ class SpacesTest(unittest.TestCase):
         command.assert_called_once_with("action", "focus-window", "--id", 1)
 
     @patch.object(spaces, "command")
-    def test_navigation_falls_back_to_niri_with_multiple_displays(self, command):
-        for op, direction, expected in (("navigate", "left", "focus-column-left"),
-                                        ("focus-member", "down", "focus-window-down")):
-            with self.subTest(op=op), tempfile.TemporaryDirectory() as directory, \
-                 patch.dict(spaces.os.environ, {"XDG_STATE_HOME": directory}), \
-                 patch.object(sys, "argv", ["flow-spaces", op, direction]), \
-                 patch.object(spaces, "run_locked", side_effect=spaces.MultipleDisplays("multiple displays")), \
-                 contextlib.redirect_stdout(io.StringIO()):
-                spaces.main()
-            command.assert_called_once_with("action", expected)
-            command.reset_mock()
-
-    @patch.object(spaces, "command")
     def test_pin_reorders_and_unpin_preserves_window(self, command):
         result = spaces.run(self.pins, "pin", None, self.ws, self.windows, "session")
         self.assertEqual(result[0]["label"], "files")
@@ -107,36 +94,17 @@ class SpacesTest(unittest.TestCase):
     @patch.object(spaces, "command")
     def test_new_app_and_group_pins_record_the_focused_output(self, command):
         ws = {**self.ws, "output": "Virtual-1"}
-        result = spaces.run(self.pins, "pin", None, ws, self.windows, "session")
-        self.assertEqual(self.pins[0]["display"], "Virtual-1")
-        self.assertEqual(result[0]["display"], "Virtual-1")
+        key = "port:Virtual-1||"
+        result = spaces.run(self.pins, "pin", None, ws, self.windows, "session", display=key)
+        self.assertEqual(self.pins[0]["display"], key)
+        self.assertEqual(result[0]["display"], key)
         self.pins.clear()
         stacked = [window(1, "terminal", 1), window(2, "files", 1)]
         stacked[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
         group = {"id": "g", "label": "Work", "members": ["terminal", "files"]}
-        result = spaces.run(self.pins, "pin-group", "g", ws, stacked, "session", [group])
-        self.assertEqual(self.pins[0]["display"], "Virtual-1")
-        self.assertEqual(result[0]["display"], "Virtual-1")
-
-    def test_legacy_pins_gain_output_once_without_reassigning_existing_owners(self):
-        with tempfile.TemporaryDirectory() as directory:
-            state = Path(directory)
-            path = state / "spaces.json"
-            pins = [{"id": "old", "label": "Old", "app_id": "terminal"},
-                    {"id": "owned", "label": "Owned", "app_id": "owned", "display": "Other"},
-                    {"id": "missing", "label": "Missing", "app_id": "missing"}]
-            path.write_text(json.dumps(pins))
-            ws = {**self.ws, "output": "Virtual-1"}
-            with patch.object(sys, "argv", ["flow-spaces", "refresh"]), \
-                 patch.object(spaces, "snapshot", return_value=(ws, self.windows)), \
-                 patch.object(spaces, "session_id", return_value="session"), \
-                 patch.object(spaces.group_store, "load", return_value=[]), \
-                 patch.object(spaces, "command"), contextlib.redirect_stdout(io.StringIO()):
-                spaces.run_locked(state)
-                saved = json.loads(path.read_text())
-                self.assertEqual([p.get("display") for p in saved], ["Virtual-1", "Other", None])
-                spaces.run_locked(state)
-                self.assertEqual(json.loads(path.read_text()), saved)
+        result = spaces.run(self.pins, "pin-group", "g", ws, stacked, "session", [group], display=key)
+        self.assertEqual(self.pins[0]["display"], key)
+        self.assertEqual(result[0]["display"], key)
 
     @patch.object(spaces, "command")
     def test_switcher_only_focuses_current_workspace_windows(self, command):
@@ -151,8 +119,10 @@ class SpacesTest(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["id"], 2)
         self.assertEqual([member["id"] for member in result[0]["members"]], [1, 2])
+        # A floating window is a Layer over the space, not a space of its own.
         self.windows[1]["is_floating"] = True
-        self.assertEqual(len(spaces.display_spaces(self.ws, self.windows)), 2)
+        self.assertEqual([s["id"] for s in spaces.display_spaces(self.ws, self.windows)], [1])
+        self.assertEqual([layer["id"] for layer in spaces.layers(self.ws, self.windows)], [2])
 
     def test_saved_group_label_requires_unambiguous_matching_members(self):
         self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
@@ -277,7 +247,7 @@ class SpacesTest(unittest.TestCase):
         group = {"id": "g", "label": "Work", "members": ["terminal", "files"]}
         cases = [([self.windows[0], window(3, "terminal", 2)], "duplicates"),
                  ([{**self.windows[0], "workspace_id": 2}], "another workspace"),
-                 (self.windows, "Both Group apps are open")]
+                 (self.windows, "All Group apps are open")]
         for windows, message in cases:
             with self.subTest(message=message), patch.object(spaces, "snapshot", return_value=(self.ws, windows)), \
                  self.assertRaisesRegex(ValueError, message):
@@ -484,7 +454,7 @@ class SpacesTest(unittest.TestCase):
             (self.windows + [window(3, "terminal", 2)], [group]),
         ]
         for windows, groups in cases:
-            with self.subTest(groups=groups, window_count=len(windows)), self.assertRaisesRegex(ValueError, "saved two-app Group"):
+            with self.subTest(groups=groups, window_count=len(windows)), self.assertRaisesRegex(ValueError, "active saved Group"):
                 spaces.run([], "group-view", "group-1", self.ws, windows, "session", groups)
         command.assert_not_called()
 

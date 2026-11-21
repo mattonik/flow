@@ -1,3 +1,5 @@
+import contextlib
+import io
 import importlib.util
 import json
 from pathlib import Path
@@ -68,6 +70,9 @@ class RecoveryTest(unittest.TestCase):
         restored = list(zip(entries, [a, b, c]))
         self.assertTrue(restore.saved_order_matches(entries, restored, ws, [a, b, c]))
         self.assertFalse(restore.saved_order_matches(entries, restored, ws, [a, b, c, window(4, "d", 3)]))
+        # An open Layer floats above the restored work and is not part of it.
+        layer = {**window(5, "notes", 1), "is_floating": True, "layout": {"pos_in_scrolling_layout": None}}
+        self.assertTrue(restore.saved_order_matches(entries, restored, ws, [a, b, c, layer]))
         self.assertFalse(restore.saved_order_matches(entries, restored, ws, [a, c, b | {"layout": {"pos_in_scrolling_layout": [3, 1]}}]))
         self.assertFalse(restore.saved_order_matches(entries, restored[:-1], ws, [a, b, c]))
 
@@ -76,6 +81,7 @@ class RecoveryTest(unittest.TestCase):
                 patch.object(sys, "argv", ["flow-recovery", "auto-save-checked"]), \
                 patch.object(restore.group_store, "load", return_value=[]), \
                 patch.object(restore.spaces, "snapshot", return_value=({"id": 1}, [window(1, "app", 1), window(2, "app", 2)])), \
+                patch.object(restore, "focused_display", return_value=(None, set())), \
                 patch.object(restore.spaces, "desktop_file", return_value=Path("/tmp/app.desktop")):
             path = Path(directory) / "flow/session.json"
             path.parent.mkdir()
@@ -83,6 +89,22 @@ class RecoveryTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "saved session was preserved"):
                 restore.main()
             self.assertEqual(path.read_text(), "previous snapshot")
+
+    def test_an_open_layer_neither_pauses_automatic_saving_nor_enters_the_snapshot(self):
+        layer = {"id": 9, "app_id": "notes", "workspace_id": 1, "title": "notes", "is_floating": True,
+                 "layout": {"pos_in_scrolling_layout": None}}
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"XDG_STATE_HOME": directory}), \
+                patch.object(sys, "argv", ["flow-recovery", "auto-save-checked"]), \
+                patch.object(restore.group_store, "load", return_value=[]), \
+                patch.object(restore.spaces, "snapshot", return_value=({"id": 1}, [window(1, "app", 1), layer])), \
+                patch.object(restore.spaces, "session_id", return_value="s"), \
+                patch.object(restore, "focused_display", return_value=(None, set())), \
+                patch.object(restore.spaces, "desktop_file", return_value=Path("/tmp/app.desktop")), \
+                contextlib.redirect_stdout(io.StringIO()):
+            path = Path(directory) / "flow/session.json"
+            path.parent.mkdir()
+            restore.main()
+            self.assertEqual([w["app_id"] for w in json.loads(path.read_text())["windows"]], ["app"])
 
     def test_automatic_start_restores_only_once_per_compositor_session(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \
@@ -129,6 +151,9 @@ class RecoveryTest(unittest.TestCase):
         self.assertFalse(restore.groups_unchanged_or_focused(old, [{**new[0], "label": "Other"}], ws, windows))
         self.assertFalse(restore.groups_unchanged_or_focused(old, [{**new[0], "last_focused_app": "two"}], ws, windows))
         self.assertFalse(restore.groups_unchanged_or_focused(old, [], ws, windows))
+        # A refreshed window binding is not an edit to the Group.
+        bound = [{**old[0], "bound": {"session": "s", "windows": {"one": 1}}}]
+        self.assertTrue(restore.groups_unchanged_or_focused(old, bound, ws, windows))
 
     def test_recovery_accepts_only_unambiguous_rebinding_of_old_session_pin(self):
         old = [{"id": "pin", "app_id": "files", "label": "Home", "session": "old", "window_id": 9}]
@@ -204,6 +229,16 @@ class RecoveryTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "snapshot was not replaced"):
                     restore.save(path, ws, [window(1, "one", 1)], registered=[group])
                 self.assertEqual(path.read_bytes(), before)
+
+    def test_a_layer_of_a_group_app_does_not_block_saving_the_group(self):
+        ws = {"id": 1, "active_window_id": 1}
+        stacked = [window(1, "one", 1), {**window(2, "two", 1), "layout": {"pos_in_scrolling_layout": [1, 2]}}]
+        layer = {**window(3, "one", 1), "is_floating": True, "layout": {"pos_in_scrolling_layout": None}}
+        group = {"id": "g", "label": "Pair", "members": ["one", "two"]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.json"
+            self.assertEqual(restore.save(path, ws, stacked + [layer], "current", registered=[group]), 2)
+            self.assertEqual([w["window_id"] for w in json.loads(path.read_text())["windows"]], [1, 2])
 
     def test_restore_refuses_to_change_side_by_side_or_transitioning_groups(self):
         ws = {"id": 1, "active_window_id": 1}

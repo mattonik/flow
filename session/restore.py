@@ -13,6 +13,7 @@ import time
 import uuid
 import spaces
 import groups as group_store
+import pin_store
 
 
 def state_path():
@@ -25,6 +26,11 @@ def pins_unchanged_or_rebound(before, after, session, windows, workspace=None, g
     for old, new in zip(before, after):
         if old == new:
             continue
+        if old.get("display") is None and new.get("display") is not None:
+            # Assigning an unassigned legacy pin to its display is not a user change.
+            old = {**old, "display": new["display"]}
+            if old == new:
+                continue
         if "members" in old:
             excluded = ("session", "window_id", "window_ids", "last_focused_app")
             if ({k: v for k, v in old.items() if k not in excluded} != {k: v for k, v in new.items() if k not in excluded}
@@ -55,12 +61,15 @@ def pins_unchanged_or_rebound(before, after, session, windows, workspace=None, g
 def groups_unchanged_or_focused(before, after, workspace, windows):
     if len(before) != len(after):
         return False
+    # Focus tracking and window bindings change with ordinary navigation; anything else is a real edit.
+    volatile = ("last_focused_app", "bound")
     for old, new in zip(before, after):
         if old == new:
             continue
-        if {k: v for k, v in old.items() if k != "last_focused_app"} != {
-                k: v for k, v in new.items() if k != "last_focused_app"}:
+        if {k: v for k, v in old.items() if k not in volatile} != {k: v for k, v in new.items() if k not in volatile}:
             return False
+        if old.get("last_focused_app") == new.get("last_focused_app"):
+            continue
         active = next((w for w in windows if w.get("id") == workspace.get("active_window_id")), None)
         if not active or new.get("last_focused_app") not in old.get("members", []) or active.get("app_id") != new.get("last_focused_app"):
             return False
@@ -68,7 +77,7 @@ def groups_unchanged_or_focused(before, after, workspace, windows):
 
 
 def saved_order_matches(entries, restored, workspace, windows):
-    current = [w for w in windows if w.get("workspace_id") == workspace["id"]]
+    current = [w for w in windows if w.get("workspace_id") == workspace["id"] and not w.get("is_floating")]
     if len(restored) != len(entries) or {w["id"] for _, w in restored} != {w["id"] for w in current}:
         return False
     rows = Counter()
@@ -155,9 +164,7 @@ def rename_group(path, group_id, label):
 
 def pinned_apps(pins):
     if not isinstance(pins, list) or any(not isinstance(pin, dict) or not isinstance(pin.get("app_id"), str)
-            or ("members" in pin and (not isinstance(pin["members"], list)
-                or len(pin["members"]) != 2 or not all(isinstance(app, str) and app for app in pin["members"])
-                or len(set(pin["members"])) != 2)) for pin in pins):
+            or ("members" in pin and not group_store.valid_members(pin["members"])) for pin in pins):
         raise ValueError("Invalid pinned spaces; recovery was not started")
     return {app for pin in pins for app in pin.get("members", [pin["app_id"]])}
 
@@ -184,7 +191,7 @@ def valid_side_pins(group, pins):
                           and claims[0].get("app_id") == group["members"][0])
 
 
-def save(path, workspace, windows, session=None, pins=(), registered=None):
+def save(path, workspace, windows, session=None, pins=(), registered=None, display=None):
     side_groups = [g for g in registered or [] if g.get("layout") == "side-by-side"]
     if any(g.get("pending_layout") for g in registered or []):
         raise ValueError("Finish Group layout changes before saving; the snapshot was not replaced")
@@ -193,7 +200,8 @@ def save(path, workspace, windows, session=None, pins=(), registered=None):
         if (not valid_side_pins(group, pins)
                 or not spaces.group_windows(candidate, workspace, windows, session, registered)):
             raise ValueError("Check side-by-side Groups and pins before saving; the snapshot was not replaced")
-    current = [w for w in windows if w.get("workspace_id") == workspace["id"]]
+    # Layers (floating windows) are temporary and never part of a saved session.
+    current = [w for w in windows if w.get("workspace_id") == workspace["id"] and not w.get("is_floating")]
     current.sort(key=lambda w: w.get("layout", {}).get("pos_in_scrolling_layout") or [99999, 0])
     entries = [{"app_id": w.get("app_id"), "window_id": w["id"], "label": w.get("title") or w.get("app_id") or "Unknown application",
                 "focused": w["id"] == workspace.get("active_window_id"),
@@ -201,7 +209,8 @@ def save(path, workspace, windows, session=None, pins=(), registered=None):
                            if not w.get("is_floating") else None)} for w in current]
     previous = spaces.saved_groups(path) if registered is None else registered
     old = json.loads(path.read_text()) if previous and path.exists() else {}
-    live_counts = Counter(w.get("app_id") for w in windows)
+    # A Layer of a Group app is not another member candidate; only tiled windows count.
+    live_counts = Counter(w.get("app_id") for w in windows if not w.get("is_floating"))
     for group in previous:
         apps = group["members"]
         if group in side_groups:
@@ -210,9 +219,10 @@ def save(path, workspace, windows, session=None, pins=(), registered=None):
             raise ValueError("Saved Group members are ambiguous or on another workspace; session was not replaced")
         if all(live_counts[app] == 1 for app in apps):
             if registered is not None:
-                pair = [e for e in entries if e["app_id"] in apps]
-                column = pair[0]["column"]
-                if column is None or pair[1]["column"] != column or sum(e["column"] == column for e in entries) != 2:
+                members = [e for e in entries if e["app_id"] in apps]
+                column = members[0]["column"]
+                if (column is None or any(e["column"] != column for e in members)
+                        or sum(e["column"] == column for e in entries) != len(apps)):
                     raise ValueError("Rejoin or dissolve the separated Group before saving; session was not replaced")
             continue
         missing = [app for app in apps if not live_counts[app]]
@@ -224,7 +234,8 @@ def save(path, workspace, windows, session=None, pins=(), registered=None):
         present = [e for e in entries if e["app_id"] in apps]
         if present:
             column = present[0]["column"]
-            if column is None or sum(e["column"] == column for e in entries) != 1:
+            if (column is None or any(e["column"] != column for e in present)
+                    or sum(e["column"] == column for e in entries) != len(present)):
                 raise ValueError("A saved Group member is in another stack; session was not replaced")
         else:
             column = max((e["column"] for e in entries if e["column"] is not None), default=0) + 1
@@ -248,14 +259,13 @@ def save(path, workspace, windows, session=None, pins=(), registered=None):
     for group in side_groups:
         candidate = {"group_id": group["id"], "members": group["members"], "session": None}
         pair = spaces.group_windows(candidate, workspace, windows, session, registered)
-        widths = [w.get("layout", {}).get("tile_size", [0])[0] for w in pair]
         saved = dict(group)
-        if all(isinstance(width, (int, float)) and width > 0 for width in widths):
-            saved["side_ratio"] = widths[0] / sum(widths)
+        if spaces.measured_ratios(pair):
+            group_store.set_ratios(saved, spaces.measured_ratios(pair))
         groups.append(saved)
     for members in columns.values():
         apps = [entry["app_id"] for entry in members]
-        if len(apps) != 2 or not all(isinstance(app, str) and app and app_counts[app] == 1 for app in apps):
+        if not group_store.valid_members(apps) or not all(app_counts[app] == 1 for app in apps):
             continue
         matches = [g for g in previous if set(g["members"]) == set(apps)]
         if len(matches) == 1:
@@ -269,7 +279,10 @@ def save(path, workspace, windows, session=None, pins=(), registered=None):
         if len(matches) == 1 and not any(g["id"] == matches[0]["id"]
                                          and set(g["members"]) == set(matches[0]["members"]) for g in groups):
             raise ValueError("Rejoin or unpin the separated pinned Group before saving; session was not replaced")
-    write_snapshot(path, {"version": 1, "session": session, "windows": entries, "groups": groups})
+    data = {"version": 1, "session": session, "windows": entries, "groups": groups}
+    if display:
+        data["display"] = display
+    write_snapshot(path, data)
     return len(current)
 
 
@@ -290,15 +303,13 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
     for group in side_groups:
         matching = [g for g in saved_groups if isinstance(g, dict) and g.get("id") == group["id"]
                     and g.get("members") == group["members"] and g.get("layout") == "side-by-side"]
-        if len(matching) == 1:
-            ratio = matching[0].get("side_ratio", 0.5)
-            if isinstance(ratio, bool) or not isinstance(ratio, (int, float)) or not 0 < ratio < 1:
-                raise ValueError("Invalid saved Group proportions; recovery stopped")
+        if len(matching) == 1 and not group_store.valid_ratios(matching[0]):
+            raise ValueError("Invalid saved Group proportions; recovery stopped")
         pair = [[e for e in entries if e.get("app_id") == app] for app in group["members"]]
         if (len(matching) != 1 or any(len(found) != 1 for found in pair)
                 or not isinstance(pair[0][0].get("column"), int) or isinstance(pair[0][0].get("column"), bool)
                 or pair[0][0]["column"] < 1
-                or pair[1][0].get("column") != pair[0][0]["column"] + 1):
+                or any(found[0].get("column") != pair[0][0]["column"] + i for i, found in enumerate(pair))):
             raise ValueError("Saved side-by-side Group is incomplete or changed; session recovery stopped")
     ids = [e["app_id"] for e in entries]
     app_counts = Counter(ids)
@@ -333,10 +344,11 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 and (w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0] == position[0]]
 
     def group_column_matches(member_ids, current, live):
-        pair = [next((w for w in live if w.get("id") == ident), None) for ident in member_ids]
-        positions = [w.get("layout", {}).get("pos_in_scrolling_layout") if w else None for w in pair]
-        return (all(positions) and positions[0][0] == positions[1][0] and positions[0][1] < positions[1][1]
-                and {w["id"] for w in column_members(pair[0], current, live)} == set(member_ids))
+        members = [next((w for w in live if w.get("id") == ident), None) for ident in member_ids]
+        positions = [w.get("layout", {}).get("pos_in_scrolling_layout") if w else None for w in members]
+        return (all(positions) and all(pos[0] == positions[0][0] for pos in positions)
+                and all(a[1] < b[1] for a, b in zip(positions, positions[1:]))
+                and {w["id"] for w in column_members(members[0], current, live)} == set(member_ids))
 
     same_session = bool(session and data.get("session") == session)
     for entry in entries:
@@ -395,15 +407,14 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                     ids = [w["id"] for w in pair]
                     active = current.get("active_window_id")
                     saved_group = next(g for g in saved_groups if g.get("id") == group["id"])
-                    ratio = saved_group.get("side_ratio", 0.5)
+                    ratios = group_store.ratios(saved_group)
                     for index, ident in enumerate(ids):
                         current, live = checked_snapshot()
                         pair = spaces.group_windows(candidate, current, live, session or "", registered)
                         if not pair or [w["id"] for w in pair] != ids or current.get("active_window_id") != active:
                             report.append("Side-by-side Group changed during recovery; check manually")
                             break
-                        action("action", "set-window-width", "--id", ident,
-                               f"{round((ratio if index == 0 else 1 - ratio) * 100, 2):g}%")
+                        action("action", "set-window-width", "--id", ident, f"{round(ratios[index] * 100, 2):g}%")
                     # Niri acknowledges width requests before the client commits its new size.
                     wait(0.2)
                     for attempt in range(11):
@@ -412,10 +423,8 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                         if not pair or [w["id"] for w in pair] != ids or current.get("active_window_id") != active:
                             report.append("Side-by-side Group changed during recovery; check manually")
                             break
-                        widths = [w.get("layout", {}).get("tile_size", [0])[0] for w in pair]
-                        if not all(isinstance(width, (int, float)) and width > 0 for width in widths):
-                            break
-                        if abs(widths[0] / sum(widths) - ratio) <= 0.05:
+                        widths = spaces.measured_ratios(pair)
+                        if not widths or all(abs(w / sum(widths) - r) <= 0.05 for w, r in zip(widths, ratios)):
                             break
                         if attempt == 10:
                             report.append("Application size constraints prevented recovery of Group proportions")
@@ -440,8 +449,10 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
             groups_ok = True
             for group in groups:
                 group_apps = [entry["app_id"] for entry in group]
-                snapshot_matches = [g for g in saved_groups if isinstance(g, dict) and isinstance(g.get("members"), list)
-                                    and len(g["members"]) == 2 and set(g["members"]) == set(group_apps)]
+                n = len(group_apps)
+                valid = group_store.valid_members
+                snapshot_matches = [g for g in saved_groups if isinstance(g, dict) and valid(g.get("members"))
+                                    and set(g["members"]) == set(group_apps)]
                 if registered is not None and snapshot_matches:
                     live_matches = [g for g in registered if g.get("id") == snapshot_matches[0].get("id")
                                     and set(g.get("members", [])) == set(group_apps)]
@@ -456,83 +467,90 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 saved_matches = [saved for saved in saved_groups if isinstance(saved, dict)
                                  and saved.get("id") == pin.get("group_id")]
                 membership_matches = [saved for saved in saved_groups if isinstance(saved, dict)
-                                      and isinstance(saved.get("members"), list) and len(saved["members"]) == 2
-                                      and all(isinstance(app, str) and app for app in saved["members"])
-                                      and set(saved["members"]) == set(group_apps)]
-                pinned_group = (isinstance(pin.get("group_id"), str) and isinstance(members, list)
-                                and len(members) == len(group_apps) == 2
-                                and all(isinstance(app, str) and app for app in members)
+                                      and valid(saved.get("members")) and set(saved["members"]) == set(group_apps)]
+                pinned_group = (isinstance(pin.get("group_id"), str) and valid(members)
                                 and set(members) == set(group_apps) and len(saved_matches) == len(membership_matches) == 1
-                                and isinstance(saved_matches[0].get("members"), list)
-                                and len(saved_matches[0]["members"]) == 2
-                                and all(isinstance(app, str) and app for app in saved_matches[0]["members"])
+                                and valid(saved_matches[0].get("members"))
                                 and set(saved_matches[0]["members"]) == set(group_apps))
                 pinned_member = any(app in pinned for app in group_apps)
-                if (len(group) != 2 or any(not app or app_counts[app] != 1 for app in group_apps)
+                if (not valid(group_apps) or any(not app or app_counts[app] != 1 for app in group_apps)
                         or (pinned_member and not pinned_group)):
-                    report.append("Group requires manual recovery (ambiguous, pinned, or more than two apps)")
+                    report.append("Group requires manual recovery (ambiguous, pinned, or unsupported size)")
                     groups_ok = False
                     continue
                 workspace, live = checked_snapshot()
-                pair = []
+                found = []
                 for app in group_apps:
                     matches = [w for w in live if w.get("app_id") == app]
                     if len(matches) != 1 or matches[0].get("workspace_id") != workspace["id"] or matches[0].get("is_floating"):
                         break
-                    pair.append(matches[0])
-                if len(pair) != 2:
+                    found.append(matches[0])
+                if len(found) != n:
                     report.append("Group members unavailable or ambiguous; group not restored")
                     groups_ok = False
                     continue
-                positions = [w.get("layout", {}).get("pos_in_scrolling_layout") for w in pair]
+                positions = [w.get("layout", {}).get("pos_in_scrolling_layout") for w in found]
                 if any(not pos for pos in positions):
                     report.append("Group members are not tiled; group not restored")
                     groups_ok = False
                     continue
-                member_ids = tuple(w["id"] for w in pair)
-                if positions[0][0] == positions[1][0]:
+                member_ids = tuple(w["id"] for w in found)
+                columns = [pos[0] for pos in positions]
+                if len(set(columns)) == 1:
                     if not group_column_matches(member_ids, workspace, live):
                         report.append("Existing group differs from saved group; check manually")
                         groups_ok = False
                     else:
-                        group_destinations.append((group[0]["column"], pair[0]["id"], member_ids))
+                        group_destinations.append((group[0]["column"], found[0]["id"], member_ids))
                     continue
-                if pinned_group:
-                    left, right = sorted(pos[0] for pos in positions)
-                    live_columns = [w.get("layout", {}).get("pos_in_scrolling_layout")
-                                    for w in live if w.get("workspace_id") == workspace_id and not w.get("is_floating")]
-                    if right != left + 1 or any(pos and pos[0] > right for pos in live_columns):
-                        report.append("Pinned Group cannot be restored without shifting other spaces")
-                        groups_ok = False
-                        continue
-                if not all(spaces.eligible(w, workspace, live) for w in pair):
+                if not all(spaces.eligible(w, workspace, live) for w in found):
                     report.append("Group members are not single windows; group not restored")
                     groups_ok = False
                     continue
-                if not pinned_group and positions[1][0] != positions[0][0] + 1:
-                    target = positions[0][0] + (positions[1][0] > positions[0][0])
-                    action("action", "focus-window", "--id", pair[1]["id"])
-                    action("action", "move-column-to-index", target)
-                    workspace, live = checked_snapshot()
-                    pair = [next((w for w in live if w.get("id") == member["id"]), None) for member in pair]
-                    if (not all(spaces.eligible(w, workspace, live) for w in pair)
-                            or pair[1]["layout"]["pos_in_scrolling_layout"][0]
-                            != pair[0]["layout"]["pos_in_scrolling_layout"][0] + 1):
+                if pinned_group:
+                    forward = columns == list(range(columns[0], columns[0] + n))
+                    backward = columns == list(range(columns[0], columns[0] - n, -1))
+                    live_columns = [w.get("layout", {}).get("pos_in_scrolling_layout")
+                                    for w in live if w.get("workspace_id") == workspace_id and not w.get("is_floating")]
+                    if not (forward or backward) or any(pos and pos[0] > max(columns) for pos in live_columns):
+                        report.append("Pinned Group cannot be restored without shifting other spaces")
+                        groups_ok = False
+                        continue
+                    for member in found[1:]:
+                        action("action", "consume-or-expel-window-" + ("left" if forward else "right"), "--id", member["id"])
+                else:
+                    moved_ok = True
+                    for index in range(1, n):
+                        first = next(w for w in live if w.get("id") == found[0]["id"])
+                        current = next(w for w in live if w.get("id") == found[index]["id"])
+                        first_col = first["layout"]["pos_in_scrolling_layout"][0]
+                        current_col = current["layout"]["pos_in_scrolling_layout"][0]
+                        # Taking a column from the left shifts the first member one place left.
+                        target = first_col + index - (current_col < first_col)
+                        if current_col != target:
+                            action("action", "focus-window", "--id", found[index]["id"])
+                            action("action", "move-column-to-index", target)
+                            workspace, live = checked_snapshot()
+                        placed = [next((w for w in live if w.get("id") == member["id"]), None) for member in found[:index + 1]]
+                        if (not all(spaces.eligible(w, workspace, live) for w in placed)
+                                or [w["layout"]["pos_in_scrolling_layout"][0] for w in placed]
+                                != list(range(placed[0]["layout"]["pos_in_scrolling_layout"][0],
+                                              placed[0]["layout"]["pos_in_scrolling_layout"][0] + index + 1))):
+                            moved_ok = False
+                            break
+                    if not moved_ok:
                         report.append("Group members moved unexpectedly; group not restored")
                         groups_ok = False
                         continue
-                if pinned_group:
-                    direction = "left" if positions[1][0] > positions[0][0] else "right"
-                    action("action", "consume-or-expel-window-" + direction, "--id", pair[1]["id"])
-                else:
-                    action("action", "focus-window", "--id", pair[0]["id"])
-                    action("action", "consume-window-into-column")
+                    action("action", "focus-window", "--id", found[0]["id"])
+                    for _ in range(n - 1):
+                        action("action", "consume-window-into-column")
                 workspace, live = checked_snapshot()
                 if not group_column_matches(member_ids, workspace, live):
                     report.append("Group members moved unexpectedly; group not restored")
                     groups_ok = False
                     continue
-                group_destinations.append((group[0]["column"], pair[0]["id"], member_ids))
+                group_destinations.append((group[0]["column"], found[0]["id"], member_ids))
 
             if groups_ok and len(restored) != len(entries):
                 report.append("Session is incomplete; saved ordering needs manual recovery")
@@ -584,6 +602,14 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
     return report, len(restored)
 
 
+def focused_display(workspace, state=None):
+    """The focused workspace's display key and every connected display key, keyed as pins are."""
+    displays = pin_store.read(state / "spaces.json")[1] if state else {}
+    identities, _ = pin_store.identities(json.loads(spaces.command("-j", "outputs")), pin_store.shared_serials(displays))
+    record = identities.get(workspace.get("output"))
+    return (record["key"] if record else None), {r["key"] for r in identities.values()}
+
+
 def main():
     path = state_path()
     op = sys.argv[1] if len(sys.argv) > 1 else "status"
@@ -602,16 +628,18 @@ def main():
                 registered = group_store.load(path.parent)
                 if op in ("save", "auto-save-checked"):
                     pins_path = path.parent / "spaces.json"
-                    pins = json.loads(pins_path.read_text()) if pins_path.exists() else []
+                    pins = pin_store.read(pins_path)[0]
                     pinned_apps(pins)
                     workspace, windows = spaces.snapshot()
+                    display = focused_display(workspace, path.parent)[0]
                     dirs = (os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share"), *os.environ.get("XDG_DATA_DIRS", "/run/current-system/sw/share:/usr/share").split(":"))
                     if op == "auto-save-checked":
-                        entries = [{"app_id": w.get("app_id"), "column": None if w.get("is_floating") else (w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0]} for w in windows if w.get("workspace_id") == workspace["id"]]
+                        entries = [{"app_id": w.get("app_id"), "column": (w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0]}
+                                   for w in windows if w.get("workspace_id") == workspace["id"] and not w.get("is_floating")]
                         warnings = recovery_warnings(entries, dirs)
                         if not entries or warnings:
                             raise ValueError("Automatic saving paused; the saved session was preserved. " + "; ".join(warnings))
-                    count = save(path, workspace, windows, spaces.session_id(), pins, registered)
+                    count = save(path, workspace, windows, spaces.session_id(), pins, registered, display)
                     warnings = recovery_warnings(json.loads(path.read_text())["windows"], dirs)
                     print(json.dumps({"message": f"Saved {count} open windows. Save documents in each app before restarting." +
                                       (" " + "; ".join(warnings) if warnings else "")}))
@@ -627,9 +655,13 @@ def main():
                     data = json.loads(original_snapshot)
                     dirs = (os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share"), *os.environ.get("XDG_DATA_DIRS", "/run/current-system/sw/share:/usr/share").split(":"))
                     pins_path = path.parent / "spaces.json"
-                    pins = json.loads(pins_path.read_text()) if pins_path.exists() else []
+                    pins = pin_store.read(pins_path)[0]
                     pinned_apps(pins)
                     session = spaces.session_id()
+                    display, connected = focused_display(workspace, path.parent)
+                    if data.get("display") and data["display"] != display and data["display"] in connected:
+                        raise ValueError("This session was saved on another connected display; "
+                                         "focus that display to restore it")
         if op == "restore":
             def checked_state():
                 with (path.parent / "session.lock").open("a") as lock:
@@ -637,7 +669,7 @@ def main():
                     with (path.parent / "spaces.lock").open("a") as spaces_lock:
                         fcntl.flock(spaces_lock, fcntl.LOCK_EX)
                         now_groups = group_store.load(path.parent)
-                        now_pins = json.loads(pins_path.read_text()) if pins_path.exists() else []
+                        now_pins = pin_store.read(pins_path)[0]
                         pinned_apps(now_pins)
                         current = spaces.snapshot()
                         if (path.read_bytes() != original_snapshot or not groups_unchanged_or_focused(registered, now_groups, *current)
