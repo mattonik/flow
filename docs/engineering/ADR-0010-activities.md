@@ -36,10 +36,10 @@ A new interface, `io.github.mattonik.Flow1.Activities`, on the same service:
 ### Who it says it is
 
 The service attaches an owner label to each activity. The app never chooses it:
-- **Flatpak app:** its app ID, the identity Flatpak verifies. The name in its desktop entry is written by its developer and is not used.
+- **Flatpak app:** its app ID, which Flatpak fixes for the sandbox so the app cannot change it at run time. The name in its desktop entry is written by its developer and is not used. Whoever builds the app chooses the ID, and Flatpak keeps it unique only within one installation, so a sideloaded bundle can show the ID of an app installed natively (see ADR-0009).
 - **Unsandboxed caller:** its process name. When that is the `flow` CLI or a Python interpreter, the program that ran it is named instead, for example `make`.
 
-For unsandboxed callers the process name is a convenience, not a boundary: such a process can rename itself, or reach Niri directly. The island always shows the owner next to the title and draws activities as a progress chip, not as a notification. A Flatpak app can write any title, but the owner shown is its verified app ID.
+For unsandboxed callers the process name is a convenience, not a boundary: such a process can rename itself, or reach Niri directly. The island always shows the owner next to the title and draws activities as a progress chip, not as a notification. A Flatpak app can write any title, but the owner shown is the app ID of its sandbox.
 
 ### Delivery to the shell
 

@@ -63,10 +63,14 @@ Clients must ignore keys they don't know.
 
 The service asks the bus for the caller's process ID, then classifies it:
 
-- **Sandboxed app.** `/proc/<pid>/root/.flatpak-info` exists, the file xdg-desktop-portal reads too; through Flatpak's D-Bus proxy the process ID is the sandbox's own. If the sandbox root cannot be read, the caller is treated as sandboxed and refused, never as trusted.
+- **Sandboxed app.** `/proc/<pid>/root/.flatpak-info` exists, the file xdg-desktop-portal reads too; through Flatpak's D-Bus proxy the process ID is the sandbox's own. If the sandbox root cannot be read, the caller is treated as sandboxed and refused, never as trusted. Such a caller is an app. It may use only `Spaces`, and `Control` returns `NotAuthorized`.
+  - Its windows are those drawn from inside its own sandbox: the process Niri reports for the window has a `.flatpak-info` that names the same app.
+  - The window's Wayland app ID is not evidence of ownership. Any client may set any value, including the Flatpak ID of another app or of an installed native app, and an app's Wayland window that sets a different one is still its own.
 - **Known gaps:**
-  - Identification uses the bare PID from `GetConnectionUnixProcessID` and then reads `/proc`. That can race with PID reuse. Current portals use a pidfd, which this service should adopt.
-  - Ownership by Wayland app ID depends on the value the client sets. Some Flatpaks do not set it to their Flatpak ID, and those see no spaces. Such a caller is an app. Its windows are those whose Wayland app ID is its Flatpak application ID. It may use only `Spaces`, and `Control` returns `NotAuthorized`.
+  - Identification uses the bare PID from `GetConnectionUnixProcessID` and then reads `/proc`, and so does window ownership with the PID Niri reports. Both can race with PID reuse. Current portals use a pidfd, which this service should adopt.
+  - An X11 window is drawn through xwayland-satellite, outside the sandbox, so it is not the Flatpak's. An app with only X11 windows lists no spaces and cannot ask for Desk or the overview. The same holds for any window whose process Niri does not report.
+  - In a space shared with other apps, `FocusSpace` focuses the caller's own window, except in a pinned space, which is focused as Super+number does.
+  - The app ID is chosen by whoever builds the app, and Flatpak keeps it unique only within one installation. A sideloaded bundle can take the ID of an app that is not installed as a Flatpak, such as one installed natively.
 - **Unsandboxed process.** It may use `Control`. It could reach Niri's socket directly anyway, so denying it would add no security. On `Spaces` its own windows are those whose process is the caller or one of its ancestors, for example a command run from a terminal acts as that terminal.
 
 Snap, containers, firejail and plain bubblewrap are not recognised, and nothing in this service or the bus policy enforces that they stay away. Such a caller is treated as unsandboxed and may use `Control`.
