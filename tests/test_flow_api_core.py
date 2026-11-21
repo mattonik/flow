@@ -105,7 +105,8 @@ class CoreTest(unittest.TestCase):
         self.assertEqual([(s["id"], s["label"], s["apps"]) for s in shown],
                          [("group:g", "org.example.Paint", ["org.example.Paint"])])
         self.assertNotIn("MyBank", json.dumps([core.public(s) for s in shown]))
-        self.assertEqual(core.capabilities(paint), (1, 1, ["spaces.list", "spaces.focus", "spaces.changed", "system.ui"]))
+        self.assertEqual(core.capabilities(paint), (1, 2, ["spaces.list", "spaces.focus", "spaces.changed", "system.ui",
+                                                         "activities"]))
 
     def test_an_app_moves_focus_only_while_it_has_focus(self):
         self.proc.process(500, 1, flatpak="[Application]\nname=org.example.Paint\n")

@@ -97,9 +97,9 @@ def main():
             wait_for(lambda: NAME in busctl("list", "--no-pager").stdout, "the API service on the bus")
 
             version = json.loads(flow("version").stdout)
-            if version != {"version": "1.1", "features": ["spaces.list", "spaces.focus", "spaces.changed",
+            if version != {"version": "1.2", "features": ["spaces.list", "spaces.focus", "spaces.changed",
                                                           "control.spaces", "control.pin", "control.reorder",
-                                                          "system.ui"]}:
+                                                          "system.ui", "activities"]}:
                 raise RuntimeError(f"Unexpected capabilities: {version}")
             steps.append(f"capabilities negotiated: {version}")
 

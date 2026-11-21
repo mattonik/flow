@@ -141,7 +141,9 @@ ShellRoot {
     }
     Process {
         id: niriEvents
-        command: ["niri", "msg", "-j", "event-stream"]
+        // The kernel stops the stream when the shell dies, even by SIGKILL, so restarts never leak one.
+        // Without setpriv the stream still runs, only without that guarantee.
+        command: ["sh", "-c", "command -v setpriv >/dev/null && exec setpriv --pdeathsig TERM niri msg -j event-stream; exec niri msg -j event-stream"]
         running: true
         onExited: eventReconnect.restart()
         stdout: SplitParser {
@@ -185,6 +187,26 @@ ShellRoot {
     onSwitcherOpenChanged: if (!switcherOpen) renameGroupId = ""
     property var windows: []
     property var displaySpaces: []
+    // Activities published by apps through the Platform API (ADR-0010), newest first.
+    property var activities: []
+    function activityText(activity) {
+        const progress = activity.progress >= 0 ? "  " + Math.round(activity.progress * 100) + "%" : "  …"
+        return activity.owner + "  ·  " + activity.title + progress
+    }
+    FileView {
+        id: activityFile
+        // Without a runtime directory nothing is published; never fall back to a world-writable place.
+        path: Quickshell.env("XDG_RUNTIME_DIR") ? Quickshell.env("XDG_RUNTIME_DIR") + "/flow-activities.json" : ""
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: {
+            try {
+                const data = JSON.parse(text())
+                root.activities = data && data.version === 1 && Array.isArray(data.activities) ? data.activities : []
+            } catch (e) { root.activities = [] }
+        }
+        onLoadFailed: root.activities = []
+    }
     // Floating windows over this workspace's spaces; they are never spaces themselves.
     property var layers: []
     readonly property var activeLayer: layers.find(layer => layer.active) || null
@@ -451,6 +473,8 @@ ShellRoot {
     }
     SystemClock { id: clock; precision: SystemClock.Minutes }
     component SystemIsland: Rectangle {
+        // The width of the screen the island is on; an activity chip only takes what is left.
+        property real room: 1280
         implicitWidth: islandControls.implicitWidth + 16; implicitHeight: 44
         radius: height / 2; color: floeTheme.canvas; border.color: floeTheme.border
         Row {
@@ -469,6 +493,43 @@ ShellRoot {
                 onPressed: closeOnRelease = root.launcherActive
                 onClicked: { if (closeOnRelease) root.closeLauncher(); else root.openApps(); closeOnRelease = false }
                 onCanceled: closeOnRelease = false
+            }
+            Rectangle {
+                // The newest activity: who it is from, its title and its progress; "+N" when there are more.
+                id: activityChip
+                property var current: root.activities.length ? root.activities[0] : null
+                // The other controls take about 330 px; on a narrower screen the chip becomes a dot.
+                property real budget: Math.min(260, room - 330)
+                property bool compact: budget < 120
+                visible: !!current
+                anchors.verticalCenter: parent.verticalCenter
+                width: compact ? 32 : Math.min(budget, activityLabel.implicitWidth + 24); height: 32; radius: 16
+                color: floeTheme.surface; border.width: 1; border.color: floeTheme.border
+                clip: true
+                Rectangle {
+                    anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
+                    width: activityChip.current && activityChip.current.progress >= 0 ? parent.width * activityChip.current.progress : 0
+                    radius: Math.min(parent.radius, width / 2); color: floeTheme.surfaceSelected
+                }
+                Text {
+                    visible: activityChip.compact
+                    anchors.centerIn: parent; textFormat: Text.PlainText
+                    text: activityChip.current && activityChip.current.progress >= 0 ? Math.round(activityChip.current.progress * 100) : "…"
+                    color: floeTheme.textPrimary; font.pixelSize: 11; font.family: floeTheme.technicalFont
+                }
+                Text {
+                    id: activityLabel
+                    visible: !activityChip.compact
+                    anchors.centerIn: parent; width: Math.min(implicitWidth, Math.max(0, activityChip.budget - 24))
+                    elide: Text.ElideRight; textFormat: Text.PlainText
+                    text: activityChip.current ? root.activityText(activityChip.current) + (root.activities.length > 1 ? "  +" + (root.activities.length - 1) : "") : ""
+                    color: floeTheme.textPrimary; font.pixelSize: 13; font.family: floeTheme.interfaceFont
+                }
+                Accessible.role: Accessible.ProgressBar
+                Accessible.name: activityChip.current ? "Activity from " + activityChip.current.owner + ": " + activityChip.current.title : ""
+                Accessible.description: activityChip.current ? (activityChip.current.progress >= 0
+                    ? Math.round(activityChip.current.progress * 100) + " percent" : "in progress")
+                    + (root.activities.length > 1 ? ", and " + (root.activities.length - 1) + " more in Desk" : "") : ""
             }
             Text {
                 width: 48; horizontalAlignment: Text.AlignHCenter; anchors.verticalCenter: parent.verticalCenter
@@ -511,6 +572,7 @@ ShellRoot {
         function toast(): string { return root.toast }
         function spaces_error(): string { return root.spacesError }
         function desk_state(): string { return root.deskOpen ? "open" : "closed" }
+        function activity_list(): string { return JSON.stringify(root.activities.map(a => root.activityText(a))) }
         function launcher_state(): string { return root.launcherBusy() ? "open" : "closed" }
         function menu(): void {
             if (menuPreferences.appMenuEnabled && root.appMenu && !root.deskOpen && !root.overviewOpen) {
@@ -577,6 +639,7 @@ ShellRoot {
             focus: true
             Keys.onEscapePressed: root.deskOpen = false
             SystemIsland {
+                room: parent.width
                 anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; anchors.topMargin: 8
             }
             Flickable {
@@ -764,6 +827,27 @@ ShellRoot {
                         visible: root.spacesError !== ""; width: parent.width; spacing: 8
                         Text { text: root.spacesError; textFormat: Text.PlainText; color: floeTheme.danger; wrapMode: Text.Wrap; width: parent.width - dismissSpacesError.width - 8; font.pixelSize: 14 }
                         FlowButton { id: dismissSpacesError; width: 96; implicitHeight: 44; text: "Dismiss"; Accessible.name: "Dismiss spaces error"; onClicked: root.spacesError = "" }
+                    }
+                    Text {
+                        visible: root.activities.length > 0
+                        text: "ACTIVITIES"; color: floeTheme.textMuted; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12
+                    }
+                    Repeater {
+                        model: root.activities
+                        Column {
+                            required property var modelData
+                            width: parent.width; spacing: 2
+                            Text {
+                                width: parent.width; elide: Text.ElideRight; textFormat: Text.PlainText
+                                text: root.activityText(modelData)
+                                color: floeTheme.textPrimary; font.pixelSize: 14; font.family: floeTheme.interfaceFont
+                            }
+                            Text {
+                                visible: modelData.detail !== ""
+                                width: parent.width; elide: Text.ElideRight; textFormat: Text.PlainText
+                                text: modelData.detail; color: floeTheme.textMuted; font.pixelSize: 12; font.family: floeTheme.interfaceFont
+                            }
+                        }
                     }
                     Text { text: "TOOLS"; color: floeTheme.textMuted; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: 12 }
                     Flow {
@@ -1612,7 +1696,7 @@ ShellRoot {
         color: "transparent"
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
-        SystemIsland { id: workIslandContent; anchors.fill: parent }
+        SystemIsland { id: workIslandContent; anchors.fill: parent; room: workIsland.screen ? workIsland.screen.width : 1280 }
     }
     PanelWindow {
         // Temporary feedback for shortcuts and Group focus changes; it never takes keyboard focus.

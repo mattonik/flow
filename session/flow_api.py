@@ -6,6 +6,7 @@ All policy is in flow_api_core; this file only binds it to GDBus, reads state th
 """
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 import time
@@ -37,6 +38,16 @@ XML = f"""
       <arg type="s" name="id" direction="in"/><arg type="s" name="direction" direction="in"/>
     </method>
   </interface>
+  <interface name="{core.NAME}.Activities">
+    <method name="Start">
+      <arg type="s" name="title" direction="in"/><arg type="a{{sv}}" name="options" direction="in"/>
+      <arg type="s" name="id" direction="out"/>
+    </method>
+    <method name="Update">
+      <arg type="s" name="id" direction="in"/><arg type="a{{sv}}" name="changes" direction="in"/>
+    </method>
+    <method name="Finish"><arg type="s" name="id" direction="in"/></method>
+  </interface>
   <interface name="{core.NAME}.System">
     <method name="ShowDesk"/>
     <method name="ShowOverview"/>
@@ -54,6 +65,10 @@ class Service:
         self.connection = connection
         self.spaces_command = list(spaces_command)
         self.shell = os.environ.get("FLOW_SHELL_CONFIG", "/etc/flow/shell.qml")
+        self.activities = core.ActivityBook()
+        runtime = os.environ.get("XDG_RUNTIME_DIR")
+        self.activity_file = Path(runtime) / "flow-activities.json" if runtime else None
+        self.write_activities()
         self.limit = core.RateLimit()
         self.cache = (0.0, None)
         self.session = session
@@ -93,6 +108,8 @@ class Service:
         if method == "GetCapabilities" and not control:
             major, minor, features = core.capabilities(identity)
             return GLib.Variant("(uuas)", (major, minor, features))
+        if interface.endswith(".Activities"):
+            return self.activity(sender, identity, method, params)
         if interface.endswith(".System"):
             what = {"ShowDesk": "desk", "ShowOverview": "overview", "ShowLauncher": "launcher"}.get(method)
             if what is None:
@@ -124,6 +141,37 @@ class Service:
             self.run_spaces(*([action, target] if target is not None else [action]))
         self.cache = (0.0, None)
         return None
+
+    def activity(self, sender, identity, method, params):
+        if method == "Start":
+            owner = core.owner_label(identity)
+            ident = self.activities.start(sender, owner, params[0], dict(params[1]), core.limit_key(identity, sender))
+            self.write_activities()
+            return GLib.Variant("(s)", (ident,))
+        if method == "Update":
+            self.activities.update(sender, params[0], dict(params[1]))
+        elif method == "Finish":
+            self.activities.finish(sender, params[0])
+        else:
+            raise core.ApiError("Unsupported", f"{method} is not supported")
+        self.write_activities()
+        return None
+
+    def write_activities(self):
+        """Publish live activities for the shell, atomically, on the session's tmpfs."""
+        if not self.activity_file:
+            return
+        data = json.dumps({"version": 1, "activities": self.activities.public()})
+        temporary = self.activity_file.with_name(self.activity_file.name + ".tmp")
+        try:
+            temporary.write_text(data)
+            os.replace(temporary, self.activity_file)
+        except OSError as exc:
+            print(f"flow-api: could not publish activities: {exc}", file=sys.stderr)
+
+    def owner_gone(self, name):
+        if self.activities.drop_connection(name):
+            self.write_activities()
 
     def show(self, ipc):
         try:
@@ -166,7 +214,11 @@ def variant(value):
 
 def watch_niri(service, children):
     """Turn Niri's event stream into debounced Changed signals; reconnect if it ends."""
-    process = Gio.Subprocess.new(["niri", "msg", "-j", "event-stream"], Gio.SubprocessFlags.STDOUT_PIPE)
+    # setpriv: the kernel ends the stream if the service dies, even by SIGKILL; without it the stream
+    # still runs, only without that guarantee.
+    process = Gio.Subprocess.new(["sh", "-c", "command -v setpriv >/dev/null && exec setpriv --pdeathsig TERM"
+                                  " niri msg -j event-stream; exec niri msg -j event-stream"],
+                                 Gio.SubprocessFlags.STDOUT_PIPE)
     children[:] = [process]  # stopped when the service exits, so no stream outlives it
     stream = Gio.DataInputStream.new(process.get_stdout_pipe())
 
@@ -215,6 +267,15 @@ def main():
         holder["service"] = Service(connection, session)
         for interface in node.interfaces:
             connection.register_object(PATH, interface, handle, None, None)
+
+        def name_owner_changed(_c, _s, _p, _i, _signal, params):
+            name, _old, new = params.unpack()
+            if not new:  # a connection closed: its activities end with it
+                holder["service"].owner_gone(name)
+
+        connection.signal_subscribe("org.freedesktop.DBus", "org.freedesktop.DBus", "NameOwnerChanged",
+                                    "/org/freedesktop/DBus", None, Gio.DBusSignalFlags.NONE, name_owner_changed)
+
         watch_niri(holder["service"], children)
 
     def lost(_connection, _name):
@@ -228,6 +289,8 @@ def main():
     finally:
         for child in children:
             child.force_exit()
+        if "service" in holder and holder["service"].activity_file:
+            holder["service"].activity_file.unlink(missing_ok=True)  # nothing outlives the service
 
 
 if __name__ == "__main__":

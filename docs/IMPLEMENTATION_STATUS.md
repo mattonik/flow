@@ -14,7 +14,7 @@ The recorded test environment is an Apple Silicon Mac running UTM 5.0.8, QEMU AR
 | F-006 Layer dismissal | Partial | A Layer is a compact floating window over the current space; floating windows are no longer counted as spaces (2026-11-20). Search can open any app as a Layer, and the switcher can make the focused standalone app one. In the guest, a Layer was opened over a pinned, resized side-by-side Group and closed again. The Group, its pin, every column and width, and the Flow state were unchanged, and focus returned to the same Group app. Portrait outputs get a bottom sheet, open Layers reshape when the output rotates, and a Layer can join the Group beneath it. Touch is not implemented. |
 | F-007 Desk/Overview | Partial | In the ARM64 guest, opening and closing Desk and Niri Overview retained the same four window IDs, workspace, scrolling positions and focused window. At a simulated 320×512 logical portrait size, Group switcher keyboard navigation and pin editing remained visible; the original display and window state were restored. Gesture, physical touch, multi-display and visual-transition acceptance remain open. |
 | F-008 Search | Partial | Search covers recent local files within the user’s home folder, Flow settings, quick settings, installed applications, open windows and saved pins, including closed apps. File indexing and commands are missing. The settings shell actions were checked through IPC. A recent-file result from an isolated history was selected in the guest and opened in Kate; naturally populated history and the settings results still need end-to-end validation. |
-| F-009 Island/system | Partial | Island, quick settings, lock and a temporary notification inbox exist. Quick Settings opens GNOME's Wi-Fi panel and the connection-profile editor, and controls one unambiguous MPRIS player. The guest showed the no-adapter Wi-Fi state; real scanning/authentication, durable notification history and independent availability across all contexts remain unverified. |
+| F-009 Island/system | Partial | Island, quick settings, lock and a temporary notification inbox exist. Apps can show Activities with progress in the island through the Platform API (ADR-0010, 2026-11-21); they are labelled with their owner and end with the app's connection. Quick Settings opens GNOME's Wi-Fi panel and the connection-profile editor, and controls one unambiguous MPRIS player. The guest showed the no-adapter Wi-Fi state; real scanning/authentication, durable notification history and independent availability across all contexts remain unverified. |
 | F-010 Real accounts | Open | Two-user and guest isolation and switching have not been verified. |
 | F-011 Display hotplug | Partial | In the guest, a second virtual output was disconnected and reconnected through its DRM connector (2026-11-20). Its pins stayed with it and nothing on the other display was reordered, then the pins came back in order. A pinned three-app Group and a single app were moved between the two outputs as one destination each. Physical monitors, docks, connector changes and serial-number identity are unit-tested only. |
 | F-012 Portal correctness | Partial | The guest's portal broker is active and owns its session D-Bus name. A disposable unsandboxed chooser request returned the selected test-file URI, and a second request returned a cancel response. Sandboxed file access, saving, screenshots, screenshare, clipboard and drag/drop remain unverified. |
@@ -179,5 +179,45 @@ Through `Control`, the guest smoke test pinned an app's space with focus kept on
 Sandboxed callers of `System` are unit-tested only, because no Flatpak app was available.
 
 Not done: the shell does not use the API yet, the service was not run as the installed systemd unit, and a real Flatpak app was not tested. Callers are identified by PID, not pidfd. Confinement other than Flatpak is not recognised. Calls are answered one at a time. Groups, displays, Layers, search providers and activities are not in this version.
+
+### Activities
+
+[ADR-0010](engineering/ADR-0010-activities.md) adds `io.github.mattonik.Flow1.Activities` to the Platform API (version 1.2) with `Start`, `Update` and `Finish`. An activity belongs to the bus connection that started it:
+- It ends when finished or when that connection closes; there is no idle timeout.
+- A caller may have three at once, and a Flatpak app counts once across its connections.
+- Text is cut to one printable line; blank-looking characters and stacked combining marks are removed.
+
+The service labels each activity with its owner, never with a name the app chose:
+- **Flatpak app:** its verified app ID.
+- **Unsandboxed caller:** its process name, or the program that ran the `flow` CLI.
+
+The service publishes live activities to `$XDG_RUNTIME_DIR/flow-activities.json`, and the shell watches that file:
+- The island shows the newest as a chip with the owner, the title, a progress fill and a count of the others. The chip fits the space the island has left on its screen and becomes a dot on narrow screens.
+- Desk lists every activity under *Activities*.
+
+The CLI adds two commands:
+- `flow activity run TITLE -- COMMAND` holds an activity while a command runs. It forwards termination signals and always returns the command's own exit status.
+- `flow activity progress TITLE` shows percentages read from standard input, one update a second at most. The last value always goes out, even without a final newline, and carriage-return progress such as rsync's works.
+
+Neither command lets a refused or failed activity call stop the work it reports: standard input is still drained, so a pipeline never breaks.
+
+`niri_activities_smoke.py` passed in the guest on a private bus and its own runtime directory, against a development shell:
+- Progress went from 25% to 60% with a detail line and ended at end of input.
+- A build showed while its command ran and ended with it.
+- A caller was refused a fourth activity, and its three ended when it was killed.
+- A service killed with SIGKILL, and a shell and service stopped normally, left no Niri event stream behind. The test is a child subreaper, so a leaked stream would be re-parented to it and caught.
+
+Unit tests cover:
+- the activity book: ownership, the per-app limit, text cleaning and owner labels
+- the CLI through a stand-in for PyGObject: refused calls that are not fatal, a pipe that never breaks, the last line, carriage returns, non-numeric lines, exit statuses and forwarded signals
+
+A NEMESIS review of the first version found the bugs these tests now pin down:
+- The CLI's throttle ran at exactly the service's rate limit, so `flow activity progress` failed after about ten seconds and broke the pipe it was reading.
+- `flow activity run` reported failure for any command over the ten-minute expiry, which has been removed.
+- A Flatpak app could get around the limit with more connections, and could pick its own owner label.
+
+Stopping the shell had leaked its `niri msg event-stream`, a bug older than Activities. The event streams of the shell and the service now run under `setpriv --pdeathsig`, so they end with their parent, and fall back to a plain stream without `setpriv`.
+
+Not tested: a Flatpak app as the owner, and the narrow-screen dot outside the layout code.
 
 Limitations: The changes run from a development copy, not an installed NixOS generation. An older generation cannot read a version 2 pin file and reports *Invalid saved spaces* without changing it. Restoring `spaces.v1.json` rolls back, but it holds the pins from before the first conversion, so pins made since are lost. An older generation also rejects a `groups.json` that contains a Group of three or four apps, which stops every `flow-spaces` call; dissolve or shrink such Groups to two apps before rolling back. Touch, physical rotation and real hotplug remain open.
