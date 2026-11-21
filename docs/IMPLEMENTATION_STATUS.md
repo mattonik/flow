@@ -233,6 +233,15 @@ The shell's controls follow one system instead of one bordered rectangle:
 - **Motion** uses the brand's quick (120 ms) and standard (220 ms) tokens and its standard curve. A *Reduce motion* setting in Desk makes every change instant, because Linux gives Quickshell no system signal for it. All "busy" indicators share one clock, so a card rebuilt by an activity update continues its sweep.
 
 Surface by surface:
+- **Niri and the lock screen follow the appearance switch** (audit UI-04). The theme generator writes `design/generated/niri-{dark,light}.kdl` and `swaylock-{dark,light}.conf`, so `session/niri.kdl` holds no colour of its own:
+  - **Niri colours:** the focus colour for the active ring, the functional border for the inactive one (the focused window of an unfocused display, where focus returns), the canvas behind workspaces, and the surface tone for the Overview backdrop.
+  - **How Niri follows the switch:** `niri.kdl` includes Polar Night, then optionally `~/.config/flow/niri-appearance.kdl`. The installed shell writes a copy of the active appearance there at startup and when the Desk switch changes, and Niri reloads included files when they change. A development shell never writes it.
+  - **The lock screen:** `flow-lock` picks the matching swaylock file: the canvas, a quiet ring, and the accent for typing and checking, with danger for a wrong password. The colours are no longer on the command line. swayidle runs its commands through `sh`, where a word starting with `#` begins a comment, so a token colour there would silently have stopped locking.
+  - **Tests:** `test_compositor_appearance.py` checks the generated files role by role and for contrast, the include order and path, that the shell writes the file Niri includes, and the lock wrapper with a stand-in swaylock. Eleven mutations each fail it.
+  - **Guest checks:** Niri validated the configuration with both includes. The shell wrote the dark file at startup. With the appearance file set to light and the shell restarted, Niri switched to the light colours, and Overview and Desk matched. The setting was then restored byte for byte.
+  - **Not exercised:** the lock screen itself, because unlocking needs a password typed.
+  - **Not yet effective:** swayidle is a Niri startup command, so its new lock command applies from the next sign-in.
+  - **Focus ring:** one colour cannot stand out against both light and dark app content.
 - **App launcher and search (fuzzel):** themed from the same tokens. The theme generator writes `design/generated/fuzzel-dark.ini` and `fuzzel-light.ini`:
   - the panel in the surface tone, with a full-strength border and a 14 px radius
   - Noto Sans at the 16 px body size, with rows as tall as the 44 px touch target

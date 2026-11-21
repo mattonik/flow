@@ -736,7 +736,20 @@ ShellRoot {
     // The installed shell does not live-reload: a NixOS switch restarts its user unit instead.
     // Quickshell cannot reload a configuration that adds an inline component, and its file watching
     // does not reliably notice a switch. A development shell keeps live reload.
-    Component.onCompleted: if (Quickshell.shellDir === "/etc/flow") Quickshell.watchFiles = false
+    Component.onCompleted: {
+        if (Quickshell.shellDir !== "/etc/flow") return
+        Quickshell.watchFiles = false
+        root.syncCompositorAppearance()
+    }
+    // Niri includes ~/.config/flow/niri-appearance.kdl (session/niri.kdl) and reloads it when it changes:
+    // the installed shell keeps it a copy of its appearance's Niri colours. A development shell never
+    // touches the user's compositor.
+    function syncCompositorAppearance() {
+        if (Quickshell.shellDir !== "/etc/flow") return
+        const source = Quickshell.shellDir + "/niri-" + (appearancePreferences.lightMode ? "light" : "dark") + ".kdl"
+        Quickshell.execDetached(["sh", "-c", 'd="$HOME/.config/flow"; t="$d/niri-appearance.kdl"; '
+            + 'cmp -s "$0" "$t" || { mkdir -p "$d" && cp "$0" "$t.tmp" && mv "$t.tmp" "$t"; }', source])
+    }
     IpcHandler {
         target: "desk"
         // Read-only, for scripted checks of shell feedback.
@@ -1109,7 +1122,7 @@ ShellRoot {
                             checked: appearancePreferences.lightMode
                             Accessible.name: "Use Arctic Daylight light mode"
                             onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(appearanceSwitch)
-                            onToggled: { appearancePreferences.lightMode = checked; appearancePreferences.sync() }
+                            onToggled: { appearancePreferences.lightMode = checked; appearancePreferences.sync(); root.syncCompositorAppearance() }
                         }
                         FlowSwitch {
                             id: reduceMotionSwitch

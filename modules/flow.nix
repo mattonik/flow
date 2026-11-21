@@ -49,10 +49,19 @@ let
     exec ${pkgs.python3.withPackages (p: [ p.pygobject3 ])}/bin/python3 ${../session/search.py}
   '';
   # The shell's files, as one store directory: /etc/flow, and the restart trigger of the shell's unit.
+  # Niri's appearance files are here because the shell copies the active one for Niri to include.
   shellFiles = pkgs.linkFarm "flow-shell" [
     { name = "shell.qml"; path = ../session/shell.qml; }
     { name = "FloeTheme.qml"; path = ../session/FloeTheme.qml; }
+    { name = "niri-dark.kdl"; path = ../design/generated/niri-dark.kdl; }
+    { name = "niri-light.kdl"; path = ../design/generated/niri-light.kdl; }
   ];
+  # The lock screen in Floe's theme, following the appearance switch (session/flow-lock.sh).
+  flowLock = pkgs.writeShellScriptBin "flow-lock" ''
+    export FLOW_SWAYLOCK_BIN=${lib.getExe pkgs.swaylock} FLOW_SWAYLOCK_THEMES=${../design/generated}
+    export PATH="${pkgs.gnugrep}/bin:$PATH"
+    exec ${pkgs.bash}/bin/sh ${../session/flow-lock.sh} "$@"
+  '';
   shellLauncher = pkgs.writeShellScriptBin "flow-shell" ''
     # A NixOS unit gets its own PATH; the shell and the apps it opens need the login session's, which
     # Niri imported into the user manager.
@@ -122,8 +131,10 @@ let
     printf '%s\n' "$!" > "$pidfile"
   '';
   niriConfig = pkgs.replaceVars ../session/niri.kdl {
+    # Polar Night until the shell writes the user's appearance (~/.config/flow/niri-appearance.kdl).
+    niriAppearance = ../design/generated/niri-dark.kdl;
     terminal = lib.getExe pkgs.foot;
-    lock = lib.getExe pkgs.swaylock;
+    lock = lib.getExe flowLock;
     idle = lib.getExe pkgs.swayidle;
     shell = lib.getExe pkgs.quickshell;
     shellConfig = "/etc/flow/shell.qml";
