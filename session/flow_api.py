@@ -93,6 +93,14 @@ class Service:
         if method == "GetCapabilities" and not control:
             major, minor, features = core.capabilities(identity)
             return GLib.Variant("(uuas)", (major, minor, features))
+        if interface.endswith(".System"):
+            what = {"ShowDesk": "desk", "ShowOverview": "overview", "ShowLauncher": "launcher"}.get(method)
+            if what is None:
+                raise core.ApiError("Unsupported", f"{method} is not supported")
+            # Only an app needs Flow state here: who has keyboard focus, read fresh.
+            windows = self.snapshot(fresh=True)[1] if identity["sandboxed"] else {}
+            self.show(core.ui_request(identity, what, windows))
+            return None
         # Anything that acts is authorized on fresh state; a cached snapshot could let an app steal focus.
         spaces, windows = self.snapshot(fresh=method != "ListSpaces")
         if method == "ListSpaces":
@@ -110,10 +118,6 @@ class Service:
             steps = core.unpin_steps(identity, params[0], spaces)
         elif method == "MoveSpace":
             steps = core.move_steps(identity, params[0], params[1], spaces)
-        elif interface.endswith(".System") and method in ("ShowDesk", "ShowOverview", "ShowLauncher"):
-            self.show(core.ui_request(identity, {"ShowDesk": "desk", "ShowOverview": "overview",
-                                                 "ShowLauncher": "launcher"}[method], windows))
-            return None
         if steps is None:
             raise core.ApiError("Unsupported", f"{method} is not supported")
         for action, target in steps:
@@ -122,10 +126,16 @@ class Service:
         return None
 
     def show(self, ipc):
-        process = subprocess.run(["quickshell", "ipc", "-p", self.shell, "call", "desk", ipc],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        try:
+            process = subprocess.run(["quickshell", "ipc", "-p", self.shell, "call", "desk", ipc], text=True,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=2)
+        except subprocess.TimeoutExpired as exc:
+            raise core.ApiError("Failed", "The Flow shell did not answer") from exc
         if process.returncode:
-            raise core.ApiError("Failed", "The Flow shell is not running")
+            running = "no running instances" not in process.stderr.lower()
+            raise core.ApiError("Failed", "The Flow shell did not accept the request" if running
+                                else "The Flow shell is not running")
+        core.ui_answer(process.stdout)
 
     def changed(self):
         self.pending = 0

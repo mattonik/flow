@@ -843,7 +843,11 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
         group_store.remap_ratios(group, [w["app_id"] for w in found])
         update_group_pins(pins, group, found, socket)
     elif op == "pin":
-        window = next((w for w in windows if w["id"] == workspace.get("active_window_id")), None)
+        # With a window ID (the Platform API), that window is pinned without moving focus.
+        if arg is not None and not str(arg).isdigit():
+            raise ValueError("Choose a window to pin by its number")
+        target = int(arg) if arg is not None else workspace.get("active_window_id")
+        window = next((w for w in windows if w["id"] == target), None)  # eligible() below keeps it to this workspace
         if not window:
             raise ValueError("Select one non-floating app window to pin")
         if window.get("is_floating"):
@@ -1832,7 +1836,9 @@ def _run_locked(state):
                           "notice": notice,
                           "all_windows": [{"id": w["id"], "app_id": w.get("app_id") or "", "pid": w.get("pid"),
                                            "title": w.get("title") or "", "workspace_id": w.get("workspace_id"),
-                                           "focused": w["id"] == workspace.get("active_window_id")}
+                                           # Niri's keyboard focus: false while Desk, a launcher or the overview
+                                           # holds the keyboard, though the window stays the workspace's active one.
+                                           "focused": w.get("is_focused") is True}
                                           for w in windows],
                           "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
 

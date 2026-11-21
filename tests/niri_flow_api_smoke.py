@@ -3,7 +3,8 @@
 
 Run inside a Niri session from the Flow checkout under ``dbus-run-session``, with the focused output's
 active workspace empty and ``flow-spaces`` on PATH running this checkout's ``session/spaces.py``.
-``FLOW_GI_PYTHON`` names a Python with PyGObject (``GI_TYPELIB_PATH`` set for it). The service and the
+``FLOW_GI_PYTHON`` names a Python with PyGObject (``GI_TYPELIB_PATH`` set for it), and ``FLOW_SHELL`` the
+development ``shell.qml`` that System requests are sent to. The service and the
 ``flow`` CLI run from this checkout; ``busctl`` is the second, C client. Flow state is isolated, real
 state files are checksummed, and disposable Foot windows are closed afterward.
 """
@@ -207,9 +208,28 @@ def main():
             time.sleep(0.5)
             if desk() != "open":
                 raise RuntimeError("A second ShowDesk closed Desk")
+            crossed = flow("overview", "show", check=False)
+            time.sleep(0.5)
+            if json.loads(crossed.stderr or "{}").get("error") != "InvalidState" or desk() != "open":
+                raise RuntimeError(f"ShowOverview with Desk open did not refuse, or closed Desk: {crossed.stderr}")
             subprocess.run(["quickshell", "ipc", "-p", shell, "call", "desk", "leave"], timeout=10)
             wait_for(lambda: desk() == "closed", "Desk closed again")
-            steps.append("System ShowDesk opened Desk, and asking again left it open")
+            steps.append("System ShowDesk opened Desk, asking again left it open, and ShowOverview over Desk "
+                         "was InvalidState with Desk still open")
+
+            def launcher():
+                return subprocess.run(["quickshell", "ipc", "-p", shell, "call", "desk", "launcher_state"], text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10).stdout.strip()
+
+            flow("launcher", "show")
+            wait_for(lambda: launcher() == "open", "the launcher opened through System")
+            flow("launcher", "show")
+            time.sleep(0.5)
+            if launcher() != "open":
+                raise RuntimeError("A second ShowLauncher closed the launcher")
+            subprocess.run(["quickshell", "ipc", "-p", shell, "call", "desk", "apps"], timeout=10)
+            wait_for(lambda: launcher() == "closed", "the launcher closed again")
+            steps.append("System ShowLauncher opened the launcher, and asking again left it open")
 
             def overview():
                 return json.loads(niri("-j", "overview-state"))["is_open"]

@@ -152,7 +152,7 @@ Callers are identified the way XDG portals identify them:
 Rate limits follow a Flatpak app across all its connections. The service reads state through a new read-only `flow-spaces observe`, which neither reconciles pins nor writes state, apart from creating an empty Group registry on a fresh installation. It focuses through the same `flow-spaces` actions as the shell, and turns Niri's event stream into debounced `Changed` signals. The NixOS module installs the `flow` CLI, a D-Bus activation file and a `flow-api` systemd user service.
 
 `niri_flow_api_smoke.py` passed in the guest on a private bus from `dbus-run-session`, using the development copy:
-- Version 1.0 and its feature list were negotiated.
+- Version 1.1 and its feature list were negotiated.
 - `flow spaces list` showed a pin ID and an opaque window ID.
 - `busctl` focused a space through `Control`.
 - A command inside a third app saw only its own space and title, focused it while it had focus, and focusing another app's space was `NotAuthorized`.
@@ -166,8 +166,18 @@ With apps allowed to see every space, or without the child cleanup, the test fai
 
 The module was evaluated in the guest from the flake. The built activation file, user unit and CLI were checked, and a private bus started the packaged service by activation on the first `flow version` call. That run found the event-stream child surviving the service, which is now fixed.
 
-Version 1.1 adds `Control.PinSpace`, `UnpinSpace` and `MoveSpace`, and a `System` interface with `ShowDesk`, `ShowOverview` and `ShowLauncher`. These open shell UI without ever closing it, and an app may ask only while it has focus. The CLI gained the matching commands. Through `Control`, the guest smoke test pinned an app's space with focus kept on the other app, moved the pin left, and unpinned it; a second unpin was `NotFound`. It then opened Desk through `System` against a development shell, and a second request left Desk open. The same check passed for Niri's overview. With *show* sent through the toggling shell call, the test fails. `ShowLauncher` was not exercised in the guest.
+Version 1.1 adds `Control.PinSpace`, `UnpinSpace` and `MoveSpace`, and a `System` interface with `ShowDesk`, `ShowOverview` and `ShowLauncher`. The CLI gained the matching commands.
 
-Not done: the shell does not use the API yet, the service was not run as the installed systemd unit, and a real Flatpak app was not tested. Callers are identified by PID, not pidfd. Confinement other than Flatpak is not recognised. Calls are answered one at a time. Pinning, Groups, displays, search providers and activities are not in this version.
+`PinSpace` names the window to pin, through a new `flow-spaces pin <window>`, so it is one locked step that never moves focus. A focus change during the call cannot pin the wrong space. A move past either end of the pins is refused, not silently ignored.
+
+System requests never close anything. While any other shell surface is open they do nothing and return `InvalidState`.
+
+Apps are gated on Niri's per-window `is_focused`, not on the workspace's active window. In the guest, opening the installed shell's Desk or Niri's overview turned the app's `is_focused` false while it stayed the active window, which is the gap the first version had. Sandboxed apps may not open the launcher.
+
+Through `Control`, the guest smoke test pinned an app's space with focus kept on the other app, moved the pin left, and unpinned it; a second unpin was `NotFound`. Against a development shell, `System` then opened Desk, and a second request left it open. `ShowOverview` with Desk open was `InvalidState`, and Desk stayed open. The overview and the launcher each opened, and a second request left them open. With *show* sent through the toggling shell call, the test fails.
+
+Sandboxed callers of `System` are unit-tested only, because no Flatpak app was available.
+
+Not done: the shell does not use the API yet, the service was not run as the installed systemd unit, and a real Flatpak app was not tested. Callers are identified by PID, not pidfd. Confinement other than Flatpak is not recognised. Calls are answered one at a time. Groups, displays, Layers, search providers and activities are not in this version.
 
 Limitations: The changes run from a development copy, not an installed NixOS generation. An older generation cannot read a version 2 pin file and reports *Invalid saved spaces* without changing it. Restoring `spaces.v1.json` rolls back, but it holds the pins from before the first conversion, so pins made since are lost. An older generation also rejects a `groups.json` that contains a Group of three or four apps, which stops every `flow-spaces` call; dissolve or shrink such Groups to two apps before rolling back. Touch, physical rotation and real hotplug remain open.

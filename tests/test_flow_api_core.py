@@ -168,14 +168,21 @@ class CoreTest(unittest.TestCase):
         tool = core.caller(900, self.proc.root)
         terminal = core.opaque("session", 4)
         steps = core.pin_steps(tool, terminal, self.spaces, self.windows)
-        self.assertEqual(steps, [("focus-window", "4"), ("pin", None), ("focus-window", "1")])
+        self.assertEqual(steps, [("pin", "4")])
+        # Focus moving to another space meanwhile cannot change what gets pinned: the window is named.
+        self.niri("action", "focus-window", "--id", 2)
         self.run_steps(steps)
         self.spaces, self.windows = core.project(self.observe(), "session")
         self.assertEqual([s["label"] for s in self.spaces if s["pinned"] and s["display"] == "Main"],
                          ["Mail", "org.example.Term"])
-        self.assertEqual(self.niri.active["eDP-1"], 1)
+        self.assertEqual(self.niri.active["eDP-1"], 2)
         pinned = next(s["id"] for s in self.spaces if s["label"] == "org.example.Term")
         self.assertEqual(core.move_steps(tool, pinned, "left", self.spaces), [("left", pinned[4:])])
+        for space_id, direction, message in ((pinned, "right", "already at that end"), ("pin:m", "left", "already at that end"),
+                                             ("pin:c", "left", "another display")):
+            with self.subTest(space_id=space_id, direction=direction), self.assertRaises(core.ApiError) as raised:
+                core.move_steps(tool, space_id, direction, self.spaces)
+            self.assertIn(message, str(raised.exception))
         self.assertEqual(core.unpin_steps(tool, pinned, self.spaces), [("unpin", pinned[4:])])
         self.assertEqual(core.pin_steps(tool, "group:g", self.spaces, self.windows), [("pin-group", "g")])
         for call, kind in ((lambda: core.pin_steps(tool, "pin:m", self.spaces, self.windows), "InvalidState"),
@@ -198,8 +205,28 @@ class CoreTest(unittest.TestCase):
         self.niri("action", "focus-window", "--id", 2)
         self.spaces, self.windows = core.project(self.observe(), "session")
         self.assertEqual(core.ui_request(paint, "overview", self.windows), "overview_open")
+        with self.assertRaises(core.ApiError) as raised:
+            core.ui_request(paint, "launcher", self.windows)
+        self.assertEqual(raised.exception.kind, "NotAuthorized")
+        # Behind Desk or a launcher the app keeps Niri's active window but not the keyboard: no UI requests.
+        self.niri.shell_has_keyboard = True
+        self.spaces, self.windows = core.project(self.observe(), "session")
+        with self.assertRaises(core.ApiError) as raised:
+            core.ui_request(paint, "overview", self.windows)
+        self.assertEqual(raised.exception.kind, "NotAuthorized")
+        with self.assertRaises(core.ApiError) as raised:
+            core.focus_target(paint, "group:g", self.spaces, self.windows, False)
+        self.assertEqual(raised.exception.kind, "NotAuthorized")
+        self.niri.shell_has_keyboard = False
         self.proc.process(900, 1)
-        self.assertEqual(core.ui_request(core.caller(900, self.proc.root), "desk", self.windows), "desk_open")
+        self.assertEqual([core.ui_request(core.caller(900, self.proc.root), what, {}) for what in ("desk", "overview", "launcher")],
+                         ["desk_open", "overview_open", "apps_open"])
+        for reply, kind in (("busy\n", "InvalidState"), ("", "Failed"), ("toggled", "Failed")):
+            with self.subTest(reply=reply), self.assertRaises(core.ApiError) as raised:
+                core.ui_answer(reply)
+            self.assertEqual(raised.exception.kind, kind)
+        core.ui_answer("opened\n")
+        core.ui_answer("open")
         with self.assertRaises(core.ApiError) as raised:
             core.ui_request(paint, "settings", self.windows)
         self.assertEqual(raised.exception.kind, "InvalidArgs")
@@ -208,7 +235,8 @@ class CoreTest(unittest.TestCase):
         cases = {"External 1 is not connected": "DisplayUnavailable", "Pinned space no longer exists": "NotFound",
                  "This pinned app is unavailable or ambiguous": "AppNotRunning", "Workspace changed": "Failed",
                  "Move this pin to this display before reordering it": "InvalidState",
-                 "This app is already pinned": "InvalidState"}
+                 "This app is already pinned": "InvalidState",
+                 "Return side-by-side Groups to a stack before changing pins or Groups": "InvalidState"}
         self.assertEqual({m: core.error_from(m).kind for m in cases}, cases)
 
     def test_a_flatpak_app_is_rate_limited_across_its_connections(self):

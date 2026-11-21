@@ -86,7 +86,8 @@ def project(snapshot, session):
     for position, pin in enumerate(pins, 1):
         result.append({"id": "pin:" + pin["id"], "kind": pin.get("kind", "app"), "pinned": True,
                        "position": position, "display": display, "label": pin.get("label", ""),
-                       "available": bool(pin.get("available")), "window_ids": list(pin.get("window_ids") or [])})
+                       "available": bool(pin.get("available")), "window_ids": list(pin.get("window_ids") or []),
+                       "local_pins": len(pins)})  # internal: a pin of the focused display, and how many it has
     offset = len(pins)
     unpinned = [s for s in snapshot.get("spaces") or [] if not {m["id"] for m in s["members"]} & claimed]
     for position, space in enumerate(unpinned, offset + 1):
@@ -182,7 +183,7 @@ def control_space(identity, space_id, spaces):
 
 
 def pin_steps(identity, space_id, spaces, windows):
-    """flow-spaces steps that pin a space and then give focus back to the window that had it."""
+    """The single flow-spaces action that pins a space where it is, without moving focus."""
     space = control_space(identity, space_id, spaces)
     if space["pinned"]:
         raise ApiError("InvalidState", "This space is already pinned")
@@ -190,12 +191,7 @@ def pin_steps(identity, space_id, spaces, windows):
         return [("pin-group", space_id[6:])]
     if not space["window_ids"]:
         raise ApiError("AppNotRunning", "The space has no open window")
-    focused = next((w["id"] for w in windows.values() if w.get("focused")), None)
-    # flow-spaces pins the focused window, so this space is focused for the moment of pinning.
-    steps = [("focus-window", str(space["window_ids"][0])), ("pin", None)]
-    if focused is not None and focused not in space["window_ids"]:
-        steps.append(("focus-window", str(focused)))
-    return steps
+    return [("pin", str(space["window_ids"][0]))]
 
 
 def unpin_steps(identity, space_id, spaces):
@@ -206,11 +202,16 @@ def unpin_steps(identity, space_id, spaces):
 
 
 def move_steps(identity, space_id, direction, spaces):
+    """Reorder a pin of the focused display; a move past either end is refused, never a silent no-op."""
     space = control_space(identity, space_id, spaces)
     if direction not in ("left", "right"):
         raise ApiError("InvalidArgs", "Move a pinned space left or right")
     if not space["pinned"]:
         raise ApiError("InvalidState", "Only pinned spaces have an order to change")
+    if "local_pins" not in space:
+        raise ApiError("InvalidState", "This space is pinned on another display; reorder it from that display")
+    if space["position"] == (1 if direction == "left" else space["local_pins"]):
+        raise ApiError("InvalidState", "This space is already at that end")
     return [(direction, space_id[4:])]
 
 
@@ -218,11 +219,22 @@ def ui_request(identity, what, windows):
     """The shell IPC call for a System request. Apps may ask for system UI only while they have focus."""
     if what not in UI:
         raise ApiError("InvalidArgs", "Ask for the desk, the overview or the launcher")
+    if identity["sandboxed"] and what == "launcher":
+        # The launcher takes the keyboard: an app could time it to catch typing meant for itself.
+        raise ApiError("NotAuthorized", "Apps may ask for the desk or the overview, not the launcher")
     if identity["sandboxed"]:
         focused = next((w for w in windows.values() if w.get("focused")), None)
         if not own_window(identity, focused):
             raise ApiError("NotAuthorized", "An app may ask for system UI only while one of its own windows has focus")
     return UI[what]
+
+
+def ui_answer(reply):
+    """The shell's answer to a show request: "busy" means other shell UI is open, which a request never closes."""
+    if reply.strip() == "busy":
+        raise ApiError("InvalidState", "Other shell UI is open; it is never closed by a request")
+    if reply.strip() not in ("open", "opened"):
+        raise ApiError("Failed", "The Flow shell did not accept the request")
 
 
 def error_from(message):
@@ -234,7 +246,8 @@ def error_from(message):
         return ApiError("NotFound", message)
     if "unavailable" in text or "no matching installed" in text:
         return ApiError("AppNotRunning", message)
-    if "already pinned" in text or "before reordering" in text or "already belongs" in text:
+    if "already pinned" in text or "before reordering" in text or "return side-by-side groups" in text \
+            or "already at that end" in text:
         return ApiError("InvalidState", message)
     return ApiError("Failed", message)
 

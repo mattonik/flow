@@ -19,7 +19,7 @@ A small session service, `flow-api`, owns the bus name `io.github.mattonik.Flow1
 |---|---|---|
 | `GetCapabilities()` | `→ (u major, u minor, as features)` | Version negotiation; features include `spaces.list`, `spaces.focus`, `spaces.changed`, `control.spaces`, and since 1.1 `control.pin`, `control.reorder` and `system.ui`. Sandboxed callers are not offered `control.*` features. |
 | `ListSpaces()` | `→ aa{sv}` | Only spaces that contain one of the caller's own windows, and only the caller's part of them. A column or Group shared with other apps shows a label and app list built from the caller's own windows, never their titles or IDs. |
-| `FocusSpace(s id)` | `→ ()` | Focus one of those spaces, but only while one of the caller's own windows has focus. An app can move between its own spaces but cannot take focus from another app. Anything else returns `NotAuthorized` or `NotFound`. Raising a window on request belongs to xdg-activation, which is not in this slice. |
+| `FocusSpace(s id)` | `→ ()` | Focus one of those spaces, but only while one of the caller's own windows has the keyboard (Niri's `is_focused`). An app can move between its own spaces but cannot take focus from another app, nor act while Desk, a launcher or the overview holds the keyboard. Anything else returns `NotAuthorized` or `NotFound`. Raising a window on request belongs to xdg-activation, which is not in this slice. |
 | `Changed` | signal, no arguments | Something about spaces changed; call `ListSpaces` again. It carries no data, so it leaks nothing beyond timing. |
 
 ### `io.github.mattonik.Flow1.Control`: unsandboxed callers only
@@ -28,15 +28,15 @@ A small session service, `flow-api`, owns the bus name `io.github.mattonik.Flow1
 |---|---|---|
 | `ListSpaces()` | `→ aa{sv}` | Every space on the focused display's current workspace, plus pinned spaces of all displays. Spaces on other workspaces are not listed in this version, on either interface. |
 | `FocusSpace(s id)` | `→ ()` | Focus any listed space, routing to its display as Super+number does. |
-| `PinSpace(s id)` | `→ ()` | Since 1.1. Pin a space at the end of its display's pins, then give focus back to the window that had it. |
+| `PinSpace(s id)` | `→ ()` | Since 1.1. Pin a space at the end of the focused display's pins, in one locked step that names its window and never moves focus. |
 | `UnpinSpace(s id)` | `→ ()` | Since 1.1. Unpin a pinned space; its windows stay where they are. |
-| `MoveSpace(s id, s direction)` | `→ ()` | Since 1.1. Move a pinned space `left` or `right` within its display's pins. |
+| `MoveSpace(s id, s direction)` | `→ ()` | Since 1.1. Move a pin of the focused display `left` or `right`. A move past either end, or of another display's pin, is `InvalidState`. |
 
 ### `io.github.mattonik.Flow1.System`: requests for shell UI (since 1.1)
 
 | Member | Signature | Meaning |
 |---|---|---|
-| `ShowDesk()`, `ShowOverview()`, `ShowLauncher()` | `→ ()` | Open Desk, Niri's overview or the app launcher, never closing them if open. An app may ask only while one of its own windows has focus; unsandboxed callers always may. Apps can request shell UI but cannot draw or impersonate it. |
+| `ShowDesk()`, `ShowOverview()`, `ShowLauncher()` | `→ ()` | Open Desk, Niri's overview or the app launcher. A request never closes anything: while any other shell surface is open (Desk, overview, launcher, switcher, quick settings, notifications, app menu) it does nothing and returns `InvalidState`. An app may ask for Desk or the overview only while one of its windows has the keyboard, which is Niri's `is_focused` and is false while shell UI holds the keyboard. Apps may not open the launcher, which takes the keyboard. Unsandboxed callers may make all three requests. |
 
 Space dictionaries have these keys:
 - `id` (s)
@@ -80,7 +80,7 @@ These are D-Bus errors named `io.github.mattonik.Flow1.Error.*`, following spec 
 - `DisplayUnavailable`
 - `AppNotRunning`
 - `RateLimited`
-- `InvalidState` (since 1.1: already pinned, not pinned, pinned on another display)
+- `InvalidState` (since 1.1: already pinned, not pinned, pinned on another display, at an end, other shell UI open)
 - `InvalidArgs` (since 1.1)
 - `Failed`
 

@@ -28,6 +28,9 @@ def call(bus, interface, method, args=None, reply="()"):
 def main(argv):
     mine = "--mine" in argv
     args = [a for a in argv if a != "--mine"]
+    if mine and not (args == ["spaces", "list"] or args[:2] == ["spaces", "focus"]):
+        print("--mine applies only to spaces list and spaces focus", file=sys.stderr)
+        return 2
     bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
     interface = "Spaces" if mine else "Control"
     if args == ["version"]:
