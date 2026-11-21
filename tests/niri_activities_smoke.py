@@ -16,8 +16,9 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
-import tempfile
 import time
+
+from isolated_state import IsolatedState
 
 CODE = Path(__file__).resolve().parents[1] / "session"
 NAME = "io.github.mattonik.Flow1"
@@ -58,7 +59,7 @@ def main():
         return {line.split()[0] for line in out.splitlines()[1:]
                 if line.split()[1] == str(os.getpid()) and "event-stream" in line}
 
-    with tempfile.TemporaryDirectory(prefix="flow-activities-") as tmp:
+    with IsolatedState("flow-activities-") as tmp:
         runtime = Path(tmp) / "runtime"
         runtime.mkdir(mode=0o700)
         published = runtime / "flow-activities.json"

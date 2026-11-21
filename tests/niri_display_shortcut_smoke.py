@@ -14,10 +14,10 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import time
 import uuid
 
+from isolated_state import IsolatedState
 
 
 def niri(*args):
@@ -84,11 +84,11 @@ def main():
     def focused_on(output, suffix):
         return lambda: focus()["output"] == output and focus()["active_window_id"] == window(suffix)["id"]
 
-    try:
-        spawn("m", first)
-        spawn("t1", second)
-        spawn("t2", second)
-        with tempfile.TemporaryDirectory(prefix="flow-display-shortcut-") as tmp:
+    with IsolatedState("flow-display-shortcut-") as tmp:
+        try:
+            spawn("m", first)
+            spawn("t1", second)
+            spawn("t2", second)
             env = dict(os.environ, XDG_STATE_HOME=tmp)
             for suffix in ("m", "t1", "t2"):
                 niri("action", "focus-window", "--id", window(suffix)["id"])
@@ -144,28 +144,28 @@ def main():
             ipc("call", "desk", "leave")
             steps.append("a missing pinned space was reported without moving focus")
             result = {"result": "pass", "niri": niri("version").strip(), "outputs": [first, second], "steps": steps}
-    finally:
-        if shell_process and shell_process.poll() is None:
-            shell_process.terminate()
+        finally:
+            if shell_process and shell_process.poll() is None:
+                shell_process.terminate()
+                try:
+                    shell_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    shell_process.kill()
+            for process in processes:
+                if process.poll() is None:
+                    process.terminate()
+            for process in processes:
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
             try:
-                shell_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                shell_process.kill()
-        for process in processes:
-            if process.poll() is None:
-                process.terminate()
-        for process in processes:
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-        try:
-            for w in read("windows"):
-                if w.get("app_id") in apps.values():
-                    niri("action", "close-window", "--id", w["id"])
-            niri("action", "focus-monitor", first)
-        except (OSError, subprocess.SubprocessError):
-            pass
+                for w in read("windows"):
+                    if w.get("app_id") in apps.values():
+                        niri("action", "close-window", "--id", w["id"])
+                niri("action", "focus-monitor", first)
+            except (OSError, subprocess.SubprocessError):
+                pass
     if [digest(path) for path in real_files] != real_digests:
         raise RuntimeError("A real Flow Group, pin, or session file changed")
     print(json.dumps(result, indent=1))
