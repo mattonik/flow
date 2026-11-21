@@ -13,6 +13,8 @@ for tool in wtype grim foot niri quickshell dbus-run-session; do
 done
 eval "$(grep '^export GI_TYPELIB_PATH' "$appmenu")"
 python=$(sed -n 's/^exec \([^ ]*python3\) .*/\1/p' "$appmenu")
+[ -n "${GI_TYPELIB_PATH:-}" ] && [ -n "$python" ] \
+    || { echo "$appmenu names no Python and GI_TYPELIB_PATH: its shape has changed" >&2; exit 1; }
 # gio, which the installed wrappers put on PATH for launching apps.
 glib=$(grep -o '/nix/store/[^/:"]*-glib-[^/:"]*/bin' "$(command -v flow-spaces)" | head -n 1 || true)
 bin=$(mktemp -d "${TMPDIR:-/tmp}/flow-focus-walk-bin.XXXXXX")

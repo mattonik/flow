@@ -128,6 +128,51 @@ def png_pixels(path):
     return width, height, bpp, rows
 
 
+def ring_drawn(shot, control, at, screen_width, focus):
+    """Whether the 2 px ring is in the focus colour on all four sides, where the design puts it. Returns True,
+    or the sides found when only some are."""
+    width, height, bpp, rows = shot
+    scale = width / screen_width
+    x, y, w, h, _ = control["ring"]
+    inset = RING_INSET[control["kind"]]
+    x, y = x + at[0], y + at[1]
+
+    def matches(px, py):
+        if not (0 <= px < width and 0 <= py < height):
+            return False
+        pixel = rows[py][px * bpp:px * bpp + 3]
+        return max(abs(a - b) for a, b in zip(pixel, focus)) <= 28
+
+    def across(lo, hi):
+        """The pixels whose centres fall inside the ring's 2 px, from lo to hi + 1 (logical px). At a
+        half-pixel position the ring spans three antialiased pixels, and only the middle one has the focus
+        colour itself."""
+        start, end = lo * scale, (hi + 1) * scale
+        return [p for p in range(int(start) - 1, int(end) + 2) if start < p + 0.5 < end]
+
+    def hit_row(px, lo, hi):
+        return any(matches(int(px * scale), py) for py in across(lo, hi))
+
+    def hit_column(py, lo, hi):
+        return any(matches(px, int(py * scale)) for px in across(lo, hi))
+
+    along = range(-3, 4)
+    per_side = [
+        [hit_row(x + w / 2 + d, y + inset, y + inset + 1) for d in along],                    # top
+        [hit_row(x + w / 2 + d, y + h - inset - 2, y + h - inset - 1) for d in along],        # bottom
+        [hit_column(y + h / 2 + d, x + inset, x + inset + 1) for d in along],                 # left
+        [hit_column(y + h / 2 + d, x + w - inset - 2, x + w - inset - 1) for d in along],     # right
+    ]
+    found = [sum(side) >= len(side) / 2 for side in per_side]
+    return all(found) or (any(found) and dict(zip(("top", "bottom", "left", "right"), found)))
+
+
+def other_shells(own=None):
+    """Flow shells running besides the test's own: their surfaces would cover the ones under test."""
+    lines = subprocess.run(["pgrep", "-a", "quickshell"], text=True, stdout=subprocess.PIPE).stdout.splitlines()
+    return "; ".join(line for line in lines if "shell.qml" in line and line.split()[0] != str(own))
+
+
 def focus_token():
     """The dark appearance's focus colour, from the generated theme the shell itself uses."""
     theme = (CODE / "FloeTheme.qml").read_text()
@@ -273,7 +318,10 @@ def run(shell, bus, steps, problems):
             for control in listed:
                 x, y, w, h = control["rect"]
                 if (surface, control["text"]) in POINTER_ONLY:
-                    control["node"] = None  # hidden from screen readers too, who have the tools' ← →
+                    # Hidden from screen readers too, who have the tools' ← →: nothing may sit at its place.
+                    if any(all(abs(a - b) <= 1 for a, b in zip(rect(o), control["rect"])) for o in objects):
+                        note(f"{surface}: the pointer-only {control['text']!r} is exposed to screen readers")
+                    control["node"] = None
                     continue
                 near = [o for o in objects if all(abs(a - b) <= 1 for a, b in zip(rect(o), control["rect"]))]
                 in_view = x >= 0 and y >= 0 and x + w <= width and y + h <= height
@@ -321,40 +369,6 @@ def run(shell, bus, steps, problems):
             subprocess.run(["grim", "-o", output["name"], str(path)], check=True, timeout=20)
             return png_pixels(path)
 
-        def ring_drawn(shot, control, at):
-            """Whether the 2 px ring is in the focus colour on all four sides, where the design puts it."""
-            width, height, bpp, rows = shot
-            scale = width / screen["width"]
-            x, y, w, h, _ = control["ring"]
-            inset = RING_INSET[control["kind"]]
-            x, y = x + at[0], y + at[1]
-
-            def matches(px, py):
-                if not (0 <= px < width and 0 <= py < height):
-                    return False
-                pixel = rows[py][px * bpp:px * bpp + 3]
-                return max(abs(a - b) for a, b in zip(pixel, focus)) <= 28
-
-            def across(lo, hi):
-                """Whole pixels from lo to hi (logical px): a ring at a half-pixel position spans three
-                antialiased rows, and only the middle one has the focus colour itself."""
-                return range(int(lo * scale) - 1, int(hi * scale) + 2)
-
-            def hit_row(px, lo, hi):
-                return any(matches(int(px * scale), py) for py in across(lo, hi))
-
-            def hit_column(py, lo, hi):
-                return any(matches(px, int(py * scale)) for px in across(lo, hi))
-
-            along = range(-3, 4)
-            per_side = [
-                [hit_row(x + w / 2 + d, y + inset, y + inset + 1) for d in along],                    # top
-                [hit_row(x + w / 2 + d, y + h - inset - 2, y + h - inset - 1) for d in along],        # bottom
-                [hit_column(y + h / 2 + d, x + inset, x + inset + 1) for d in along],                 # left
-                [hit_column(y + h / 2 + d, x + w - inset - 2, x + w - inset - 1) for d in along],     # right
-            ]
-            found = [sum(side) >= len(side) / 2 for side in per_side]
-            return all(found) or (any(found) and dict(zip(("top", "bottom", "left", "right"), found)))
 
         def check_rings(surface, index, listed, shot):
             """The focused control, and only it, has its ring drawn (where the shell has it now, scrolled or not)."""
@@ -363,11 +377,13 @@ def run(shell, bus, steps, problems):
                 if listed[i]["ring"][4] != RING_INSET[listed[i]["kind"]]:
                     raise RuntimeError(f"{surface}: {listed[i]['text']!r} draws its ring at {listed[i]['ring'][4]} px, "
                                        f"not {RING_INSET[listed[i]['kind']]}")
-                drawn = ring_drawn(shot, listed[i], at)
+                drawn = ring_drawn(shot, listed[i], at, screen["width"], focus)
                 if (drawn is True) != (i == index):
                     kept = Path(tempfile.mkdtemp(prefix="flow-focus-walk-failure-")) / "screenshot.png"
                     shutil.copy(last_shot[0], kept)
                     partly = f" (sides found: {drawn})" if isinstance(drawn, dict) else ""
+                    others = other_shells(shell_process.pid)
+                    partly += f"; another shell started meanwhile and may cover it: {others}" if others else ""
                     raise RuntimeError(f"{surface}: {listed[i]['text']!r} {'has a' if drawn is True else 'has no whole'} "
                                        f"focus ring while {'focused' if i == index else 'not focused'}{partly}, "
                                        f"ring at {listed[i]['ring']} in a {listed[i]['window']} window; see {kept}")
@@ -497,6 +513,14 @@ def run(shell, bus, steps, problems):
                             note(f"an unnamed {n.getRoleName()} at {rect(n)} in a {rect(window)[2:]} window")
             steps.append(f"{where}: checked the names and states of {checked} controls in view")
 
+        def keyboard_on(surface):
+            """Wait until the surface's window has keyboard focus: a key sent sooner goes to the app."""
+            frame = frame_of(wait_for(lambda: controls(surface), surface)[0]["window"])
+            wait_for(lambda: (frame.clear_cache(), frame.getState().contains(pyatspi.STATE_ACTIVE))[1],
+                     f"{surface} to take keyboard focus", timeout=5)
+            time.sleep(0.3)
+            return frame
+
         def progress_bars(size):
             return [n for n in nodes(frame_of(size)) if n.getRole() == pyatspi.ROLE_PROGRESS_BAR]
 
@@ -541,8 +565,7 @@ def run(shell, bus, steps, problems):
 
             # Desk: walk, Return opens Settings, walk again with its switches, Return and keypad Enter toggle one.
             ipc("toggle")
-            wait_for(lambda: controls("desk"), "Desk")
-            time.sleep(0.4)
+            keyboard_on("desk")
             cards = progress_bars(controls("desk")[0]["window"])
             if len(cards) != 2 or any(c.description != "40 percent" for c in cards):
                 raise RuntimeError(f"Desk does not show the activity as progress bars: {[(c.name, c.description) for c in cards]}")
@@ -564,7 +587,7 @@ def run(shell, bus, steps, problems):
             # Overview: Tab goes through the island and the tools; Return on Next space moves the selection.
             ipc("overview")
             wait_for(lambda: ipc("overview_state") == "open" and controls("overview"), "Overview")
-            time.sleep(0.6)
+            keyboard_on("overview")
             check_semantics("Overview")
             frame = walk("overview")
             before = ipc("overview_selected")
@@ -577,12 +600,12 @@ def run(shell, bus, steps, problems):
             # Search: focus starts in its field, which shows a ring; Tab reaches Close.
             ipc("search")
             wait_for(lambda: ipc("search_state") == "open" and controls("search"), "search")
-            time.sleep(0.6)
+            keyboard_on("search")
             check_semantics("Search")
             walk("search")
             expected = close_and_type("search", lambda: key("-k", "Escape"), "b", expected)
             ipc("search")
-            frame = frame_of(wait_for(lambda: controls("search"), "search again")[0]["window"])
+            frame = keyboard_on("search")
             focus_on(frame, "Close search")
             expected = close_and_type("search", lambda: key("-k", "Return"), "c", expected)
             steps.append("Search: Escape, and Return on Close, each closed it and returned keys to the app")
@@ -593,7 +616,7 @@ def run(shell, bus, steps, problems):
             wait_for(lambda: any("Current" in " ".join(c["words"]) for c in controls("switcher"))
                      and len({tuple(c["card"]) for c in controls("switcher") if c["card"]}) == SPACES,
                      lambda: f"the switcher with {SPACES} space cards")
-            time.sleep(0.4)
+            keyboard_on("switcher")
             check_semantics("Spaces switcher")
             walk("switcher")
             expected = close_and_type("switcher", lambda: key("-k", "Escape"), "2", expected)
@@ -603,7 +626,7 @@ def run(shell, bus, steps, problems):
             ipc("switcher")
             wait_for(lambda: any(c["selected"] and not c["card"] for c in controls("switcher")),
                      "the switcher with the Layer selected")
-            time.sleep(0.4)
+            keyboard_on("switcher")
             check_semantics("Spaces switcher with a Layer")
             frame = walk("switcher")
             focus_on(frame, "Close Spaces switcher")
@@ -611,13 +634,12 @@ def run(shell, bus, steps, problems):
             steps.append("Spaces switcher: Escape, and Return on Close, each closed it and returned keys to the app")
 
             ipc("quick_open")
-            wait_for(lambda: controls("quick"), "Quick settings")
-            time.sleep(0.4)
+            keyboard_on("quick")
             check_semantics("Quick settings")
             walk("quick")
             expected = close_and_type("quick", lambda: key("-k", "Escape"), "4", expected)
             ipc("quick_open")
-            frame = frame_of(wait_for(lambda: controls("quick"), "Quick settings again")[0]["window"])
+            frame = keyboard_on("quick")
             focus_on(frame, "Close")
             expected = close_and_type("quick", lambda: key("-k", "KP_Enter"), "5", expected)
             steps.append("Quick settings: Escape, and keypad Enter on Close, each closed it and returned keys to the app")
@@ -633,7 +655,7 @@ def run(shell, bus, steps, problems):
             ipc("notifications")
             wait_for(lambda: sum(c["text"] == "Open folder" for c in controls("notifications")) == NOTIFICATIONS,
                      "Notifications")
-            time.sleep(0.4)
+            keyboard_on("notifications")
             check_semantics("Notifications")
             frame = walk("notifications")
             focus_on(frame, "Dismiss notification")
@@ -671,8 +693,7 @@ def main():
                                   "org.freedesktop.DBus", "ListActivatableNames"], text=True, stdout=subprocess.PIPE).stdout
     if '"org.a11y.Bus"' not in activatable:
         raise RuntimeError("The session bus cannot start the AT-SPI bus: at-spi2-core is not installed")
-    others = "; ".join(line for line in subprocess.run(["pgrep", "-a", "quickshell"], text=True,
-                                                       stdout=subprocess.PIPE).stdout.splitlines() if "shell.qml" in line)
+    others = other_shells()
     if others:
         raise RuntimeError(f"Another Flow shell is running; stop it (systemctl --user stop flow-shell) first: {others}")
     real_state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "flow"
@@ -681,7 +702,12 @@ def main():
     steps, problems = [], []
     changed = lambda: [digest(path) for path in real_files] != real_digests
     try:
-        result = run(shell, bus, steps, problems)
+        try:
+            result = run(shell, bus, steps, problems)
+        except RuntimeError as exc:
+            if problems and "Screen-reader semantics" not in str(exc):
+                raise RuntimeError(f"{exc}\nScreen-reader semantics found before that:\n  " + "\n  ".join(problems)) from exc
+            raise
     except BaseException:
         # Checked on failure too: a failing run that touched real state must say so.
         if changed():

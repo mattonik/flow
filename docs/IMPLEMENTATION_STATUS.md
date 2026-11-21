@@ -423,10 +423,11 @@ The shell's read-only `controls` IPC call reports what each control shows. Qt ex
 - **Return did nothing on a switch.** Qt's Switch toggles only on Space. Now Return and Enter flip it once, even when the key is held.
 - **Clipped or hidden focus.** A control scrolled into view sat flush with the clipped edge, so its ring was cut off (Save session at the bottom of Desk). Quick settings and Notifications never scrolled to the focused control at all. One `reveal` now scrolls every view around a control that takes focus from the keyboard, keeping 8 px clear: Desk, the switcher and its row of cards, and both panels. It replaces some 60 per-control handlers, main's new Desk included.
 - **A focused unnamed panel.** Quick settings and Notifications scroll in a ScrollView, a focus scope that reported focus along with the control inside it. Screen readers now skip it.
-- **Focus dropped by background work.** Session recovery and most switcher actions were disabled while `flow-spaces` ran, including the periodic refresh (every 30 s, and after Niri events), and while an automatic save ran. A focused control that turns disabled loses keyboard focus. Neither now disables them:
+- **Focus dropped by background work.** Session recovery and most switcher actions were disabled while `flow-spaces` ran, including the periodic refresh (every 30 s, and after Niri events) and automatic layout (every 2 s while a Group asks for it), and while automatic recovery ran. A focused control that turns disabled loses keyboard focus. Neither now disables them:
   - space actions queue behind a refresh;
   - `flow-recovery` waits for `flow-spaces` on `spaces.lock`;
-  - Save session, Restore session and the recovery switch refuse while an automatic save runs, and say so;
+  - space actions also queue behind automatic layout and automatic recovery, and run when they end;
+  - Save session, Restore session and the recovery switch refuse while automatic recovery runs and say so (the switch flips back);
   - renaming a Group no longer refuses during a refresh.
 - **Names without their visible label:**
   - the Desk wordmark ("Return to work" for "floe.");
@@ -447,8 +448,10 @@ The shell's read-only `controls` IPC call reports what each control shows. Qt ex
 - **Search field:** it showed no focus at all. It now draws the 2 px ring at its edge, as the Group name field does.
 - **Overview's edge rails:** they sat half off the screen, so their rings could not be whole. They are now for a pointer or a finger only, hidden from screen readers. The keyboard and screen readers have the arrow keys and the tools' ← →.
 
-**Shown to fail.** The final smoke ran against 30 copies of the final shell, each with a line or two neutralised. Every copy failed, at the check that covers its change:
-- **Names (one copy):** twelve of the name fixes reverted together. Each of the twelve was reported by name.
+**Shown to fail.** The final smoke was run against copies of the shell, each with a line or two neutralised. Every copy failed, at the check that covers its change.
+
+Thirty copies were cut from the shell at commit a2f6499. The shell's later changes touch none of the lines they neutralise: the recovery switch, queuing behind automatic work, automatic layout, and the Group name field's pointer guard. The thirty were:
+- **Names (one copy):** eleven name fixes and the card's "Current" reverted together. All twelve were reported.
 - **States:** "Open" dropped from open buttons, which predates this work (five reports), and separately "Current" dropped from selected ones.
 - **Progress roles:** removed from the Island's chip, and separately from Desk's cards.
 - **Switches:** Return doing nothing, and a switch that does not scroll itself into view.
@@ -463,29 +466,46 @@ The shell's read-only `controls` IPC call reports what each control shows. Qt ex
   - every button taken out;
   - an Overview rail put back in;
   - Return doing nothing on a button;
-  - a Shift+Tab detour;
+  - a Tab detour (`KeyNavigation.backtab`, which Qt mirrors onto the other control's Tab);
   - Desk's tools laid out right to left while Tab goes left to right.
 - **Closing:** Escape doing nothing on each of the six surfaces, and Quick settings handing focus to another window as it closes.
 
-`test_focus_walk_helpers.py` was shown to fail the same way, by matching labels inside words, by ignoring cards, and by altering the PNG filters. The `checks.module` assert was built in the guest (aarch64): it passed on this branch and failed at the assert when the test configuration forced at-spi2-core off.
+Two more copies were cut from the final shell:
+- **Shift+Tab only:** a detour on the backward step alone. It failed in the Shift+Tab walk.
+- **Rails exposed:** Overview's rails visible to screen readers again. They were reported.
+
+**CI tests and the module assert.** `test_focus_walk_helpers.py` was shown to fail when:
+- labels matched inside words, `%` was dropped, or case was kept;
+- a row was not sorted left to right, or items joined rows by their top;
+- cards were ignored;
+- the ring was sampled with a looser band, or a PNG filter was decoded wrongly.
+
+The `checks.module` assert was built in the guest (aarch64). It passed on this branch, and failed at the assert both when the module's line was deleted and when the test configuration forced at-spi2-core off.
 
 **Not shown to fail:**
 - **Things the guest does not have or stage:**
   - Quick settings never overflows in the guest, so its scrolling is unproven;
-  - keeping controls enabled through a refresh or an automatic save would need a race the smoke does not stage;
+  - keeping controls enabled through background work, and queuing behind it, would need races the smoke does not stage;
   - the held-key and pointer-focus guards need a held key and a pointer.
-- **The leak check:** no key reaching the app while a surface is open, because a mutation that lets keys through stops focus moving first.
+- **The leak check:** no key reaching the app while a surface is open. A mutation that lets keys through stops focus moving first.
 
-**Guest check of the module (19:07 UTC).** A build of this branch, main's #19 included, was activated in the guest without a new generation. `org.a11y.Bus` was then activatable on the session bus, and the final smoke passed through `run_focus_walk_smoke.sh` with no extra bus configuration. The previous system was activated again afterward.
+**Guest check of the module (19:27 UTC).** A build of this branch, main's #19 included, was activated in the guest without a new generation. `org.a11y.Bus` was then activatable on the session bus, and the final smoke passed through `run_focus_walk_smoke.sh` with no extra bus configuration. The previous system was activated again afterward.
 
-**Two quirks of the guest shape the smoke:**
+**Three quirks of the guest shape the smoke:**
 - **Stale keymaps.** Niri does not resend a virtual keymap equal to the previous one, so a client that took focus in between reads the keys with the physical keymap (Tab arrives as Escape). The smoke sends a lone Shift or Control first, alternating, so every call's keymap differs.
+- **Shift+Tab is Tab with Shift.** wtype's keymap has no ISO_Left_Tab, so Qt receives Tab with Shift held where a real keyboard sends Backtab. Qt's focus chain treats both as a step back, but a handler for Backtab alone would not see the smoke's key.
 - **No audio.** PipeWire does not reach a shell with its own runtime directory, so the volume steps were disabled: their names were checked, but they were not walked.
 
 Not verified:
 - **A running screen reader:** the accessibility tree was checked, but Orca was not run, so speech and focus announcements were not heard.
 - **The opt-in app menu** and Group card controls: the smoke does not open them.
-- **Focus lost when content is rebuilt:** a window title that changes rebuilds the switcher's cards, and a space action started from the keyboard disables the cards until it ends. Either drops the focus of a control in them. Overview's ← → and the switcher's ‹ › disable themselves at the row's ends, which drops focus the same way.
+- **Focus lost when content is rebuilt or a control disables itself:**
+  - A window title that changes rebuilds the switcher's cards.
+  - A space action started from the keyboard disables the cards until it ends. On Desk, Pin current space, Make this the main display, Pin here and the pin edit buttons disable themselves while their own action runs, and the pins are rebuilt, so reordering pins from the keyboard loses focus at every step.
+  - A successful Group rename hides the rename row.
+  - Overview's ← → and the switcher's ‹ › disable themselves at the row's ends.
+
+  Each drops the focus of the control involved.
 - **Touch and 200% text.**
 - **Manrope:** the brand font is not installed in the guest, so the wordmark uses Noto Sans.
 

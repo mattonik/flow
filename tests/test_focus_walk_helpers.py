@@ -1,5 +1,5 @@
 """The focus-walk smoke's own judgements, which run only in the guest: label-in-name matching, reading
-order and screenshot decoding. tests/niri_focus_walk_smoke.py imports nothing outside the standard
+order, focus-ring sampling and screenshot decoding. tests/niri_focus_walk_smoke.py imports nothing outside the standard
 library until it runs, so its helpers can be checked here."""
 
 from pathlib import Path
@@ -25,6 +25,7 @@ class LabelInNameTest(unittest.TestCase):
             with self.subTest(name=name, label=label):
                 self.assertTrue(smoke.contains(name, label))
         for name, label in [("Unpin foot", "Pin"), ("Enclose panel", "Close"), ("Reopen", "Open"),
+                            ("Volume at 5", "5%"),
                             ("Return to work", "floe."), ("Open foot", "Open selected"), ("Search", "")]:
             with self.subTest(name=name, label=label):
                 self.assertFalse(smoke.contains(name, label))
@@ -35,12 +36,60 @@ class ReadingOrderTest(unittest.TestCase):
         controls = [control("c", 0, 100), control("b", 60, 4, h=44), control("a", 0, 0, h=48)]
         self.assertEqual([c["name"] for c in smoke.reading_order(controls)], ["a", "b", "c"])
 
+    def test_a_row_is_read_left_to_right_even_when_its_left_item_sits_lower(self):
+        controls = [control("right", 200, 0, h=60), control("left", 0, 10, h=40)]
+        self.assertEqual([c["name"] for c in smoke.reading_order(controls)], ["left", "right"])
+
+    def test_an_item_joins_a_row_by_its_centre_not_its_top(self):
+        # "tall" starts inside the first row (0 to 40), left of "a", but is centred below it: a row of its own.
+        controls = [control("a", 100, 0), control("tall", 0, 30, h=100)]
+        self.assertEqual([c["name"] for c in smoke.reading_order(controls)], ["a", "tall"])
+
     def test_a_card_is_read_whole_before_the_next(self):
         first, second = [0, 90, 220, 200], [230, 90, 220, 104]
         controls = [control("header", 0, 0), control("B", 240, 100, 200, 84, second),
                     control("A2", 110, 190, 90, 44, first), control("A", 10, 100, 200, 84, first),
                     control("A1", 10, 190, 90, 44, first)]
         self.assertEqual([c["name"] for c in smoke.reading_order(controls)], ["header", "A", "A1", "A2", "B"])
+
+
+class RingTest(unittest.TestCase):
+    FOCUS, BACKGROUND = (189, 218, 209), (28, 45, 54)
+
+    def shot(self, box, thickness=2, size=(200, 120)):
+        """A screenshot of a ring whose outer edge is ``box`` (float x, y, w, h), drawn with antialiased edges."""
+        width, height = size
+        x, y, w, h = box
+
+        def cover(lo, hi, a, b):
+            return max(0.0, min(hi, b) - max(lo, a))
+
+        rows = []
+        for py in range(height):
+            row = bytearray()
+            for px in range(width):
+                inside_x, inside_y = cover(px, px + 1, x, x + w), cover(py, py + 1, y, y + h)
+                hole_x = cover(px, px + 1, x + thickness, x + w - thickness)
+                hole_y = cover(py, py + 1, y + thickness, y + h - thickness)
+                amount = inside_x * inside_y - hole_x * hole_y
+                row += bytes(round(f * amount + b * (1 - amount)) for f, b in zip(self.FOCUS, self.BACKGROUND)) + b"\xff"
+            rows.append(row)
+        return width, height, 4, rows
+
+    def drawn(self, ring_box, control_y):
+        button = {"kind": "button", "ring": [40, control_y, 100, 44, -3]}
+        return smoke.ring_drawn(self.shot(ring_box), button, (0, 0), 200, self.FOCUS)
+
+    def test_a_ring_three_px_outside_is_found_at_whole_and_half_pixels(self):
+        self.assertIs(self.drawn((37, 17, 106, 50), 20), True)
+        self.assertIs(self.drawn((37, 17.5, 106, 50), 20.5), True)
+
+    def test_a_ring_two_px_away_from_its_place_is_not(self):
+        self.assertIsNot(self.drawn((35, 15, 110, 54), 20), True)
+        self.assertIsNot(self.drawn((39, 19, 102, 46), 20), True)
+
+    def test_no_ring_is_not_a_ring(self):
+        self.assertIs(self.drawn((0, 0, 0, 0), 20), False)
 
 
 class PngTest(unittest.TestCase):

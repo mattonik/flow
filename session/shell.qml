@@ -268,9 +268,10 @@ ShellRoot {
     property string spacesError: ""
     property var pendingSpaceActions: []
     // Actions of the user's, not background jobs. Controls stay enabled through the periodic refresh (every
-    // 30 s) and automatic saves: a control that turned disabled would drop keyboard focus. Space actions
-    // queue behind a refresh, and flow-recovery waits for flow-spaces on spaces.lock.
-    readonly property bool spacesWorking: spacesProcess.running && spacesProcess.command[1] !== "refresh"
+    // 30 s), automatic layout (every 2 s while a Group asks for it) and automatic recovery: a control that
+    // turned disabled would drop keyboard focus. Space actions queue behind them, and flow-recovery waits for
+    // flow-spaces on spaces.lock.
+    readonly property bool spacesWorking: spacesProcess.running && !["refresh", "auto-layout"].includes(spacesProcess.command[1])
     readonly property bool recoveryWorking: recoveryProcess.running && !String(recoveryProcess.command[1]).startsWith("auto-")
     function renameGroup(id, label) {
         if (recoveryProcess.running || spacesWorking || pendingSpaceActions.length) { spacesError = "Wait for the current action"; return }
@@ -278,8 +279,9 @@ ShellRoot {
         recoveryProcess.running = true
     }
     function spaceAction(action, id) {
-        if (recoveryProcess.running) { if (action !== "refresh") spacesError = "Wait for session recovery to finish"; return }
-        if (spacesProcess.running || pendingSpaceActions.length) {
+        // A recovery the user started refuses; an automatic one (every 30 s) is waited for, like a refresh.
+        if (recoveryWorking) { if (action !== "refresh") spacesError = "Wait for session recovery to finish"; return }
+        if (recoveryProcess.running || spacesProcess.running || pendingSpaceActions.length) {
             if (action !== "refresh") {
                 if (pendingSpaceActions.length >= 8) spacesError = "Too many pending actions"
                 else pendingSpaceActions = pendingSpaceActions.concat([{action: action, id: id}])
@@ -332,6 +334,7 @@ ShellRoot {
     }
     Process {
         id: recoveryProcess
+        onRunningChanged: if (!running && root.pendingSpaceActions.length) Qt.callLater(root.drainSpaceActions)
         stdout: StdioCollector {
             onStreamFinished: {
                 try {
@@ -1578,16 +1581,23 @@ ShellRoot {
                             enabled: !root.recoveryWorking && !root.spacesWorking
                             Accessible.name: text
                             onToggled: {
+                                // Enabled through automatic recovery so focus stays, but a change waits for it:
+                                // the run's result would otherwise undo the pause below.
+                                if (recoveryProcess.running) {
+                                    checked = Qt.binding(() => menuPreferences.autoRecovery)
+                                    root.recoveryMessage = "Wait for automatic recovery to finish"
+                                    return
+                                }
                                 menuPreferences.autoRecovery = checked; menuPreferences.sync()
                                 root.autoRecoveryBlocked = true
-                                if (checked && !recoveryProcess.running) { recoveryProcess.command = ["flow-recovery", "auto-pause"]; recoveryProcess.running = true }
+                                if (checked) { recoveryProcess.command = ["flow-recovery", "auto-pause"]; recoveryProcess.running = true }
                             }
                         }
                         Text { text: "Save your documents, then save the current window list before restarting."; color: floeTheme.textMuted; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 14; font.family: floeTheme.interfaceFont }
                         Flow {
                             width: parent.width; spacing: 8
-                            FlowButton { id: saveSession; implicitHeight: 44; text: "Save session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: { if (recoveryProcess.running) { root.recoveryMessage = "Wait for the automatic save to finish"; return } recoveryProcess.command = ["flow-recovery", "save"]; recoveryProcess.running = true } }
-                            FlowButton { id: restoreSession; implicitHeight: 44; variant: "quiet"; text: "Restore session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: { if (recoveryProcess.running) { root.recoveryMessage = "Wait for the automatic save to finish"; return } root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
+                            FlowButton { id: saveSession; implicitHeight: 44; text: "Save session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: { if (recoveryProcess.running) { root.recoveryMessage = "Wait for automatic recovery to finish"; return } recoveryProcess.command = ["flow-recovery", "save"]; recoveryProcess.running = true } }
+                            FlowButton { id: restoreSession; implicitHeight: 44; variant: "quiet"; text: "Restore session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: { if (recoveryProcess.running) { root.recoveryMessage = "Wait for automatic recovery to finish"; return } root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
                         }
                         Text { id: recoveryStatus; visible: root.recoveryMessage !== ""; text: root.recoveryMessage; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
                     }
@@ -2484,7 +2494,7 @@ ShellRoot {
                                         Keys.onEscapePressed: { root.renameGroupId = ""; renameButton.forceActiveFocus() }
                                         TextField {
                                             id: groupName
-                                            onActiveFocusChanged: if (activeFocus) root.reveal(groupName)
+                                            onActiveFocusChanged: if (activeFocus && groupName.focusReason !== Qt.MouseFocusReason) root.reveal(groupName)
                                             width: parent.width - 136; height: 44; maximumLength: 80
                                             leftPadding: 10; rightPadding: 10
                                             color: floeTheme.textPrimary; placeholderTextColor: floeTheme.textMuted
