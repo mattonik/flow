@@ -95,8 +95,14 @@ class CoreTest(unittest.TestCase):
         self.assertEqual(set(core.public(self.spaces[0])), {"id", "kind", "pinned", "position", "display", "active",
                                                             "available", "label", "apps"})
 
-    def test_a_flatpak_app_sees_only_its_own_part_of_a_shared_space(self):
+    def paint(self):
+        """Paint as a Flatpak: the caller (pid 500) and the process behind its window (pid 102) share its sandbox."""
         self.proc.process(500, 1, flatpak="[Application]\nname=org.example.Paint\n")
+        self.proc.process(PIDS[2], 1, flatpak="[Application]\nname=org.example.Paint\n")
+        return core.caller(500, self.proc.root)
+
+    def test_a_flatpak_app_sees_only_its_own_part_of_a_shared_space(self):
+        self.paint()
         paint = core.caller(500, self.proc.root)
         self.assertEqual((paint["sandboxed"], paint["app_id"]), (True, "org.example.Paint"))
         # Notes shares the Studio column with Paint and has a private title; Paint never sees it.
@@ -109,15 +115,15 @@ class CoreTest(unittest.TestCase):
                                                          "activities"]))
 
     def test_an_app_moves_focus_only_while_it_has_focus(self):
-        self.proc.process(500, 1, flatpak="[Application]\nname=org.example.Paint\n")
-        paint = core.caller(500, self.proc.root)
+        paint = self.paint()
         # Notes (window 1) has focus, so Paint may not raise its own Group space over it.
         with self.assertRaises(core.ApiError) as raised:
             core.focus_target(paint, "group:g", self.spaces, self.windows, False)
         self.assertEqual(raised.exception.kind, "NotAuthorized")
         self.niri("action", "focus-window", "--id", 2)
         self.spaces, self.windows = core.project(self.observe(), "session")
-        self.assertEqual(core.focus_target(paint, "group:g", self.spaces, self.windows, False), ("focus-window", "1"))
+        # Notes is first in the shared Group, but Paint raises its own window, never hands focus to Notes.
+        self.assertEqual(core.focus_target(paint, "group:g", self.spaces, self.windows, False), ("focus-window", "2"))
         for space_id, kind in (("pin:m", "NotAuthorized"), (core.opaque("session", 4), "NotAuthorized"),
                                ("pin:missing", "NotFound")):
             with self.subTest(space_id=space_id), self.assertRaises(core.ApiError) as raised:
@@ -126,6 +132,28 @@ class CoreTest(unittest.TestCase):
         with self.assertRaises(core.ApiError) as raised:
             core.visible(paint, self.spaces, self.windows, control=True)
         self.assertEqual(raised.exception.kind, "NotAuthorized")
+
+    def test_a_window_is_a_flatpak_apps_only_if_drawn_from_its_sandbox(self):
+        paint = self.paint()
+        # Notes is a native app that sets Paint's app ID on its window, and it has focus.
+        self.windows[1].update(app_id="org.example.Paint", title="root@prod: ~ - ssh")
+        self.proc.process(PIDS[1], 1)
+        shown = core.visible(paint, self.spaces, self.windows, control=False)
+        self.assertEqual([(s["id"], s["label"]) for s in shown], [("group:g", "org.example.Paint")])
+        self.assertNotIn("prod", json.dumps([core.public(s) for s in shown]))
+        for request in (lambda: core.ui_request(paint, "desk", self.windows),
+                        lambda: core.focus_target(paint, "group:g", self.spaces, self.windows, False)):
+            with self.assertRaises(core.ApiError) as raised:
+                request()
+            self.assertEqual(raised.exception.kind, "NotAuthorized")
+        # Another Flatpak's window, and a window whose process is gone, are not Paint's either.
+        self.proc.process(PIDS[4], 1, flatpak="[Application]\nname=org.example.Term\n")
+        self.windows[4]["app_id"] = "org.example.Paint"
+        self.windows[3].update(app_id="org.example.Paint", pid=99999)
+        self.assertEqual([s["id"] for s in core.visible(paint, self.spaces, self.windows, control=False)], ["group:g"])
+        # Paint's own window counts whatever app ID it sets.
+        self.windows[2]["app_id"] = "paint"
+        self.assertEqual([s["apps"] for s in core.visible(paint, self.spaces, self.windows, control=False)], [["paint"]])
 
     def test_an_unsandboxed_command_acts_as_the_app_it_runs_in(self):
         # A command started from the terminal (pid 104) through a shell.
@@ -195,8 +223,7 @@ class CoreTest(unittest.TestCase):
             self.assertEqual(raised.exception.kind, kind)
 
     def test_sandboxed_apps_cannot_pin_and_ask_for_system_ui_only_with_focus(self):
-        self.proc.process(500, 1, flatpak="[Application]\nname=org.example.Paint\n")
-        paint = core.caller(500, self.proc.root)
+        paint = self.paint()
         with self.assertRaises(core.ApiError) as raised:
             core.pin_steps(paint, "group:g", self.spaces, self.windows)
         self.assertEqual(raised.exception.kind, "NotAuthorized")

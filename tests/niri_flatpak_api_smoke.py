@@ -7,9 +7,12 @@ active workspace empty, ``flow-spaces`` on PATH running this checkout's ``sessio
 PyGObject (``GI_TYPELIB_PATH`` set for it), and ``FLOW_SHELL`` the development ``shell.qml`` that System
 requests are sent to.
 
+Another app's windows share a column with FlowProbe, stand alone, and one even sets FlowProbe's app ID
+without running in its sandbox: FlowProbe must never see their titles or act while they have focus.
+
 The test builds FlowProbe (``tests/flatpak/flow_probe.py``) as the Flatpak app
 ``io.github.mattonik.FlowProbe``, with only ``--socket=wayland`` and ``--talk-name`` for the API, and
-installs it for the user in place of any earlier build. FlowProbe opens two GTK windows and makes the
+installs it for the user in place of any earlier build, and uninstalls it with its data afterward. FlowProbe opens two GTK windows and makes the
 calls the test asks for, through Flatpak's D-Bus proxy, onto this private bus. The service, the
 development shell and FlowProbe each get their own ``XDG_RUNTIME_DIR``, so neither a real Flow service
 nor the real runtime directory sees them. Flow state is isolated, and real state files are checksummed.
@@ -34,7 +37,10 @@ NAME = "io.github.mattonik.Flow1"
 APP = "io.github.mattonik.FlowProbe"
 RUNTIME = "org.freedesktop.Platform"
 BRANCH = "25.08"
-RATE_WINDOW = 10.5  # ADR-0009: 20 calls in any 10 seconds per Flatpak app
+sys.path.insert(0, str(CODE))
+import flow_api_core as core  # noqa: E402  (no PyGObject needed)
+
+RATE_WINDOW = core.RATE[1] + 0.5  # wait this long and the rate limit has forgotten every earlier call
 
 
 def niri(*args):
@@ -165,7 +171,8 @@ def main():
     secret = f"secret-{token}"  # in other apps' titles only; FlowProbe must never be told it
     titles = [f"probe-one-{token}", f"probe-two-{token}"]
     others = {s: f"flow-flatpak-{token}-{s}" for s in "ab"}
-    steps, result, processes, probe = [], None, [], None
+    others["c"] = APP  # a native window that claims FlowProbe's app ID
+    steps, result, processes, probe, installed, overview_opened = [], None, [], None, False, False
 
     with tempfile.TemporaryDirectory(prefix="flow-flatpak-") as tmp:
         service_runtime, probe_runtime = Path(tmp) / "service-runtime", Path(tmp) / "probe-runtime"
@@ -217,6 +224,7 @@ def main():
             return json.loads(published.read_text())["activities"] if published.exists() else None
 
         try:
+            installed = True  # from here on, whatever happens, the probe is uninstalled again
             build_probe(tmp)
             steps.append("FlowProbe was built on the bare freedesktop runtime with only --socket=wayland and "
                          f"--talk-name={NAME}, and installed for the user")
@@ -239,42 +247,52 @@ def main():
             info = Path(f"/proc/{caller_pid}/root/.flatpak-info")
             if not caller_pid or f"name={APP}" not in info.read_text():
                 raise RuntimeError(f"FlowProbe's connection was not from a Flatpak sandbox: pid {caller_pid}")
+            comm = Path(f"/proc/{caller_pid}/comm").read_text().strip()
+            if comm != "xdg-dbus-proxy":
+                raise RuntimeError(f"FlowProbe did not reach the bus through Flatpak's proxy, but through {comm}")
             capabilities = probe.call("Spaces", "GetCapabilities")
             if capabilities.get("ok", [None])[:2] != [1, 2] \
                     or any(f.startswith("control.") for f in capabilities["ok"][2]):
                 raise RuntimeError(f"The service did not treat FlowProbe as sandboxed: {capabilities}")
-            steps.append(f"the bus named FlowProbe's process ({caller_pid}), /proc/{caller_pid}/root/.flatpak-info "
-                         "named its app ID, and the service offered it no control features")
+            steps.append(f"the bus named Flatpak's D-Bus proxy ({caller_pid}) as FlowProbe's process, its "
+                         ".flatpak-info named FlowProbe's app ID, and the service offered it no control features")
 
-            # Its own spaces only. Window a of another app shares FlowProbe's second column; b stands alone.
+            # Its own spaces only. Another app's window a sits above FlowProbe's second window in its column,
+            # b stands alone, and c is a native window that sets FlowProbe's app ID.
             one = next(w for w in mine if w["title"] == titles[0])
             two = next(w for w in mine if w["title"] == titles[1])
             give_focus(two)
-            for suffix in "ab":
+
+            def other(suffix):
+                return next(w for w in read("windows") if w.get("title") == f"{secret}-{suffix}")
+
+            for suffix in "abc":
                 start("foot", "--app-id", others[suffix], "--title", f"{secret}-{suffix}", "-o", "locked-title=yes",
                       "sleep", "600", environment=os.environ, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                       stderr=subprocess.DEVNULL)
-                wait_for(lambda: windows(others[suffix]), f"window {suffix}")
+                wait_for(lambda: any(w.get("title") == f"{secret}-{suffix}" for w in read("windows")), f"window {suffix}")
                 if suffix == "a":
-                    give_focus(windows(others["a"])[0])
+                    give_focus(other("a"))
                     niri("action", "consume-or-expel-window-left")
-            spaces = {tuple(s["apps"]): s for s in flow("spaces", "list")}
-            shared, alone = tuple(sorted([APP, others["a"]])), (others["b"],)
-            if shared not in spaces or (APP,) not in spaces or alone not in spaces:
+                    niri("action", "move-window-up")
+            spaces = {s["label"]: s for s in flow("spaces", "list")}
+            labels = {"one": titles[0], "shared": f"{secret}-a + {titles[1]}", "b": f"{secret}-b", "c": f"{secret}-c"}
+            if set(labels.values()) - set(spaces) or spaces[labels["c"]]["apps"] != [APP]:
                 raise RuntimeError(f"The layout was not set up: {list(spaces)}")
+            spaces = {key: spaces[label] for key, label in labels.items()}
             listed = probe.call("Spaces", "ListSpaces")
             seen = {s["id"]: s for s in listed.get("ok", [[]])[0]}
-            expected = {spaces[(APP,)]["id"]: titles[0], spaces[shared]["id"]: titles[1]}
+            expected = {spaces["one"]["id"]: titles[0], spaces["shared"]["id"]: titles[1]}
             if {i: s["label"] for i, s in seen.items()} != expected or any(s["apps"] != [APP] for s in seen.values()):
                 raise RuntimeError(f"FlowProbe saw more than its own windows' spaces: {listed}")
             if any(secret in line or others["a"] in line or others["b"] in line for line in probe.transcript):
-                raise RuntimeError("FlowProbe learned another app's title or app ID")
+                raise RuntimeError("FlowProbe learned a title or app ID of another app's windows")
             steps.append("FlowProbe listed exactly its two spaces; in the column it shares with another app it saw "
-                         "only its own title and app ID, never the other app's")
+                         "only its own title and app ID, and a native window with its app ID was not its own")
 
             # Without focus: Control, System and focusing are all refused, and nothing moves.
-            give_focus(windows(others["b"])[0])
-            own_id, theirs = spaces[(APP,)]["id"], spaces[alone]["id"]
+            give_focus(other("b"))
+            own_id, theirs = spaces["one"]["id"], spaces["b"]["id"]
             calls = [("Spaces", "FocusSpace", f"({theirs!r},)"), ("Spaces", "FocusSpace", f"({own_id!r},)"),
                      ("Control", "ListSpaces", "()"), ("Control", "FocusSpace", f"({theirs!r},)"),
                      ("Control", "PinSpace", f"({own_id!r},)"), ("Control", "UnpinSpace", f"({own_id!r},)"),
@@ -283,13 +301,25 @@ def main():
             answers = {f"{i}.{m}{a if m == 'FocusSpace' else ''}": probe.call(i, m, a) for i, m, a in calls}
             time.sleep(0.5)
             wrong = {k: v for k, v in answers.items() if not refused(v)}
-            if wrong or focused()["app_id"] != others["b"] or overview() or ipc("desk_state") != "closed" \
+            if wrong or focused()["id"] != other("b")["id"] or overview() or ipc("desk_state") != "closed" \
                     or ipc("launcher_state") != "closed":
                 raise RuntimeError(f"Without focus, FlowProbe was not refused everything, or something moved: {wrong}")
             if any(s["pinned"] for s in flow("spaces", "list") if APP in s["apps"]):
                 raise RuntimeError("FlowProbe pinned its own space through Control")
             steps.append("without focus, FlowProbe's FocusSpace (its own and another app's), all five Control "
                          "methods and all three System requests were NotAuthorized, and nothing moved or opened")
+
+            # A native window that sets FlowProbe's app ID has focus: that is not FlowProbe having focus.
+            give_focus(other("c"))
+            impostor = {"System.ShowDesk": probe.call("System", "ShowDesk"),
+                        "Spaces.FocusSpace": probe.call("Spaces", "FocusSpace", f"({own_id!r},)")}
+            time.sleep(0.5)
+            wrong = {k: v for k, v in impostor.items() if not refused(v)}
+            if wrong or focused()["id"] != other("c")["id"] or ipc("desk_state") != "closed":
+                raise RuntimeError(f"A native window with FlowProbe's app ID counted as FlowProbe's focus: {wrong}")
+            steps.append("while a native window with FlowProbe's app ID had focus, FlowProbe's ShowDesk and "
+                         "FocusSpace were NotAuthorized")
+            time.sleep(RATE_WINDOW)  # the next phase must not run into the call rate limit
 
             # With focus: Desk and the overview, and its own spaces; never the launcher or Control.
             give_focus(one)
@@ -304,9 +334,11 @@ def main():
             shown = probe.call("System", "ShowOverview")
             if "ok" not in shown:
                 raise RuntimeError(f"FlowProbe could not open the overview while it had focus: {shown}")
+            overview_opened = True
             wait_for(overview, "the overview FlowProbe asked for")
             niri("action", "close-overview")
             wait_for(lambda: not overview(), "the overview to close")
+            overview_opened = False
             give_focus(one)
             desk = probe.call("System", "ShowDesk")
             if "ok" not in desk:
@@ -315,29 +347,35 @@ def main():
             ipc("leave")
             wait_for(lambda: ipc("desk_state") == "closed", "Desk to close")
             give_focus(one)
-            moved = probe.call("Spaces", "FocusSpace", f"({spaces[shared]['id']!r},)")
+            moved = probe.call("Spaces", "FocusSpace", f"({spaces['shared']['id']!r},)")
             if "ok" not in moved:
                 raise RuntimeError(f"FlowProbe could not focus its own space while it had focus: {moved}")
-            wait_for(lambda: focused()["id"] in (two["id"], windows(others["a"])[0]["id"]), "its shared column")
-            steps.append("with focus, FlowProbe opened the overview and Desk and moved to its other space, while "
-                         "ShowLauncher and Control.FocusSpace were still NotAuthorized")
+            # The other app's window is first in that column; FlowProbe must land on its own window.
+            wait_for(lambda: focused()["id"] == two["id"], lambda: f"its own window in the shared column ({focused()})")
+            steps.append("with focus, FlowProbe opened the overview and Desk and moved to its own window in the "
+                         "shared column, while ShowLauncher and Control.FocusSpace were still NotAuthorized")
+
+            # The call rate limit follows the app across connections: 20 calls in 10 s, wherever they come from.
+            time.sleep(RATE_WINDOW)
+            lanes = [0, probe.connect()["conn"], probe.connect()["conn"]]
+            burst = [probe.call("Spaces", "GetCapabilities", conn=lanes[n % 3]) for n in range(core.RATE[0] + 1)]
+            if not all("ok" in a for a in burst[:-1]) or not refused(burst[-1], "RateLimited") \
+                    or "Too many requests" not in burst[-1]["message"]:
+                raise RuntimeError(f"21 calls over three connections were not limited once: {burst[-3:]}")
+            steps.append(f"{core.RATE[0] + 1} calls spread over three connections: only the last was RateLimited")
 
             # Activities: owned by its verified app ID, three at most across its connections, gone when it exits.
             time.sleep(RATE_WINDOW)  # so a refusal below is the activity limit, not the call rate
             first = probe.call("Activities", "Start", "('Flow shell: update ready', {'progress': <0.25>, "
                                                       "'owner': <'org.gnome.Shell'>, 'app_id': <'org.gnome.Shell'>})")
             second = probe.call("Activities", "Start", "('Second job', @a{sv} {})")
-            third_conn = probe.connect()
-            third = probe.call("Activities", "Start", "('Third job', @a{sv} {})", conn=third_conn["conn"])
-            fourth_conn = probe.connect()
-            fourth = probe.call("Activities", "Start", "('Fourth job', @a{sv} {})", conn=fourth_conn["conn"])
+            third = probe.call("Activities", "Start", "('Third job', @a{sv} {})", conn=lanes[1])
+            fourth = probe.call("Activities", "Start", "('Fourth job', @a{sv} {})", conn=lanes[2])
             if not all("ok" in a for a in (first, second, third)):
                 raise RuntimeError(f"FlowProbe could not start three activities: {first} {second} {third}")
             if not refused(fourth, "RateLimited") or "at most 3 activities" not in fourth["message"]:
                 raise RuntimeError(f"A fourth activity on a fourth connection was not refused: {fourth}")
-            if pid_of(fourth_conn["name"]) is None or fourth_conn["name"] == probe.ready["name"]:
-                raise RuntimeError("FlowProbe's extra connections were not connections of their own")
-            stolen = probe.call("Activities", "Finish", f"({first['ok'][0]!r},)", conn=third_conn["conn"])
+            stolen = probe.call("Activities", "Finish", f"({first['ok'][0]!r},)", conn=lanes[1])
             live = activities()
             if not refused(stolen, "NotFound") or len(live or []) != 3:
                 raise RuntimeError(f"One connection finished another's activity: {stolen} {live}")
@@ -356,10 +394,11 @@ def main():
         finally:
             if probe:
                 probe.stop()
-            try:
-                niri("action", "close-overview")
-            except (OSError, subprocess.SubprocessError):
-                pass
+            if overview_opened:
+                try:
+                    niri("action", "close-overview")
+                except (OSError, subprocess.SubprocessError):
+                    pass
             for process in reversed(processes):
                 if process.poll() is None:
                     process.terminate()
@@ -373,6 +412,9 @@ def main():
                         niri("action", "close-window", "--id", w["id"])
             except (OSError, subprocess.SubprocessError):
                 pass
+            if installed:
+                subprocess.run(["flatpak", "uninstall", "--user", "--delete-data", "-y", "--noninteractive", APP],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
     if digest(real_runtime / "flow-activities.json") != real_published_before:
         raise RuntimeError("The test touched the real runtime directory's activity file")
     if [digest(path) for path in real_files] != real_digests:

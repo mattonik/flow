@@ -22,7 +22,7 @@ The recorded test environment is an Apple Silicon Mac running UTM 5.0.8, QEMU AR
 | F-014 Figma day | Open | No recorded Figma workload, screenshare or browser-load test. |
 | F-015 Development day | Open | Terminal and editors run, but the native-host development, container and VM workflow is not verified. |
 | F-016 Touch day | Open | A manually invoked on-screen keyboard entered a letter, Shift and Enter into a guest terminal with a simulated pointer. Real touch, automatic text-field activation, rotation and tablet Group testing remain open. |
-| F-017 API app test | Partial | Version 1.1 of the Flow Platform API (ADR-0009) is a session D-Bus service with a spaces interface scoped to the caller's own app and a control interface for unsandboxed callers (2026-11-21). Two non-Qt clients were used in the guest on a private bus: the Python/Gio `flow` CLI and `busctl`. A command run inside one app listed only its own part of that app's space and focused it while the app had focus. Its attempt to focus another app's space was refused as `NotAuthorized`. The packaged service also started by D-Bus activation. Since 2026-11-21 a real Flatpak app, FlowProbe, built on the freedesktop runtime with only Wayland and `--talk-name`, kept the sandbox promises of version 1.2 in the guest (`niri_flatpak_api_smoke.py`, see *Flow Platform API*). Remaining gap: the shell does not use the API yet, and callers are identified by PID, not pidfd. |
+| F-017 API app test | Partial | Version 1.1 of the Flow Platform API (ADR-0009) is a session D-Bus service with a spaces interface scoped to the caller's own app and a control interface for unsandboxed callers (2026-11-21). Two non-Qt clients were used in the guest on a private bus: the Python/Gio `flow` CLI and `busctl`. A command run inside one app listed only its own part of that app's space and focused it while the app had focus. Its attempt to focus another app's space was refused as `NotAuthorized`. The packaged service also started by D-Bus activation. Since 2026-11-21 a real Flatpak app, FlowProbe, built on the freedesktop runtime with only Wayland and `--talk-name`, kept the sandbox promises of version 1.2 in the guest (`niri_flatpak_api_smoke.py`, see *Flow Platform API*). That test found that a sandboxed app owned any window carrying its app ID, including a native app's; ownership now follows the window's sandbox. Remaining gaps: the shell does not use the API yet; callers and windows are identified by PID, not pidfd; confinement other than Flatpak is not recognised; and a sideloaded Flatpak can take the app ID of a natively installed app. |
 | F-018 Shell restart | Partial | `niri_shell_restart_smoke.py` (2026-11-20) started a development shell and restarted it with SIGTERM, then SIGKILL. It ran beside a pinned app, a pinned, resized side-by-side Group and an unpinned app, with isolated state. Pins, Groups, window IDs, columns, widths and focus were unchanged from before the first start, and Super+1 and Super+2 still reached both pins. A shell that moves focus on startup fails the test. A restart during a Flow action was not tested. The installed shell is the `flow-shell` user unit, restarted by a NixOS switch when its files or Quickshell change; see *Installed generation*. |
 | F-019 DisplayLink hardware | Open | No named dock or monitor test. |
 | F-020 App menu fallback | Partial | The opt-in AT-SPI experiment showed and invoked Kate commands; native menus are retained. Coverage, same-process ambiguity and the complete fallback journey remain unverified. |
@@ -177,14 +177,22 @@ Apps are gated on Niri's per-window `is_focused`, not on the workspace's active 
 Through `Control`, the guest smoke test pinned an app's space with focus kept on the other app, moved the pin left, and unpinned it; a second unpin was `NotFound`. Against a development shell, `System` then opened Desk, and a second request left it open. `ShowOverview` with Desk open was `InvalidState`, and Desk stayed open. The overview and the launcher each opened, and a second request left them open. With *show* sent through the toggling shell call, the test fails.
 
 A real Flatpak app, FlowProbe (`tests/flatpak/flow_probe.py`), was tested in the guest with Flatpak 1.18 (2026-11-21). `niri_flatpak_api_smoke.py` builds it on the bare `org.freedesktop.Platform` 25.08 runtime with only `--socket=wayland` and `--talk-name=io.github.mattonik.Flow1`, and drives it through Flatpak's D-Bus proxy on a private bus:
-- The bus names the proxy, inside the sandbox, as the caller, and its `/proc/<pid>/root/.flatpak-info` names the app; the service offered it no `control.*` features.
-- It listed exactly its two spaces. In the column it shares with another app it saw only its own title and app ID; no answer it received contained another app's title or ID.
+- The bus names Flatpak's `xdg-dbus-proxy`, inside the sandbox, as the caller, and its `/proc/<pid>/root/.flatpak-info` names the app; the service offered it no `control.*` features.
+- It listed exactly its two spaces. In the column it shares with another app, it saw only its own title and app ID, and no answer contained the titles or app IDs of the test's other windows.
+- A native window that sets FlowProbe's app ID is not FlowProbe's: it was not listed, and while it had focus, `ShowDesk` and `FocusSpace` were `NotAuthorized`.
 - Without focus, `FocusSpace` (its own space and another app's), all five `Control` methods and all three `System` requests were `NotAuthorized`, and nothing moved or opened.
-- With focus, it opened the overview and Desk and moved to its other space; `ShowLauncher` and `Control` stayed `NotAuthorized`.
+- With focus, it opened the overview and Desk, and focusing the shared column moved focus to its own window there, not the other app's window above it. `ShowLauncher` and `Control` stayed `NotAuthorized`.
+- Of 21 calls spread over three connections, only the last was `RateLimited`.
 
-Each check failed when the guard it covers was neutralised in a throwaway copy of the service.
+Each refusal, listing, ownership and limit check failed when the guard it covers was neutralised in a throwaway copy of the service.
 
-Not done: the shell does not use the API yet, and the service was not run as the installed systemd unit. Callers are identified by PID, not pidfd. Confinement other than Flatpak is not recognised. Calls are answered one at a time. Groups, displays, Layers, search providers and activities are not in this version.
+The test found two defects, now fixed:
+- **Window ownership by app ID:** a sandboxed app owned every window whose Wayland app ID equalled its Flatpak ID. A Flatpak sideloaded under a native app's ID could read that app's window titles, act whenever that app had focus, and show its name on activities. A window is now the app's only if Niri's PID for it is inside the app's sandbox.
+- **Focus in a shared space:** focusing a space shared with another app focused the space's first window, which could be the other app's. An app now gets its own window.
+
+A NEMESIS review also found that `clean()` read an activity title or detail of any length before cutting it, so a Flatpak could stall the service, which answers one call at a time, with one huge string. Only the first four times the limit is now read.
+
+Not done: the shell does not use the API yet, and the service was not run as the installed systemd unit. Callers and windows are identified by PID, not pidfd. A sideloaded Flatpak can take the app ID of an app installed natively; its windows stay apart, but its activities show that ID. Confinement other than Flatpak is not recognised. Calls are answered one at a time. Groups, displays, Layers, search providers and activities are not in this version.
 
 ### Activities
 
@@ -194,7 +202,7 @@ Not done: the shell does not use the API yet, and the service was not run as the
 - Text is cut to one printable line; blank-looking characters and stacked combining marks are removed.
 
 The service labels each activity with its owner, never with a name the app chose:
-- **Flatpak app:** its verified app ID.
+- **Flatpak app:** the app ID of its sandbox.
 - **Unsandboxed caller:** its process name, or the program that ran the `flow` CLI.
 
 The service publishes live activities to `$XDG_RUNTIME_DIR/flow-activities.json`, and the shell watches that file:
@@ -224,7 +232,7 @@ A NEMESIS review of the first version found the bugs these tests now pin down:
 
 Stopping the shell had leaked its `niri msg event-stream`, a bug older than Activities. The event streams of the shell and the service now run under `setpriv --pdeathsig`, so they end with their parent, and fall back to a plain stream without `setpriv`.
 
-The same FlowProbe run covered activities from a Flatpak app. They showed its app ID as owner even though it asked for another owner. A fourth activity on a fourth connection was refused, one connection could not finish another's activity, and all three ended when the app exited.
+The same FlowProbe run covered activities from a Flatpak app. They showed its app ID as owner, though it asked for another owner. A fourth activity on a fourth connection was refused, one connection could not finish another's activity, and all three ended when the app exited.
 
 Not tested: the narrow-screen dot outside the layout code.
 

@@ -31,29 +31,38 @@ class ApiError(Exception):
         self.kind = kind
 
 
+def flatpak_app(pid, proc=Path("/proc")):
+    """``(sandboxed, app ID)`` of a process, from the ``.flatpak-info`` Flatpak puts in its sandbox's root.
+
+    A sandbox whose root or file cannot be read is a sandbox without an app ID, never "not sandboxed".
+    """
+    if not isinstance(pid, int) or pid <= 0:
+        return False, None
+    info = proc / str(pid) / "root" / ".flatpak-info"
+    try:
+        os.stat(info)
+    except FileNotFoundError:
+        return False, None
+    except OSError as exc:
+        # An unreadable sandbox root counts as sandboxed, never as trusted (Path.exists hides EACCES).
+        return exc.errno != errno.ENOENT, None
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        parser.read_string(info.read_text())
+        return True, parser.get("Application", "name") or None
+    except (OSError, configparser.Error, UnicodeDecodeError):
+        return True, None
+
+
 def caller(pid, proc=Path("/proc")):
     """Who is calling: a sandboxed Flatpak app (by app ID) or an unsandboxed process (by lineage)."""
     if not isinstance(pid, int) or pid <= 0:
         raise ApiError("NotAuthorized", "The caller could not be identified")
-    info = proc / str(pid) / "root" / ".flatpak-info"
-    try:
-        os.stat(info)
-        exists = True
-    except FileNotFoundError:
-        exists = False
-    except OSError as exc:
-        # An unreadable sandbox root counts as sandboxed, never as trusted (Path.exists hides EACCES).
-        exists = exc.errno != errno.ENOENT
-    if exists:
-        parser = configparser.ConfigParser(interpolation=None)
-        try:
-            parser.read_string(info.read_text())
-            app = parser.get("Application", "name")
-        except (OSError, configparser.Error, UnicodeDecodeError):
-            app = None
+    sandboxed, app = flatpak_app(pid, proc)
+    if sandboxed:
         if not app:
             raise ApiError("NotAuthorized", "The sandboxed caller has no application ID")
-        return {"sandboxed": True, "app_id": app, "lineage": frozenset(), "pid": pid, "name": app}
+        return {"sandboxed": True, "app_id": app, "lineage": frozenset(), "pid": pid, "name": app, "proc": proc}
     lineage, current = set(), pid
     while current and current > 1 and current not in lineage and len(lineage) < 64:
         lineage.add(current)
@@ -66,7 +75,7 @@ def caller(pid, proc=Path("/proc")):
         name = (proc / str(pid) / "comm").read_text().strip() or "an app"
     except OSError:
         name = "an app"
-    return {"sandboxed": False, "app_id": None, "lineage": frozenset(lineage), "pid": pid, "name": name}
+    return {"sandboxed": False, "app_id": None, "lineage": frozenset(lineage), "pid": pid, "name": name, "proc": proc}
 
 
 def capabilities(identity):
@@ -124,10 +133,15 @@ def project(snapshot, session):
 
 
 def own_window(identity, window):
+    """Whether a window belongs to the caller, judged by the process that drew it.
+
+    A sandboxed app's windows are those drawn from inside its own sandbox. The Wayland app ID is not
+    evidence: any client may set any value, including the ID of an installed native app.
+    """
     if not window:
         return False
     if identity["sandboxed"]:
-        return window.get("app_id") == identity["app_id"]
+        return flatpak_app(window.get("pid"), identity.get("proc", Path("/proc"))) == (True, identity["app_id"])
     return window.get("pid") in identity["lineage"]
 
 
@@ -176,9 +190,12 @@ def focus_target(identity, space_id, spaces, windows, control):
             raise ApiError("NotAuthorized", "An app may change focus only while one of its own windows has it")
     if space_id.startswith("pin:"):
         return "focus", space_id[4:]
-    if not space["window_ids"]:
+    # In a space shared with other apps, an app focuses its own window, never hands focus to another app.
+    targets = space["window_ids"] if control else [i for i in space["window_ids"]
+                                                   if own_window(identity, windows.get(i))]
+    if not targets:
         raise ApiError("AppNotRunning", "The space has no open window")
-    return "focus-window", str(space["window_ids"][0])
+    return "focus-window", str(targets[0])
 
 
 def control_space(identity, space_id, spaces):
@@ -286,7 +303,9 @@ def clean(text, limit):
     if not isinstance(text, str):
         raise ApiError("InvalidArgs", "Activity text must be a string")
     kept, marks = [], 0
-    for c in text:
+    # Nothing past the limit is shown, so a huge string costs no more than a short one; four times the
+    # limit leaves room for accents and spaces that are folded away below.
+    for c in text[:limit * 4]:
         kind = unicodedata.category(c)
         if kind[0] == "C" or c in BLANK:
             c, kind = " ", "Zs"
