@@ -238,7 +238,7 @@ Surface by surface:
     - the focus colour for the active ring
     - the functional border for the inactive one, which marks the focused window of an unfocused display, where focus returns
     - the canvas behind workspaces
-    - the functional border for the Overview backdrop, so workspaces stand out from it at 3:1, as targets must. In Polar Night that backdrop is a mid sea-grey rather than near-black, a deliberate trade-off.
+    - the selected-surface tone for the Overview backdrop: calm and distinct (1.6:1 against the workspaces in Polar Night, 1.1:1 in Arctic Daylight). A 3:1 backdrop needed the functional border, a mid sea-grey that broke Polar Night's near-black, and it was rejected on 2026-11-21. Workspaces are told apart by their windows and a workspace shadow that the generated files pin, coloured from the appearance's ink. This is a deliberate exception to the audit's 3:1 rule for targets, also listed in `design/ACCESSIBILITY_AUDIT.md`.
   - **How Niri follows the switch:**
     - `niri.kdl` includes Polar Night, then optionally `~/.config/flow/niri-appearance.kdl`.
     - `flow-niri-appearance` (`session/flow-niri-appearance.sh`) keeps that a symlink to `/etc/flow/niri-<mode>.kdl`. It reads the mode under a lock when it runs.

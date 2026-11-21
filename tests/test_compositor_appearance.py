@@ -68,11 +68,19 @@ class GeneratedFilesTest(unittest.TestCase):
             with self.subTest(mode=mode):
                 c = niri_colours(mode)
                 self.assertEqual(c, {"active-color": role(mode, "focus"), "inactive-color": role(mode, "border"),
-                                     "background-color": role(mode, "canvas"), "backdrop-color": role(mode, "border")})
+                                     "background-color": role(mode, "canvas"), "backdrop-color": role(mode, "surface-selected")})
                 self.assertGreaterEqual(contrast(c["active-color"], c["background-color"]), 3.0)
                 self.assertGreaterEqual(contrast(c["inactive-color"], c["background-color"]), 3.0)
-                # In Overview the workspaces are the targets; they must stand out from the backdrop.
-                self.assertGreaterEqual(contrast(c["backdrop-color"], c["background-color"]), 3.0)
+                # A calm backdrop (design decision, 2026-11-21): distinct from the workspaces, never loud.
+                # Workspaces are told apart by their windows and Niri's shadows.
+                self.assertGreater(contrast(c["backdrop-color"], c["background-color"]), 1.05)
+                self.assertLess(contrast(c["backdrop-color"], c["background-color"]), 2.0)
+                # That leaves the workspace shadow to separate them: it is pinned, never Niri's default.
+                text = (ROOT / f"design/generated/niri-{mode}.kdl").read_text()
+                shadow = re.search(r"workspace-shadow \{([^}]*)\}", text)
+                self.assertIsNotNone(shadow)
+                self.assertNotRegex(shadow.group(1), r"(?m)^\s*off\s*$")
+                self.assertRegex(shadow.group(1), r'color "#[0-9A-Fa-f]{8}"')
 
     def test_lock_feedback_is_legible(self):
         for mode in ("dark", "light"):

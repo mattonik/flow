@@ -20,6 +20,9 @@
 
 Minimum intended criteria: 4.5:1 for regular text and semantic statuses used as text; 3:1 for visual information required to identify controls, focus, selection and essential icons (WCAG 2.2 SC 1.4.3 and SC 1.4.11). Large text has a 3:1 minimum but this audit deliberately uses the stricter 4.5:1 threshold. A palette token passing against several surfaces does not mean it passes at reduced opacity, over images or with translucent glass/blur.
 
+
+**Deliberate exception (2026-11-21):** Niri's Overview backdrop is the selected-surface tone, 1.6:1 against the workspaces in Polar Night and 1.1:1 in Arctic Daylight, not 3:1. A 3:1 backdrop needed the functional border and broke Polar Night's calm. Workspaces are identified by their windows and a pinned workspace shadow; see `design/generated/niri-*.kdl`.
+
 **Not validated here:** actual Quickshell loading; focus-visible indicator shape, location, thickness, offset or visibility against adjacent two-color boundaries; inactive/disabled opacity; state indicated only by color; anti-aliased 1px strokes; hover/pressed opacity; text truncation and resizing to 200%; 320px reflow; touch gestures and target spacing; screen-reader semantics; keyboard-only focus order; reduced-motion implementation; bidirectional layout; real tablet/desktop hardware. All require component and native-session checks.
 
 Next: capture dark and light screenshots of Desk, Overview, Island, app menus, notifications and Quick Settings with keyboard focus on every interactive element. Test no-color and high-contrast settings, 200% text, reduced motion and keyboard-only traversal.
