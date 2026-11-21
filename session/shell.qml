@@ -450,6 +450,16 @@ ShellRoot {
     // Motion follows the brand's quick token (120 ms). Linux offers Quickshell no reduced-motion signal,
     // so it is a per-user preference in Desk settings; with it on, every change is instant.
     readonly property int motionQuick: appearancePreferences.reduceMotion ? 0 : 120
+    readonly property int motionStandard: appearancePreferences.reduceMotion ? 0 : 220
+    // The brand's standard curve, cubic-bezier(.22, 1, .36, 1).
+    readonly property var standardCurve: [0.22, 1, 0.36, 1, 1, 1]
+    // One clock for every "busy, amount unknown" indicator, so a card rebuilt by an activity update
+    // picks up where the last one was instead of starting its sweep again. 0–1, looping.
+    property real busyPhase: 0
+    NumberAnimation on busyPhase {
+        from: 0; to: 1; duration: 1600; loops: Animation.Infinite
+        running: root.motionQuick > 0 && root.activities.some(a => !(a.progress >= 0))
+    }
     // Line icons on a 24-unit grid, drawn by the shell so no icon font is needed.
     readonly property var iconPaths: ({
         "bell": "M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z M10 21h4",
@@ -472,7 +482,7 @@ ShellRoot {
             layer.enabled: true; layer.samples: 4
             ShapePath {
                 scale: Qt.size(flowIcon.size / 24, flowIcon.size / 24)
-                strokeColor: flowIcon.color; strokeWidth: 1.75 * 24 / flowIcon.size; fillColor: "transparent"
+                strokeColor: flowIcon.color; strokeWidth: 1.6; fillColor: "transparent"
                 capStyle: ShapePath.RoundCap; joinStyle: ShapePath.RoundJoin
                 PathSvg { path: root.iconPaths[flowIcon.name] || "" }
             }
@@ -485,11 +495,12 @@ ShellRoot {
     }
     component FlowButton: Button {
         id: control
-        // secondary: the ordinary control. primary: the one main action of a surface. quiet: no fill until
-        // hovered, for repeated and low-priority actions. danger: a quiet action that removes or closes.
+        // secondary: the ordinary control. primary: the one main action of a surface. quiet: a soft tint, for
+        // repeated and low-priority actions. danger: a quiet action that removes or closes. plain: no fill at
+        // rest, for a control whose container already draws its boundary (a switcher card).
         property string variant: "secondary"
-        // The current choice among siblings (the focused app, the active Layer): a fill, a stronger border
-        // and a heavier label, so it never depends on tint alone.
+        // The current choice among siblings (the focused app, the active Layer): a leading dot, a 2 px
+        // border, a heavier label and "Current" for assistive technology, so it never depends on tint alone.
         property bool selected: false
         property string glyph: ""
         property real radius: 10
@@ -503,28 +514,45 @@ ShellRoot {
         leftPadding: 16; rightPadding: 16
         opacity: enabled ? 1 : 0.45
         scale: control.down && root.motionQuick ? 0.96 : 1
-        Behavior on scale { NumberAnimation { duration: root.motionQuick; easing.type: Easing.OutCubic } }
+        Behavior on scale { NumberAnimation { duration: root.motionQuick; easing.type: Easing.BezierSpline; easing.bezierCurve: root.standardCurve } }
+        Accessible.description: selected ? "Current" : ""
         contentItem: Item {
-            implicitWidth: control.glyph ? 18 : label.implicitWidth; implicitHeight: label.implicitHeight
-            FlowIcon { visible: !!control.glyph; anchors.centerIn: parent; name: control.glyph; color: control.labelColor }
+            readonly property real dotRoom: control.selected && !control.glyph ? 12 : 0
+            implicitWidth: control.glyph ? 18 : label.implicitWidth + dotRoom; implicitHeight: label.implicitHeight
+            Loader {
+                // Only glyph buttons pay for a Shape and its multisampled layer.
+                active: !!control.glyph; anchors.centerIn: parent
+                sourceComponent: Component { FlowIcon { name: control.glyph; color: control.labelColor } }
+            }
+            Rectangle {
+                visible: parent.dotRoom > 0
+                x: Math.max(0, (parent.width - parent.implicitWidth) / 2); anchors.verticalCenter: parent.verticalCenter
+                width: 6; height: 6; radius: 3; color: control.labelColor
+            }
             Text {
                 id: label
-                visible: !control.glyph; anchors.fill: parent
+                visible: !control.glyph
+                x: parent.dotRoom ? Math.max(12, (parent.width - parent.implicitWidth) / 2 + 12) : 0
+                width: parent.width - x; height: parent.height
                 text: control.text; textFormat: Text.PlainText; color: control.labelColor; elide: Text.ElideRight
                 font.pixelSize: 14; font.family: floeTheme.interfaceFont
                 font.weight: control.selected || control.variant === "primary" ? Font.DemiBold : Font.Medium
-                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                horizontalAlignment: parent.dotRoom ? Text.AlignLeft : Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
             }
         }
         background: Item {
             Rectangle {
                 anchors.fill: parent; radius: control.radius
+                // Quiet and danger buttons rest on a soft tint, so they read as controls on touch screens too,
+                // where there is no hover to reveal them.
                 color: control.variant === "primary" ? (control.down || control.hovered ? floeTheme.accentStrong : floeTheme.accent)
                     : control.selected || control.down || control.hovered ? floeTheme.surfaceSelected
-                    : control.variant === "secondary" ? floeTheme.surface : "transparent"
-                // A text label already identifies the control; the hairline only shapes it, and firms up on hover.
-                border.width: control.variant === "secondary" || control.selected ? 1 : 0
-                border.color: control.selected ? floeTheme.borderStrong : control.hovered ? floeTheme.border : Qt.alpha(floeTheme.border, 0.45)
+                    : control.variant === "secondary" ? floeTheme.surface
+                    : control.variant === "danger" ? Qt.alpha(floeTheme.danger, 0.1)
+                    : control.variant === "plain" ? "transparent" : Qt.alpha(floeTheme.surfaceSelected, 0.6)
+                // Functional borders stay at full strength (3:1 against the surfaces, brand guidelines).
+                border.width: control.selected ? 2 : control.variant === "secondary" ? 1 : 0
+                border.color: control.selected || control.hovered ? floeTheme.borderStrong : floeTheme.border
                 Behavior on color { ColorAnimation { duration: root.motionQuick } }
             }
             Rectangle {
@@ -544,7 +572,7 @@ ShellRoot {
             Rectangle {
                 anchors.fill: parent; anchors.margins: 4; radius: height / 2
                 color: islandButton.selected || islandButton.down || islandButton.hovered ? floeTheme.surfaceSelected : "transparent"
-                border.width: islandButton.selected ? 1 : 0; border.color: floeTheme.borderStrong
+                border.width: islandButton.selected ? 2 : 0; border.color: floeTheme.borderStrong
                 Behavior on color { ColorAnimation { duration: root.motionQuick } }
             }
             Rectangle {
@@ -574,7 +602,7 @@ ShellRoot {
                 selected: root.deskOpen
                 contentItem: Text {
                     text: wordmark.text; textFormat: Text.PlainText
-                    color: floeTheme.textPrimary; font.pixelSize: 15; font.weight: Font.Bold; font.letterSpacing: -0.4
+                    color: floeTheme.textPrimary; font.pixelSize: 16; font.weight: Font.DemiBold; font.letterSpacing: -0.4
                     font.family: floeTheme.interfaceFont; verticalAlignment: Text.AlignVCenter; horizontalAlignment: Text.AlignHCenter
                 }
                 onClicked: root.toggleDesk()
@@ -608,18 +636,15 @@ ShellRoot {
                         anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
                         width: activityChip.determinate ? parent.width * activityChip.current.progress : 0
                         radius: Math.min(parent.radius, width / 2); color: Qt.alpha(floeTheme.accent, 0.22)
-                        Behavior on width { NumberAnimation { duration: root.motionQuick * 2; easing.type: Easing.OutCubic } }
+                        Behavior on width { NumberAnimation { duration: root.motionStandard; easing.type: Easing.BezierSpline; easing.bezierCurve: root.standardCurve } }
                     }
                     Rectangle {
-                        // Busy without a known amount: a steady dot that breathes unless motion is reduced.
+                        // Busy without a known amount: a dot that breathes with the shared busy clock, and
+                        // stays solid when motion is reduced.
                         visible: !activityChip.determinate && !activityChip.compact
                         x: 10; anchors.verticalCenter: parent.verticalCenter; width: 6; height: 6; radius: 3
                         color: floeTheme.accent
-                        SequentialAnimation on opacity {
-                            running: visible && root.motionQuick > 0; loops: Animation.Infinite
-                            NumberAnimation { from: 1; to: 0.35; duration: 900; easing.type: Easing.InOutSine }
-                            NumberAnimation { from: 0.35; to: 1; duration: 900; easing.type: Easing.InOutSine }
-                        }
+                        opacity: root.motionQuick ? 0.675 + 0.325 * Math.cos(root.busyPhase * 2 * Math.PI) : 1
                     }
                     Text {
                         visible: activityChip.compact
@@ -692,7 +717,7 @@ ShellRoot {
                     x: toggle.checked ? parent.width - width - 4 : 4; anchors.verticalCenter: parent.verticalCenter
                     width: 18; height: 18; radius: 9
                     color: toggle.checked ? floeTheme.onAccent : floeTheme.textMuted
-                    Behavior on x { NumberAnimation { duration: root.motionQuick; easing.type: Easing.OutCubic } }
+                    Behavior on x { NumberAnimation { duration: root.motionQuick; easing.type: Easing.BezierSpline; easing.bezierCurve: root.standardCurve } }
                 }
             }
         }
@@ -757,7 +782,8 @@ ShellRoot {
         }
     }
 
-    // shortcut: Desk opens without spatial animation; add transitions when compositor integration supports them.
+    // shortcut: Desk content settles in (220 ms fade and rise) but apps do not move away; add the spatial
+    // transition when compositor integration supports it.
     PanelWindow {
         visible: root.deskOpen
         anchors { top: true; bottom: true; left: true; right: true }
@@ -768,8 +794,8 @@ ShellRoot {
         onVisibleChanged: if (visible && root.motionQuick) deskEnter.restart()
         ParallelAnimation {
             id: deskEnter
-            NumberAnimation { target: deskContent; property: "opacity"; from: 0; to: 1; duration: 220; easing.type: Easing.OutCubic }
-            NumberAnimation { target: deskShift; property: "y"; from: 12; to: 0; duration: 220; easing.type: Easing.OutCubic }
+            NumberAnimation { target: deskContent; property: "opacity"; from: 0; to: 1; duration: 220; easing.type: Easing.BezierSpline; easing.bezierCurve: root.standardCurve }
+            NumberAnimation { target: deskShift; property: "y"; from: 12; to: 0; duration: 220; easing.type: Easing.BezierSpline; easing.bezierCurve: root.standardCurve }
         }
 
         FocusScope {
@@ -805,9 +831,9 @@ ShellRoot {
                         text: "Everything<br>in its <font color='" + floeTheme.textSecondary + "'>place.</font>"
                         textFormat: Text.RichText
                         color: floeTheme.textPrimary; font.weight: Font.DemiBold; font.family: floeTheme.interfaceFont
-                        font.pixelSize: Math.max(36, Math.min(64, parent.width / 10))
+                        font.pixelSize: parent.width >= 520 ? 52 : 32
                         // Display type tracks tighter: −3% of its size.
-                        font.letterSpacing: -Math.max(36, Math.min(64, parent.width / 10)) * 0.03
+                        font.letterSpacing: -(parent.width >= 520 ? 52 : 32) * 0.03
                         lineHeight: 0.98
                     }
                     Text {
@@ -820,8 +846,8 @@ ShellRoot {
                         onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(searchButton)
                         width: Math.min(parent.width, 620); implicitHeight: 60; radius: 14
                         leftPadding: 18; rightPadding: 12
-                        text: "Search apps and open spaces"
-                        Accessible.name: text
+                        text: width < 380 ? "Search" : "Search apps and open spaces"
+                        Accessible.name: "Search apps and open spaces"
                         contentItem: Item {
                             FlowIcon {
                                 id: searchGlyph
@@ -833,12 +859,12 @@ ShellRoot {
                                 anchors.right: searchShortcut.left; anchors.rightMargin: 8
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: searchButton.text; textFormat: Text.PlainText; elide: Text.ElideRight
-                                color: floeTheme.textSecondary; font.pixelSize: 15; font.family: floeTheme.interfaceFont
+                                color: floeTheme.textSecondary; font.pixelSize: 16; font.family: floeTheme.interfaceFont
                             }
                             Rectangle {
                                 id: searchShortcut
                                 anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
-                                width: shortcutLabel.implicitWidth + 16; height: 28; radius: 7
+                                width: shortcutLabel.implicitWidth + 16; height: 28; radius: 6
                                 color: floeTheme.surfaceRaised; border.color: Qt.alpha(floeTheme.border, 0.6)
                                 Text {
                                     id: shortcutLabel
@@ -1009,18 +1035,18 @@ ShellRoot {
                                     }
                                     Item { width: 1; height: 4 }
                                     Rectangle {
-                                        // Progress track; without a known amount a short segment drifts across it.
+                                        // Progress track. Without a known amount a short segment sweeps across it,
+                                        // driven by the shared busy clock (cards are rebuilt on every update);
+                                        // with motion reduced the whole track is dimly filled instead.
+                                        id: progressTrack
                                         width: parent.width; height: 4; radius: 2; color: floeTheme.surfaceSelected; clip: true
+                                        readonly property bool sweeping: !activityCard.determinate && root.motionQuick > 0
                                         Rectangle {
-                                            id: progressFill
-                                            height: parent.height; radius: 2; color: floeTheme.accent
-                                            width: activityCard.determinate ? parent.width * activityCard.modelData.progress : parent.width * 0.3
-                                            Behavior on width { NumberAnimation { duration: root.motionQuick * 2; easing.type: Easing.OutCubic } }
-                                            NumberAnimation on x {
-                                                running: !activityCard.determinate && root.motionQuick > 0
-                                                from: -progressFill.width; to: progressFill.parent.width; duration: 1600; loops: Animation.Infinite
-                                                easing.type: Easing.InOutSine
-                                            }
+                                            height: parent.height; radius: 2
+                                            color: activityCard.determinate || progressTrack.sweeping ? floeTheme.accent : Qt.alpha(floeTheme.accent, 0.45)
+                                            width: activityCard.determinate ? parent.width * activityCard.modelData.progress
+                                                : progressTrack.sweeping ? parent.width * 0.3 : parent.width
+                                            x: progressTrack.sweeping ? -width + root.busyPhase * (parent.width + width) : 0
                                         }
                                     }
                                 }
@@ -1142,7 +1168,9 @@ ShellRoot {
         id: workIndicatorWindow
         visible: !root.deskOpen && !root.switcherOpen && !root.overviewOpen && !root.appMenuOpen && !root.launcherActive && (!!root.activeSpace || !!root.activeLayer)
         anchors { bottom: true; right: true }
-        margins { bottom: 8; right: 12 }
+        // Below 560 px the bottom controls and this indicator cannot share a row, so it rises above them.
+        readonly property bool narrow: !!screen && screen.width < 560
+        margins { bottom: narrow ? 68 : 8; right: 12 }
         implicitWidth: workIndicator.implicitWidth + 8; implicitHeight: 52
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
@@ -1154,9 +1182,10 @@ ShellRoot {
                 Row {
                     visible: !!root.activeLayer
                     spacing: 4
-                    SectionLabel { anchors.verticalCenter: parent.verticalCenter; leftPadding: 14; rightPadding: 4; text: "LAYER" }
+                    SectionLabel { visible: !workIndicatorWindow.narrow; anchors.verticalCenter: parent.verticalCenter; leftPadding: 14; rightPadding: 4; text: "LAYER" }
                     Text {
-                        anchors.verticalCenter: parent.verticalCenter; rightPadding: 6
+                        anchors.verticalCenter: parent.verticalCenter; rightPadding: 6; leftPadding: workIndicatorWindow.narrow ? 14 : 0
+                        width: Math.min(implicitWidth, workIndicatorWindow.narrow ? 120 : 220); elide: Text.ElideRight
                         text: root.activeLayer ? (root.activeLayer.app_name || root.activeLayer.label).slice(0, 24) : ""
                         textFormat: Text.PlainText; color: floeTheme.textPrimary; font.weight: Font.DemiBold; font.pixelSize: 13; font.family: floeTheme.interfaceFont
                     }
@@ -1166,13 +1195,13 @@ ShellRoot {
                         onClicked: root.spaceAction("layer-to-space", String(root.activeLayer.id))
                     }
                     IslandButton {
-                        width: 44; implicitHeight: 44; glyph: "close"; text: "Close"
+                        implicitHeight: 44; variant: "danger"; text: "Close"
                         Accessible.name: "Close this Layer; the app is asked to close and the space under it stays as it is"
                         onClicked: root.spaceAction("close-layer", String(root.activeLayer.id))
                     }
                 }
                 Row {
-                    // Narrow screens keep only the position, so the bottom controls never overlap it.
+                    // Screens under 800 px keep only the position, so the indicator stays short.
                     visible: !root.activeLayer && !!(root.activeSpace && root.activeSpace.group_id) && workIndicatorWindow.screen && workIndicatorWindow.screen.width >= 800
                     spacing: 2
                     SectionLabel { anchors.verticalCenter: parent.verticalCenter; leftPadding: 14; rightPadding: 6; text: "GROUP" }
@@ -1223,10 +1252,9 @@ ShellRoot {
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
         Rectangle {
-            // A bottom sheet: card radius 20 on top, square where it meets the screen edge.
+            // A bottom sheet: radius 20 on top, square where it meets the screen edge.
             anchors.fill: parent; anchors.bottomMargin: -20; radius: 20
             color: floeTheme.surface; border.width: 1; border.color: Qt.alpha(floeTheme.border, 0.5)
-            Rectangle { anchors.horizontalCenter: parent.horizontalCenter; y: 8; width: 36; height: 4; radius: 2; color: Qt.alpha(floeTheme.border, 0.6) }
         }
         FocusScope {
             anchors.fill: parent; focus: true
@@ -1319,9 +1347,10 @@ ShellRoot {
                     SectionLabel { width: 72; height: 44; verticalAlignment: Text.AlignVCenter; text: "LAYERS" }
                     Repeater {
                         model: root.layers
-                        Row {
+                        Flow {
                             required property var modelData
-                            spacing: 4
+                            // Room for one Layer's four controls; narrower screens wrap them.
+                            width: Math.min(parent.width, 540); spacing: 4
                             FlowButton {
                                 id: layerButton
                                 onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(layerButton)
@@ -1377,250 +1406,251 @@ ShellRoot {
                                 id: spaceCard
                                 required property var modelData
                                 property var groupPin: root.pins.find(p => p.kind === "group" && p.group_id === modelData.group_id) || null
-                                // Card radius 16 with 8 px padding: the controls inside use radius 8.
-                                width: cardColumn.width + 16; height: cardColumn.implicitHeight + 16; radius: 16
+                                // Card radius 20 with 10 px padding: the controls inside use radius 10.
+                                width: cardColumn.width + 20; height: cardColumn.implicitHeight + 20; radius: 20
                                 color: floeTheme.surfaceRaised
                                 border.width: modelData.active ? 2 : 1
-                                border.color: modelData.active ? floeTheme.borderStrong : Qt.alpha(floeTheme.border, 0.4)
+                                // The card is the boundary of its focus button, so it keeps the functional border.
+                                border.color: modelData.active ? floeTheme.borderStrong : floeTheme.border
                                 Column {
-                                id: cardColumn
-                                x: 8; y: 8
-                                width: spaceCard.modelData.members.length > 1 ? spaceCard.modelData.members.length * 144 - 4 : 200
-                                spacing: 6
-                                FlowButton {
-                                    id: spaceButton
-                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(spaceButton)
-                                    width: parent.width; height: modelData.members.length > 1 ? 52 : 84; radius: 8
-                                    variant: "quiet"; leftPadding: 10; rightPadding: 10
-                                    text: modelData.label
-                                    readonly property string meta: [modelData.active ? "Current" : "",
-                                        modelData.group_id ? "Group" : modelData.members.length > 1 ? "Stack" : "",
-                                        spaceCard.groupPin ? "Pinned" : "", modelData.members.length > 1 ? modelData.members.length + " apps" : ""]
-                                        .filter(x => x).join("  ·  ")
-                                    contentItem: Item {
-                                        implicitHeight: spaceMeta.implicitHeight
-                                        Column {
-                                        id: spaceMeta
-                                        anchors.verticalCenter: parent.verticalCenter; width: parent.width; spacing: 2
-                                        Text {
-                                            width: parent.width; text: spaceButton.text; textFormat: Text.PlainText; elide: Text.ElideRight
-                                            color: floeTheme.textPrimary; font.pixelSize: 15; font.weight: Font.DemiBold; font.family: floeTheme.interfaceFont
-                                        }
-                                        Text {
-                                            visible: spaceButton.meta !== ""
-                                            width: parent.width; text: spaceButton.meta; textFormat: Text.PlainText; elide: Text.ElideRight
-                                            color: modelData.active ? floeTheme.accent : floeTheme.textMuted; font.pixelSize: 12; font.family: floeTheme.interfaceFont
-                                        }
-                                        }
-                                    }
-                                    Accessible.name: "Switch to " + modelData.label + (spaceCard.groupPin ? ", pinned Group" : "")
-                                    onClicked: root.spaceAction("focus-window", String(modelData.id))
-                                }
-                                Row {
-                                    visible: modelData.members.length > 1; spacing: 4
-                                    Repeater {
-                                        model: spaceCard.modelData.members
-                                        Column {
-                                            id: memberColumn
-                                            required property var modelData
-                                            required property int index
-                                            property var space: spaceCard.modelData
-                                            property bool grouped: !!space.group_id
-                                            spacing: 2
-                                            FlowButton {
-                                                id: memberButton
-                                                onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberButton)
-                                                width: 140; implicitHeight: 44; radius: 8; selected: memberColumn.modelData.active
-                                                text: memberColumn.modelData.label.slice(0, 14)
-                                                Accessible.name: "Focus " + memberColumn.modelData.label + " in group"
-                                                onClicked: root.spaceAction("focus-window", String(memberColumn.modelData.id))
-                                            }
-                                            Row {
-                                                visible: memberColumn.grouped; spacing: 4
-                                                FlowButton {
-                                                    id: memberLeftButton
-                                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberLeftButton)
-                                                    width: 44; implicitHeight: 44; radius: 8; variant: "quiet"; glyph: memberColumn.space.group_layout === "side-by-side" ? "left" : "up"; text: memberColumn.space.group_layout === "side-by-side" ? "‹" : "↑"
-                                                    enabled: memberColumn.index > 0 && !memberColumn.space.order_changed && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                                    Accessible.name: "Move " + memberColumn.modelData.label + " earlier in Group " + memberColumn.space.label
-                                                    onClicked: root.spaceAction("member-left", String(memberColumn.modelData.id))
-                                                }
-                                                FlowButton {
-                                                    id: memberRightButton
-                                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberRightButton)
-                                                    width: 44; implicitHeight: 44; radius: 8; variant: "quiet"; glyph: memberColumn.space.group_layout === "side-by-side" ? "right" : "down"; text: memberColumn.space.group_layout === "side-by-side" ? "›" : "↓"
-                                                    enabled: memberColumn.index < memberColumn.space.members.length - 1 && !memberColumn.space.order_changed && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                                    Accessible.name: "Move " + memberColumn.modelData.label + " later in Group " + memberColumn.space.label
-                                                    onClicked: root.spaceAction("member-right", String(memberColumn.modelData.id))
-                                                }
-                                                FlowButton {
-                                                    id: memberRemoveButton
-                                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberRemoveButton)
-                                                    width: 44; implicitHeight: 44; radius: 8; variant: "danger"; glyph: "close"; text: "×"
-                                                    visible: !!memberColumn.space.can_remove
-                                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                                    Accessible.name: "Remove " + memberColumn.modelData.label + " from Group " + memberColumn.space.label + "; the app stays open"
-                                                    onClicked: root.spaceAction("remove-from-group", String(memberColumn.modelData.id))
-                                                }
-                                            }
-                                            Row {
-                                                // Width within a side-by-side Group; each step trades width with the next app.
-                                                visible: memberColumn.grouped && memberColumn.space.group_layout === "side-by-side" && !!memberColumn.space.shares
-                                                spacing: 4
-                                                FlowButton {
-                                                    id: memberNarrowerButton
-                                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberNarrowerButton)
-                                                    width: 44; implicitHeight: 44; radius: 8; variant: "quiet"; glyph: "minus"; text: "−"
-                                                    enabled: !!(memberColumn.space.can_narrow && memberColumn.space.can_narrow[memberColumn.index]) && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                                    Accessible.name: "Make " + memberColumn.modelData.label + " narrower in Group " + memberColumn.space.label
-                                                    onClicked: root.spaceAction("member-narrower", String(memberColumn.modelData.id))
+                                    id: cardColumn
+                                    x: 10; y: 10
+                                    width: spaceCard.modelData.members.length > 1 ? spaceCard.modelData.members.length * 144 - 4 : 200
+                                    spacing: 6
+                                    FlowButton {
+                                        id: spaceButton
+                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(spaceButton)
+                                        width: parent.width; height: modelData.members.length > 1 ? 52 : 84; radius: 10
+                                        variant: "plain"; leftPadding: 10; rightPadding: 10
+                                        text: modelData.label
+                                        readonly property string meta: [modelData.active ? "Current" : "",
+                                            modelData.group_id ? "Group" : modelData.members.length > 1 ? "Stack" : "",
+                                            spaceCard.groupPin ? "Pinned" : "", modelData.members.length > 1 ? modelData.members.length + " apps" : ""]
+                                            .filter(x => x).join("  ·  ")
+                                        contentItem: Item {
+                                            implicitHeight: spaceMeta.implicitHeight
+                                            Column {
+                                                id: spaceMeta
+                                                anchors.verticalCenter: parent.verticalCenter; width: parent.width; spacing: 2
+                                                Text {
+                                                    width: parent.width; text: spaceButton.text; textFormat: Text.PlainText; elide: Text.ElideRight
+                                                    color: floeTheme.textPrimary; font.pixelSize: 16; font.weight: Font.DemiBold; font.family: floeTheme.interfaceFont
                                                 }
                                                 Text {
-                                                    width: 44; height: 44
-                                                    text: memberColumn.space.shares ? memberColumn.space.shares[memberColumn.index] + "%" : ""
-                                                    textFormat: Text.PlainText; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-                                                    color: floeTheme.textSecondary; font.pixelSize: 13; font.family: floeTheme.interfaceFont; font.features: { "tnum": 1 }
-                                                    Accessible.name: memberColumn.modelData.label + " uses " + text + " of the Group's width"
+                                                    visible: spaceButton.meta !== ""
+                                                    width: parent.width; text: spaceButton.meta; textFormat: Text.PlainText; elide: Text.ElideRight
+                                                    color: modelData.active ? floeTheme.accent : floeTheme.textMuted; font.pixelSize: 12; font.family: floeTheme.interfaceFont
                                                 }
+                                            }
+                                        }
+                                        Accessible.name: "Switch to " + modelData.label + (spaceCard.groupPin ? ", pinned Group" : "")
+                                        onClicked: root.spaceAction("focus-window", String(modelData.id))
+                                    }
+                                    Row {
+                                        visible: modelData.members.length > 1; spacing: 4
+                                        Repeater {
+                                            model: spaceCard.modelData.members
+                                            Column {
+                                                id: memberColumn
+                                                required property var modelData
+                                                required property int index
+                                                property var space: spaceCard.modelData
+                                                property bool grouped: !!space.group_id
+                                                spacing: 2
                                                 FlowButton {
-                                                    id: memberWiderButton
-                                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberWiderButton)
-                                                    width: 44; implicitHeight: 44; radius: 8; variant: "quiet"; glyph: "plus"; text: "+"
-                                                    enabled: !!(memberColumn.space.can_widen && memberColumn.space.can_widen[memberColumn.index]) && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                                    Accessible.name: "Make " + memberColumn.modelData.label + " wider in Group " + memberColumn.space.label
-                                                    onClicked: root.spaceAction("member-wider", String(memberColumn.modelData.id))
+                                                    id: memberButton
+                                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberButton)
+                                                    width: 140; implicitHeight: 44; radius: 10; selected: memberColumn.modelData.active
+                                                    text: memberColumn.modelData.label.slice(0, 14)
+                                                    Accessible.name: "Focus " + memberColumn.modelData.label + " in group"
+                                                    onClicked: root.spaceAction("focus-window", String(memberColumn.modelData.id))
+                                                }
+                                                Row {
+                                                    visible: memberColumn.grouped; spacing: 4
+                                                    FlowButton {
+                                                        id: memberLeftButton
+                                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberLeftButton)
+                                                        width: 44; implicitHeight: 44; radius: 10; variant: "quiet"; glyph: memberColumn.space.group_layout === "side-by-side" ? "left" : "up"; text: memberColumn.space.group_layout === "side-by-side" ? "‹" : "↑"
+                                                        enabled: memberColumn.index > 0 && !memberColumn.space.order_changed && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                        Accessible.name: "Move " + memberColumn.modelData.label + " earlier in Group " + memberColumn.space.label
+                                                        onClicked: root.spaceAction("member-left", String(memberColumn.modelData.id))
+                                                    }
+                                                    FlowButton {
+                                                        id: memberRightButton
+                                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberRightButton)
+                                                        width: 44; implicitHeight: 44; radius: 10; variant: "quiet"; glyph: memberColumn.space.group_layout === "side-by-side" ? "right" : "down"; text: memberColumn.space.group_layout === "side-by-side" ? "›" : "↓"
+                                                        enabled: memberColumn.index < memberColumn.space.members.length - 1 && !memberColumn.space.order_changed && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                        Accessible.name: "Move " + memberColumn.modelData.label + " later in Group " + memberColumn.space.label
+                                                        onClicked: root.spaceAction("member-right", String(memberColumn.modelData.id))
+                                                    }
+                                                    FlowButton {
+                                                        id: memberRemoveButton
+                                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberRemoveButton)
+                                                        width: 44; implicitHeight: 44; radius: 10; variant: "danger"; glyph: "close"; text: "×"
+                                                        visible: !!memberColumn.space.can_remove
+                                                        enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                        Accessible.name: "Remove " + memberColumn.modelData.label + " from Group " + memberColumn.space.label + "; the app stays open"
+                                                        onClicked: root.spaceAction("remove-from-group", String(memberColumn.modelData.id))
+                                                    }
+                                                }
+                                                Row {
+                                                    // Width within a side-by-side Group; each step trades width with the next app.
+                                                    visible: memberColumn.grouped && memberColumn.space.group_layout === "side-by-side" && !!memberColumn.space.shares
+                                                    spacing: 4
+                                                    FlowButton {
+                                                        id: memberNarrowerButton
+                                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberNarrowerButton)
+                                                        width: 44; implicitHeight: 44; radius: 10; variant: "quiet"; glyph: "minus"; text: "−"
+                                                        enabled: !!(memberColumn.space.can_narrow && memberColumn.space.can_narrow[memberColumn.index]) && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                        Accessible.name: "Make " + memberColumn.modelData.label + " narrower in Group " + memberColumn.space.label
+                                                        onClicked: root.spaceAction("member-narrower", String(memberColumn.modelData.id))
+                                                    }
+                                                    Text {
+                                                        width: 44; height: 44
+                                                        text: memberColumn.space.shares ? memberColumn.space.shares[memberColumn.index] + "%" : ""
+                                                        textFormat: Text.PlainText; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                                                        color: floeTheme.textSecondary; font.pixelSize: 13; font.family: floeTheme.interfaceFont; font.features: { "tnum": 1 }
+                                                        Accessible.name: memberColumn.modelData.label + " uses " + text + " of the Group's width"
+                                                    }
+                                                    FlowButton {
+                                                        id: memberWiderButton
+                                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(memberWiderButton)
+                                                        width: 44; implicitHeight: 44; radius: 10; variant: "quiet"; glyph: "plus"; text: "+"
+                                                        enabled: !!(memberColumn.space.can_widen && memberColumn.space.can_widen[memberColumn.index]) && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                        Accessible.name: "Make " + memberColumn.modelData.label + " wider in Group " + memberColumn.space.label
+                                                        onClicked: root.spaceAction("member-wider", String(memberColumn.modelData.id))
+                                                    }
                                                 }
                                             }
                                         }
                                     }
-                                }
-                                FlowButton {
-                                    id: createGroupButton
-                                    visible: spaceCard.modelData.members.length >= 2 && spaceCard.modelData.members.length <= 4 && !spaceCard.modelData.group_id
-                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(createGroupButton)
-                                    width: parent.width; implicitHeight: 44; radius: 8; text: "Create Group"
-                                    Accessible.name: "Create Group from " + spaceCard.modelData.label
-                                    enabled: spaceCard.modelData.active && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                    onClicked: root.spaceAction("create-group")
-                                }
-                                FlowButton {
-                                    id: addMemberButton
-                                    visible: !!spaceCard.modelData.can_add
-                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(addMemberButton)
-                                    width: parent.width; implicitHeight: 44; radius: 8; text: "Add " + (spaceCard.modelData.add_label || "next app").slice(0, 24) + " to Group"
-                                    Accessible.name: "Add the next space, " + spaceCard.modelData.add_label + ", to Group " + spaceCard.modelData.label
-                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                    onClicked: root.spaceAction("add-to-group", spaceCard.modelData.group_id)
-                                }
-                                FlowButton {
-                                    id: keepOrderButton
-                                    visible: !!spaceCard.modelData.order_changed
-                                    onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(keepOrderButton)
-                                    width: parent.width; implicitHeight: 44; radius: 8; text: "Keep new app order"
-                                    Accessible.name: "Keep the new app order for Group " + spaceCard.modelData.label
-                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                    onClicked: root.spaceAction("adopt-group-order", spaceCard.modelData.group_id)
-                                }
-                                Grid {
-                                    visible: !!spaceCard.modelData.group_id
-                                    columns: 2; spacing: 4
                                     FlowButton {
+                                        id: createGroupButton
+                                        visible: spaceCard.modelData.members.length >= 2 && spaceCard.modelData.members.length <= 4 && !spaceCard.modelData.group_id
+                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(createGroupButton)
+                                        width: parent.width; implicitHeight: 44; radius: 10; text: "Create Group"
+                                        Accessible.name: "Create Group from " + spaceCard.modelData.label
+                                        enabled: spaceCard.modelData.active && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                        onClicked: root.spaceAction("create-group")
+                                    }
+                                    FlowButton {
+                                        id: addMemberButton
+                                        visible: !!spaceCard.modelData.can_add
+                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(addMemberButton)
+                                        width: parent.width; implicitHeight: 44; radius: 10; text: "Add " + (spaceCard.modelData.add_label || "next app").slice(0, 24) + " to Group"
+                                        Accessible.name: "Add the next space, " + spaceCard.modelData.add_label + ", to Group " + spaceCard.modelData.label
+                                        enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                        onClicked: root.spaceAction("add-to-group", spaceCard.modelData.group_id)
+                                    }
+                                    FlowButton {
+                                        id: keepOrderButton
+                                        visible: !!spaceCard.modelData.order_changed
+                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(keepOrderButton)
+                                        width: parent.width; implicitHeight: 44; radius: 10; text: "Keep new app order"
+                                        Accessible.name: "Keep the new app order for Group " + spaceCard.modelData.label
+                                        enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                        onClicked: root.spaceAction("adopt-group-order", spaceCard.modelData.group_id)
+                                    }
+                                    Grid {
+                                        visible: !!spaceCard.modelData.group_id
+                                        columns: 2; spacing: 4
+                                        FlowButton {
                                             id: renameButton
                                             onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(renameButton)
-                                            width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 8; leftPadding: 6; rightPadding: 6; variant: "quiet"; text: "Rename"
+                                            width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 10; leftPadding: 6; rightPadding: 6; variant: "quiet"; text: "Rename"
                                             Accessible.name: "Rename Group " + spaceCard.modelData.label
                                             enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                             onClicked: { groupName.text = spaceCard.modelData.label; root.renameGroupId = spaceCard.modelData.group_id; groupName.forceActiveFocus() }
                                         }
-    FlowButton {
+                                        FlowButton {
                                             id: groupViewButton
                                             onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(groupViewButton)
-                                            width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 8; leftPadding: 6; rightPadding: 6; variant: "quiet"; text: "Tabs / stack"
+                                            width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 10; leftPadding: 6; rightPadding: 6; variant: "quiet"; text: "Tabs / stack"
                                             visible: spaceCard.modelData.group_layout !== "side-by-side"
                                             enabled: spaceCard.modelData.active && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                             Accessible.name: "Toggle tabs or stack for " + spaceCard.modelData.label
                                             onClicked: root.spaceAction("group-view", spaceCard.modelData.group_id)
                                         }
-    FlowButton {
-                                        id: groupLayoutButton
-                                        visible: !!spaceCard.modelData.group_id
-                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(groupLayoutButton)
-                                        width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 8; leftPadding: 6; rightPadding: 6; variant: "quiet"
-                                        text: spaceCard.modelData.group_layout === "side-by-side" ? "Stack" : "Side by side"
-                                        Accessible.name: text + " Group " + spaceCard.modelData.label
-                                        enabled: spaceCard.modelData.active && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                        onClicked: root.spaceAction("group-layout", spaceCard.modelData.group_id)
-                                    }
-    FlowButton {
-                                        id: autoLayoutButton
-                                        visible: !!spaceCard.modelData.group_id
-                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(autoLayoutButton)
-                                        width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 8; leftPadding: 6; rightPadding: 6; variant: "quiet"
-                                        text: spaceCard.modelData.auto_layout ? "Auto layout: on" : "Auto layout: off"
-                                        Accessible.name: (spaceCard.modelData.auto_layout ? "Automatic layout: on" : "Automatic layout: off") + " for " + spaceCard.modelData.label
-                                        enabled: spaceCard.modelData.active && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                        onClicked: root.spaceAction("toggle-auto-layout", spaceCard.modelData.group_id)
-                                    }
-    FlowButton {
-                                        id: groupPinButton
-                                        visible: !!spaceCard.modelData.group_id
-                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(groupPinButton)
-                                        width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 8; leftPadding: 6; rightPadding: 6; variant: "quiet"
-                                        text: spaceCard.groupPin ? "Unpin Group" : spaceCard.modelData.group_layout === "side-by-side" ? "Stack to pin" : "Pin Group"
-                                        Accessible.name: text + " " + spaceCard.modelData.label
-                                        enabled: (spaceCard.groupPin || spaceCard.modelData.group_layout !== "side-by-side") && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                        onClicked: root.spaceAction(spaceCard.groupPin ? "unpin" : "pin-group", spaceCard.groupPin ? spaceCard.groupPin.id : spaceCard.modelData.group_id)
-                                    }
-    FlowButton {
-                                        id: dissolveGroupButton
-                                        visible: !!spaceCard.modelData.group_id
-                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(dissolveGroupButton)
-                                        width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 8; leftPadding: 6; rightPadding: 6; variant: "danger"
-                                        text: spaceCard.groupPin ? "Unpin to dissolve" : "Dissolve"
-                                        Accessible.name: (spaceCard.groupPin ? "Unpin to dissolve" : "Dissolve Group") + " " + spaceCard.modelData.label
-                                        enabled: spaceCard.modelData.active && !spaceCard.groupPin && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                        onClicked: root.spaceAction("dissolve-group", spaceCard.modelData.group_id)
-                                    }
-                                }
-                                Repeater {
-                                    // Moving acts on the active space, so the choice appears on that card only.
-                                    model: spaceCard.modelData.active ? root.displays.filter(d => !d.current) : []
-                                    FlowButton {
-                                        id: moveDisplayButton
-                                        required property var modelData
-                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(moveDisplayButton)
-                                        width: cardColumn.width; implicitHeight: 44; radius: 8; variant: "quiet"
-                                        text: "Move to " + modelData.label.slice(0, 22)
-                                        Accessible.name: "Move " + spaceCard.modelData.label + (spaceCard.modelData.group_id ? ", the whole Group," : "") + " to display " + modelData.label
-                                        enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                        onClicked: root.spaceAction("move-to-display", modelData.key)
-                                    }
-                                }
-                                Row {
-                                    visible: !!spaceCard.modelData.group_id && root.renameGroupId === spaceCard.modelData.group_id
-                                    width: parent.width; spacing: 4
-                                    Keys.onEscapePressed: { root.renameGroupId = ""; renameButton.forceActiveFocus() }
-                                    TextField {
-                                        id: groupName
-                                        onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(groupName)
-                                        width: parent.width - 136; height: 44; maximumLength: 80
-                                        leftPadding: 10; rightPadding: 10
-                                        color: floeTheme.textPrimary; placeholderTextColor: floeTheme.textMuted
-                                        selectionColor: floeTheme.accent; selectedTextColor: floeTheme.onAccent
-                                        font.pixelSize: 14; font.family: floeTheme.interfaceFont
-                                        background: Rectangle {
-                                            radius: 8; color: floeTheme.surface
-                                            border.width: groupName.activeFocus ? 2 : 1
-                                            border.color: groupName.activeFocus ? floeTheme.focus : floeTheme.border
+                                        FlowButton {
+                                            id: groupLayoutButton
+                                            visible: !!spaceCard.modelData.group_id
+                                            onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(groupLayoutButton)
+                                            width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 10; leftPadding: 6; rightPadding: 6; variant: "quiet"
+                                            text: spaceCard.modelData.group_layout === "side-by-side" ? "Stack" : "Side by side"
+                                            Accessible.name: text + " Group " + spaceCard.modelData.label
+                                            enabled: spaceCard.modelData.active && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                            onClicked: root.spaceAction("group-layout", spaceCard.modelData.group_id)
                                         }
-                                        text: spaceCard.modelData.label
-                                        placeholderText: "Group name"
-                                        Accessible.name: "Group name"
-                                        onAccepted: root.renameGroup(spaceCard.modelData.group_id, text)
+                                        FlowButton {
+                                            id: autoLayoutButton
+                                            visible: !!spaceCard.modelData.group_id
+                                            onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(autoLayoutButton)
+                                            width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 10; leftPadding: 6; rightPadding: 6; variant: "quiet"
+                                            text: spaceCard.modelData.auto_layout ? "Auto layout: on" : "Auto layout: off"
+                                            Accessible.name: text + " for " + spaceCard.modelData.label
+                                            enabled: spaceCard.modelData.active && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                            onClicked: root.spaceAction("toggle-auto-layout", spaceCard.modelData.group_id)
+                                        }
+                                        FlowButton {
+                                            id: groupPinButton
+                                            visible: !!spaceCard.modelData.group_id
+                                            onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(groupPinButton)
+                                            width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 10; leftPadding: 6; rightPadding: 6; variant: "quiet"
+                                            text: spaceCard.groupPin ? "Unpin Group" : spaceCard.modelData.group_layout === "side-by-side" ? "Stack to pin" : "Pin Group"
+                                            Accessible.name: text + " " + spaceCard.modelData.label
+                                            enabled: (spaceCard.groupPin || spaceCard.modelData.group_layout !== "side-by-side") && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                            onClicked: root.spaceAction(spaceCard.groupPin ? "unpin" : "pin-group", spaceCard.groupPin ? spaceCard.groupPin.id : spaceCard.modelData.group_id)
+                                        }
+                                        FlowButton {
+                                            id: dissolveGroupButton
+                                            visible: !!spaceCard.modelData.group_id
+                                            onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(dissolveGroupButton)
+                                            width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 10; leftPadding: 6; rightPadding: 6; variant: "danger"
+                                            text: spaceCard.groupPin ? "Unpin first" : "Dissolve"
+                                            Accessible.name: (spaceCard.groupPin ? "Unpin first to dissolve Group " : "Dissolve Group ") + spaceCard.modelData.label
+                                            enabled: spaceCard.modelData.active && !spaceCard.groupPin && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                            onClicked: root.spaceAction("dissolve-group", spaceCard.modelData.group_id)
+                                        }
                                     }
-                                    FlowButton { id: saveGroupName; onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(saveGroupName); width: 64; implicitHeight: 44; radius: 8; variant: "primary"; text: "Save"; Accessible.name: "Save name for Group " + spaceCard.modelData.label; enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length; onClicked: root.renameGroup(spaceCard.modelData.group_id, groupName.text) }
-                                    FlowButton { id: cancelGroupName; onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(cancelGroupName); width: 64; implicitHeight: 44; radius: 8; variant: "quiet"; text: "Cancel"; Accessible.name: "Cancel rename for Group " + spaceCard.modelData.label; onClicked: { root.renameGroupId = ""; renameButton.forceActiveFocus() } }
-                                }
+                                    Repeater {
+                                        // Moving acts on the active space, so the choice appears on that card only.
+                                        model: spaceCard.modelData.active ? root.displays.filter(d => !d.current) : []
+                                        FlowButton {
+                                            id: moveDisplayButton
+                                            required property var modelData
+                                            onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(moveDisplayButton)
+                                            width: cardColumn.width; implicitHeight: 44; radius: 10; variant: "quiet"
+                                            text: "Move to " + modelData.label.slice(0, 22)
+                                            Accessible.name: "Move " + spaceCard.modelData.label + (spaceCard.modelData.group_id ? ", the whole Group," : "") + " to display " + modelData.label
+                                            enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                            onClicked: root.spaceAction("move-to-display", modelData.key)
+                                        }
+                                    }
+                                    Row {
+                                        visible: !!spaceCard.modelData.group_id && root.renameGroupId === spaceCard.modelData.group_id
+                                        width: parent.width; spacing: 4
+                                        Keys.onEscapePressed: { root.renameGroupId = ""; renameButton.forceActiveFocus() }
+                                        TextField {
+                                            id: groupName
+                                            onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(groupName)
+                                            width: parent.width - 136; height: 44; maximumLength: 80
+                                            leftPadding: 10; rightPadding: 10
+                                            color: floeTheme.textPrimary; placeholderTextColor: floeTheme.textMuted
+                                            selectionColor: floeTheme.accent; selectedTextColor: floeTheme.onAccent
+                                            font.pixelSize: 14; font.family: floeTheme.interfaceFont
+                                            background: Rectangle {
+                                                radius: 10; color: floeTheme.surface
+                                                border.width: groupName.activeFocus ? 2 : 1
+                                                border.color: groupName.activeFocus ? floeTheme.focus : floeTheme.border
+                                            }
+                                            text: spaceCard.modelData.label
+                                            placeholderText: "Group name"
+                                            Accessible.name: "Group name"
+                                            onAccepted: root.renameGroup(spaceCard.modelData.group_id, text)
+                                        }
+                                        FlowButton { id: saveGroupName; onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(saveGroupName); width: 64; implicitHeight: 44; radius: 10; variant: "primary"; text: "Save"; Accessible.name: "Save name for Group " + spaceCard.modelData.label; enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length; onClicked: root.renameGroup(spaceCard.modelData.group_id, groupName.text) }
+                                        FlowButton { id: cancelGroupName; onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(cancelGroupName); width: 64; implicitHeight: 44; radius: 10; variant: "quiet"; text: "Cancel"; Accessible.name: "Cancel rename for Group " + spaceCard.modelData.label; onClicked: { root.renameGroupId = ""; renameButton.forceActiveFocus() } }
+                                    }
                                 }
                             }
                         }
@@ -1635,106 +1665,106 @@ ShellRoot {
                         Rectangle {
                             id: attentionCard
                             required property var modelData
-                            width: Math.min(parent.width, 720); height: attentionColumn.implicitHeight + 24; radius: 16
+                            width: Math.min(parent.width, 720); height: attentionColumn.implicitHeight + 24; radius: 20
                             color: floeTheme.surfaceRaised; border.width: 1; border.color: Qt.alpha(floeTheme.warning, 0.55)
                             Column {
-                            id: attentionColumn
-                            x: 12; y: 12; width: parent.width - 24; spacing: 6
-                            Text {
-                                width: parent.width; text: modelData.label; textFormat: Text.PlainText
-                                color: floeTheme.textPrimary; font.weight: Font.DemiBold; font.pixelSize: 15; font.family: floeTheme.interfaceFont
-                                wrapMode: Text.WrapAnywhere
-                            }
-                            Text {
-                                width: parent.width; text: modelData.status; textFormat: Text.PlainText
-                                color: floeTheme.textMuted; font.pixelSize: 13; font.family: floeTheme.interfaceFont
-                                wrapMode: Text.WrapAnywhere
-                            }
-                            Repeater {
-                                // Several windows of a member app: the user picks the one in the Group.
-                                model: modelData.choices || []
-                                Column {
-                                    id: memberChoice
-                                    required property var modelData
-                                    property string groupId: attentionCard.modelData.id
-                                    width: parent.width; spacing: 4
-                                    Text {
-                                        width: parent.width; wrapMode: Text.Wrap; textFormat: Text.PlainText
-                                        text: "Which " + memberChoice.modelData.app_name + " window belongs to this Group?"
-                                        color: floeTheme.textSecondary; font.pixelSize: 14; font.family: floeTheme.interfaceFont
-                                    }
-                                    Flow {
+                                id: attentionColumn
+                                x: 12; y: 12; width: parent.width - 24; spacing: 6
+                                Text {
+                                    width: parent.width; text: modelData.label; textFormat: Text.PlainText
+                                    color: floeTheme.textPrimary; font.weight: Font.DemiBold; font.pixelSize: 16; font.family: floeTheme.interfaceFont
+                                    wrapMode: Text.WrapAnywhere
+                                }
+                                Text {
+                                    width: parent.width; text: modelData.status; textFormat: Text.PlainText
+                                    color: floeTheme.textMuted; font.pixelSize: 13; font.family: floeTheme.interfaceFont
+                                    wrapMode: Text.WrapAnywhere
+                                }
+                                Repeater {
+                                    // Several windows of a member app: the user picks the one in the Group.
+                                    model: modelData.choices || []
+                                    Column {
+                                        id: memberChoice
+                                        required property var modelData
+                                        property string groupId: attentionCard.modelData.id
                                         width: parent.width; spacing: 4
-                                        Repeater {
-                                            model: memberChoice.modelData.windows
-                                            FlowButton {
-                                                id: chooseWindowButton
-                                                required property var modelData
-                                                width: Math.min(memberChoice.width, 220); implicitHeight: 44; radius: 8
-                                                text: modelData.label.slice(0, 28)
-                                                Accessible.name: "Use " + modelData.label + " as the Group's " + memberChoice.modelData.app_name + " window"
-                                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(chooseWindowButton)
-                                                onClicked: root.spaceAction("choose-member", memberChoice.groupId + ":" + modelData.id)
+                                        Text {
+                                            width: parent.width; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                                            text: "Which " + memberChoice.modelData.app_name + " window belongs to this Group?"
+                                            color: floeTheme.textSecondary; font.pixelSize: 14; font.family: floeTheme.interfaceFont
+                                        }
+                                        Flow {
+                                            width: parent.width; spacing: 4
+                                            Repeater {
+                                                model: memberChoice.modelData.windows
+                                                FlowButton {
+                                                    id: chooseWindowButton
+                                                    required property var modelData
+                                                    width: Math.min(memberChoice.width, 220); implicitHeight: 44; radius: 10
+                                                    text: modelData.label.slice(0, 28)
+                                                    Accessible.name: "Use " + modelData.label + " as the Group's " + memberChoice.modelData.app_name + " window"
+                                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                    onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(chooseWindowButton)
+                                                    onClicked: root.spaceAction("choose-member", memberChoice.groupId + ":" + modelData.id)
+                                                }
                                             }
                                         }
                                     }
                                 }
-                            }
-                            FlowButton {
-                                id: forgetGroupChoice
-                                visible: !!modelData.can_forget_choice
-                                width: Math.min(parent.width, 200); implicitHeight: 44; radius: 8; variant: "quiet"; text: "Choose again"
-                                Accessible.name: "Forget the windows chosen for " + modelData.label + " and choose again"
-                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(forgetGroupChoice)
-                                onClicked: root.spaceAction("forget-choice", modelData.id)
-                            }
-                            FlowButton {
-                                id: openGroupMember
-                                visible: modelData.can_open
-                                width: Math.min(parent.width, 200); implicitHeight: 44; radius: 8; text: "Open missing app"
-                                Accessible.name: "Open missing app for " + modelData.label
-                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(openGroupMember)
-                                onClicked: root.spaceAction("open-group-member", modelData.id)
-                            }
-                            FlowButton {
-                                id: rejoinGroup
-                                visible: modelData.can_rejoin
-                                width: Math.min(parent.width, 200); implicitHeight: 44; radius: 8; text: "Rejoin Group"
-                                Accessible.name: "Rejoin Group for " + modelData.label
-                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(rejoinGroup)
-                                onClicked: root.spaceAction("rejoin-group", modelData.id)
-                            }
-                            FlowButton {
-                                id: resumeGroupLayout
-                                visible: modelData.can_resume_layout
-                                width: Math.min(parent.width, 220); implicitHeight: 44; radius: 8; text: "Finish layout change"
-                                Accessible.name: "Finish layout change for Group " + modelData.label
-                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(resumeGroupLayout)
-                                onClicked: root.spaceAction("resume-group-layout", modelData.id)
-                            }
-                            FlowButton {
-                                id: adoptGroupOrder
-                                visible: modelData.can_adopt_order
-                                width: Math.min(parent.width, 220); implicitHeight: 44; radius: 8; text: "Keep current order"
-                                Accessible.name: "Keep the current app order for Group " + modelData.label
-                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(adoptGroupOrder)
-                                onClicked: root.spaceAction("adopt-group-order", modelData.id)
-                            }
-                            FlowButton {
-                                id: repairGroupLayout
-                                visible: modelData.can_repair
-                                width: Math.min(parent.width, 220); implicitHeight: 44; radius: 8; text: "Repair Group layout"
-                                Accessible.name: "Repair layout for Group " + modelData.label
-                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(repairGroupLayout)
-                                onClicked: root.spaceAction("repair-side-group", modelData.id)
-                            }
+                                FlowButton {
+                                    id: forgetGroupChoice
+                                    visible: !!modelData.can_forget_choice
+                                    width: Math.min(parent.width, 200); implicitHeight: 44; radius: 10; variant: "quiet"; text: "Choose again"
+                                    Accessible.name: "Forget the windows chosen for " + modelData.label + " and choose again"
+                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(forgetGroupChoice)
+                                    onClicked: root.spaceAction("forget-choice", modelData.id)
+                                }
+                                FlowButton {
+                                    id: openGroupMember
+                                    visible: modelData.can_open
+                                    width: Math.min(parent.width, 200); implicitHeight: 44; radius: 10; text: "Open missing app"
+                                    Accessible.name: "Open missing app for " + modelData.label
+                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(openGroupMember)
+                                    onClicked: root.spaceAction("open-group-member", modelData.id)
+                                }
+                                FlowButton {
+                                    id: rejoinGroup
+                                    visible: modelData.can_rejoin
+                                    width: Math.min(parent.width, 200); implicitHeight: 44; radius: 10; text: "Rejoin Group"
+                                    Accessible.name: "Rejoin Group for " + modelData.label
+                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(rejoinGroup)
+                                    onClicked: root.spaceAction("rejoin-group", modelData.id)
+                                }
+                                FlowButton {
+                                    id: resumeGroupLayout
+                                    visible: modelData.can_resume_layout
+                                    width: Math.min(parent.width, 220); implicitHeight: 44; radius: 10; text: "Finish layout change"
+                                    Accessible.name: "Finish layout change for Group " + modelData.label
+                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(resumeGroupLayout)
+                                    onClicked: root.spaceAction("resume-group-layout", modelData.id)
+                                }
+                                FlowButton {
+                                    id: adoptGroupOrder
+                                    visible: modelData.can_adopt_order
+                                    width: Math.min(parent.width, 220); implicitHeight: 44; radius: 10; text: "Keep current order"
+                                    Accessible.name: "Keep the current app order for Group " + modelData.label
+                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(adoptGroupOrder)
+                                    onClicked: root.spaceAction("adopt-group-order", modelData.id)
+                                }
+                                FlowButton {
+                                    id: repairGroupLayout
+                                    visible: modelData.can_repair
+                                    width: Math.min(parent.width, 220); implicitHeight: 44; radius: 10; text: "Repair Group layout"
+                                    Accessible.name: "Repair layout for Group " + modelData.label
+                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(repairGroupLayout)
+                                    onClicked: root.spaceAction("repair-side-group", modelData.id)
+                                }
                             }
                         }
                     }
@@ -1822,8 +1852,8 @@ ShellRoot {
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
         Rectangle {
-            // Panels hang from the island: radius 20, hairline edge, the surface tone.
-            anchors.fill: parent; radius: 20
+            // Panels hang from the island: radius 14, hairline edge, the surface tone.
+            anchors.fill: parent; radius: 14
             color: floeTheme.surface; border.width: 1; border.color: Qt.alpha(floeTheme.border, 0.5)
         }
         FocusScope {
@@ -1834,18 +1864,19 @@ ShellRoot {
                 contentWidth: availableWidth; contentHeight: quickSettingsColumn.implicitHeight
                 Column {
                 id: quickSettingsColumn
-                width: parent.width; spacing: 10
+                // 4 px inside the clip keeps focus rings whole.
+                x: 4; width: parent.width - 8; topPadding: 4; bottomPadding: 4; spacing: 10
                 SectionLabel { text: "NETWORK" }
-                Text { text: root.networkStatus; color: floeTheme.textPrimary; font.pixelSize: 15; font.weight: Font.DemiBold; font.family: floeTheme.interfaceFont }
+                Text { text: root.networkStatus; color: floeTheme.textPrimary; font.pixelSize: 16; font.weight: Font.DemiBold; font.family: floeTheme.interfaceFont }
                 FlowButton { width: parent.width; implicitHeight: 44; text: "Choose Wi-Fi network"; onClicked: { root.quickSettingsOpen = false; Quickshell.execDetached(["flow-wifi-settings"]) } }
                 FlowButton { width: parent.width; implicitHeight: 44; variant: "quiet"; text: "Toggle on-screen keyboard"; Accessible.name: "Toggle on-screen keyboard"; onClicked: { Quickshell.execDetached(["flow-keyboard"]); root.quickSettingsOpen = false } }
                 SectionLabel { text: "SOUND"; topPadding: 8 }
-                Text { text: root.volumeStatus; color: floeTheme.textPrimary; font.pixelSize: 15; font.weight: Font.DemiBold; font.family: floeTheme.interfaceFont; font.features: { "tnum": 1 } }
+                Text { text: root.volumeStatus; color: floeTheme.textPrimary; font.pixelSize: 16; font.weight: Font.DemiBold; font.family: floeTheme.interfaceFont; font.features: { "tnum": 1 } }
                 Flow {
                     width: parent.width; spacing: 6
                     FlowButton { width: 70; implicitHeight: 44; text: "− 5%"; Accessible.name: "Decrease volume"; enabled: root.audioAvailable; onClicked: root.changeVolume(-0.05) }
                     FlowButton { width: 70; implicitHeight: 44; text: "+ 5%"; Accessible.name: "Increase volume"; enabled: root.audioAvailable; onClicked: root.changeVolume(0.05) }
-                    FlowButton { width: parent.width - 152; implicitHeight: 44; variant: "quiet"; text: "Mute / unmute"; enabled: root.audioAvailable; onClicked: root.changeVolume("mute") }
+                    FlowButton { width: Math.max(70, parent.width - 152); implicitHeight: 44; variant: "quiet"; text: "Mute"; enabled: root.audioAvailable; onClicked: root.changeVolume("mute") }
                 }
                 Row {
                     visible: !!root.mediaPlayer
@@ -1892,8 +1923,8 @@ ShellRoot {
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: root.notificationsOpen ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
         Rectangle {
-            // Panels hang from the island: radius 20, hairline edge, the surface tone.
-            anchors.fill: parent; radius: 20
+            // Panels hang from the island: radius 14, hairline edge, the surface tone.
+            anchors.fill: parent; radius: 14
             color: floeTheme.surface; border.width: 1; border.color: Qt.alpha(floeTheme.border, 0.5)
         }
         FocusScope {
@@ -1903,7 +1934,7 @@ ShellRoot {
             anchors.fill: parent; anchors.margins: 8; clip: true
             contentWidth: availableWidth; contentHeight: notificationColumn.implicitHeight
             Column {
-                id: notificationColumn; width: parent.width; spacing: 8
+                id: notificationColumn; x: 4; width: parent.width - 8; topPadding: 4; bottomPadding: 4; spacing: 8
                 Row {
                     width: parent.width; spacing: 8
                     SectionLabel { leftPadding: 4; width: parent.width - 88; text: "NOTIFICATIONS"; anchors.verticalCenter: parent.verticalCenter }
@@ -1921,8 +1952,8 @@ ShellRoot {
                         required property int index
                         visible: root.notificationsOpen || index === notificationServer.trackedNotifications.values.length - 1
                         width: notificationColumn.width; implicitHeight: cardColumn.implicitHeight + 20
-                        // Panel radius 20, inset 8: radius 12.
-                        radius: 12; color: floeTheme.surfaceRaised; border.color: Qt.alpha(floeTheme.border, 0.45)
+                        // Panel radius 14, inset 8: radius 6.
+                        radius: 6; color: floeTheme.surfaceRaised; border.color: Qt.alpha(floeTheme.border, 0.45)
                         Column {
                             id: cardColumn; anchors.fill: parent; anchors.margins: 12; anchors.rightMargin: 4; spacing: 4
                             Row {
@@ -1964,14 +1995,17 @@ ShellRoot {
         // Temporary feedback for shortcuts and Group focus changes; it never takes keyboard focus.
         visible: root.toast !== ""
         anchors.bottom: true
-        margins.bottom: 56
+        // Above the bottom controls (52 + 8), and above the raised work indicator on narrow screens.
+        margins.bottom: screen && screen.width < 560 ? 128 : 68
         implicitWidth: toastText.implicitWidth + 36; implicitHeight: 44
         color: "transparent"
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-        CapsuleBar {
-            anchors.fill: parent; color: floeTheme.surfaceRaised; border.color: floeTheme.borderStrong
+        Rectangle {
+            // The capsule belongs to the island and its bars; feedback is a panel.
+            anchors.fill: parent; radius: 14
+            color: floeTheme.surfaceRaised; border.width: 1; border.color: floeTheme.borderStrong
             Text {
                 id: toastText
                 anchors.centerIn: parent
