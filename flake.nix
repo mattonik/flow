@@ -11,6 +11,8 @@
     # Flow's own pieces of the test system, without the rest of it: the rendered Niri config, which Niri
     # must accept, and the wrappers. Building one runs its shell syntax check; a placeholder that
     # replaceVars cannot fill fails the Niri config. CI builds this (.github/workflows/floe-tests.yml).
+    # Wrappers are found by name, flow*, so one named otherwise is left out: systemsettings, which is
+    # installed only with Plasma, is not checked.
     checks.aarch64-linux.module = let
       inherit (self.nixosConfigurations.test) config pkgs;
       inherit (nixpkgs) lib;
@@ -18,7 +20,7 @@
       wrappers = builtins.filter (p: lib.hasPrefix "flow" (lib.getName p)) config.environment.systemPackages
         ++ [ config.systemd.user.services.flow-shell.serviceConfig.ExecStart
              config.systemd.user.services.flow-api.serviceConfig.ExecStart ];
-    in pkgs.runCommand "flow-module-check" { } ''
+    in assert wrappers != [ ]; pkgs.runCommand "flow-module-check" { } ''
       ${lib.getExe config.programs.niri.package} validate -c ${niriConfig}
       mkdir $out
       ln -s ${niriConfig} $out/niri.kdl

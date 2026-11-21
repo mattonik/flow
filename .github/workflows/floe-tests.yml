@@ -1,4 +1,4 @@
-name: Floe — design tokens and Python tests
+name: Floe — design tokens, Python tests and the NixOS module
 
 on:
   pull_request:
@@ -23,9 +23,11 @@ jobs:
 
   module:
     name: NixOS module evaluation and Niri config
-    # The test configuration is aarch64-linux, so its Flow pieces build natively here. Nothing is
-    # compiled: everything but Flow's own small derivations comes from cache.nixos.org.
+    # The test configuration is aarch64-linux, so its Flow pieces build natively here. Nothing big is
+    # compiled: everything but Flow's own small derivations comes from cache.nixos.org, about 0.7 GB
+    # each run (Quickshell's Qt, and gnome-control-center for flow-wifi-settings).
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v31

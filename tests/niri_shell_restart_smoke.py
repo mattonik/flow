@@ -177,14 +177,25 @@ def main():
                 shell_process.kill()
         # Remove the state folder only once nothing that writes it runs any more: a flow-spaces helper
         # outlives a shell stopped mid-refresh, and one still starting creates the folder again. Then give
-        # anything that still could the time the apps take to close to do so.
+        # anything that still could the time the apps take to close to do so. A process still there after
+        # the wait is what this test exists to catch: it is killed, so the guest stays clean, and reported.
+        killed = []
+
+        def gone():
+            if state_users():
+                return False
+            time.sleep(0.2)  # scan twice: a helper that forks and exits during one scan can escape it
+            return not state_users()
+
         try:
-            wait_for(lambda: not state_users(), "the development shell's helpers to exit", timeout=20)
+            wait_for(gone, "the development shell's helpers to exit", timeout=20)
         except RuntimeError:
             for pid in state_users():
                 try:
+                    command = (Path("/proc") / str(pid) / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace").strip()
                     os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
+                    killed.append(f"process {pid} ({command}), killed after 20 s")
+                except OSError:  # it exited meanwhile
                     pass
             time.sleep(1)
         shutil.rmtree(tmp, ignore_errors=True)
@@ -203,7 +214,7 @@ def main():
         except (OSError, subprocess.SubprocessError):
             pass
         time.sleep(1)
-        leftover = [f"folder {tmp}"] * Path(tmp).exists() + [f"process {pid}" for pid in state_users()]
+        leftover = killed + ([f"folder {tmp}"] if Path(tmp).exists() else []) + [f"process {pid}" for pid in state_users()]
         if leftover:
             print(f"Left behind: {', '.join(leftover)}", file=sys.stderr)
     if leftover:
