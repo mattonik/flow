@@ -154,6 +154,30 @@ class MoveToDisplayTest(unittest.TestCase):
         self.assertEqual(self.niri.layout()["DP-1"], [["terminal"], ["mail"], ["a"], ["b"], ["c"]])
         self.assertEqual(self.niri.active["DP-1"], 7)
 
+    def test_a_pin_follows_a_group_that_arrived_out_of_order(self):
+        self.setup({"eDP-1": [[1], [2], [3]], "DP-1": [[8]]}, focused=2, groups=[self.side_trio()],
+                   pins=[{"id": "gp", "label": "Trio", "app_id": "a", "members": ["a", "b", "c"], "group_id": "g",
+                          "display": LAPTOP_KEY}])
+
+        def scramble(args):
+            # Another client reorders the destination just after the last column arrives.
+            if args[1] == "focus-window" and len(self.niri.columns["DP-1"]) == 4:
+                cols = self.niri.columns["DP-1"]
+                cols[1], cols[3] = cols[3], cols[1]
+            return False
+
+        self.niri.fail_on = scramble
+        with self.assertRaisesRegex(ValueError, "arrived out of order"):
+            self.invoke("move-to-display", MONITOR_KEY)
+        self.assertEqual(self.saved_pins()[0]["display"], MONITOR_KEY)
+
+    def test_a_layer_is_not_moved_to_another_display(self):
+        ws = {"id": 1, "active_window_id": 9, "output": "eDP-1"}
+        layer = {"id": 9, "app_id": "notes", "workspace_id": 1, "is_floating": True,
+                 "layout": {"pos_in_scrolling_layout": None}}
+        with self.assertRaisesRegex(ValueError, "Make this Layer a space"):
+            spaces.move_plan([], ws, {"id": 2}, [layer])
+
     def test_refuses_unsafe_moves_without_moving_anything(self):
         self.setup({"eDP-1": [[1], [7], [2], [3]], "DP-1": [[8]]}, focused=1, groups=[self.side_trio()])
         for target, message in ((LAPTOP_KEY, "already on that display"), ("port:HDMI-A-1||", "not connected"),

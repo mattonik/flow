@@ -230,6 +230,16 @@ class RecoveryTest(unittest.TestCase):
                     restore.save(path, ws, [window(1, "one", 1)], registered=[group])
                 self.assertEqual(path.read_bytes(), before)
 
+    def test_a_layer_of_a_group_app_does_not_block_saving_the_group(self):
+        ws = {"id": 1, "active_window_id": 1}
+        stacked = [window(1, "one", 1), {**window(2, "two", 1), "layout": {"pos_in_scrolling_layout": [1, 2]}}]
+        layer = {**window(3, "one", 1), "is_floating": True, "layout": {"pos_in_scrolling_layout": None}}
+        group = {"id": "g", "label": "Pair", "members": ["one", "two"]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.json"
+            self.assertEqual(restore.save(path, ws, stacked + [layer], "current", registered=[group]), 2)
+            self.assertEqual([w["window_id"] for w in json.loads(path.read_text())["windows"]], [1, 2])
+
     def test_restore_refuses_to_change_side_by_side_or_transitioning_groups(self):
         ws = {"id": 1, "active_window_id": 1}
         windows = [window(1, "one", 1), window(2, "two", 2)]

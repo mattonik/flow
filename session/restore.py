@@ -209,7 +209,8 @@ def save(path, workspace, windows, session=None, pins=(), registered=None, displ
                            if not w.get("is_floating") else None)} for w in current]
     previous = spaces.saved_groups(path) if registered is None else registered
     old = json.loads(path.read_text()) if previous and path.exists() else {}
-    live_counts = Counter(w.get("app_id") for w in windows)
+    # A Layer of a Group app is not another member candidate; only tiled windows count.
+    live_counts = Counter(w.get("app_id") for w in windows if not w.get("is_floating"))
     for group in previous:
         apps = group["members"]
         if group in side_groups:
@@ -601,9 +602,10 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
     return report, len(restored)
 
 
-def focused_display(workspace):
-    """The focused workspace's display key and every connected display key."""
-    identities, _ = pin_store.identities(json.loads(spaces.command("-j", "outputs")))
+def focused_display(workspace, state=None):
+    """The focused workspace's display key and every connected display key, keyed as pins are."""
+    displays = pin_store.read(state / "spaces.json")[1] if state else {}
+    identities, _ = pin_store.identities(json.loads(spaces.command("-j", "outputs")), pin_store.shared_serials(displays))
     record = identities.get(workspace.get("output"))
     return (record["key"] if record else None), {r["key"] for r in identities.values()}
 
@@ -629,7 +631,7 @@ def main():
                     pins = pin_store.read(pins_path)[0]
                     pinned_apps(pins)
                     workspace, windows = spaces.snapshot()
-                    display = focused_display(workspace)[0]
+                    display = focused_display(workspace, path.parent)[0]
                     dirs = (os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share"), *os.environ.get("XDG_DATA_DIRS", "/run/current-system/sw/share:/usr/share").split(":"))
                     if op == "auto-save-checked":
                         entries = [{"app_id": w.get("app_id"), "column": (w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0]}
@@ -656,7 +658,7 @@ def main():
                     pins = pin_store.read(pins_path)[0]
                     pinned_apps(pins)
                     session = spaces.session_id()
-                    display, connected = focused_display(workspace)
+                    display, connected = focused_display(workspace, path.parent)
                     if data.get("display") and data["display"] != display and data["display"] in connected:
                         raise ValueError("This session was saved on another connected display; "
                                          "focus that display to restore it")

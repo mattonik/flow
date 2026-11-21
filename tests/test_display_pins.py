@@ -225,6 +225,13 @@ class RoutingTest(unittest.TestCase):
         self.assertEqual([(p["id"], p["display_state"]) for p in result["other_pins"]], [("t", "connected")])
         self.assertNotIn(MONITOR_KEY, pin_store.read(self.state / "spaces.json")[1])
 
+    def test_recovery_keys_a_lone_twin_monitor_as_pins_do(self):
+        (self.state / "spaces.json").write_text(json.dumps({"version": 2, "pins": [], "displays": {
+            "port:DP-1|Dell|U2723QE": {"connector": "DP-1", "label": "Dell U2723QE", "shared_serial": MONITOR_KEY}}}))
+        with patch.object(restore.spaces, "command", return_value=json.dumps({"DP-1": MONITOR})):
+            key, connected = restore.focused_display({"output": "DP-1"}, self.state)
+        self.assertEqual((key, connected), ("port:DP-1|Dell|U2723QE", {"port:DP-1|Dell|U2723QE"}))
+
     def test_reordering_refuses_a_pin_from_another_display(self):
         self.pins([{"id": "t", "label": "Terminal", "app_id": "terminal", "display": MONITOR_KEY},
                    {"id": "m", "label": "Mail", "app_id": "mail", "display": LAPTOP_KEY}])

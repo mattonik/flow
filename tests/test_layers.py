@@ -92,6 +92,33 @@ class LayerTest(unittest.TestCase):
         self.assertEqual(next(heights, "done"), "done")
         self.assertIn(("action", "center-window", "--id", 9), self.niri.log)
 
+    def test_a_committed_height_ends_the_wait_even_off_the_expected_size(self):
+        landscape = {"Virtual-1": {"logical": {"x": 0, "y": 0, "width": 1280, "height": 800}}}
+        heights = iter([634, 450, 999])
+        snapshot = self.niri.snapshot
+
+        def settling():
+            ws, windows = snapshot()
+            for w in windows:
+                if w["is_floating"]:
+                    w["layout"]["tile_size"] = [576, next(heights, 999)]
+            return ws, windows
+
+        self.niri("action", "focus-window", "--id", 9)
+        with patch.object(spaces, "display_state", return_value=(landscape, [])), \
+             patch.object(spaces, "snapshot", side_effect=settling):
+            self.run_op("make-layer")
+        # A working area smaller than the output gives 450, not 480; the wait still ends at once.
+        self.assertEqual(next(heights, None), 999)
+
+    def test_navigating_past_the_last_space_from_a_layer_keeps_the_layer(self):
+        with self.launch("notes"):
+            self.run_op("open-layer", "org.example.Notes")
+        self.niri("action", "focus-window", "--id", 9)
+        self.niri("action", "focus-window", "--id", 50)
+        self.run_op("navigate", "right")
+        self.assertEqual(self.niri.active, 50)
+
     def test_closing_a_layer_returns_focus_to_the_group_without_moving_anything(self):
         before = self.tiles()
         with self.launch("notes"):

@@ -136,6 +136,22 @@ class SameAppTest(unittest.TestCase):
         self.niri("action", "focus-window", "--id", 6)
         self.invoke("pin")
 
+    def test_after_a_bound_member_closes_other_windows_of_its_app_are_free(self):
+        self.invoke("create-group")
+        self.niri("action", "close-window", "--id", 2)
+        self.niri("action", "focus-window", "--id", 6)
+        self.invoke("make-layer")
+        self.assertEqual(self.niri.floating, [6])
+
+    def test_a_window_outside_the_live_group_is_refused_cleanly(self):
+        group = {"id": "g", "label": "Pair", "members": ["terminal", "editor"]}
+        ws, windows = self.niri.snapshot()
+        live = [w for w in windows if w["id"] in (1, 2)]
+        with patch.object(spaces, "group_of", return_value=group), \
+             patch.object(spaces, "live_group", return_value=(group, live)), \
+             self.assertRaisesRegex(ValueError, "not a Group member"):
+            spaces.group_of_window([group], 5, ws, windows, "s")
+
     def test_the_added_window_is_bound_even_when_its_app_has_another_window(self):
         self.niri.columns = [[1], [2], [5], [6]]
         self.niri.apps[5] = "viewer"

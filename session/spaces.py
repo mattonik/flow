@@ -165,13 +165,15 @@ def group_members(group, windows):
 def group_of(window, groups, windows):
     """The saved Group this window may belong to, or None.
 
-    Another window of a member app is outside the Group only when the member resolves to a different
-    window; while the member cannot be told apart, every window of that app is treated as possibly in it.
+    A window is in the Group when it is the member's window, or one of the member's candidates while
+    the member cannot be told apart: without a binding from this session that is every window of the
+    app, so ambiguity stays conservative. A bound member that closed has no candidates.
     """
     for group in groups if window else ():
         if window.get("app_id") in group["members"]:
-            member = group_members(group, windows)[group["members"].index(window["app_id"])]
-            if member is None or member["id"] == window["id"]:
+            match, others = member_candidates(group, window["app_id"], windows)
+            # A bound member that closed has no candidates, so other windows of its app stay outside.
+            if (match or {}).get("id") == window["id"] or (not match and any(w["id"] == window["id"] for w in others)):
                 return group
     return None
 
@@ -861,14 +863,17 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
         if arg not in ("left", "right"):
             raise ValueError("Choose left or right")
         focused = next((w for w in windows if w["id"] == workspace.get("active_window_id")), None)
-        if focused and focused.get("is_floating"):
+        layer = focused if focused and focused.get("is_floating") else None
+        if layer:
             # From a Layer, move from the space beneath it: Niri remembers that column.
             command("action", "focus-tiling")
             workspace, windows = snapshot()
         destinations = display_spaces(workspace, windows, groups, pins)
         index = next((i for i, space in enumerate(destinations) if space["active"]), None)
+        target = index + (-1 if arg == "left" else 1) if index is not None else None
+        if layer and (target is None or not 0 <= target < len(destinations)):
+            command("action", "focus-window", "--id", layer["id"])  # nowhere to go: keep the Layer
         if index is not None:
-            target = index + (-1 if arg == "left" else 1)
             if 0 <= target < len(destinations):
                 selected = destinations[target]
                 pin = next((p for p in pins if p.get("group_id") and p["group_id"] == selected.get("group_id")), None)
