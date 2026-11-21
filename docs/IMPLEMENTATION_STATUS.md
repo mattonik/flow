@@ -14,7 +14,7 @@ The recorded test environment is an Apple Silicon Mac running UTM 5.0.8, QEMU AR
 | F-006 Layer dismissal | Partial | A Layer is a compact floating window over the current space; floating windows are no longer counted as spaces (2026-11-20). Search can open any app as a Layer, and the switcher can make the focused standalone app one. In the guest, a Layer was opened over a pinned, resized side-by-side Group and closed again. The Group, its pin, every column and width, and the Flow state were unchanged, and focus returned to the same Group app. Portrait outputs get a bottom sheet, open Layers reshape when the output rotates, and a Layer can join the Group beneath it. Touch is not implemented. |
 | F-007 Desk/Overview | Partial | In the ARM64 guest, opening and closing Desk and Niri Overview retained the same four window IDs, workspace, scrolling positions and focused window. At a simulated 320×512 logical portrait size, Group switcher keyboard navigation and pin editing remained visible; the original display and window state were restored. Gesture, physical touch, multi-display and visual-transition acceptance remain open. |
 | F-008 Search | Partial | Search covers recent local files within the user’s home folder, Flow settings, quick settings, installed applications, open windows and saved pins, including closed apps. File indexing and commands are missing. The settings shell actions were checked through IPC. A recent-file result from an isolated history was selected in the guest and opened in Kate; naturally populated history and the settings results still need end-to-end validation. |
-| F-009 Island/system | Partial | Island, quick settings, lock and a temporary notification inbox exist. Apps can show Activities with progress in the island through the Platform API (ADR-0010, 2026-11-21); they are labelled with their owner and end with the app's connection. Quick Settings opens GNOME's Wi-Fi panel and the connection-profile editor, and controls one unambiguous MPRIS player. The guest showed the no-adapter Wi-Fi state; real scanning/authentication, durable notification history and independent availability across all contexts remain unverified. |
+| F-009 Island/system | Partial | Island, quick settings, lock, a temporary notification inbox and notification banners exist. Apps can show Activities with progress in the island through the Platform API (ADR-0010, 2026-11-21); they are labelled with their owner and end with the app's connection. Quick Settings opens GNOME's Wi-Fi panel and the connection-profile editor, and controls one unambiguous MPRIS player. The guest showed the no-adapter Wi-Fi state; real scanning/authentication, durable notification history and independent availability across all contexts remain unverified. |
 | F-010 Real accounts | Open | Two-user and guest isolation and switching have not been verified. |
 | F-011 Display hotplug | Partial | In the guest, a second virtual output was disconnected and reconnected through its DRM connector (2026-11-20). Its pins stayed with it and nothing on the other display was reordered, then the pins came back in order. A pinned three-app Group and a single app were moved between the two outputs as one destination each. Physical monitors, docks, connector changes and serial-number identity are unit-tested only. |
 | F-012 Portal correctness | Partial | The guest's portal broker is active and owns its session D-Bus name. A disposable unsandboxed chooser request returned the selected test-file URI, and a second request returned a cancel response. Sandboxed file access, saving, screenshots, screenshare, clipboard and drag/drop remain unverified. |
@@ -348,6 +348,57 @@ Not verified:
 - **Slider input:** dragging, tapping or the arrow keys, because the guest has no pointer or key injection. The restore-mode fix rests on Qt 6's documented `Binding` behaviour.
 - **Mute:** a click on *Mute*.
 - **Long panels:** scrolling to the focused control was not tried with enough notifications to need it.
+
+### Notification banners (2026-11-21)
+
+Before this, a notification that arrived with its panel closed showed only as a dot on the Island's bell. Now a banner shows it, as a phone does:
+- **What shows:** the newest notification, 12 px below the Island where the panels hang, in the panels' style. It shows the app in small capitals, the summary and the body (two lines each, plain text) and a dismiss button.
+- **Replacements:** a notification that replaces an earlier one (`replaces_id`: a chat's next message, a download's progress) shows again. Quickshell updates the object in place without a new signal, so the shell listens for its summary and body changing.
+- **How long:** 5 s of being seen.
+  - The count runs only while the banner can be seen and the pointer is not resting on it, and each time it starts it starts from 5 s.
+  - A critical notification stays until it is dismissed or opened, and only another critical one replaces it; anything else waits in the panel.
+  - A low-urgency one never shows a banner and waits in the panel, with the bell's dot.
+  - The notification's own expiry time is ignored; it governs the notification, not the banner.
+- **Where it shows:** only in the plain work view, as the work indicator. Desk, Overview and the switcher would cover it (the surface mapped later is on top), and the panels, search and the app menu sit where it does. While any of them is open the banner waits, without counting, and shows when it closes.
+- **Opening the panel:** this takes the banner, so it doesn't come back. A notification that arrives with the panel open shows no banner.
+- **Clicking:** a click runs the notification's default action, as freedesktop clients expect (a chat opens its conversation), or else opens the panel. × dismisses the notification.
+- **Keyboard:** the banner never takes the keyboard, so a notification cannot pull typing away from an app. The new Super+N opens the panel, which also takes the banner. The banner is announced as an alert, with the body as its description.
+- **Display:** the banner shows on the display niri chooses, normally the focused one; neither it nor the Island names a screen.
+- **IPC:** `banner` returns the summary (or app name) the banner is set to show, or "" when it is hidden. It reports the shell's state, not what the compositor draws.
+
+Tests:
+- **`niri_notification_banner_smoke.py`:** drives a development shell on a private bus (`dbus-run-session`), sending notifications with `busctl` and reading the banner's state through the IPC. It checks:
+  - a normal notification goes after 5.4 s, and a low-urgency one shows nothing;
+  - a newer one replaces the shown one, and one sent with `replaces_id` shows again;
+  - one the app closes leaves at once;
+  - quick settings hides a banner, which shows when quick settings closes;
+  - Desk hides one for 6 s, and it then shows with its time unspent;
+  - one that arrives with the panel open shows nothing after;
+  - a critical one stays past 9 s, a normal one doesn't push it off, and the panel takes it for good.
+- **Mutations:** thirteen mutations each fail the smoke, at the step that covers them:
+  - no banner, low urgency shown, a banner shown while the panel is open;
+  - no timeout, a 7 s timeout, a critical one timing out, a normal one evicting a critical one;
+  - the timer counting while hidden, replacements ignored, the panel not taking the banner;
+  - a banner over Desk or over quick settings, and a newer notification not replacing the shown one.
+  
+  An earlier version also checked that the notification was still tracked. Removing that check broke nothing: a notification the app closes is destroyed, which empties the banner's property. So the check was dropped.
+- **`test_notification_banner.py`:** checks the source for what the smoke can't see or reach:
+  - the banner never takes the keyboard, and Super+N is bound;
+  - the exact set of conditions that hide it, in any order;
+  - it sits where the panels sit;
+  - the dismiss button is 44 px and calls `dismiss()`;
+  - the card has the alert role;
+  - new and replaced notifications both reach `showBanner`, and a click runs the default action.
+  
+  Eleven mutations of the shell and the Niri config were checked against it. Ten fail it, among them an extra `|| root.deskOpen`, quick settings dropped from `workViewOnly`, a scaled or dead dismiss, a hidden card, a missing `showBanner` call, an ignored default action, and Super+N removed. The eleventh, a harmless reordering of the conditions, passes, as it should.
+
+A NEMESIS review of the first version found that replaced notifications never showed, that a normal notification pushed a critical banner off, that the timer ran while the banner was hidden or held, that the banner ignored Desk, Overview, the switcher and the app menu, no keyboard path outside Desk, no default action on click, false claims about the IPC and the display, and weak tests. All are fixed as described above.
+
+Not verified:
+- **Pointer:** clicking the banner, the default action and the pointer holding it, because the guest has no pointer injection.
+- **Screen reader:** the announcement was not heard with a running screen reader.
+- **Super+N:** not pressed, because the guest has no key injection; the binding passes `niri validate`.
+- **Several displays:** not tried.
 
 ### Moving along a row in Overview (2026-11-21)
 
