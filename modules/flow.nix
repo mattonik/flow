@@ -35,6 +35,18 @@ let
     export GI_TYPELIB_PATH="${pkgs.glib}/lib/girepository-1.0:${pkgs.gobject-introspection}/lib/girepository-1.0''${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
     exec ${pkgs.python3.withPackages (p: [ p.pygobject3 ])}/bin/python3 ${../session/search.py}
   '';
+  # The shell's files, as one store directory: /etc/flow, and the restart trigger of the shell's unit.
+  shellFiles = pkgs.linkFarm "flow-shell" [
+    { name = "shell.qml"; path = ../session/shell.qml; }
+    { name = "FloeTheme.qml"; path = ../session/FloeTheme.qml; }
+  ];
+  shellLauncher = pkgs.writeShellScriptBin "flow-shell" ''
+    # A user unit gets a minimal PATH; the shell and the apps it opens need the session's.
+    export PATH="/run/wrappers/bin:/etc/profiles/per-user/$(${pkgs.coreutils}/bin/id -un)/bin:/run/current-system/sw/bin:$PATH"
+    # One installed shell per user. This also ends a shell Niri started before the shell was a unit.
+    ${pkgs.procps}/bin/pkill -u "$(${pkgs.coreutils}/bin/id -u)" -f -x '(/[^ ]*/)?quickshell -p /etc/flow/shell\.qml' || true
+    exec ${lib.getExe pkgs.quickshell} -p /etc/flow/shell.qml
+  '';
   # Flow Platform API (docs/engineering/ADR-0009-platform-api-v1.md): a session D-Bus service and its CLI.
   apiPython = pkgs.python3.withPackages (p: [ p.pygobject3 ]);
   apiTypelibs = "${pkgs.glib}/lib/girepository-1.0:${pkgs.gobject-introspection}/lib/girepository-1.0";
@@ -132,9 +144,32 @@ in {
         Restart = "on-failure";
       };
     };
+    # The shell is a user unit of the Niri session. A switch restarts it when its files or Quickshell
+    # change, as it does any changed user unit: Quickshell's own live reload cannot load a
+    # configuration that adds an inline component, and does not reliably notice a switch.
+    # A switch restarts a changed unit but does not start a new one wanted by niri.service, so the
+    # first switch to this module would leave a shell Niri spawned before; start the unit while Niri
+    # runs (a no-op when it is running). Its launcher replaces the older shell.
+    system.userActivationScripts.flow-shell = ''
+      if ${pkgs.systemd}/bin/systemctl --user is-active --quiet niri.service; then
+        ${pkgs.systemd}/bin/systemctl --user start flow-shell.service || true
+      fi
+    '';
+    systemd.user.services.flow-shell = {
+      description = "Flow shell";
+      wantedBy = [ "niri.service" ];
+      partOf = [ "niri.service" ];
+      after = [ "niri.service" ];
+      restartTriggers = [ shellFiles pkgs.quickshell ];
+      serviceConfig = {
+        ExecStart = "${shellLauncher}/bin/flow-shell";
+        Restart = "on-failure";
+        # Apps opened from the shell are its children; stopping or restarting the shell must not end them.
+        KillMode = "process";
+      };
+    };
     environment.etc."niri/config.kdl".source = niriConfig;
-    environment.etc."flow/shell.qml".source = ../session/shell.qml;
-    environment.etc."flow/FloeTheme.qml".source = ../session/FloeTheme.qml;
+    environment.etc."flow".source = shellFiles;
     environment.etc."xdg/fuzzel/fuzzel.ini".text = ''
       [main]
       font=sans:size=12

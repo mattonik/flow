@@ -34,7 +34,7 @@ def wait_for(test, label, timeout=15):
         if value:
             return value
         time.sleep(0.2)
-    raise RuntimeError(f"Timed out waiting for {label}")
+    raise RuntimeError(f"Timed out waiting for {label() if callable(label) else label}")
 
 
 def main():
@@ -81,8 +81,17 @@ def main():
             except (subprocess.SubprocessError, ValueError):
                 return None
 
+        def owner():
+            """The name's owner, asked of the bus driver, which never starts a service. An installed Flow
+            puts an activation file for the same name on every bus; that service must not stand in."""
+            answer = subprocess.run(["busctl", f"--address={bus}", "call", "org.freedesktop.DBus", "/org/freedesktop/DBus",
+                                     "org.freedesktop.DBus", "GetConnectionUnixProcessID", "s", NAME], text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            return int(answer.stdout.split()[1]) if answer.returncode == 0 else None
+
         try:
             service = start(python, str(CODE / "flow_api.py"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            wait_for(lambda: owner() == service.pid, lambda: f"this checkout's service to own the name ({owner()})")
             wait_for(lambda: published.exists(), "the service to publish its activity file")
             start("quickshell", "-p", shell, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                   stderr=subprocess.DEVNULL)
@@ -134,14 +143,9 @@ def main():
             service.terminate()
             service.wait(timeout=10)
 
-            def owns_name():
-                listed = subprocess.run(["busctl", f"--address={bus}", "list", "--no-pager"], text=True,
-                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
-                return NAME in listed
-
-            wait_for(lambda: not owns_name(), "the first service to give up its name")
+            wait_for(lambda: owner() is None, "the first service to give up its name")
             doomed = start(python, str(CODE / "flow_api.py"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            wait_for(owns_name, "the second service to own the name")
+            wait_for(lambda: owner() == doomed.pid, lambda: f"the second service to own the name ({owner()})")
             wait_for(lambda: "event-stream" in subprocess.run(["ps", "-o", "cmd=", "--ppid", str(doomed.pid)], text=True,
                                                               stdout=subprocess.PIPE).stdout, "its event stream")
             doomed.send_signal(signal.SIGKILL)

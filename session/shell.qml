@@ -727,6 +727,10 @@ ShellRoot {
         }
     }
 
+    // The installed shell does not live-reload: a NixOS switch restarts its user unit instead.
+    // Quickshell cannot reload a configuration that adds an inline component, and its file watching
+    // does not reliably notice a switch. A development shell keeps live reload.
+    Component.onCompleted: if (Quickshell.shellDir === "/etc/flow") Quickshell.watchFiles = false
     IpcHandler {
         target: "desk"
         // Read-only, for scripted checks of shell feedback.

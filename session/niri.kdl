@@ -10,7 +10,7 @@ layout {
 }
 overview { backdrop-color "#0d1313"; }
 hotkey-overlay { skip-at-startup; }
-spawn-at-startup "@shell@" "-p" "@shellConfig@"
+// The shell is the flow-shell user unit, started with niri.service (modules/flow.nix).
 spawn-at-startup "@idle@" "-C" "/dev/null" "-w" "lock" "@lock@ -f -c 0b1015" "before-sleep" "@lock@ -f -c 0b1015"
 
 binds {
