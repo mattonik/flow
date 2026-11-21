@@ -220,6 +220,29 @@ Stopping the shell had leaked its `niri msg event-stream`, a bug older than Acti
 
 Not tested: a Flatpak app as the owner, and the narrow-screen dot outside the layout code.
 
+### The prototype's Overview, home indicator and search (2026-11-21)
+
+Flow used Niri's own Overview (a vertical zoom of workspaces), fuzzel for search and two buttons at the bottom; none of it looked like the prototype (`docs/Flow_v1.0_Contextual_Menus.html`). These are now Flow's own surfaces, styled from the tokens:
+- **Overview** (Super+O, the home indicator, Desk's *Overview*, the Platform API's `ShowOverview`):
+  - **Header:** "YOUR WORK / MAIN DISPLAY", **Overview.** and "Every space in its place."
+  - **The row:** this display's spaces in one row, the selected one centred with a 2 px ring. Each card has a caption with its pin number or a dot, its name, and PINNED, GROUP or SPACE.
+  - **Navigation:** half-pill rails at the screen's edges. A tool bar: *Open selected*, *Pin space* or *Unpin*, ← →, and *Your desk*. *Shortcuts* opens Niri's hotkey overlay.
+  - **Keys:** Left/Right, Home/End and the wheel choose; Enter or a click returns; Up, or the home indicator again, goes on to Desk; Escape returns unchanged.
+  - **Card images:** Niri offers no capture of one window, but a space fills its display while focused. So each card shows the snapshot taken the last time its space was on screen, as a phone's app switcher does: `grim`, at about 640 px wide, into `$XDG_RUNTIME_DIR/flow-snapshots`, which is gone at logout. Until then, a card shows the space's apps and title.
+  - **When snapshots are taken:** only in the plain work view, after a space has settled for 0.7 s.
+  - **Why not Qt's own capture:** Qt's `grabToImage` crashed Quickshell 0.3.2 on Niri, in every run that used it. Niri's screenshot action would fill the clipboard.
+- **The home indicator:** a 48 × 4 line (65 px and accent on hover) on a 160 × 44 target. It replaces the *Overview* and *Spaces* buttons. Tap it or drag it up: from work to Overview, from Overview to Desk, from Desk back to work. The Spaces switcher moved to Desk's tools and stays on Super+Tab.
+- **Search** (Super+K, Desk's search, the Island's *Apps*, which shows apps only):
+  - **The palette:** a shade and a 620 px palette with an 18 px radius. The field has a search icon and a close button.
+  - **Results:** each has an icon tile (the app's icon, or a line icon for its kind), a title, a detail line and ↗. The chosen row has a 2 px focus edge.
+  - **Footer:** "Enter to open · ↑ ↓ to choose · Esc to close".
+  - **Behaviour:** `search.py --json` lists the same results fuzzel showed, and the shell filters as you type and runs the choice. Apps open in their own scope.
+- **Platform API:** `ShowOverview` now opens Flow's Overview; `ShowLauncher` opens the panel's app view.
+
+`test_prototype_surfaces.py` checks the JSON results and the shell's wiring in its source. That covers which keys and calls open what, that snapshots are only taken of the plain work view with `grim` and never with `grabToImage`, and that choices are marked by more than tint. The surfaces were checked in the guest with a development shell.
+
+Not verified: a real wheel and touch drag on the home indicator, because the guest has no pointer injection, and the Overview with several displays. On a second display it shows that display's spaces, but snapshots come from the island's screen.
+
 ### Moving along a row in Overview (2026-11-21)
 
 Niri has no binds that apply only in Overview, so plain arrow keys cannot move through a display's row of spaces there. What does:

@@ -239,17 +239,21 @@ def main():
             steps.append("System ShowLauncher opened the launcher, and asking again left it open")
 
             def overview():
-                return json.loads(niri("-j", "overview-state"))["is_open"]
+                """Flow's Overview (the shell's), which ShowOverview opens."""
+                return subprocess.run(["quickshell", "ipc", "-p", shell, "call", "desk", "overview_state"], text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10).stdout.strip() == "open"
 
             flow("overview", "show")
-            wait_for(overview, "Niri's overview opened through System")
+            wait_for(overview, "Flow's Overview opened through System")
             flow("overview", "show")
             time.sleep(0.5)
             if not overview():
-                raise RuntimeError("A second ShowOverview closed the overview")
-            niri("action", "close-overview")
-            wait_for(lambda: not overview(), "the overview closed again")
-            steps.append("System ShowOverview opened Niri's overview, and asking again left it open")
+                raise RuntimeError("A second ShowOverview closed the Overview")
+            if desk() != "closed":
+                raise RuntimeError("A second ShowOverview went on to Desk")
+            subprocess.run(["quickshell", "ipc", "-p", shell, "call", "desk", "overview_close"], timeout=10)
+            wait_for(lambda: not overview(), "the Overview closed again")
+            steps.append("System ShowOverview opened Flow's Overview, and asking again left it open")
 
             burst = ("from gi.repository import Gio, GLib\n"
                      "bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)\n"

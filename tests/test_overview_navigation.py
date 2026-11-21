@@ -69,7 +69,7 @@ class IndicatorTest(unittest.TestCase):
         marker = SHELL.index("// Work indicator: the focused app of an active Group")
         window = block_after("PanelWindow {", SHELL[SHELL.rindex("PanelWindow {", 0, marker):])
         visibility = re.findall(r"visible: ([^\n]+)", window)
-        self.assertNotIn("overviewOpen", visibility[0])  # the window itself
+        self.assertNotRegex(visibility[0], r"root\.overviewOpen\b")  # the window itself: shown in Niri's Overview
         self.assertNotRegex(window, r"visible: !root\.overviewOpen\b")
         for direction, label in (("left", "Previous space"), ("right", "Next space")):
             button = window[window.rindex("IslandButton {", 0, window.index(f'Accessible.name: "{label}"')):]
