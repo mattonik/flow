@@ -23,7 +23,8 @@ them stacked in one column, so the switcher has more cards than fit and one with
 Eight notifications overflow the Notifications panel.
 
 Run inside a Niri session from the Flow checkout, with ``wtype``, ``grim`` and ``foot`` on PATH,
-``flow-spaces`` running this checkout's ``session/spaces.py``, and no other Flow shell running (stop
+``flow-spaces`` and ``flow-search`` running this checkout's ``session/spaces.py`` and ``session/search.py``
+(an older installed ``flow-search`` opens fuzzel instead of answering), and no other Flow shell running (stop
 ``flow-shell`` first: its surfaces would cover these). The session bus must be able to start the AT-SPI
 bus (``org.a11y.Bus``), as the Flow module provides. The Python needs pyatspi and PyGObject; an
 installed Flow's ``flow-appmenu`` wrapper names one and its ``GI_TYPELIB_PATH``::
@@ -234,16 +235,19 @@ def run(shell, bus, steps, problems):
             return None
 
         def frame_of(size):
-            app = shell_app()
-            if app is None:
-                raise RuntimeError("The development shell left the AT-SPI bus")
-            app.clear_cache()
-            for i in range(app.childCount):
-                frame = app.getChildAtIndex(i)
-                extents = frame.queryComponent().getExtents(pyatspi.WINDOW_COORDS)
-                if frame.getState().contains(pyatspi.STATE_SHOWING) and [extents.width, extents.height] == [round(v) for v in size]:
-                    return frame
-            raise RuntimeError(f"No showing AT-SPI window of size {size}")
+            """The AT-SPI window of a surface, by its size; it can show a moment after the shell reports it."""
+            def find():
+                app = shell_app()
+                if app is None:
+                    raise RuntimeError("The development shell left the AT-SPI bus")
+                app.clear_cache()
+                for i in range(app.childCount):
+                    frame = app.getChildAtIndex(i)
+                    extents = frame.queryComponent().getExtents(pyatspi.WINDOW_COORDS)
+                    if frame.getState().contains(pyatspi.STATE_SHOWING) and [extents.width, extents.height] == [round(v) for v in size]:
+                        return frame
+                return None
+            return wait_for(find, f"a showing AT-SPI window of size {size}", timeout=5)
 
         def nodes(node):
             """Visible descendants. Qt exposes only controls in view: one scrolled away has no object."""

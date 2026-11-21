@@ -363,6 +363,8 @@ A NEMESIS review of the first version found these problems, which the second ver
 
 **What it opens.** On the output's empty workspace it opens the smoke's own Foot window and six more, two of them stacked in one column, so the switcher has six cards in a scrolling row, one with two members. It sends eight notifications, which overflow their panel. Then it opens, in turn:
 - Desk, without and then with its settings;
+- Overview, where Tab goes through the island and the tools (the cards are chosen with the arrow keys);
+- search, where focus starts in the field;
 - the Spaces switcher, first with the test's window as the current space, then with it as a Layer;
 - Quick settings;
 - Notifications.
@@ -394,8 +396,29 @@ The shell's read-only `controls` IPC call reports what each control shows. Qt ex
 
   Names in states the smoke does not reach were fixed the same way, and are not checked: Pin here, Make this the main display, a Group's window buttons (now named by the app they show), and the Group card and repair actions. Add to Group on a card now shows the whole app name, elided, instead of a 24-character cut that the name could not contain.
 - **"Current" missing.** The current space's card showed "Current" but did not report it to assistive technology.
+- **Focus dropped by the background refresh.** Session recovery and most switcher actions were disabled while `flow-spaces` ran, the periodic refresh included (every 30 s, and after Niri events). A focused control that turns disabled loses keyboard focus. A refresh now leaves them enabled, as it already left the pins. Space actions queue behind it, and `flow-recovery` waits for `flow-spaces` on `spaces.lock`.
+- **Overview and search** (added on main while this work ran):
+  - the search field showed no focus at all, so it now draws the 2 px ring at its edge when focused, as the Group name field does;
+  - Overview's Open selected and Pin space names did not hold their labels;
+  - Overview's edge rails sat half off the screen, so their rings could not be whole. They are now for a pointer or a finger only: the keyboard has the arrow keys and the tools' ← →.
 
-MUTATIONS_PLACEHOLDER
+**Shown to fail.** Each fix and each check was neutralised in its own copy of the shell, and the smoke failed every time, for the reason intended. That is 27 mutations, each changing a line or two:
+- **Names and states:** eight of the name and description fixes reverted together in one copy, which the smoke reported as eleven problems, each by name. "Current" dropped from selected buttons in another copy.
+- **Progress roles:** removing the role from the island's chip, and separately from Desk's cards.
+- **Switch:** Return doing nothing on a switch.
+- **Scrolling:** no room kept for the ring (Save session); no sideways scrolling (the switcher's last card); no scrolling in the Notifications panel.
+- **Unnamed panels:** the ScrollView of Quick settings, and separately of Notifications, exposed again.
+- **Rings:** a hidden ring, a ring that is always on, a ring in another colour, a ring drawn inside the button, the search field without its ring, and an Overview rail back in the Tab order.
+- **Keys and order:**
+  - buttons Tab cannot reach;
+  - Return doing nothing on a button;
+  - a Shift+Tab detour;
+  - Desk's tools laid out right to left while Tab goes left to right.
+- **Closing:** Escape doing nothing on each of the six surfaces, and Quick settings handing focus to another window as it closes.
+
+Not shown to fail:
+- the check that no key reaches the app while a surface is open, because a mutation that lets keys through stops focus moving first;
+- keeping controls enabled through a background refresh, because a refresh landing between two key presses is a race the smoke does not stage.
 
 **Guest check of the module.** A build of this branch was activated in the guest without a new generation. `org.a11y.Bus` was then activatable on the session bus, and the smoke passed with no extra session configuration. The previous system was activated again afterward.
 
