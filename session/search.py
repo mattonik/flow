@@ -3,7 +3,6 @@
 import json
 import os
 from pathlib import Path
-import signal
 import subprocess
 import sys
 from urllib.parse import unquote, urlsplit
@@ -69,11 +68,6 @@ def results(snapshot, apps, files=()):
     return [(" ".join(title.split()), " ".join(detail.split()), kind, value, glyph) for title, detail, kind, value, glyph in result]
 
 
-def entries(snapshot, apps, files=()):
-    """Fuzzel's rows: one line per result, and the action it runs."""
-    return [(f"{title} · {detail}", (kind, value)) for title, detail, kind, value, _ in results(snapshot, apps, files)]
-
-
 def as_json(found):
     """The rows Flow's search panel shows. An app is named by its desktop file, which the shell opens."""
     rows = []
@@ -86,49 +80,39 @@ def as_json(found):
     return json.dumps(rows)
 
 
-def main():
-    from gi.repository import Gio, GLib
+def open_result(kind, value):
+    """Opens an app (by its desktop file) or a file (by its URI) for the shell, in an app scope of its own when
+    the installed shell asks for one. The installed wrapper puts gio on PATH; the shell's own PATH lacks it."""
+    command = {"app": ["gio", "launch"], "file": ["gio", "open"]}.get(kind)
+    if command is None:
+        print(f"Flow search: cannot open a {kind!r} result", file=sys.stderr)
+        return 2
+    try:
+        # The app inherits gio's streams: none of them may be the shell's pipe, which it would hold open.
+        return subprocess.run(app_command([*command, value]), stdin=subprocess.DEVNULL,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+    except OSError as exc:
+        print(f"Flow search: {exc}", file=sys.stderr)
+        return 127
+
+
+def main(args):
+    """``--json`` lists every result for the shell's search panel; ``--open KIND VALUE`` opens an app or file."""
+    if len(args) == 3 and args[0] == "--open":
+        return open_result(args[1], args[2])
+    if args != ["--json"]:
+        print("usage: flow-search --json | --open app|file VALUE", file=sys.stderr)
+        return 2
+    from gi.repository import Gio
     try:
         snapshot = json.loads(subprocess.check_output(["flow-spaces", "refresh"], text=True))
     except (OSError, ValueError, subprocess.SubprocessError):
         snapshot = {}
     home = Path.home()
     history = Path(os.environ.get("XDG_DATA_HOME") or home / ".local/share") / "recently-used.xbel"
-    if "--json" in sys.argv[1:]:
-        print(as_json(results(snapshot, Gio.AppInfo.get_all(), recent_files(history, home))))
-        return
-    choices = entries(snapshot, Gio.AppInfo.get_all(), recent_files(history, home))
-    # FLOW_FUZZEL is fuzzel in Floe's theme when installed (modules/flow.nix).
-    result = subprocess.run([os.environ.get("FLOW_FUZZEL") or "fuzzel", "--keyboard-focus=on-demand",
-                             "--override=main.exit-on-keyboard-focus-loss=yes", "--dmenu", "--index", "--only-match",
-                             "--placeholder", "Search apps, spaces and files"],
-                            input="".join(label + "\n" for label, _ in choices), text=True, capture_output=True)
-    if result.returncode != 0:
-        return
-    try:
-        index = int(result.stdout.strip())
-        if not 0 <= index < len(choices):
-            return
-        kind, value = choices[index][1]
-        if kind == "app":
-            if os.environ.get("FLOW_APP_SCOPES") == "1" and value.get_filename():
-                subprocess.run(app_command(["gio", "launch", value.get_filename()]), check=True)
-            else:
-                value.launch([], None)
-        elif kind == "file":
-            if os.environ.get("FLOW_APP_SCOPES") == "1":
-                subprocess.run(app_command(["gio", "open", value]), check=True)
-            else:
-                Gio.AppInfo.launch_default_for_uri(value, None)
-        else:
-            action = {"settings": value, "pin": "focus_pin", "window": "focus_window", "layer": "open_layer"}[kind]
-            args = ["quickshell", "ipc", "-p", "/etc/flow/shell.qml", "call", "desk", action]
-            subprocess.run(args + ([value] if kind != "settings" else []), check=True)
-    except (ValueError, OSError, subprocess.SubprocessError, GLib.Error) as exc:
-        print(f"Flow search: {exc}", file=sys.stderr)
+    print(as_json(results(snapshot, Gio.AppInfo.get_all(), recent_files(history, home))))
+    return 0
 
 
 if __name__ == "__main__":
-    # subprocess.run cleans up Fuzzel when the shell terminates this search.
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    main()
+    sys.exit(main(sys.argv[1:]))

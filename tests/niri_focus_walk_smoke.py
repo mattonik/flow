@@ -560,6 +560,9 @@ def run(shell, bus, steps, problems):
                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             processes.append(shell_process)
             wait_for(lambda: ipc("desk_state") == "closed", "the development shell", timeout=20)
+            # A keymap key() never sends, so its first call's keymap differs from the last one Niri sent, even
+            # when an earlier run stopped right after that same first call.
+            subprocess.run(["wtype", "-k", "Hyper_L"], check=True, timeout=10)
             wait_for(shell_app, "the shell on the AT-SPI bus")
             island = wait_for(lambda: controls("island"), "the island")
             chips = progress_bars(island[0]["window"])

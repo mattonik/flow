@@ -172,7 +172,7 @@ def main():
             moved = {s: before[s][1] != where()[s][1] for s in ("b1", "b2")}
             if any(moved.values()):
                 raise RuntimeError(f"Disconnect reordered the other display's windows: {moved}")
-            listed = [label for label, action in search.entries(unplugged, []) if action[0] == "pin"]
+            listed = [title for title, _, kind, _, _ in search.results(unplugged, []) if kind == "pin"]
             if len(listed) != 3:
                 raise RuntimeError(f"Search did not list disconnected pins with open windows: {listed}")
             spaces("focus", pins["b1"])

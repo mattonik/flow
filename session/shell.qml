@@ -591,6 +591,7 @@ ShellRoot {
     property bool searchOpen: false
     property bool searchAppsOnly: false
     property var searchResults: []
+    property bool searchFailed: false   // flow-search has not printed a list of results: say so, not "Nothing matches"
     property string searchQuery: ""
     property int searchIndex: 0
     readonly property var searchMatches: {
@@ -598,14 +599,15 @@ ShellRoot {
         const pool = searchAppsOnly ? searchResults.filter(r => r.kind === "app") : searchResults
         if (!query) return pool.slice(0, 60)
         const scored = []
-        for (const result of pool) {
+        pool.forEach((result, index) => {
             const title = result.title.toLowerCase(), detail = result.detail.toLowerCase()
             const words = title.split(/[\s·:/._-]+/)
-            const score = title.startsWith(query) ? 0 : words.some(w => w.startsWith(query)) ? 1
-                : title.includes(query) ? 2 : detail.includes(query) ? 3 : -1
-            if (score >= 0) scored.push({score: score, result: result})
-        }
-        scored.sort((a, b) => a.score - b.score)
+            const score = title === query ? 0 : title.startsWith(query) ? 1 : words.some(w => w.startsWith(query)) ? 2
+                : title.includes(query) ? 3 : detail.includes(query) ? 4 : -1
+            if (score >= 0) scored.push({score: score, index: index, result: result})
+        })
+        // Ties keep search.py's order (an app before the same app as a Layer): V4's sort is not stable.
+        scored.sort((a, b) => a.score - b.score || a.index - b.index)
         return scored.slice(0, 60).map(entry => entry.result)
     }
     onSearchMatchesChanged: searchIndex = 0
@@ -614,9 +616,35 @@ ShellRoot {
         command: ["flow-search", "--json"]
         stdout: StdioCollector {
             onStreamFinished: {
-                try { root.searchResults = JSON.parse(this.text) } catch (error) { root.searchResults = [] }
+                let rows = null
+                try { rows = JSON.parse(this.text) } catch (error) {}
+                root.searchFailed = !Array.isArray(rows)
+                root.searchResults = Array.isArray(rows) ? rows : []
             }
         }
+    }
+    // Apps and files open through flow-search, whose wrapper has gio. One process per open, so each failure
+    // is shown: one that ran and failed, and one that never started (a Process that cannot start never exits).
+    Component {
+        id: searchOpener
+        Process {
+            property string title: ""
+            property bool began: false
+            property bool done: false
+            function finish(failed) {
+                if (done) return
+                done = true
+                if (failed) root.showToast("Couldn’t open " + title)
+                destroy()
+            }
+            onStarted: began = true
+            onExited: exitCode => finish(exitCode !== 0)
+            onRunningChanged: if (!running && !began) finish(true)
+        }
+    }
+    function openSearchResult(result) {
+        const opener = searchOpener.createObject(root, { title: result.title, command: ["flow-search", "--open", result.kind, result.value] })
+        opener.running = true
     }
     function openSearchPanel(appsOnly) {
         overviewPending = false
@@ -631,6 +659,7 @@ ShellRoot {
         searchQuery = ""
         searchIndex = 0
         searchResults = []   // never the last run's: its windows may have closed
+        searchFailed = true    // until flow-search prints its list: one that never starts never answers
         searchOpen = true
         if (!searchList.running) searchList.running = true
     }
@@ -639,8 +668,7 @@ ShellRoot {
         if (!result) return
         searchOpen = false
         if (result.kind !== "settings") deskOpen = false
-        if (result.kind === "app") root.launchApp(["gio", "launch", result.value])
-        else if (result.kind === "file") root.launchApp(["gio", "open", result.value])
+        if (result.kind === "app" || result.kind === "file") openSearchResult(result)
         else if (result.kind === "pin") spaceAction("focus", result.value)
         else if (result.kind === "window") spaceAction("focus-window", result.value)
         else if (result.kind === "layer") spaceAction("open-layer", result.value)
@@ -1260,6 +1288,13 @@ ShellRoot {
                                    notifications: root.notificationsOpen, niri_overview: root.overviewOpen})
         }
         function search_state(): string { return root.searchOpen ? (root.searchAppsOnly ? "apps" : "open") : "closed" }
+        // What the search panel shows, for scripted checks: its rows, or the message in their place.
+        function search_view(): string {
+            return JSON.stringify({ rows: root.searchMatches.map(r => ({ kind: r.kind, title: r.title, icon: r.icon })),
+                                    message: root.searchMatches.length ? "" : searchEmpty.text,
+                                    // The message, as laid out, ends above the footer's rule.
+                                    message_clear: searchEmpty.y + Math.max(searchEmpty.height, searchEmpty.contentHeight) <= searchFooter.y - 1 })
+        }
         function activity_list(): string { return JSON.stringify(root.activities.map(a => root.activityText(a))) }
         // Read-only, for tests/niri_focus_walk_smoke.py: the visible buttons and switches of every shell surface
         // but the opt-in app menu, with the words each shows, its state, its place in its window and where its
@@ -2264,7 +2299,9 @@ ShellRoot {
             id: palette
             x: (parent.width - width) / 2; y: Math.max(64, Math.min(190, parent.height * 0.17))
             width: Math.min(620, parent.width - 28)
-            height: searchHeader.height + 1 + Math.min(searchView.contentHeight + 20, 7 * 58 + 20) + 1 + searchFooter.height
+            // The results area; with no rows it keeps room for its message, which never meets the footer.
+            readonly property real resultsHeight: root.searchMatches.length ? Math.min(searchView.contentHeight + 20, 7 * 58 + 20) : 76
+            height: searchHeader.height + 1 + resultsHeight + 1 + searchFooter.height
             radius: 18; color: floeTheme.surface; border.width: 1; border.color: floeTheme.border
             clip: true
             MouseArea { anchors.fill: parent }   // clicks on the palette never reach the shade
@@ -2362,10 +2399,18 @@ ShellRoot {
                 }
             }
             Text {
+                id: searchEmpty
                 visible: root.searchMatches.length === 0
-                anchors { top: searchHeader.bottom; topMargin: 24; horizontalCenter: parent.horizontalCenter }
-                text: searchList.running ? "Looking…" : "Nothing matches “" + root.searchQuery + "”"
+                anchors { top: searchHeader.bottom; topMargin: 1; left: parent.left; right: parent.right; margins: 20 }
+                height: palette.resultsHeight
+                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
+                text: searchList.running ? "Looking…"
+                    : root.searchFailed ? "Search couldn’t list anything. Close it and try again."
+                    : root.searchQuery.trim() ? "Nothing matches “" + root.searchQuery.trim() + "”"
+                    : "Nothing to show"
                 textFormat: Text.PlainText; color: floeTheme.textMuted; font.pixelSize: 14; font.family: floeTheme.interfaceFont
+                Accessible.role: Accessible.StaticText; Accessible.name: text
             }
             Rectangle { anchors.bottom: searchFooter.top; width: parent.width; height: 1; color: Qt.alpha(floeTheme.border, 0.5) }
             Item {
