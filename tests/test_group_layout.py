@@ -1,4 +1,6 @@
 import json
+import contextlib
+import io
 from pathlib import Path
 import sys
 import tempfile
@@ -29,6 +31,17 @@ class GroupLayoutTest(unittest.TestCase):
         self.assertTrue(result[0]["active"])
         self.assertEqual(result[0]["id"], 12)
         self.assertEqual([w["app_id"] for w in result[1]["members"]], ["other"])
+
+    def test_dissolve_side_by_side_keeps_windows_and_rejects_pins(self):
+        registry = [dict(self.group)]
+        with patch.object(spaces, "snapshot", return_value=(self.ws, self.windows)), \
+             patch.object(spaces, "command") as command:
+            with self.assertRaisesRegex(ValueError, "Unpin"):
+                spaces.run([{"group_id": "g", "members": ["a", "b"]}], "dissolve-group", "g", self.ws, self.windows, "s", registry)
+            spaces.run([], "dissolve-group", "g", self.ws, self.windows, "s", registry)
+            self.assertEqual(registry, [])
+            self.assertEqual([w["id"] for w in self.windows], [11, 12, 13])
+            command.assert_not_called()
 
     def test_side_by_side_projection_rejects_ambiguous_or_incomplete_members(self):
         cases = {
@@ -81,6 +94,75 @@ class GroupLayoutTest(unittest.TestCase):
                 self.assertEqual(pins[0]["id"], "p")
                 self.assertEqual(pins[0]["window_ids"], [11, 12])
                 self.assertEqual(pins[0]["window_id"], 12)
+
+    def test_custom_side_proportions_survive_stack_and_resume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            group = dict(self.group)
+            registry = [group]
+            self.windows[0]["layout"]["tile_size"] = [650, 700]
+            self.windows[1]["layout"]["tile_size"] = [350, 700]
+            groups.write(state / "groups.json", registry)
+
+            def action(*args):
+                if args[1] == "consume-or-expel-window-left":
+                    self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+                elif args[1] == "consume-or-expel-window-right":
+                    self.windows[1]["layout"]["pos_in_scrolling_layout"] = [2, 1]
+                elif args[1] == "set-window-width" and args[-1] == "65.0%":
+                    raise OSError("interrupted")
+
+            with patch.object(spaces, "snapshot", side_effect=lambda: (self.ws, self.windows)), \
+                 patch.object(spaces, "command", side_effect=action):
+                spaces.change_group_layout(state, registry, [], "g", self.ws, self.windows, "s")
+                self.assertEqual(groups.load(state)[0]["side_ratio"], 0.65)
+                with self.assertRaisesRegex(ValueError, "interrupted"):
+                    spaces.change_group_layout(state, registry, [], "g", self.ws, self.windows, "s")
+            self.assertEqual(groups.load(state)[0]["pending_layout"], "side-by-side")
+            actions = []
+            with patch.object(spaces, "snapshot", side_effect=lambda: (self.ws, self.windows)), \
+                 patch.object(spaces, "command", side_effect=lambda *args: actions.append(args)):
+                spaces.change_group_layout(state, registry, [], "g", self.ws, self.windows, "s", resume=True)
+            self.assertEqual([args[-1] for args in actions], ["65.0%", "35.0%"])
+            self.assertEqual(groups.load(state)[0]["side_ratio"], 0.65)
+
+    def test_automatic_layout_uses_focused_output_geometry(self):
+        for width, height, active, expected in ((800, 1200, 11, True), (1200, 800, 11, False),
+                                                  (800, 1200, 13, True)):
+            ws = {**self.ws, "output": "test", "active_window_id": active}
+            with self.subTest(width=width, active=active), tempfile.TemporaryDirectory() as directory:
+                state = Path(directory)
+                group = {**self.group, "auto_layout": True}
+                groups.write(state / "groups.json", [group])
+                (state / "groups.initialized").touch()
+                outputs = json.dumps({"test": {"logical": {"width": width, "height": height}}})
+                with patch.object(sys, "argv", ["spaces", "auto-layout"]), \
+                     patch.object(spaces, "snapshot", return_value=(ws, self.windows)), \
+                     patch.object(spaces, "session_id", return_value="s"), \
+                     patch.object(spaces, "command", return_value=outputs), \
+                     patch.object(spaces, "change_group_layout") as change, \
+                     contextlib.redirect_stdout(io.StringIO()):
+                    spaces.run_locked(state)
+                self.assertEqual(change.called, expected)
+
+    def test_size_constraints_leave_transition_pending(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            self.windows[0]["layout"]["pos_in_scrolling_layout"] = [1, 1]
+            self.windows[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+            self.windows[0]["layout"]["tile_size"] = [800, 700]
+            self.windows[1]["layout"]["tile_size"] = [200, 700]
+            group = {"id": "g", "label": "Work", "members": ["a", "b"], "layout": "stack"}
+            registry = [group]
+            groups.write(state / "groups.json", registry)
+            def action(*args):
+                if args[1] == "consume-or-expel-window-right":
+                    self.windows[1]["layout"]["pos_in_scrolling_layout"] = [2, 1]
+            with patch.object(spaces, "snapshot", side_effect=lambda: (self.ws, self.windows)), \
+                 patch.object(spaces, "command", side_effect=action), \
+                 self.assertRaisesRegex(ValueError, "size constraints"):
+                spaces.change_group_layout(state, registry, [], "g", self.ws, self.windows, "s")
+            self.assertEqual(groups.load(state)[0]["pending_layout"], "side-by-side")
 
     def test_action_failure_keeps_pending_registry_for_resume(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -220,6 +220,8 @@ def main():
             if not pin:
                 raise RuntimeError("Group pin is unavailable")
             pin_id = pin["id"]
+            if not pin.get("display") or pin["display"] != group_pin["display"]["key"]:
+                raise RuntimeError("Group pin display missing from the switcher data")
 
             # Pin a separate neighboring app so layout changes must preserve its identity and availability.
             niri("action", "focus-window", "--id", ids[2])
@@ -228,6 +230,19 @@ def main():
             if len(neighbors) != 1:
                 raise RuntimeError("Could not pin the neighboring disposable app")
             neighbor_pin_id = neighbors[0]["id"]
+            display_key = neighbor_pin["display"]["key"]
+            if not display_key or neighbors[0].get("display") != display_key:
+                raise RuntimeError("App pin display missing from the switcher data")
+            saved_pins = json.loads((temporary_state / "spaces.json").read_text())
+            if {p["id"]: p.get("display") for p in saved_pins["pins"]} != {pin_id: display_key, neighbor_pin_id: display_key}:
+                raise RuntimeError("Pins did not record their display")
+            # Rewrite the pins as a version 1 list without displays, then confirm migration.
+            legacy = [{k: v for k, v in pin.items() if k != "display"} for pin in saved_pins["pins"]]
+            (temporary_state / "spaces.json").write_text(json.dumps(legacy))
+            cli(cli_env, "refresh")
+            migrated = json.loads((temporary_state / "spaces.json").read_text())
+            if {p["id"]: p.get("display") for p in migrated["pins"]} != {pin_id: display_key, neighbor_pin_id: display_key}:
+                raise RuntimeError("Legacy pins were not assigned to their display")
             niri("action", "focus-window", "--id", ids[0])
 
             focused_id = focus().get("active_window_id")
@@ -338,11 +353,71 @@ def main():
             if not any(p.get("id") == neighbor_pin_id and p.get("available") for p in stacked["pins"]):
                 raise RuntimeError("Neighboring pin was lost or became unavailable after stacking")
 
+            cli(cli_env, "group-layout", group_id)
+            for ident, width in zip(ids[:2], ("65%", "35%")):
+                niri("action", "set-window-width", "--id", ident, width)
+            wait_for(lambda: group_pair(lambda ws: ws[0]["layout"]["tile_size"][0] > ws[1]["layout"]["tile_size"][0] * 1.5), "custom Group proportions")
+            cli(cli_env, "group-layout", group_id)
+            cli(cli_env, "group-layout", group_id)
+            wait_for(lambda: group_pair(lambda ws: ws[0]["layout"]["tile_size"][0] > ws[1]["layout"]["tile_size"][0] * 1.5), "restored Group proportions")
+            recover("save")
+            saved = json.loads((temporary_state / "session.json").read_text())
+            if not 0.60 < saved["groups"][0].get("side_ratio", 0) < 0.70:
+                raise RuntimeError("Custom proportions were not saved")
+            for ident in ids[:2]:
+                niri("action", "set-window-width", "--id", ident, "50%")
+            recover("restore")
+            wait_for(lambda: group_pair(lambda ws: ws[0]["layout"]["tile_size"][0] > ws[1]["layout"]["tile_size"][0] * 1.5), "recovered custom proportions")
+            (temporary_state / "session.json").unlink()
+            cli(cli_env, "toggle-auto-layout", group_id)
+            original_transform = read("outputs")[original["output"]]["logical"]["transform"]
+            if original_transform != "Normal":
+                raise RuntimeError("Automatic layout smoke test requires an unrotated display")
+            niri("action", "focus-window", "--id", ids[2])
+            # FLOW_SHELL selects a development shell; its flow-spaces must come first on PATH.
+            shell = subprocess.Popen(["quickshell", "-p", os.environ.get("FLOW_SHELL", "/etc/flow/shell.qml")], env=cli_env,
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                niri("output", original["output"], "transform", "90")
+                wait_for(lambda: read("outputs")[original["output"]]["logical"]["height"] > read("outputs")[original["output"]]["logical"]["width"], "portrait output")
+                active_before = focus().get("active_window_id")
+                wait_for(lambda: group_pair(lambda ws: ws[0]["layout"]["pos_in_scrolling_layout"][0] == ws[1]["layout"]["pos_in_scrolling_layout"][0]), "automatic portrait stack")
+                portrait = cli(cli_env, "refresh")
+                if not group_space(portrait, group_id) or focus().get("active_window_id") != active_before or not pinned(portrait, group_id, pin_id):
+                    raise RuntimeError("Portrait transition changed Group, pin, or focus")
+                niri("output", original["output"], "transform", "normal")
+                wait_for(lambda: read("outputs")[original["output"]]["logical"]["width"] > read("outputs")[original["output"]]["logical"]["height"], "landscape output")
+                wait_for(lambda: group_pair(lambda ws: ws[0]["layout"]["pos_in_scrolling_layout"][0] + 1 == ws[1]["layout"]["pos_in_scrolling_layout"][0] and ws[0]["layout"]["tile_size"][0] > ws[1]["layout"]["tile_size"][0] * 1.5), "automatic landscape proportions")
+                landscape = cli(cli_env, "refresh")
+                if not group_space(landscape, group_id) or focus().get("active_window_id") != active_before or not pinned(landscape, group_id, pin_id):
+                    raise RuntimeError("Landscape transition changed Group, pin, or focus")
+            finally:
+                shell.terminate()
+                shell.wait(timeout=5)
+                niri("output", original["output"], "transform", "normal")
+            niri("action", "focus-window", "--id", ids[0])
+            cli(cli_env, "group-layout", group_id)
+            if saved_groups(tmp)[0].get("auto_layout"):
+                raise RuntimeError("Manual layout did not turn off automatic layout")
+            cli(cli_env, "auto-layout")
+            if not group_pair(lambda ws: ws[0]["layout"]["pos_in_scrolling_layout"][0] == ws[1]["layout"]["pos_in_scrolling_layout"][0]):
+                raise RuntimeError("Automatic layout overrode a manual choice")
+            cli(cli_env, "group-layout", group_id)
+            cli(cli_env, "unpin", pin_id)
+            before = [(w["id"], w["layout"]["pos_in_scrolling_layout"]) for w in test_windows()]
+            focused = focus().get("active_window_id")
+            dissolved = cli(cli_env, "dissolve-group", group_id)
+            after = [(w["id"], w["layout"]["pos_in_scrolling_layout"]) for w in test_windows()]
+            if before != after or focus().get("active_window_id") != focused or saved_groups(tmp):
+                raise RuntimeError("Dissolving side-by-side changed windows or focus")
+            if group_space(dissolved, group_id):
+                raise RuntimeError("Dissolved Group remains in the switcher")
+
             result = {"result": "pass", "niri": niri("version").strip(), "group_id": group_id,
                       "pin_id": pin_id, "neighbor_pin_id": neighbor_pin_id, "window_ids": ids,
                       "side_by_side_widths": widths, "focus_preserved": True, "logical_navigation": True,
                       "separated_group_repaired": True, "unpinned_side_recovery": True,
-                      "pinned_side_recovery": True}
+                      "pinned_side_recovery": True, "side_by_side_dissolved": True, "automatic_rotation": True, "unfocused_group_focus_preserved": True, "manual_override": True}
             if (temporary_state / "session.json").exists():
                 raise RuntimeError("Layout changes unexpectedly wrote a temporary session snapshot")
     finally:

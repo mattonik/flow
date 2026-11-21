@@ -169,7 +169,7 @@ def main():
             assert 'error' in rejected and saved()[0]['id'] == legacy_id
             unchanged()
             cli(env, 'spaces.py', 'unpin', 'legacy-pin')
-            assert not json.loads(pins.read_text()) and saved()[0]['id'] == legacy_id
+            assert not json.loads(pins.read_text())['pins'] and saved()[0]['id'] == legacy_id
             pinned = cli(env, 'spaces.py', 'pin-group', legacy_id)
             assert len(pinned['pins']) == 1 and pinned['pins'][0]['group_id'] == legacy_id
             cli(env, 'spaces.py', 'unpin', pinned['pins'][0]['id'])

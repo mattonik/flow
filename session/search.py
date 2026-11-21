@@ -44,13 +44,22 @@ def entries(snapshot, apps, files=()):
     for pin in snapshot.get("pins", []):
         status = "Pinned space" if pin.get("available") else "Pinned Group · Unavailable" if pin.get("kind") == "group" else "Pinned space · Open"
         result.append((f"{pin['label']}  ·  {status}", ("pin", pin["id"])))
+    for pin in snapshot.get("other_pins", []):
+        # Pins of a disconnected display are listed only while their window is open somewhere.
+        if pin.get("display_state") == "connected" or pin.get("available"):
+            where = pin.get("display_label") or "another display"
+            result.append((f"{pin['label']}  ·  Pinned on {where}", ("pin", pin["id"])))
     for window in snapshot.get("windows", []):
         result.append((f"{window['label']}  ·  Open window  ·  {window['app_id']}", ("window", str(window["id"]))))
     for path in files:
         result.append((f"{path.name}  ·  Recent file  ·  {path.parent}", ("file", path.as_uri())))
-    for app in sorted(apps, key=lambda a: a.get_display_name().casefold()):
-        if app.should_show():
-            result.append((f"{app.get_display_name()}  ·  Application", ("app", app)))
+    shown = [app for app in sorted(apps, key=lambda a: a.get_display_name().casefold()) if app.should_show()]
+    for app in shown:
+        result.append((f"{app.get_display_name()}  ·  Application", ("app", app)))
+    # After every ordinary entry: the same apps opened as a Layer over the current space.
+    for app in shown:
+        if app.get_id():
+            result.append((f"{app.get_display_name()}  ·  Open as Layer", ("layer", app.get_id())))
     return [(" ".join(label.split()), action) for label, action in result]
 
 
@@ -78,7 +87,7 @@ def main():
         elif kind == "file":
             Gio.AppInfo.launch_default_for_uri(value, None)
         else:
-            action = {"settings": value, "pin": "focus_pin", "window": "focus_window"}[kind]
+            action = {"settings": value, "pin": "focus_pin", "window": "focus_window", "layer": "open_layer"}[kind]
             args = ["quickshell", "ipc", "-p", "/etc/flow/shell.qml", "call", "desk", action]
             subprocess.run(args + ([value] if kind != "settings" else []), check=True)
     except (ValueError, OSError, subprocess.SubprocessError, GLib.Error) as exc:

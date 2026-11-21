@@ -16,6 +16,7 @@ class SearchTest(unittest.TestCase):
     def test_local_results_include_available_pins_windows_and_apps(self):
         app = Mock()
         app.get_display_name.return_value = "Browser"
+        app.get_id.return_value = "org.example.Browser.desktop"
         app.should_show.return_value = True
         hidden = Mock()
         hidden.get_display_name.return_value = "Hidden"
@@ -23,7 +24,9 @@ class SearchTest(unittest.TestCase):
         data = {"pins": [{"label": "Work", "id": "1", "available": True}, {"label": "Missing", "id": "2", "available": False}],
                 "windows": [{"label": "My\nDocument", "id": 4, "app_id": "editor"}]}
         rows = search.entries(data, [app, hidden])
-        self.assertEqual([r[1][0] for r in rows], ["settings", "settings", "pin", "pin", "window", "app"])
+        self.assertEqual([r[1][0] for r in rows], ["settings", "settings", "pin", "pin", "window", "app", "layer"])
+        # Each shown app can also open as a Layer over the current space; hidden apps cannot.
+        self.assertEqual(rows[6], ("Browser · Open as Layer", ("layer", "org.example.Browser.desktop")))
         self.assertEqual(rows[4][0], "My Document · Open window · editor")
         self.assertEqual(rows[4][1], ("window", "4"))
         self.assertEqual(rows[3], ("Missing · Pinned space · Open", ("pin", "2")))
@@ -34,6 +37,14 @@ class SearchTest(unittest.TestCase):
 
 
 
+
+    def test_other_display_pins_are_labeled_and_closed_disconnected_pins_hidden(self):
+        rows = search.entries({"other_pins": [
+            {"label": "Terminal", "id": "t", "display_state": "connected", "display_label": "Dell U2723QE", "available": True},
+            {"label": "Notes", "id": "n", "display_state": "disconnected", "display_label": "Studio", "available": True},
+            {"label": "Gone", "id": "g", "display_state": "disconnected", "display_label": "Studio", "available": False}]}, [])
+        self.assertEqual([row for row in rows if row[1][0] == "pin"],
+                         [("Terminal · Pinned on Dell U2723QE", ("pin", "t")), ("Notes · Pinned on Studio", ("pin", "n"))])
 
     def test_search_routes_pin_and_window_focus_through_the_shell(self):
         gio = SimpleNamespace(AppInfo=SimpleNamespace(get_all=lambda: []))
