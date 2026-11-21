@@ -4,7 +4,9 @@ The service asks the bus for a caller's process ID; everything that decides what
 see or do lives here, so it can be tested without a bus.
 """
 import configparser
+import errno
 import hashlib
+import os
 from pathlib import Path
 import time
 
@@ -28,9 +30,13 @@ def caller(pid, proc=Path("/proc")):
         raise ApiError("NotAuthorized", "The caller could not be identified")
     info = proc / str(pid) / "root" / ".flatpak-info"
     try:
-        exists = info.exists()
-    except OSError:
-        exists = True  # an unreadable sandbox root is treated as sandboxed, never as trusted
+        os.stat(info)
+        exists = True
+    except FileNotFoundError:
+        exists = False
+    except OSError as exc:
+        # An unreadable sandbox root counts as sandboxed, never as trusted (Path.exists hides EACCES).
+        exists = exc.errno != errno.ENOENT
     if exists:
         parser = configparser.ConfigParser(interpolation=None)
         try:
@@ -50,6 +56,12 @@ def caller(pid, proc=Path("/proc")):
         except (OSError, ValueError, IndexError):
             break
     return {"sandboxed": False, "app_id": None, "lineage": frozenset(lineage)}
+
+
+def capabilities(identity):
+    """The version and the features this caller can use."""
+    features = [f for f in FEATURES if not (identity["sandboxed"] and f.startswith("control."))]
+    return (*VERSION, features)
 
 
 def limit_key(identity, sender):
@@ -81,9 +93,13 @@ def project(snapshot, session):
                        "kind": "group" if space.get("group_id") else "app", "pinned": False,
                        "position": position, "display": display, "label": space.get("label", ""),
                        "available": True, "window_ids": ids})
+    numbered = {}
     for pin in snapshot.get("other_pins") or []:
+        # Each other display numbers its own pins, in its own order.
+        where = pin.get("display_name") or ""
+        numbered[where] = numbered.get(where, 0) + 1
         result.append({"id": "pin:" + pin["id"], "kind": pin.get("kind", "app"), "pinned": True,
-                       "position": 0, "display": pin.get("display_name") or "", "label": pin.get("label", ""),
+                       "position": numbered[where], "display": where, "label": pin.get("label", ""),
                        "available": bool(pin.get("available")), "window_ids": list(pin.get("window_ids") or [])})
     windows = {w["id"]: w for w in snapshot.get("all_windows") or []}
     for space in result:
@@ -95,26 +111,36 @@ def project(snapshot, session):
     return result, windows
 
 
+def own_window(identity, window):
+    if not window:
+        return False
+    if identity["sandboxed"]:
+        return window.get("app_id") == identity["app_id"]
+    return window.get("pid") in identity["lineage"]
+
+
 def owns(identity, space, windows):
     """Whether the space holds one of the caller's own windows."""
-    for ident in space["window_ids"]:
-        window = windows.get(ident)
-        if not window:
-            continue
-        if identity["sandboxed"] and window.get("app_id") == identity["app_id"]:
-            return True
-        if not identity["sandboxed"] and window.get("pid") in identity["lineage"]:
-            return True
-    return False
+    return any(own_window(identity, windows.get(ident)) for ident in space["window_ids"])
 
 
 def visible(identity, spaces, windows, control):
-    """The spaces this caller may see through the interface it called."""
+    """The spaces this caller may see through the interface it called.
+
+    Through Spaces a caller sees only spaces holding its own windows, and only its own part of them:
+    a column or Group shared with other apps never reveals their titles or app IDs.
+    """
     if control:
         if identity["sandboxed"]:
             raise ApiError("NotAuthorized", "Sandboxed apps may only use their own spaces")
         return spaces
-    return [s for s in spaces if owns(identity, s, windows)]
+    shown = []
+    for space in spaces:
+        mine = [windows[i] for i in space["window_ids"] if own_window(identity, windows.get(i))]
+        if mine:
+            label = " + ".join(w.get("title") or w.get("app_id") or "Application" for w in mine)
+            shown.append({**space, "label": label, "apps": sorted({w.get("app_id") or "" for w in mine})})
+    return shown
 
 
 def public(space):
@@ -131,6 +157,11 @@ def focus_target(identity, space_id, spaces, windows, control):
             raise ApiError("NotAuthorized", "This space does not belong to the caller")
         raise ApiError("NotFound", "No such space")
     space = allowed[space_id]
+    if not control:
+        # No focus stealing: an app moves focus only between its own spaces, while it has focus.
+        focused = next((w for w in windows.values() if w.get("focused")), None)
+        if not own_window(identity, focused):
+            raise ApiError("NotAuthorized", "An app may change focus only while one of its own windows has it")
     if space_id.startswith("pin:"):
         return "focus", space_id[4:]
     if not space["window_ids"]:

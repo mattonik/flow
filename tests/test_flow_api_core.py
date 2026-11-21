@@ -2,6 +2,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -85,7 +86,7 @@ class CoreTest(unittest.TestCase):
     def test_spaces_are_projected_with_stable_ids_and_no_raw_niri_ids(self):
         self.assertEqual(self.by_label(self.spaces), [
             ("Mail", "pin", 1, "Main"), ("Studio", "group", 2, "Main"),
-            ("org.example.Term", "window", 3, "Main"), ("Chat", "pin", 0, "External 1")])
+            ("org.example.Term", "window", 3, "Main"), ("Chat", "pin", 1, "External 1")])
         terminal = self.spaces[2]
         self.assertEqual(terminal["id"], core.opaque("session", 4))
         self.assertNotEqual(terminal["id"], "window:4")
@@ -94,12 +95,27 @@ class CoreTest(unittest.TestCase):
         self.assertEqual(set(core.public(self.spaces[0])), {"id", "kind", "pinned", "position", "display", "active",
                                                             "available", "label", "apps"})
 
-    def test_a_flatpak_app_sees_and_focuses_only_its_own_space(self):
+    def test_a_flatpak_app_sees_only_its_own_part_of_a_shared_space(self):
         self.proc.process(500, 1, flatpak="[Application]\nname=org.example.Paint\n")
         paint = core.caller(500, self.proc.root)
         self.assertEqual((paint["sandboxed"], paint["app_id"]), (True, "org.example.Paint"))
+        # Notes shares the Studio column with Paint and has a private title; Paint never sees it.
+        self.windows[1]["title"] = "Statement - MyBank - Notes"
         shown = core.visible(paint, self.spaces, self.windows, control=False)
-        self.assertEqual([s["label"] for s in shown], ["Studio"])
+        self.assertEqual([(s["id"], s["label"], s["apps"]) for s in shown],
+                         [("group:g", "org.example.Paint", ["org.example.Paint"])])
+        self.assertNotIn("MyBank", json.dumps([core.public(s) for s in shown]))
+        self.assertEqual(core.capabilities(paint), (1, 0, ["spaces.list", "spaces.focus", "spaces.changed"]))
+
+    def test_an_app_moves_focus_only_while_it_has_focus(self):
+        self.proc.process(500, 1, flatpak="[Application]\nname=org.example.Paint\n")
+        paint = core.caller(500, self.proc.root)
+        # Notes (window 1) has focus, so Paint may not raise its own Group space over it.
+        with self.assertRaises(core.ApiError) as raised:
+            core.focus_target(paint, "group:g", self.spaces, self.windows, False)
+        self.assertEqual(raised.exception.kind, "NotAuthorized")
+        self.niri("action", "focus-window", "--id", 2)
+        self.spaces, self.windows = core.project(self.observe(), "session")
         self.assertEqual(core.focus_target(paint, "group:g", self.spaces, self.windows, False), ("focus-window", "1"))
         for space_id, kind in (("pin:m", "NotAuthorized"), (core.opaque("session", 4), "NotAuthorized"),
                                ("pin:missing", "NotFound")):
@@ -120,11 +136,19 @@ class CoreTest(unittest.TestCase):
         shown = core.visible(command, self.spaces, self.windows, control=False)
         self.assertEqual([s["label"] for s in shown], ["org.example.Term"])
         self.assertEqual(len(core.visible(command, self.spaces, self.windows, control=True)), 4)
+        # Another display's pin is owned through its live window too.
+        self.proc.process(108, 1, comm="chat")
+        chat = core.caller(108, self.proc.root)
+        self.assertEqual([s["id"] for s in core.visible(chat, self.spaces, self.windows, control=False)], ["pin:c"])
         self.assertEqual(core.focus_target(command, "pin:c", self.spaces, self.windows, True), ("focus", "c"))
 
     def test_unidentifiable_or_nameless_sandboxed_callers_are_refused(self):
         self.proc.process(700, 1, flatpak="[Application]\n")
-        for pid in (0, 700, "x"):
+        # A sandbox root that cannot be read counts as sandboxed, never as a trusted caller.
+        self.proc.process(701, 1)
+        (self.proc.root / "701" / "root").chmod(0)
+        self.addCleanup((self.proc.root / "701" / "root").chmod, 0o755)
+        for pid in (0, 700, "x") + ((701,) if os.geteuid() else ()):  # root reads any directory
             with self.subTest(pid=pid), self.assertRaises(core.ApiError) as raised:
                 core.caller(pid, self.proc.root)
             self.assertEqual(raised.exception.kind, "NotAuthorized")

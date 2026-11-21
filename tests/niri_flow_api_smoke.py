@@ -116,20 +116,42 @@ def main():
 
             # A command run inside window c acts as app c: it sees only its own space.
             out = Path(tmp) / "mine.json"
+            own = Path(tmp) / "own-focus.txt"
             err = Path(tmp) / "denied.txt"
+            trigger, steal = Path(tmp) / "trigger", Path(tmp) / "steal.txt"
             cli = f"{shlex.quote(python)} {shlex.quote(str(CODE / 'flow_cli.py'))}"
+            first_id = f"$({shlex.quote(python)} -c 'import json; print(json.load(open(\"{out}\"))[0][\"id\"])')"
             script = (f"{cli} spaces list --mine > {out}.part && mv {out}.part {out}; "
-                      f"{cli} spaces focus {shlex.quote(b_id)} --mine 2> {err}; sleep 60")
+                      f"{cli} spaces focus {first_id} --mine 2> {own}.part; echo $? >> {own}.part; mv {own}.part {own}; "
+                      f"{cli} spaces focus {shlex.quote(b_id)} --mine 2> {err}; "
+                      f"while [ ! -e {trigger} ]; do sleep 0.2; done; "
+                      f"{cli} spaces focus {first_id} --mine 2> {steal}.part; echo \"exit $?\" >> {steal}.part; "
+                      f"mv {steal}.part {steal}; sleep 60")
             processes.append(subprocess.Popen(["foot", "--app-id", apps["c"], "sh", "-c", script], env=env,
                                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                               stderr=subprocess.DEVNULL))
             mine = json.loads(wait_for(lambda: out.exists() and out.read_text(), "the app's own list", timeout=30))
-            if [s["apps"] for s in mine] != [[apps["c"]]]:
+            if [s["apps"] for s in mine] != [[apps["c"]]] or any(apps["a"] in s["label"] or apps["b"] in s["label"]
+                                                                  for s in mine):
                 raise RuntimeError(f"An app saw spaces other than its own: {mine}")
+            if wait_for(lambda: own.exists() and own.read_text(), "the app's own focus", timeout=30).strip() != "0":
+                raise RuntimeError(f"An app could not focus its own space while it had focus: {own.read_text()}")
             denied = json.loads(wait_for(lambda: err.exists() and err.read_text(), "the refused focus", timeout=30))
             if denied["error"] != "NotAuthorized" or focus()["active_window_id"] != window("c")["id"]:
                 raise RuntimeError(f"An app was allowed to focus another app's space: {denied}")
-            steps.append("a command in app c saw only c's space, and focusing b's space was NotAuthorized")
+            steps.append("a command in app c saw only c's space, focused it while c had focus, "
+                         "and focusing b's space was NotAuthorized")
+
+            # Once another app has focus, c may not raise even its own space over it.
+            niri("action", "focus-window", "--id", window("a")["id"])
+            wait_for(lambda: focus()["active_window_id"] == window("a")["id"], "focus on a")
+            trigger.touch()
+            attempt = wait_for(lambda: steal.exists() and steal.read_text(), "the steal attempt", timeout=30)
+            time.sleep(0.5)
+            if ("NotAuthorized" not in attempt or "exit 0" in attempt
+                    or focus()["active_window_id"] != window("a")["id"]):
+                raise RuntimeError(f"An app without focus raised its space: {attempt!r}")
+            steps.append("with another app focused, c raising its own space was NotAuthorized and focus stayed")
 
             missing = flow("spaces", "focus", "pin:nope", check=False)
             if json.loads(missing.stderr)["error"] != "NotFound":

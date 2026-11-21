@@ -168,6 +168,20 @@ class LayerTest(unittest.TestCase):
         self.run_op("layer-to-group", "50")
         self.assertEqual(self.niri.layout(), [["mail"], ["a", "b", "notes"], ["other"]])
 
+    def test_a_second_window_of_a_member_app_does_not_join_its_group(self):
+        # Bound in this session, the Group stays itself beside another window of its app.
+        self.group["bound"] = {"session": "s", "windows": {"a": 1, "b": 2}}
+        patcher = patch.object(spaces, "SESSION", "s")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.niri.apps[51] = "a"
+        self.niri.floating.append(51)
+        self.niri("action", "focus-window", "--id", 1)
+        self.niri("action", "focus-window", "--id", 51)
+        with self.assertRaisesRegex(ValueError, "already in this Group"):
+            self.run_op("layer-to-group", "51")
+        self.assertEqual((self.niri.floating, self.niri.active), ([51], 51))
+
     def test_a_layer_over_another_space_or_a_full_group_stays_a_layer(self):
         self.niri("action", "focus-window", "--id", 7)
         with self.launch("notes"):
@@ -206,9 +220,6 @@ class LayerTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "No matching installed"):
             self.run_op("open-layer", "org.example.Missing")
 
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class LayerRotationTest(unittest.TestCase):
@@ -267,3 +278,30 @@ class LayerRotationTest(unittest.TestCase):
         self.size = (800, 1280)
         self.invoke("auto-layout")
         self.assertEqual(len(self.sheet_moves()), 1)
+
+    def test_a_floating_window_flow_did_not_shape_is_never_reshaped(self):
+        # An app's own dialog floats; Flow never made it a Layer, so a rotation leaves it alone.
+        self.niri.floating.append(9)
+        self.niri.columns = [[7]]
+        self.size = (800, 1280)
+        self.invoke("auto-layout")
+        self.size = (1280, 800)
+        self.invoke("refresh")
+        self.assertEqual([a for a in self.niri.log if a[0] == "action" and "9" in map(str, a)], [])
+
+    def test_layer_code_outside_a_locked_action_writes_nothing(self):
+        home = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(home))
+        (home / ".local/state/flow").mkdir(parents=True)  # so a stray write would succeed and be seen
+        sized = {"Virtual-1": {"logical": {"x": 0, "y": 0, "width": 1280, "height": 800}}}
+        with patch.object(Path, "home", return_value=home), patch.dict(os.environ, {"XDG_STATE_HOME": ""}), \
+             patch.object(spaces, "display_state", return_value=(sized, [])), \
+             patch.object(spaces, "snapshot", side_effect=self.niri.snapshot), \
+             patch.object(spaces, "command", side_effect=self.niri):
+            ws, windows = self.niri.snapshot()
+            spaces.run([], "make-layer", None, ws, windows, "s", [])
+        self.assertEqual([p for p in home.rglob("*") if p.is_file()], [])
+
+
+if __name__ == "__main__":
+    unittest.main()

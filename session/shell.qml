@@ -347,7 +347,7 @@ ShellRoot {
     Timer { interval: niriEvents.running ? 30000 : 3000; running: true; repeat: true; triggeredOnStart: true; onTriggered: root.spaceAction("refresh") }
     Timer {
         interval: 2000; repeat: true
-        running: root.displaySpaces.some(space => space.auto_layout) || root.layers.length > 0
+        running: root.displaySpaces.some(space => space.auto_layout) || root.layers.some(layer => layer.shaped)
         onTriggered: if (!root.deskOpen && !root.switcherOpen && !root.overviewOpen && !root.launcherActive && !root.appMenuOpen && !root.quickSettingsOpen && !root.notificationsOpen && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length) root.spaceAction("auto-layout")
     }
     function toggleDesk() {
@@ -1327,6 +1327,15 @@ ShellRoot {
                                         }
                                     }
                                 }
+                            }
+                            FlowButton {
+                                id: forgetGroupChoice
+                                visible: !!modelData.can_forget_choice
+                                width: Math.min(parent.width, 200); implicitHeight: 44; text: "Choose again"
+                                Accessible.name: "Forget the windows chosen for " + modelData.label + " and choose again"
+                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(forgetGroupChoice)
+                                onClicked: root.spaceAction("forget-choice", modelData.id)
                             }
                             FlowButton {
                                 id: openGroupMember

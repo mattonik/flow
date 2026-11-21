@@ -119,6 +119,9 @@ in {
     # Started on first use by D-Bus activation; it reads Flow state through flow-spaces.
     systemd.user.services.flow-api = {
       description = "Flow Platform API";
+      # Bound to the graphical session, so a user manager that outlives a login never keeps a stale Niri socket.
+      partOf = [ "graphical-session.target" ];
+      after = [ "graphical-session.target" ];
       serviceConfig = {
         Type = "dbus";
         BusName = "io.github.mattonik.Flow1";

@@ -189,6 +189,65 @@ class SameAppTest(unittest.TestCase):
         self.invoke("choose-member", f"{group}:77", expect_error="not one of this Group")
         self.assertNotEqual(self.groups()[0]["bound"]["session"], "session-2")
 
+    def elsewhere(self, *extra):
+        snapshot = self.niri.snapshot
+        self.niri.snapshot = lambda: (snapshot()[0], snapshot()[1] + list(extra))
+
+    def window_on(self, ident, app, workspace=2, floating=False):
+        return {"id": ident, "app_id": app, "title": f"{app} {ident}", "workspace_id": workspace, "is_floating": floating,
+                "layout": {"pos_in_scrolling_layout": None if floating else [1, 1], "tile_size": [500, 700]}}
+
+    def test_observing_never_writes_the_registry_even_when_a_binding_would_change(self):
+        self.invoke("create-group")
+        self.session = "session-2"
+        self.niri("action", "close-window", "--id", 5)
+        self.niri("action", "close-window", "--id", 6)
+        before = (self.state / "groups.json").read_bytes()
+        self.invoke("observe")
+        self.assertEqual((self.state / "groups.json").read_bytes(), before)
+
+    def test_choices_offer_only_tiled_windows_here_and_explain_other_workspaces(self):
+        self.invoke("create-group")
+        group = self.groups()[0]["id"]
+        self.session = "session-2"
+        self.elsewhere(self.window_on(40, "terminal"), self.window_on(41, "terminal", workspace=1, floating=True))
+        (incomplete,) = self.invoke("refresh")["incomplete_groups"]
+        terminals = next(c for c in incomplete["choices"] if c["app"] == "terminal")
+        self.assertEqual([w["id"] for w in terminals["windows"]], [1, 5])
+        self.invoke("choose-member", f"{group}:40", expect_error="on this workspace")
+        self.invoke("choose-member", f"{group}:41", expect_error="Make this Layer a space")
+        # With every duplicate on another workspace there is nothing to choose here, and the card says why.
+        self.niri.columns = [[2]]
+        self.niri.snapshot = FakeNiri.snapshot.__get__(self.niri)
+        self.elsewhere(self.window_on(40, "terminal"), self.window_on(42, "terminal"))
+        (incomplete,) = self.invoke("refresh")["incomplete_groups"]
+        self.assertIn("on another workspace; choose them there", incomplete["status"])
+
+    def test_choosing_needs_a_known_niri_session(self):
+        group = {"id": "g", "label": "Pair", "members": ["terminal", "editor"]}
+        ws, windows = self.niri.snapshot()
+        with self.assertRaisesRegex(ValueError, "Cannot identify this Niri session"):
+            spaces.run([], "choose-member", "g:1", ws, windows, "s", [group])
+
+    def test_a_wrong_choice_can_be_undone(self):
+        self.niri.columns = [[1], [2], [5], [6]]
+        self.niri("action", "focus-window", "--id", 1)
+        self.invoke("stack")
+        self.invoke("create-group")
+        group = self.groups()[0]["id"]
+        self.invoke("group-layout", group)
+        self.session = "session-2"
+        self.invoke("choose-member", f"{group}:5")
+        (incomplete,) = self.invoke("refresh")["incomplete_groups"]
+        self.assertTrue(incomplete["can_forget_choice"])
+        self.invoke("forget-choice", group)
+        self.assertNotIn("bound", self.groups()[0])
+        self.invoke("forget-choice", group, expect_error="No window was chosen")
+        self.invoke("choose-member", f"{group}:1")
+        result = self.invoke("choose-member", f"{group}:2")
+        self.assertEqual([len(s["members"]) for s in self.group_space(result)], [2])
+        self.invoke("forget-choice", group, expect_error="Group is working")
+
     def test_the_added_window_is_bound_even_when_its_app_has_another_window(self):
         self.niri.columns = [[1], [2], [5], [6]]
         self.niri.apps[5] = "viewer"

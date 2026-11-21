@@ -35,16 +35,18 @@ XML = f"""
 """
 CACHE_SECONDS = 0.3
 DEBOUNCE_MS = 250
+MAX_WAIT_MS = 1000  # under a steady stream of Niri events, Changed still goes out at least this often
 
 
 class Service:
-    def __init__(self, connection, spaces_command=("flow-spaces",)):
+    def __init__(self, connection, session, spaces_command=("flow-spaces",)):
         self.connection = connection
         self.spaces_command = list(spaces_command)
         self.limit = core.RateLimit()
         self.cache = (0.0, None)
-        self.session = spaces.session_id()
+        self.session = session
         self.pending = 0
+        self.first_event = None
 
     def run_spaces(self, *args):
         process = subprocess.run([*self.spaces_command, *args], text=True, stdout=subprocess.PIPE,
@@ -57,9 +59,10 @@ class Service:
             raise core.error_from(value.get("error") or "Flow state is unavailable")
         return value
 
-    def snapshot(self):
+    def snapshot(self, fresh=False):
+        """Flow state, cached briefly for listing. Decisions that grant something use fresh state."""
         stamp, value = self.cache
-        if value is None or time.monotonic() - stamp > CACHE_SECONDS:
+        if fresh or value is None or time.monotonic() - stamp > CACHE_SECONDS:
             value = self.run_spaces("observe")
             self.cache = (time.monotonic(), value)
         return core.project(value, self.session)
@@ -76,8 +79,10 @@ class Service:
         self.limit.check(core.limit_key(identity, sender))
         control = interface.endswith(".Control")
         if method == "GetCapabilities" and not control:
-            return GLib.Variant("(uuas)", (*core.VERSION, list(core.FEATURES)))
-        spaces, windows = self.snapshot()
+            major, minor, features = core.capabilities(identity)
+            return GLib.Variant("(uuas)", (major, minor, features))
+        # Focus is authorized on who has focus right now; a cached snapshot could let an app steal it.
+        spaces, windows = self.snapshot(fresh=method == "FocusSpace")
         if method == "ListSpaces":
             shown = [core.public(s) for s in core.visible(identity, spaces, windows, control)]
             return GLib.Variant(f"({SPACE})", ([{k: variant(v) for k, v in s.items()} for s in shown],))
@@ -90,14 +95,19 @@ class Service:
 
     def changed(self):
         self.pending = 0
+        self.first_event = None
         self.cache = (0.0, None)
         self.connection.emit_signal(None, PATH, core.NAME + ".Spaces", "Changed", None)
         return False
 
     def niri_event(self):
+        now = time.monotonic()
+        self.first_event = self.first_event or now
         if self.pending:
             GLib.source_remove(self.pending)
-        self.pending = GLib.timeout_add(DEBOUNCE_MS, self.changed)
+        # Wait for a quiet moment, but never longer than MAX_WAIT_MS after the first unsent event.
+        delay = min(DEBOUNCE_MS, max(0, int(MAX_WAIT_MS - (now - self.first_event) * 1000)))
+        self.pending = GLib.timeout_add(delay, self.changed)
 
 
 def variant(value):
@@ -133,6 +143,11 @@ def watch_niri(service, children):
 
 def main():
     name = core.NAME
+    try:
+        session = spaces.session_id()  # fail before owning the name, so systemd can restart us
+    except (OSError, ValueError) as exc:
+        print(f"flow-api: no Niri session: {exc}", file=sys.stderr)
+        sys.exit(1)
     loop = GLib.MainLoop()
     node = Gio.DBusNodeInfo.new_for_xml(XML)
     holder, children = {}, []
@@ -149,11 +164,11 @@ def main():
             invocation.return_value(holder["service"].call(sender, interface, method, params.unpack()))
         except core.ApiError as exc:
             invocation.return_dbus_error(f"{core.NAME}.Error.{exc.kind}", str(exc))
-        except (OSError, subprocess.SubprocessError, GLib.Error) as exc:
-            invocation.return_dbus_error(f"{core.NAME}.Error.Failed", str(exc))
+        except Exception as exc:  # noqa: BLE001 — every call gets an answer, never a client timeout
+            invocation.return_dbus_error(f"{core.NAME}.Error.Failed", f"{type(exc).__name__}: {exc}")
 
     def acquired(connection, _name):
-        holder["service"] = Service(connection)
+        holder["service"] = Service(connection, session)
         for interface in node.interfaces:
             connection.register_object(PATH, interface, handle, None, None)
         watch_niri(holder["service"], children)

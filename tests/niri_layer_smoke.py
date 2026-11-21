@@ -128,7 +128,6 @@ def main():
             steps.append("closing the Layer returned focus to the same Group app with the same Group, pins and state")
             del closed
 
-
             niri("action", "focus-window", "--id", window("u")["id"])
             spaces("make-layer")
             if not window("u").get("is_floating") or {k: v for k, v in tiles().items()} != {

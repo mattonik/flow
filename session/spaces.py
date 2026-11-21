@@ -125,6 +125,7 @@ def split_of(ordered, workspace, windows):
 
 
 SESSION = None  # this Niri session's identity, set by run_locked; Group bindings from other sessions are ignored
+STATE = None  # Flow's state directory while run_locked runs; nothing else writes beside it
 
 
 def member_candidates(group, app, windows):
@@ -721,7 +722,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
             raise ValueError("Unpin this app before making it a Layer")
         if not eligible(window, workspace, windows):
             raise ValueError("Separate this app from its stack before making it a Layer")
-        float_as_layer(window["id"], layer_output(workspace), workspace.get("output"))
+        float_as_layer(window["id"], layer_output(workspace))
     elif op == "open-layer":
         desktop = desktop_file(arg, data_dirs())
         if not desktop:
@@ -749,7 +750,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
             raise ValueError("The app opened more than one window or opened elsewhere; it was left as it is")
         if not new[0].get("is_floating"):
             # Niri reactivates the column the window was opened from, so closing the Layer returns there.
-            float_as_layer(new[0]["id"], layer_output(workspace), workspace.get("output"))
+            float_as_layer(new[0]["id"], layer_output(workspace))
     elif op == "layer-to-space":
         window = layer_window(arg, workspace, windows)
         command("action", "move-window-to-tiling", "--id", window["id"])
@@ -765,9 +766,15 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
         if not beneath or not beneath.get("group_id"):
             command("action", "focus-window", "--id", layer["id"])
             raise ValueError("The space beneath this Layer is not a Group")
-        group, found = live_group(groups, beneath["group_id"], ws, live, socket)
+        try:
+            group, found = live_group(groups, beneath["group_id"], ws, live, socket)
+        except ValueError:
+            command("action", "focus-window", "--id", layer["id"])
+            raise
         app = layer.get("app_id")
         problem = (f"Groups can have up to {MAX_MEMBERS} apps" if len(group["members"]) >= MAX_MEMBERS
+                   else "That app is already in this Group; a Group holds one window of each app"
+                   if app in group["members"]
                    else "That app belongs to another Group or pin" if not app or app in pinned_apps(pins)
                    or any(app in g["members"] for g in groups) else "")
         if problem:
@@ -809,12 +816,23 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
             raise ValueError("This Group app is not ambiguous; nothing to choose")
         if window.get("workspace_id") != workspace["id"]:
             raise ValueError("Choose a window on this workspace")
+        if window.get("is_floating") or not position(window):
+            raise ValueError("Make this Layer a space before choosing it for the Group")
         if not SESSION:
             raise ValueError("Cannot identify this Niri session; the window was not chosen")
         known = group_members(group, windows)  # members that are already unambiguous stay as they are
         bound = {w["app_id"]: w["id"] for w in known if w}
         bound[window["app_id"]] = window["id"]
-        group["bound"] = {"session": SESSION, "windows": bound}
+        group["bound"] = {"session": SESSION, "windows": bound, "chosen": True}
+    elif op == "forget-choice":
+        # Undo a wrong choice: this session's windows for the Group are forgotten and can be chosen again.
+        group = find_group(groups, arg)
+        if any(space.get("group_id") == group["id"] for space in display_spaces(workspace, windows, groups, pins)):
+            raise ValueError("The Group is working; nothing to choose again")
+        bound = group.get("bound")
+        if not (SESSION and isinstance(bound, dict) and bound.get("session") == SESSION and bound.get("chosen")):
+            raise ValueError("No window was chosen for this Group in this session")
+        group.pop("bound")
     elif op == "adopt-group-order":
         group = find_group(groups, arg)
         if group.get("pending_layout"):
@@ -980,7 +998,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
                   "dissolve-group", "open-group-member", "rejoin-group", "add-to-group", "remove-from-group",
                   "member-left", "member-right", "adopt-group-order", "member-wider", "member-narrower",
                   "make-layer", "open-layer", "layer-to-space", "close-layer", "choose-member",
-                  "layer-to-group", "observe"):
+                  "layer-to-group", "observe", "forget-choice"):
         reconcile(here, workspace, windows, socket, groups)
     return [describe(p) for p in here]
 
@@ -1014,11 +1032,14 @@ def saved_groups(path):
         return []
 
 
-def layers(workspace, windows):
-    """Floating windows on the workspace: Layers over its spaces, never spaces themselves."""
+def layers(workspace, windows, shaped=()):
+    """Floating windows on the workspace: Layers over its spaces, never spaces themselves.
+
+    ``shaped`` marks the ones Flow shaped, which follow rotation; other floating windows keep their size.
+    """
     return [{"id": w["id"], "label": w.get("title") or w.get("app_id") or "Application",
              "app_id": w.get("app_id") or "", "app_name": app_name(w.get("app_id")),
-             "active": w["id"] == workspace.get("active_window_id")}
+             "active": w["id"] == workspace.get("active_window_id"), "shaped": str(w["id"]) in shaped}
             for w in windows if w.get("workspace_id") == workspace["id"] and w.get("is_floating")]
 
 
@@ -1032,37 +1053,75 @@ def layer_output(workspace):
     return size if all(isinstance(v, int) and v > 0 for v in size) else None
 
 
-def orientation_memory():
-    """Each output's last seen orientation, kept beside Flow's state so Layers reshape only on a change."""
-    return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "flow" / "layer-orientation.json"
+def orientation_of(size):
+    return "portrait" if size[1] > size[0] else "landscape"
 
 
-def remember_orientation(output, size):
-    """Record an output's orientation; return the one recorded before, or None."""
-    path = orientation_memory()
-    if not path or not output or not size:
-        return None
+def layer_memory():
+    """The Layers Flow shaped in this Niri session and the orientation each was shaped for.
+
+    Only run_locked sets STATE, so nothing outside a locked action, tests included, touches the file.
+    """
+    path = STATE / "layer-shapes.json" if STATE else None
     try:
-        memory = json.loads(path.read_text()) if path.exists() else {}
-        memory = memory if isinstance(memory, dict) else {}
+        data = json.loads(path.read_text()) if path and path.exists() else {}
     except (OSError, ValueError):
-        memory = {}
-    current = "portrait" if size[1] > size[0] else "landscape"
-    previous = memory.get(output)
-    if previous != current:
-        memory[output] = current
+        data = {}
+    if not isinstance(data, dict) or data.get("session") != SESSION or not isinstance(data.get("layers"), dict):
+        data = {"session": SESSION, "layers": {}}
+    return path, data
+
+
+def save_layer_memory(path, data, before):
+    if path and json.dumps(data, sort_keys=True) != before:
         try:
-            path.write_text(json.dumps(memory))
+            path.write_text(json.dumps(data))
         except OSError:
             pass
-    return previous
 
 
-def float_as_layer(window_id, size=None, output=None):
+def remember_layer(window_id, size):
+    path, data = layer_memory()
+    if path and size:
+        before = json.dumps(data, sort_keys=True)
+        data["layers"][str(window_id)] = orientation_of(size)
+        save_layer_memory(path, data, before)
+
+
+def follow_rotation(outputs, workspaces, windows):
+    """Give each Layer Flow shaped the shape of its output's current orientation; True if any changed.
+
+    Floating windows Flow did not shape, such as app dialogs, are never touched.
+    """
+    path, data = layer_memory()
+    if not path:
+        return False
+    before = json.dumps(data, sort_keys=True)
+    floating = {str(w["id"]): w for w in windows if w.get("is_floating")}
+    data["layers"] = {key: shape for key, shape in data["layers"].items() if key in floating}
+    if not data["layers"]:
+        save_layer_memory(path, data, before)
+        return False
+    where = {ws["id"]: ws.get("output") for ws in workspaces}
+    changed = False
+    for key, shaped in list(data["layers"].items()):
+        logical = ((outputs or {}).get(where.get(floating[key].get("workspace_id"))) or {}).get("logical") or {}
+        if not logical.get("width") or not logical.get("height"):
+            continue
+        size = (logical["width"], logical["height"])
+        if orientation_of(size) != shaped:
+            shape_layer(int(key), size)
+            data["layers"][key] = orientation_of(size)
+            changed = True
+    save_layer_memory(path, data, before)
+    return changed
+
+
+def float_as_layer(window_id, size=None):
     """Lift one window out of the strip; the columns around it close up and keep their sizes."""
     command("action", "move-window-to-floating", "--id", window_id)
-    remember_orientation(output, size)
     shape_layer(window_id, size)
+    remember_layer(window_id, size)
     command("action", "focus-window", "--id", window_id)
 
 
@@ -1233,12 +1292,16 @@ def incomplete_groups(workspace, windows, groups, pins):
         # Several windows of a member app: the user says which one, never Flow.
         choices = [{"app": app, "app_name": app_name(app) or app,
                     "windows": [{"id": w["id"], "label": w.get("title") or app} for w in found
-                                if w.get("workspace_id") == workspace["id"]]}
+                                if w.get("workspace_id") == workspace["id"] and not w.get("is_floating")
+                                and position(w)]}
                    for app, found in zip(group["members"], candidates) if len(found) > 1]
         choices = [choice for choice in choices if len(choice["windows"]) > 0]
+        bound = group.get("bound")
+        can_forget = bool(SESSION and isinstance(bound, dict) and bound.get("session") == SESSION and bound.get("chosen"))
         result.append({"id": group["id"], "label": group["label"], "status": status,
                        "can_open": can_open, "can_rejoin": can_rejoin, "can_resume_layout": can_resume,
                        "can_repair": can_repair, "can_adopt_order": can_adopt, "choices": choices,
+                       "can_forget_choice": can_forget,
                        "missing_app": missing[0] if can_open else ""})
     return result
 
@@ -1575,11 +1638,11 @@ def other_pins(pins, display, displays, connected, ambiguous, workspaces, window
 
 def run_locked(state):
     """Run one action; Group bindings apply only while it runs, in this Niri session."""
-    global SESSION
+    global SESSION, STATE
     try:
         return _run_locked(state)
     finally:
-        SESSION = None
+        SESSION = STATE = None
 
 
 def _run_locked(state):
@@ -1592,8 +1655,8 @@ def _run_locked(state):
         outputs, workspaces = display_state()
         connected, ambiguous = pin_store.identities(outputs, pin_store.shared_serials(displays))
         socket = session_id()
-        global SESSION
-        SESSION = socket
+        global SESSION, STATE
+        SESSION, STATE = socket, state
         groups = group_store.load(state)
         before_groups = json.dumps(groups, sort_keys=True)
         sync_group_pins(pins, groups)
@@ -1614,6 +1677,11 @@ def _run_locked(state):
         display = here(workspace)
         op = sys.argv[1] if len(sys.argv) > 1 else "refresh"
         arg = sys.argv[2] if len(sys.argv) > 2 else None
+        if op != "observe" and follow_rotation(outputs, workspaces, windows):
+            # A Layer took its rotated output's shape; focus stays where it was.
+            if workspace.get("active_window_id"):
+                command("action", "focus-window", "--id", workspace["active_window_id"])
+            workspace, windows = snapshot()
         notice = ""
         if op == "focus-number":
             # "D:S" — pinned space S of display number D (0 is Main), as typed with Super or Super+Alt.
@@ -1710,18 +1778,6 @@ def _run_locked(state):
                                         allow_unfocused=True)
                     workspace, windows = snapshot()
                     before_groups = json.dumps(groups, sort_keys=True)
-            open_layers = layers(workspace, windows)
-            if open_layers:
-                size = layer_output(workspace)
-                previous = remember_orientation(workspace.get("output"), size)
-                current = size and ("portrait" if size[1] > size[0] else "landscape")
-                if previous and current and previous != current:
-                    # The output rotated: Layers take the new orientation's shape; focus stays where it was.
-                    for layer in open_layers:
-                        shape_layer(layer["id"], size)
-                    if workspace.get("active_window_id"):
-                        command("action", "focus-window", "--id", workspace["active_window_id"])
-                    workspace, windows = snapshot()
             result = run(pins, "refresh", None, workspace, windows, socket, groups, display)
         elif op in ("group-layout", "resume-group-layout"):
             if op == "group-layout":
@@ -1762,7 +1818,7 @@ def _run_locked(state):
                    for w in ordered]
         record = connected.get(workspace.get("output"))
         print(json.dumps({"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows, groups, pins),
-                          "layers": layers(workspace, windows),
+                          "layers": layers(workspace, windows, layer_memory()[1]["layers"]),
                           "incomplete_groups": incomplete_groups(workspace, windows, groups, pins),
                           "other_pins": other_pins(pins, display, displays, connected, ambiguous, workspaces, windows, socket, groups),
                           "display": {"key": display, "label": record["label"] if record else workspace.get("output") or "",
@@ -1775,7 +1831,9 @@ def _run_locked(state):
                                        for key in screen_order],
                           "notice": notice,
                           "all_windows": [{"id": w["id"], "app_id": w.get("app_id") or "", "pid": w.get("pid"),
-                                           "workspace_id": w.get("workspace_id")} for w in windows],
+                                           "title": w.get("title") or "", "workspace_id": w.get("workspace_id"),
+                                           "focused": w["id"] == workspace.get("active_window_id")}
+                                          for w in windows],
                           "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
 
 
