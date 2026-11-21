@@ -27,10 +27,11 @@ import queue
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import uuid
+
+from isolated_state import IsolatedState
 
 ROOT = Path(__file__).resolve().parents[1]
 CODE = ROOT / "session"
@@ -171,7 +172,7 @@ def main():
     others["c"] = APP  # a native window that claims FlowProbe's app ID
     steps, result, processes, probe, installed, overview_opened = [], None, [], None, False, False
 
-    with tempfile.TemporaryDirectory(prefix="flow-flatpak-") as tmp:
+    with IsolatedState("flow-flatpak-") as tmp:
         service_runtime, probe_runtime = Path(tmp) / "service-runtime", Path(tmp) / "probe-runtime"
         for directory in (service_runtime, probe_runtime):
             directory.mkdir(mode=0o700)

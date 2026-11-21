@@ -15,9 +15,10 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 import uuid
+
+from isolated_state import IsolatedState
 
 CODE = Path(__file__).resolve().parents[1] / "session"
 
@@ -167,7 +168,7 @@ def main():
 
         niri("action", "focus-window", "--id", ids[0])
         cli_env = None
-        with tempfile.TemporaryDirectory(prefix="flow-niri-layout-") as tmp:
+        with IsolatedState("flow-niri-layout-") as tmp:
             cli_env = dict(os.environ, XDG_STATE_HOME=tmp)
             temporary_state = Path(tmp) / "flow"
             cli(cli_env, "stack")

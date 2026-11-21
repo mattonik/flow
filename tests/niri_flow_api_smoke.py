@@ -16,9 +16,10 @@ from pathlib import Path
 import shlex
 import subprocess
 import sys
-import tempfile
 import time
 import uuid
+
+from isolated_state import IsolatedState
 
 CODE = Path(__file__).resolve().parents[1] / "session"
 NAME = "io.github.mattonik.Flow1"
@@ -70,7 +71,7 @@ def main():
     def window(suffix):
         return next(w for w in read("windows") if w.get("app_id") == apps[suffix])
 
-    with tempfile.TemporaryDirectory(prefix="flow-api-") as tmp:
+    with IsolatedState("flow-api-") as tmp:
         env = dict(os.environ, XDG_STATE_HOME=tmp, PYTHONPATH=str(CODE), FLOW_SHELL_CONFIG=shell)
 
         def flow(*args, check=True):

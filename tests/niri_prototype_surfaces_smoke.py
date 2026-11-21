@@ -24,9 +24,10 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 import uuid
+
+from isolated_state import IsolatedState
 
 
 def niri(*args):
@@ -66,7 +67,7 @@ def main():
     token = uuid.uuid4().hex[:8]
     steps, apps = [], []
 
-    with tempfile.TemporaryDirectory(prefix="flow-surfaces-") as tmp:
+    with IsolatedState("flow-surfaces-") as tmp:
         root = Path(tmp)
         runtime = root / "runtime"
         runtime.mkdir(mode=0o700)
