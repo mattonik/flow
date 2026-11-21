@@ -5,6 +5,7 @@ All policy is in flow_api_core; this file only binds it to GDBus, reads state th
 ``flow-spaces observe`` and focuses through the same ``flow-spaces`` actions the shell uses.
 """
 import json
+import os
 import subprocess
 import sys
 import time
@@ -30,6 +31,16 @@ XML = f"""
   <interface name="{core.NAME}.Control">
     <method name="ListSpaces"><arg type="{SPACE}" name="spaces" direction="out"/></method>
     <method name="FocusSpace"><arg type="s" name="id" direction="in"/></method>
+    <method name="PinSpace"><arg type="s" name="id" direction="in"/></method>
+    <method name="UnpinSpace"><arg type="s" name="id" direction="in"/></method>
+    <method name="MoveSpace">
+      <arg type="s" name="id" direction="in"/><arg type="s" name="direction" direction="in"/>
+    </method>
+  </interface>
+  <interface name="{core.NAME}.System">
+    <method name="ShowDesk"/>
+    <method name="ShowOverview"/>
+    <method name="ShowLauncher"/>
   </interface>
 </node>
 """
@@ -42,6 +53,7 @@ class Service:
     def __init__(self, connection, session, spaces_command=("flow-spaces",)):
         self.connection = connection
         self.spaces_command = list(spaces_command)
+        self.shell = os.environ.get("FLOW_SHELL_CONFIG", "/etc/flow/shell.qml")
         self.limit = core.RateLimit()
         self.cache = (0.0, None)
         self.session = session
@@ -81,8 +93,16 @@ class Service:
         if method == "GetCapabilities" and not control:
             major, minor, features = core.capabilities(identity)
             return GLib.Variant("(uuas)", (major, minor, features))
-        # Focus is authorized on who has focus right now; a cached snapshot could let an app steal it.
-        spaces, windows = self.snapshot(fresh=method == "FocusSpace")
+        if interface.endswith(".System"):
+            what = {"ShowDesk": "desk", "ShowOverview": "overview", "ShowLauncher": "launcher"}.get(method)
+            if what is None:
+                raise core.ApiError("Unsupported", f"{method} is not supported")
+            # Only an app needs Flow state here: who has keyboard focus, read fresh.
+            windows = self.snapshot(fresh=True)[1] if identity["sandboxed"] else {}
+            self.show(core.ui_request(identity, what, windows))
+            return None
+        # Anything that acts is authorized on fresh state; a cached snapshot could let an app steal focus.
+        spaces, windows = self.snapshot(fresh=method != "ListSpaces")
         if method == "ListSpaces":
             shown = [core.public(s) for s in core.visible(identity, spaces, windows, control)]
             return GLib.Variant(f"({SPACE})", ([{k: variant(v) for k, v in s.items()} for s in shown],))
@@ -91,7 +111,31 @@ class Service:
             self.run_spaces(action, target)
             self.cache = (0.0, None)
             return None
-        raise core.ApiError("Unsupported", f"{method} is not supported")
+        steps = None
+        if method == "PinSpace":
+            steps = core.pin_steps(identity, params[0], spaces, windows)
+        elif method == "UnpinSpace":
+            steps = core.unpin_steps(identity, params[0], spaces)
+        elif method == "MoveSpace":
+            steps = core.move_steps(identity, params[0], params[1], spaces)
+        if steps is None:
+            raise core.ApiError("Unsupported", f"{method} is not supported")
+        for action, target in steps:
+            self.run_spaces(*([action, target] if target is not None else [action]))
+        self.cache = (0.0, None)
+        return None
+
+    def show(self, ipc):
+        try:
+            process = subprocess.run(["quickshell", "ipc", "-p", self.shell, "call", "desk", ipc], text=True,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=2)
+        except subprocess.TimeoutExpired as exc:
+            raise core.ApiError("Failed", "The Flow shell did not answer") from exc
+        if process.returncode:
+            running = "no running instances" not in process.stderr.lower()
+            raise core.ApiError("Failed", "The Flow shell did not accept the request" if running
+                                else "The Flow shell is not running")
+        core.ui_answer(process.stdout)
 
     def changed(self):
         self.pending = 0

@@ -384,6 +384,8 @@ ShellRoot {
         searchLauncher.running = true
     }
 
+    function launcherBusy() { return launcherActive || appsLauncher.running || searchLauncher.running || launcherDismissDelay.running }
+    function otherSurfaceOpen() { return switcherOpen || quickSettingsOpen || notificationsOpen || appMenuOpen }
     function openApps() {
         if (launcherActive || appsLauncher.running || searchLauncher.running) { closeLauncher(); return }
         notificationsOpen = false
@@ -508,6 +510,8 @@ ShellRoot {
         // Read-only, for scripted checks of shell feedback.
         function toast(): string { return root.toast }
         function spaces_error(): string { return root.spacesError }
+        function desk_state(): string { return root.deskOpen ? "open" : "closed" }
+        function launcher_state(): string { return root.launcherBusy() ? "open" : "closed" }
         function menu(): void {
             if (menuPreferences.appMenuEnabled && root.appMenu && !root.deskOpen && !root.overviewOpen) {
                 if (root.appMenuOpen) root.appMenuOpen = false
@@ -535,6 +539,23 @@ ShellRoot {
         }
         function display_digit(digit: int): void { if (digit > 0 && digit <= 9) root.displayDigit(digit) }
         function toggle(): void { root.toggleDesk() }
+        // Show-only requests (the Platform API's System interface). They never close anything: while
+        // any other shell surface is open they do nothing and answer "busy"; otherwise "open" or "opened".
+        function desk_open(): string {
+            if (root.overviewOpen || root.launcherBusy() || root.otherSurfaceOpen()) return "busy"
+            if (root.deskOpen) return "open"
+            root.toggleDesk(); return "opened"
+        }
+        function overview_open(): string {
+            if (root.deskOpen || root.launcherBusy() || root.otherSurfaceOpen()) return "busy"
+            if (root.overviewOpen) return "open"
+            root.showOverview("open-overview"); return "opened"
+        }
+        function apps_open(): string {
+            if (root.deskOpen || root.overviewOpen || root.otherSurfaceOpen()) return "busy"
+            if (root.launcherBusy()) return "open"
+            root.openApps(); return "opened"
+        }
         function leave(): void { root.deskOpen = false }
         function switcher(): void { root.toggleSwitcher() }
         function overview(): void {

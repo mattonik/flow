@@ -41,7 +41,8 @@ let
   flowApi = pkgs.writeShellScriptBin "flow-api" ''
     export PYTHONPATH="${../session}"
     export GI_TYPELIB_PATH="${apiTypelibs}"
-    export PATH="${spaces}/bin:${config.programs.niri.package}/bin:$PATH"
+    export PATH="${spaces}/bin:${config.programs.niri.package}/bin:${pkgs.quickshell}/bin:$PATH"
+    export FLOW_SHELL_CONFIG=/etc/flow/shell.qml
     exec ${apiPython}/bin/python3 ${../session/flow_api.py}
   '';
   flowCli = pkgs.writeShellScriptBin "flow" ''

@@ -180,6 +180,15 @@ class RoutingTest(unittest.TestCase):
         self.assertEqual(result["pins"][0]["display"], MONITOR_KEY)
         self.assertEqual(result["other_pins"], [])
 
+    def test_a_named_window_is_pinned_without_moving_focus_and_only_from_this_workspace(self):
+        self.pins([])
+        result = self.invoke("pin", "2")
+        self.assertEqual([p["window_ids"] for p in result["pins"]], [[2]])
+        self.assertEqual(next(w for w in self.workspaces if w["is_focused"])["active_window_id"], 1)
+        for arg, message in (("x", "by its number"), ("3", "Select one non-floating")):
+            with self.subTest(arg=arg), self.assertRaisesRegex(ValueError, message):
+                self.invoke("pin", arg)
+
     def test_focusing_another_displays_pin_moves_display_focus_first(self):
         self.pins([{"id": "t", "label": "Terminal", "app_id": "terminal", "display": MONITOR_KEY}])
         result = self.invoke("focus", "t")

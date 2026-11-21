@@ -10,6 +10,7 @@ class FakeNiri:
         self.workspace = workspace
         self.widths = {}
         self.floating = []
+        self.shell_has_keyboard = False  # Desk, a launcher or the overview holds the keyboard
         self.tiled_active = active  # Niri remembers the active column while a floating window has focus
         self.opened_from = {}  # a new window remembers the column it was opened from
         self.log = []
@@ -25,10 +26,12 @@ class FakeNiri:
                 width = self.widths.get(ident, 50.0) * 10
                 windows.append({"id": ident, "app_id": self.apps[ident], "title": self.apps[ident],
                                 "workspace_id": self.workspace, "is_floating": False,
+                                "is_focused": ident == self.active and not self.shell_has_keyboard,
                                 "layout": {"pos_in_scrolling_layout": [c, r], "tile_size": [width, 700]}})
         for ident in self.floating:
             windows.append({"id": ident, "app_id": self.apps[ident], "title": self.apps[ident],
                             "workspace_id": self.workspace, "is_floating": True,
+                            "is_focused": ident == self.active and not self.shell_has_keyboard,
                             "layout": {"pos_in_scrolling_layout": None, "tile_size": [576, 480]}})
         return {"id": self.workspace, "active_window_id": self.active, "output": self.output,
                 "is_focused": True, "is_active": True}, windows
@@ -147,6 +150,7 @@ class MultiNiri:
         self.active[self.focused_output] = focused
         self.widths = {}
         self.minimum = {}  # an app's minimum width, in percent of its output
+        self.shell_has_keyboard = False
         self.log = []
         self.fail_on = None
 
@@ -168,6 +172,8 @@ class MultiNiri:
                 for r, ident in enumerate(column, 1):
                     windows.append({"id": ident, "app_id": self.apps[ident], "title": self.apps[ident],
                                     "workspace_id": self.workspace_ids[name], "is_floating": False,
+                                    "is_focused": (name == self.focused_output and ident == self.active[name]
+                                                   and not self.shell_has_keyboard),
                                     "layout": {"pos_in_scrolling_layout": [c, r],
                                                "tile_size": [self.widths.get(ident, 50.0) * 10, 700]}})
         return next(w for w in self.workspaces() if w["is_focused"]), windows
