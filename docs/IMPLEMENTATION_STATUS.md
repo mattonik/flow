@@ -375,7 +375,13 @@ Tests:
   - Desk hides one for 6 s, and it then shows with its time unspent;
   - one that arrives with the panel open shows nothing after;
   - a critical one stays past 9 s, a normal one doesn't push it off, and the panel takes it for good.
-- **Mutations:** MUTATION_RESULT
+- **Mutations:** thirteen mutations each fail the smoke, at the step that covers them:
+  - no banner, low urgency shown, a banner shown while the panel is open;
+  - no timeout, a 7 s timeout, a critical one timing out, a normal one evicting a critical one;
+  - the timer counting while hidden, replacements ignored, the panel not taking the banner;
+  - a banner over Desk or over quick settings, and a newer notification not replacing the shown one.
+  
+  An earlier version also checked that the notification was still tracked. Removing that check broke nothing: a notification the app closes is destroyed, which empties the banner's property. So the check was dropped.
 - **`test_notification_banner.py`:** checks the source for what the smoke can't see or reach:
   - the banner never takes the keyboard, and Super+N is bound;
   - the exact set of conditions that hide it, in any order;
@@ -384,7 +390,7 @@ Tests:
   - the card has the alert role;
   - new and replaced notifications both reach `showBanner`, and a click runs the default action.
   
-  Ten mutations of the shell and the Niri config were checked against it. Nine fail it (among them an extra `|| root.deskOpen`, a scaled or dead dismiss, a hidden card, a missing `showBanner` call, an ignored default action, and Super+N removed). The tenth, a harmless reordering of the conditions, passes, as it should.
+  Eleven mutations of the shell and the Niri config were checked against it. Ten fail it, among them an extra `|| root.deskOpen`, quick settings dropped from `workViewOnly`, a scaled or dead dismiss, a hidden card, a missing `showBanner` call, an ignored default action, and Super+N removed. The eleventh, a harmless reordering of the conditions, passes, as it should.
 
 A NEMESIS review of the first version found that replaced notifications never showed, that a normal notification pushed a critical banner off, that the timer ran while the banner was hidden or held, that the banner ignored Desk, Overview, the switcher and the app menu, no keyboard path outside Desk, no default action on click, false claims about the IPC and the display, and weak tests. All are fixed as described above.
 
