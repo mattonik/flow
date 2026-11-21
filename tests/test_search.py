@@ -93,6 +93,15 @@ class SearchTest(unittest.TestCase):
                           ("app", "/usr/share/applications/browser.desktop"), ("layer", "browser.desktop")])
         self.assertEqual(rows[3]["icon"], "browser")
 
+    def test_an_icon_with_fallbacks_is_given_to_the_shell_by_its_name(self):
+        app = Mock()
+        app.get_display_name.return_value = "Editor"
+        app.should_show.return_value = True
+        app.get_icon.return_value.to_string.return_value = ". GThemedIcon org.example.Editor org.example.Editor-symbolic"
+        self.assertEqual(search.results({}, [app])[2][4], "org.example.Editor")
+        app.get_icon.return_value.to_string.return_value = "/opt/editor/icon.png"
+        self.assertEqual(search.results({}, [app])[2][4], "/opt/editor/icon.png")
+
     def test_open_launches_apps_and_files_through_gio_in_an_app_scope(self):
         for kind, value, command in (("app", "/a/browser.desktop", ["gio", "launch", "/a/browser.desktop"]),
                                      ("file", "file:///home/u/notes.txt", ["gio", "open", "file:///home/u/notes.txt"])):

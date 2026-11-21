@@ -591,7 +591,7 @@ ShellRoot {
     property bool searchOpen: false
     property bool searchAppsOnly: false
     property var searchResults: []
-    property bool searchFailed: false   // flow-search did not answer with results: say so, not "Nothing matches"
+    property bool searchFailed: false   // flow-search did not print a list of results: say so, not "Nothing matches"
     property string searchQuery: ""
     property int searchIndex: 0
     readonly property var searchMatches: {
@@ -599,14 +599,15 @@ ShellRoot {
         const pool = searchAppsOnly ? searchResults.filter(r => r.kind === "app") : searchResults
         if (!query) return pool.slice(0, 60)
         const scored = []
-        for (const result of pool) {
+        pool.forEach((result, index) => {
             const title = result.title.toLowerCase(), detail = result.detail.toLowerCase()
             const words = title.split(/[\s·:/._-]+/)
-            const score = title.startsWith(query) ? 0 : words.some(w => w.startsWith(query)) ? 1
-                : title.includes(query) ? 2 : detail.includes(query) ? 3 : -1
-            if (score >= 0) scored.push({score: score, result: result})
-        }
-        scored.sort((a, b) => a.score - b.score)
+            const score = title === query ? 0 : title.startsWith(query) ? 1 : words.some(w => w.startsWith(query)) ? 2
+                : title.includes(query) ? 3 : detail.includes(query) ? 4 : -1
+            if (score >= 0) scored.push({score: score, index: index, result: result})
+        })
+        // Ties keep search.py's order (an app before the same app as a Layer): V4's sort is not stable.
+        scored.sort((a, b) => a.score - b.score || a.index - b.index)
         return scored.slice(0, 60).map(entry => entry.result)
     }
     onSearchMatchesChanged: searchIndex = 0
@@ -621,7 +622,6 @@ ShellRoot {
                 root.searchResults = Array.isArray(rows) ? rows : []
             }
         }
-        onExited: exitCode => { if (exitCode !== 0) { root.searchFailed = true; root.searchResults = [] } }
     }
     // Apps and files open through flow-search, whose wrapper has gio; a failure is shown, never silent.
     Process {
@@ -1281,7 +1281,9 @@ ShellRoot {
         // What the search panel shows, for scripted checks: its rows, or the message in their place.
         function search_view(): string {
             return JSON.stringify({ rows: root.searchMatches.map(r => ({ kind: r.kind, title: r.title, icon: r.icon })),
-                                    message: root.searchMatches.length ? "" : searchEmpty.text })
+                                    message: root.searchMatches.length ? "" : searchEmpty.text,
+                                    // The message, as laid out, ends above the footer's rule.
+                                    message_clear: searchEmpty.y + Math.max(searchEmpty.height, searchEmpty.contentHeight) <= searchFooter.y - 1 })
         }
         function activity_list(): string { return JSON.stringify(root.activities.map(a => root.activityText(a))) }
         // Read-only, for tests/niri_focus_walk_smoke.py: the visible buttons and switches of every shell surface
