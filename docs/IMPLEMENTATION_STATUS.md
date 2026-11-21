@@ -285,7 +285,7 @@ The Island and Desk now follow the prototype (`docs/Flow_v1.0_Contextual_Menus.h
   - **Headline:** "Everything in its place." as display type, in DemiBold (600). It is 7.9% of the screen's width, between 40 and 116 px and at most 11% of the screen's height, and 44 px when Desk is narrower than 600 px. On a screen under 600 px tall the space around the search field shrinks too.
     - Lines are at 0.97 of the size. That is a fixed line height: a proportional one multiplies Noto Sans's own line gap.
     - Tracking is −5%, and "place." is in the accent.
-  - **Headline font:** the tokens name Manrope as the brand face, but nixpkgs removed it ("its source has been pulled"). The brand guidelines rule out forcing a remote font download, so the headline falls back to Noto Sans until Manrope is packaged.
+  - **Headline font:** the tokens name Manrope as the brand face, but nixpkgs removed it ("its source has been pulled"). The brand guidelines rule out forcing a remote font download, so the headline uses the Noto Sans fallback. On 2026-11-21 it was decided to keep Noto Sans rather than fetch Manrope from Google Fonts.
   - **Eyebrow:** "FLOE / YOUR DESK", after a small accent light.
   - **Search field:** "Search anything, start anywhere…" with *Super K*, 59 px tall with a 15 px radius.
   - **Pinned spaces:** cards, two to a row (one per row in *Edit pins*, with its arrows and ×), with the pin number in the accent. A long display name in the section label is cut short with an ellipsis.

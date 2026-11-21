@@ -75,11 +75,15 @@ ShellRoot {
         }
         quickSettingsOpen = !quickSettingsOpen
     }
-    function changeVolume(value) {
+    function setVolume(level) {
         if (!audioAvailable) { quickError = "Audio control unavailable"; return }
         quickError = ""
-        if (value === "mute") audioSink.audio.muted = !audioSink.audio.muted
-        else audioSink.audio.volume = Math.max(0, Math.min(1, audioSink.audio.volume + value))
+        audioSink.audio.volume = Math.max(0, Math.min(1, level))
+    }
+    function toggleMute() {
+        if (!audioAvailable) { quickError = "Audio control unavailable"; return }
+        quickError = ""
+        audioSink.audio.muted = !audioSink.audio.muted
     }
     property bool appMenuOpen: false
     property bool appMenuFocusChanged: false
@@ -809,6 +813,155 @@ ShellRoot {
             Behavior on color { ColorAnimation { duration: root.motionQuick } }
         }
     }
+    // A row of a system panel, after the prototype's: a label, a value at the right and a chevron when it
+    // opens something, over a hairline. Rows that only show a value (interactive: false) take no focus.
+    component PanelRow: Button {
+        id: panelRow
+        property string value: ""
+        property color valueColor: floeTheme.textMuted
+        property bool chevron: interactive
+        property bool interactive: true
+        property bool last: false
+        focusPolicy: interactive ? Qt.StrongFocus : Qt.NoFocus
+        hoverEnabled: interactive
+        Keys.onReturnPressed: if (interactive) panelRow.clicked()
+        Keys.onEnterPressed: if (interactive) panelRow.clicked()
+        implicitHeight: 48; padding: 0
+        Accessible.role: interactive ? Accessible.Button : Accessible.StaticText
+        Accessible.name: value ? text + ", " + value : text
+        contentItem: Item {
+            Text {
+                id: rowLabel
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.min(implicitWidth, parent.width * 0.6)
+                text: panelRow.text; textFormat: Text.PlainText; elide: Text.ElideRight
+                color: floeTheme.textPrimary; font.pixelSize: 14; font.weight: Font.Medium; font.family: floeTheme.interfaceFont
+            }
+            Text {
+                anchors { left: rowLabel.right; leftMargin: 12; right: rowChevron.visible ? rowChevron.left : parent.right
+                          rightMargin: rowChevron.visible ? 4 : 0; verticalCenter: parent.verticalCenter }
+                text: panelRow.value; textFormat: Text.PlainText; elide: Text.ElideRight; horizontalAlignment: Text.AlignRight
+                color: panelRow.valueColor; font.pixelSize: 14; font.family: floeTheme.interfaceFont; font.features: { "tnum": 1 }
+            }
+            FlowIcon {
+                id: rowChevron
+                visible: panelRow.chevron
+                anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+                name: "right"; size: 16; color: floeTheme.textMuted
+            }
+        }
+        background: Item {
+            Rectangle {
+                // The tint reaches 10 px past the text, as a list row's does.
+                anchors { fill: parent; leftMargin: -10; rightMargin: -10; topMargin: 2; bottomMargin: 2 }
+                radius: 10
+                color: panelRow.interactive && (panelRow.down || panelRow.hovered) ? Qt.alpha(floeTheme.textPrimary, 0.06) : "transparent"
+                Behavior on color { ColorAnimation { duration: root.motionQuick } }
+            }
+            Rectangle {
+                visible: !panelRow.last
+                anchors.bottom: parent.bottom; width: parent.width; height: 1
+                color: Qt.alpha(floeTheme.border, 0.3)
+            }
+            Rectangle {
+                visible: panelRow.activeFocus
+                anchors { fill: parent; leftMargin: -13; rightMargin: -13; topMargin: -1; bottomMargin: -1 }
+                radius: 13; color: "transparent"; border.width: 2; border.color: floeTheme.focus
+            }
+        }
+    }
+    // A system panel, after the prototype's: it hangs 12 px below the Island, 370 px wide (less on a
+    // narrow screen), radius 19 with 23 px inside, a title, any tools, a close button, then its rows. It
+    // drops in over 220 ms, or at once when motion is reduced. Escape and the close button ask to close.
+    component SystemPanel: PanelWindow {
+        id: systemPanel
+        property bool shown: false
+        property string title
+        property alias tools: panelTools.data
+        default property alias content: panelBody.data
+        signal closeRequested()
+        visible: shown
+        anchors.top: true
+        implicitWidth: Math.max(0, Math.min(370, screen.width - 24))
+        // 13 above the header, 44 for it, 6 below it, and 19 under the rows (23 with their padding).
+        implicitHeight: Math.min(screen.height - 80, panelBody.implicitHeight + 82)
+        margins.top: 56
+        color: "transparent"; exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: shown ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+        onVisibleChanged: if (visible && root.motionStandard) panelEnter.restart()
+        ParallelAnimation {
+            id: panelEnter
+            NumberAnimation { target: panelCard; property: "opacity"; from: 0; to: 1; duration: root.motionStandard; easing.type: Easing.BezierSpline; easing.bezierCurve: root.standardCurve }
+            NumberAnimation { target: panelCard; property: "y"; from: -8; to: 0; duration: root.motionStandard; easing.type: Easing.BezierSpline; easing.bezierCurve: root.standardCurve }
+        }
+        Rectangle {
+            id: panelCard
+            width: parent.width; height: parent.height; radius: 19
+            color: floeTheme.surface; border.width: 1; border.color: Qt.alpha(floeTheme.border, 0.5)
+            FocusScope {
+                anchors.fill: parent; focus: systemPanel.shown
+                Keys.onEscapePressed: systemPanel.closeRequested()
+                Row {
+                    id: panelHeader
+                    // The close glyph lines up with the rows' right edge, so the row runs 12 px past it.
+                    x: 23; y: 13; width: parent.width - 46 + 12; height: 44; spacing: 4
+                    Text {
+                        width: parent.width - panelTools.width - panelClose.width - 2 * parent.spacing; height: 44
+                        verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
+                        text: systemPanel.title; textFormat: Text.PlainText; color: floeTheme.textPrimary
+                        font.pixelSize: 18; font.weight: Font.DemiBold; font.letterSpacing: -0.4; font.family: floeTheme.interfaceFont
+                        Accessible.role: Accessible.Heading; Accessible.name: text
+                    }
+                    Row { id: panelTools; height: 44; spacing: 4 }
+                    FlowButton {
+                        id: panelClose
+                        width: 44; implicitHeight: 44; radius: 12; variant: "plain"; glyph: "close"; text: "×"
+                        Accessible.name: "Close " + systemPanel.title.toLowerCase()
+                        onClicked: systemPanel.closeRequested()
+                    }
+                }
+                ScrollView {
+                    // 12 px between the clip and the rows, so their tints and focus rings stay whole.
+                    anchors { fill: parent; topMargin: 63; leftMargin: 11; rightMargin: 11; bottomMargin: 19 }
+                    clip: true
+                    contentWidth: availableWidth; contentHeight: panelBody.implicitHeight
+                    Column { id: panelBody; x: 12; width: parent.width - 24; topPadding: 4; bottomPadding: 4 }
+                }
+            }
+        }
+    }
+    // The volume, as a slider: drag or tap the track, or use the arrow keys (5% a step).
+    component VolumeSlider: Slider {
+        id: volumeSlider
+        from: 0; to: 1; stepSize: 0.05
+        enabled: root.audioAvailable
+        implicitHeight: 44
+        focusPolicy: Qt.StrongFocus
+        opacity: enabled ? 1 : 0.45
+        Accessible.name: "Volume"
+        onMoved: root.setVolume(value)
+        // A Binding element, not a property binding: moving the slider assigns its value, which would end a
+        // binding, and then a change made elsewhere would no longer show.
+        Binding on value { value: root.audioAvailable ? root.audioSink.audio.volume : 0; when: !volumeSlider.pressed }
+        background: Rectangle {
+            x: volumeSlider.leftPadding; y: volumeSlider.topPadding + volumeSlider.availableHeight / 2 - height / 2
+            width: volumeSlider.availableWidth; height: 6; radius: 3
+            color: Qt.alpha(floeTheme.border, 0.45)
+            Rectangle { width: volumeSlider.visualPosition * parent.width; height: parent.height; radius: 3; color: floeTheme.accent }
+        }
+        handle: Rectangle {
+            x: volumeSlider.leftPadding + volumeSlider.visualPosition * (volumeSlider.availableWidth - width)
+            y: volumeSlider.topPadding + volumeSlider.availableHeight / 2 - height / 2
+            width: 22; height: 22; radius: 11
+            color: floeTheme.accentStrong; border.width: 2; border.color: floeTheme.accent
+            Rectangle {
+                visible: volumeSlider.activeFocus
+                anchors { fill: parent; margins: -4 }
+                radius: 15; color: "transparent"; border.width: 2; border.color: floeTheme.focus
+            }
+        }
+    }
     // A capsule bar for position controls: the work indicator.
     component CapsuleBar: Rectangle {
         radius: height / 2; color: floeTheme.canvas
@@ -1009,6 +1162,7 @@ ShellRoot {
             }
         }
         function quick(): void { root.toggleQuickSettings() }
+        function notifications(): void { root.toggleNotifications() }
         function quick_open(): void { if (!root.quickSettingsOpen) root.toggleQuickSettings() }
         function settings(): void {
             if (!root.deskOpen) root.toggleDesk()
@@ -2634,141 +2788,140 @@ ShellRoot {
             }
         }
     }
-    PanelWindow {
-        visible: root.quickSettingsOpen
-        anchors.top: true
-        implicitWidth: Math.max(0, Math.min(340, screen.width - 24)); implicitHeight: Math.min(screen.height - 80, Math.max(235, quickSettingsColumn.implicitHeight + 40)); margins.top: 56
-        color: "transparent"; exclusionMode: ExclusionMode.Ignore
-        WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
-        Rectangle {
-            // Panels hang from the island: radius 14, hairline edge, the surface tone.
-            anchors.fill: parent; radius: 14
-            color: floeTheme.surface; border.width: 1; border.color: Qt.alpha(floeTheme.border, 0.5)
+    SystemPanel {
+        shown: root.quickSettingsOpen; title: "Quick settings"
+        onCloseRequested: root.quickSettingsOpen = false
+        PanelRow {
+            width: parent.width; text: "Network"; value: root.networkStatus
+            valueColor: root.networkStatus === "Connected" ? floeTheme.success : floeTheme.textMuted
+            Accessible.description: "Choose a Wi-Fi network"
+            onClicked: { root.quickSettingsOpen = false; root.launchApp(["flow-wifi-settings"]) }
         }
-        FocusScope {
-            anchors.fill: parent; focus: true
-            Keys.onEscapePressed: root.quickSettingsOpen = false
-            ScrollView {
-                anchors.fill: parent; anchors.margins: 16; anchors.topMargin: 20; clip: true
-                contentWidth: availableWidth; contentHeight: quickSettingsColumn.implicitHeight
-                Column {
-                id: quickSettingsColumn
-                // 4 px inside the clip keeps focus rings whole.
-                x: 4; width: parent.width - 8; topPadding: 4; bottomPadding: 4; spacing: 10
-                SectionLabel { text: "NETWORK" }
-                Text { text: root.networkStatus; color: floeTheme.textPrimary; font.pixelSize: 16; font.weight: Font.DemiBold; font.family: floeTheme.interfaceFont }
-                FlowButton { width: parent.width; implicitHeight: 44; text: "Choose Wi-Fi network"; onClicked: { root.quickSettingsOpen = false; root.launchApp(["flow-wifi-settings"]) } }
-                FlowButton { width: parent.width; implicitHeight: 44; variant: "quiet"; text: "Toggle on-screen keyboard"; Accessible.name: "Toggle on-screen keyboard"; onClicked: { root.launchApp(["flow-keyboard"]); root.quickSettingsOpen = false } }
-                SectionLabel { text: "SOUND"; topPadding: 8 }
-                Text { text: root.volumeStatus; color: floeTheme.textPrimary; font.pixelSize: 16; font.weight: Font.DemiBold; font.family: floeTheme.interfaceFont; font.features: { "tnum": 1 } }
-                Flow {
-                    width: parent.width; spacing: 6
-                    FlowButton { width: 70; implicitHeight: 44; text: "− 5%"; Accessible.name: "Decrease volume"; enabled: root.audioAvailable; onClicked: root.changeVolume(-0.05) }
-                    FlowButton { width: 70; implicitHeight: 44; text: "+ 5%"; Accessible.name: "Increase volume"; enabled: root.audioAvailable; onClicked: root.changeVolume(0.05) }
-                    FlowButton { width: Math.max(70, parent.width - 152); implicitHeight: 44; variant: "quiet"; text: root.audioAvailable && root.audioSink.audio.muted ? "Unmute" : "Mute"; enabled: root.audioAvailable; onClicked: root.changeVolume("mute") }
-                }
-                Row {
-                    visible: !!root.mediaPlayer
-                    width: parent.width; spacing: 8
-                    Column {
-                        width: parent.width - mediaToggle.width - parent.spacing; spacing: 2
-                        Text {
-                            width: parent.width; maximumLineCount: 1; wrapMode: Text.NoWrap; elide: Text.ElideRight
-                            text: root.mediaPlayer ? (root.mediaPlayer.trackTitle || root.mediaPlayer.identity || "Media player").slice(0, 160) : ""
-                            textFormat: Text.PlainText; color: floeTheme.textPrimary; font.weight: Font.DemiBold; font.pixelSize: 14; font.family: floeTheme.interfaceFont
-                        }
-                        Text {
-                            visible: !!(root.mediaPlayer && root.mediaPlayer.trackArtist)
-                            width: parent.width; maximumLineCount: 1; wrapMode: Text.NoWrap; elide: Text.ElideRight
-                            text: root.mediaPlayer ? root.mediaPlayer.trackArtist.slice(0, 160) : ""
-                            textFormat: Text.PlainText; color: floeTheme.textMuted; font.pixelSize: 12
-                        }
-                    }
-                    FlowButton {
-                        id: mediaToggle; width: 76; implicitHeight: 44
-                        text: root.mediaPlayer && root.mediaPlayer.isPlaying ? "Pause" : "Play"
-                        Accessible.name: root.mediaPlayer && root.mediaPlayer.isPlaying ? "Pause media" : "Play media"
-                        enabled: !!(root.mediaPlayer && root.mediaPlayer.canTogglePlaying)
-                        onClicked: if (root.mediaPlayer && root.mediaPlayer.canTogglePlaying) root.mediaPlayer.togglePlaying()
-                    }
-                }
-                Text { visible: root.quickError !== ""; text: root.quickError; color: floeTheme.danger; font.pixelSize: 12; font.family: floeTheme.interfaceFont; width: parent.width; wrapMode: Text.Wrap }
-                Rectangle { width: parent.width; height: 1; color: Qt.alpha(floeTheme.border, 0.35) }
-                Flow {
-                    width: parent.width; spacing: 6
-                    FlowButton { implicitHeight: 44; variant: "quiet"; text: "Edit connections"; onClicked: { root.quickSettingsOpen = false; root.launchApp(["nm-connection-editor"]) } }
-                    FlowButton { implicitHeight: 44; variant: "quiet"; text: "Close"; onClicked: root.quickSettingsOpen = false }
-                }
-                }
+        PanelRow {
+            width: parent.width; text: "Edit connections"
+            onClicked: { root.quickSettingsOpen = false; root.launchApp(["nm-connection-editor"]) }
+        }
+        PanelRow {
+            width: parent.width; text: "On-screen keyboard"; value: "Show or hide"; valueColor: floeTheme.accent; chevron: false
+            onClicked: { root.launchApp(["flow-keyboard"]); root.quickSettingsOpen = false }
+        }
+        PanelRow { width: parent.width; interactive: false; last: true; text: "Sound"; value: root.volumeStatus }
+        Row {
+            width: parent.width; spacing: 12
+            VolumeSlider { width: parent.width - muteButton.width - parent.spacing }
+            FlowButton {
+                id: muteButton
+                width: 84; implicitHeight: 44; variant: "quiet"; enabled: root.audioAvailable
+                text: root.audioAvailable && root.audioSink.audio.muted ? "Unmute" : "Mute"
+                onClicked: root.toggleMute()
             }
         }
-    }
-    PanelWindow {
-        visible: root.notificationsOpen
-        anchors.top: true
-        implicitWidth: Math.min(420, screen.width - 24); implicitHeight: Math.min(notificationColumn.implicitHeight + 24, screen.height - 80)
-        margins.top: 56
-        color: "transparent"; exclusionMode: ExclusionMode.Ignore
-        WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: root.notificationsOpen ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-        Rectangle {
-            // Panels hang from the island: radius 14, hairline edge, the surface tone.
-            anchors.fill: parent; radius: 14
-            color: floeTheme.surface; border.width: 1; border.color: Qt.alpha(floeTheme.border, 0.5)
-        }
-        FocusScope {
-            anchors.fill: parent; focus: root.notificationsOpen
-            Keys.onEscapePressed: root.notificationsOpen = false
-            ScrollView {
-            anchors.fill: parent; anchors.margins: 8; clip: true
-            contentWidth: availableWidth; contentHeight: notificationColumn.implicitHeight
+        Row {
+            visible: !!root.mediaPlayer
+            width: parent.width; spacing: 8; topPadding: 8
             Column {
-                id: notificationColumn; x: 4; width: parent.width - 8; topPadding: 4; bottomPadding: 4; spacing: 8
-                Row {
-                    width: parent.width; spacing: 8
-                    SectionLabel { leftPadding: 4; width: parent.width - 88; text: "NOTIFICATIONS"; anchors.verticalCenter: parent.verticalCenter }
-                    FlowButton { width: 80; implicitHeight: 44; text: "Close"; variant: "quiet"; onClicked: root.notificationsOpen = false }
+                width: parent.width - mediaToggle.width - parent.spacing; spacing: 2
+                Text {
+                    width: parent.width; maximumLineCount: 1; wrapMode: Text.NoWrap; elide: Text.ElideRight
+                    text: root.mediaPlayer ? (root.mediaPlayer.trackTitle || root.mediaPlayer.identity || "Media player").slice(0, 160) : ""
+                    textFormat: Text.PlainText; color: floeTheme.textPrimary; font.weight: Font.DemiBold; font.pixelSize: 14; font.family: floeTheme.interfaceFont
                 }
                 Text {
-                    visible: notificationServer.trackedNotifications.values.length === 0
-                    width: parent.width; height: 88; verticalAlignment: Text.AlignVCenter; horizontalAlignment: Text.AlignHCenter
-                    text: "No notifications"; color: floeTheme.textMuted; font.pixelSize: 14; font.family: floeTheme.interfaceFont
+                    visible: !!(root.mediaPlayer && root.mediaPlayer.trackArtist)
+                    width: parent.width; maximumLineCount: 1; wrapMode: Text.NoWrap; elide: Text.ElideRight
+                    text: root.mediaPlayer ? root.mediaPlayer.trackArtist.slice(0, 160) : ""
+                    textFormat: Text.PlainText; color: floeTheme.textMuted; font.pixelSize: 12
                 }
-                Repeater {
-                    model: notificationServer.trackedNotifications
-                    delegate: Rectangle {
-                        required property var modelData
-                        required property int index
-                        visible: root.notificationsOpen || index === notificationServer.trackedNotifications.values.length - 1
-                        width: notificationColumn.width; implicitHeight: cardColumn.implicitHeight + 20
-                        // Panel radius 14, inset 8: radius 6.
-                        radius: 6; color: floeTheme.surfaceRaised; border.color: Qt.alpha(floeTheme.border, 0.45)
+            }
+            FlowButton {
+                id: mediaToggle; width: 76; implicitHeight: 44
+                text: root.mediaPlayer && root.mediaPlayer.isPlaying ? "Pause" : "Play"
+                Accessible.name: root.mediaPlayer && root.mediaPlayer.isPlaying ? "Pause media" : "Play media"
+                enabled: !!(root.mediaPlayer && root.mediaPlayer.canTogglePlaying)
+                onClicked: if (root.mediaPlayer && root.mediaPlayer.canTogglePlaying) root.mediaPlayer.togglePlaying()
+            }
+        }
+        Text {
+            visible: root.quickError !== ""; topPadding: 8
+            text: root.quickError; color: floeTheme.danger; font.pixelSize: 12; font.family: floeTheme.interfaceFont; width: parent.width; wrapMode: Text.Wrap
+        }
+    }
+    SystemPanel {
+        shown: root.notificationsOpen; title: "Notifications"
+        onCloseRequested: root.notificationsOpen = false
+        tools: FlowButton {
+            visible: notificationServer.trackedNotifications.values.length > 0
+            implicitHeight: 44; leftPadding: 12; rightPadding: 12; variant: "plain"; text: "Clear all"
+            Accessible.name: "Clear all notifications"
+            onClicked: [...notificationServer.trackedNotifications.values].forEach(n => n.dismiss())
+        }
+        Column {
+            visible: notificationServer.trackedNotifications.values.length === 0
+            width: parent.width; topPadding: 16; bottomPadding: 20; spacing: 8
+            FlowIcon { anchors.horizontalCenter: parent.horizontalCenter; name: "bell"; size: 22; color: floeTheme.textMuted }
+            Text {
+                width: parent.width; horizontalAlignment: Text.AlignHCenter
+                text: "No notifications"; color: floeTheme.textSecondary; font.pixelSize: 14; font.weight: Font.Medium; font.family: floeTheme.interfaceFont
+            }
+            Text {
+                width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
+                text: "They gather here, above every space."; color: floeTheme.textMuted; font.pixelSize: 12; font.family: floeTheme.interfaceFont
+            }
+        }
+        Repeater {
+            id: notificationList
+            // Newest first.
+            model: [...notificationServer.trackedNotifications.values].reverse()
+            delegate: Item {
+                required property var modelData
+                required property int index
+                width: parent.width; implicitHeight: notificationItem.implicitHeight + 20
+                Column {
+                    id: notificationItem
+                    y: 10; width: parent.width; spacing: 2
+                    Row {
+                        width: parent.width; spacing: 8
                         Column {
-                            id: cardColumn; anchors.fill: parent; anchors.margins: 12; anchors.rightMargin: 4; spacing: 4
-                            Row {
-                                width: parent.width; spacing: 8
-                                Text { width: parent.width - dismiss.width - 8; text: modelData.appName + " · " + modelData.summary; textFormat: Text.PlainText; color: floeTheme.textPrimary; font.weight: Font.DemiBold; font.pixelSize: 14; font.family: floeTheme.interfaceFont; wrapMode: Text.Wrap; height: Math.max(44, implicitHeight); verticalAlignment: Text.AlignVCenter }
-                                FlowButton { id: dismiss; width: 44; implicitHeight: 44; variant: "quiet"; glyph: "close"; text: "×"; Accessible.name: "Dismiss notification"; onClicked: modelData.dismiss() }
+                            width: parent.width - dismiss.width - parent.spacing; anchors.verticalCenter: parent.verticalCenter; spacing: 2
+                            SectionLabel {
+                                visible: modelData.appName !== ""; width: parent.width; elide: Text.ElideRight
+                                text: modelData.appName.toUpperCase()
                             }
-                            Text { visible: modelData.body !== ""; width: parent.width; text: modelData.body; textFormat: Text.PlainText; color: floeTheme.textSecondary; wrapMode: Text.Wrap; font.pixelSize: 14; font.family: floeTheme.interfaceFont; rightPadding: 8 }
-                            Flow {
-                                width: parent.width; spacing: 6
-                                Repeater {
-                                    model: modelData.actions
-                                    delegate: FlowButton {
-                                        required property var modelData
-                                        width: Math.min(200, implicitWidth); implicitHeight: 44
-                                        text: modelData.text; Accessible.name: modelData.text
-                                        onClicked: modelData.invoke()
-                                    }
-                                }
+                            Text {
+                                width: parent.width; text: modelData.summary; textFormat: Text.PlainText; wrapMode: Text.Wrap
+                                color: floeTheme.textPrimary; font.weight: Font.DemiBold; font.pixelSize: 14; font.family: floeTheme.interfaceFont
+                            }
+                        }
+                        FlowButton {
+                            id: dismiss; width: 44; implicitHeight: 44; radius: 12; variant: "plain"; glyph: "close"; text: "×"
+                            Accessible.name: "Dismiss notification"; onClicked: modelData.dismiss()
+                        }
+                    }
+                    Text {
+                        visible: modelData.body !== ""; width: parent.width; rightPadding: 52
+                        text: modelData.body; textFormat: Text.PlainText; wrapMode: Text.Wrap; maximumLineCount: 6; elide: Text.ElideRight
+                        color: floeTheme.textSecondary; font.pixelSize: 13; font.family: floeTheme.interfaceFont
+                    }
+                    Flow {
+                        visible: modelData.actions.length > 0
+                        width: parent.width; spacing: 6; topPadding: 6
+                        Repeater {
+                            model: modelData.actions
+                            delegate: FlowButton {
+                                required property var modelData
+                                width: Math.min(200, implicitWidth); implicitHeight: 44
+                                text: modelData.text; Accessible.name: modelData.text
+                                onClicked: modelData.invoke()
                             }
                         }
                     }
                 }
+                Rectangle {
+                    visible: index < notificationList.count - 1
+                    anchors.bottom: parent.bottom; width: parent.width; height: 1
+                    color: Qt.alpha(floeTheme.border, 0.3)
+                }
             }
-        }
         }
     }
     PanelWindow {
