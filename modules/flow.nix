@@ -28,16 +28,24 @@ let
     fi
     exec "$@" </dev/null >/dev/null 2>&1
   '';
+  # fuzzel in Floe's theme, following the user's appearance setting (session/flow-fuzzel.sh). Not
+  # named `fuzzel`: inside `with pkgs; [ … ]` a let binding would replace the fuzzel package itself.
+  themedFuzzel = pkgs.writeShellScriptBin "flow-fuzzel" ''
+    export FLOW_FUZZEL_BIN=${lib.getExe pkgs.fuzzel} FLOW_FUZZEL_THEMES=${../design/generated}
+    export PATH="${pkgs.gnugrep}/bin:$PATH"
+    exec ${pkgs.bash}/bin/sh ${../session/flow-fuzzel.sh} "$@"
+  '';
   launcher = pkgs.writeShellScriptBin "flow-apps" ''
     user_name="$(${pkgs.coreutils}/bin/id -un)"
     export XDG_DATA_DIRS="''${XDG_DATA_DIRS:+$XDG_DATA_DIRS:}$HOME/.nix-profile/share:$HOME/.local/state/nix/profile/share:/etc/profiles/per-user/$user_name/share:/nix/var/nix/profiles/default/share:/run/current-system/sw/share:/usr/local/share:/usr/share"
-    exec ${lib.getExe pkgs.fuzzel} --layer=overlay --keyboard-focus=on-demand --override=main.exit-on-keyboard-focus-loss=yes --launch-prefix=${lib.getExe appLaunch} "$@"
+    exec ${themedFuzzel}/bin/flow-fuzzel --layer=overlay --keyboard-focus=on-demand --override=main.exit-on-keyboard-focus-loss=yes --launch-prefix=${lib.getExe appLaunch} "$@"
   '';
   search = pkgs.writeShellScriptBin "flow-search" ''
     user_name="$(${pkgs.coreutils}/bin/id -un)"
     export XDG_DATA_DIRS="''${XDG_DATA_DIRS:+$XDG_DATA_DIRS:}$HOME/.nix-profile/share:$HOME/.local/state/nix/profile/share:/etc/profiles/per-user/$user_name/share:/nix/var/nix/profiles/default/share:/run/current-system/sw/share:/usr/local/share:/usr/share"
     export GI_TYPELIB_PATH="${pkgs.glib}/lib/girepository-1.0:${pkgs.gobject-introspection}/lib/girepository-1.0''${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
     export PYTHONPATH="${../session}"
+    export FLOW_FUZZEL=${themedFuzzel}/bin/flow-fuzzel
     exec ${pkgs.python3.withPackages (p: [ p.pygobject3 ])}/bin/python3 ${../session/search.py}
   '';
   # The shell's files, as one store directory: /etc/flow, and the restart trigger of the shell's unit.
@@ -192,23 +200,8 @@ in {
     };
     environment.etc."niri/config.kdl".source = niriConfig;
     environment.etc."flow".source = shellFiles;
-    environment.etc."xdg/fuzzel/fuzzel.ini".text = ''
-      [main]
-      font=sans:size=12
-      prompt="Search apps: "
-      [colors]
-      background=0b1015f2
-      text=ecf2f0ff
-      prompt=b8ddcbff
-      input=ecf2f0ff
-      match=b8ddcbff
-      selection=172128ff
-      selection-text=ecf2f0ff
-      selection-match=b8ddcbff
-      border=b8ddcbff
-      [border]
-      radius=12
-    '';
+    # Plain fuzzel, started by anything else, gets the dark theme too.
+    environment.etc."xdg/fuzzel/fuzzel.ini".source = ../design/generated/fuzzel-dark.ini;
     environment.sessionVariables.NIXOS_OZONE_WL = "1";
   };
 }

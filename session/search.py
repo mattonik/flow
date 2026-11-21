@@ -74,8 +74,10 @@ def main():
     home = Path.home()
     history = Path(os.environ.get("XDG_DATA_HOME") or home / ".local/share") / "recently-used.xbel"
     choices = entries(snapshot, Gio.AppInfo.get_all(), recent_files(history, home))
-    result = subprocess.run(["fuzzel", "--keyboard-focus=on-demand", "--override=main.exit-on-keyboard-focus-loss=yes",
-                             "--dmenu", "--index", "--only-match", "--prompt", "Search: "],
+    # FLOW_FUZZEL is fuzzel in Floe's theme when installed (modules/flow.nix).
+    result = subprocess.run([os.environ.get("FLOW_FUZZEL") or "fuzzel", "--keyboard-focus=on-demand",
+                             "--override=main.exit-on-keyboard-focus-loss=yes", "--dmenu", "--index", "--only-match",
+                             "--placeholder", "Search apps, spaces and files"],
                             input="".join(label + "\n" for label, _ in choices), text=True, capture_output=True)
     if result.returncode != 0:
         return
