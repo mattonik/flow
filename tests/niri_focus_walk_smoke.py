@@ -7,7 +7,8 @@ Shift+Tab walk every enabled control and the test checks that:
   (a switcher card's controls as one block) that is enabled at that moment;
 - the focus ring is drawn around the focused control in the ``focus`` token and around no other
   (screenshot pixels, sampled where the ring belongs: 3 px outside a button, 1 px inside an island
-  capsule, 1 px outside a switch's indicator, at a text field's edge);
+  capsule, 1 px outside a switch's indicator, 4 px around a slider's handle, at a text field's edge, and
+  around a panel row as the shell reports it);
 - Return and keypad Enter activate the focused control;
 - Escape closes the surface and keystrokes reach the app again, and none reached it while the surface
   was open.
@@ -56,7 +57,8 @@ CODE = Path(__file__).resolve().parents[1] / "session"
 CONTROL_ROLES = ()  # AT-SPI roles of controls, set once pyatspi is imported
 # Where each kind of control draws its 2 px ring, from its edge (or a switch's indicator's): the design,
 # held here so a shell that moved its rings would fail rather than be sampled where it put them.
-RING_INSET = {"button": -3, "glyph": -3, "capsule": 1, "switch": -1, "field": 0}
+RING_INSET = {"button": -3, "glyph": -3, "capsule": 1, "switch": -1, "field": 0, "slider": -4,
+              "row": 0}  # a system panel's row: the shell reports the ring's own rectangle (13 px out at the sides)
 # Every enabled control Tab must reach, except these, by surface and text: Overview's half-off-screen rails,
 # which are for a pointer or a finger (the tools hold the same ← →). They must stay out of the Tab order.
 POINTER_ONLY = {("overview", "‹"), ("overview", "›")}
@@ -220,7 +222,7 @@ def run(shell, bus, steps, problems):
     import pyatspi
     global CONTROL_ROLES
     CONTROL_ROLES = (pyatspi.ROLE_PUSH_BUTTON, pyatspi.ROLE_CHECK_BOX, pyatspi.ROLE_TOGGLE_BUTTON, pyatspi.ROLE_SWITCH,
-                     pyatspi.ROLE_TEXT, pyatspi.ROLE_ENTRY)
+                     pyatspi.ROLE_TEXT, pyatspi.ROLE_ENTRY, pyatspi.ROLE_SLIDER)
 
     real_runtime = Path(os.environ["XDG_RUNTIME_DIR"])
     wayland = os.environ.get("WAYLAND_DISPLAY", "wayland-1")
@@ -408,9 +410,11 @@ def run(shell, bus, steps, problems):
             else:
                 # A card's meta line ("Current  ·  Group  ·  2 apps") marks the current choice in words.
                 shows_current = any(part.strip() == "Current" for w in c["words"] for part in w.split("·"))
-                want = "Current" if c["selected"] or shows_current else "Open" if c["open"] else ""
-                if description != want:
-                    problem = f"{name!r} is described as {description!r}, not {want!r}"
+                want = "Current" if c["selected"] or shows_current else "Open" if c["open"] else None
+                # The state is the whole description when it applies; otherwise a hint may stand there
+                # ("Choose a Wi-Fi network"), but never a state the control is not in.
+                if want and description != want or not want and description in ("Current", "Open"):
+                    problem = f"{name!r} is described as {description!r}, not {want or 'a hint or nothing'!r}"
             if problem:
                 note(f"{surface}: {problem}")
 
@@ -640,7 +644,7 @@ def run(shell, bus, steps, problems):
             expected = close_and_type("quick", lambda: key("-k", "Escape"), "4", expected)
             ipc("quick_open")
             frame = keyboard_on("quick")
-            focus_on(frame, "Close")
+            focus_on(frame, "Close quick settings")
             expected = close_and_type("quick", lambda: key("-k", "KP_Enter"), "5", expected)
             steps.append("Quick settings: Escape, and keypad Enter on Close, each closed it and returned keys to the app")
 

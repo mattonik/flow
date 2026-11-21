@@ -1,39 +1,46 @@
 from pathlib import Path
 import unittest
 
+QML = (Path(__file__).parents[1] / "session/shell.qml").read_text()
+
+
+def notification_panel():
+    from test_system_panels import panel
+    return panel("notificationsOpen")
+
 
 class NotificationShellTest(unittest.TestCase):
     def test_notification_surface_is_bounded_and_plain_text(self):
-        qml = (Path(__file__).parents[1] / "session/shell.qml").read_text()
-        self.assertEqual(qml.count("NotificationServer {"), 1)
-        self.assertIn("Qt.callLater(root.trimTrackedNotifications)", qml)
-        self.assertLess(qml.index("notification.tracked = true"), qml.index("Qt.callLater(root.trimTrackedNotifications)"))
-        self.assertIn("const tracked = [...notificationServer.trackedNotifications.values]", qml)
-        self.assertIn("for (let i = 0; i < tracked.length - 20; i++) tracked[i].dismiss()", qml)
-        self.assertNotIn("trackedNotifications.count", qml)
-        self.assertNotIn("trackedNotifications.get(", qml)
-        self.assertNotIn("doNotDisturb", qml)
-        self.assertIn("visible: root.notificationsOpen", qml)
-        self.assertIn("text: modelData.body; textFormat: Text.PlainText", qml)
-        self.assertIn("Keys.onEscapePressed: root.notificationsOpen = false", qml)
+        self.assertEqual(QML.count("NotificationServer {"), 1)
+        self.assertIn("Qt.callLater(root.trimTrackedNotifications)", QML)
+        self.assertLess(QML.index("notification.tracked = true"), QML.index("Qt.callLater(root.trimTrackedNotifications)"))
+        self.assertIn("const tracked = [...notificationServer.trackedNotifications.values]", QML)
+        self.assertIn("for (let i = 0; i < tracked.length - 20; i++) tracked[i].dismiss()", QML)
+        self.assertNotIn("trackedNotifications.count", QML)
+        self.assertNotIn("trackedNotifications.get(", QML)
+        self.assertNotIn("doNotDisturb", QML)
+        panel = notification_panel()
+        self.assertIn("onCloseRequested: root.notificationsOpen = false", panel)
+        self.assertIn("text: modelData.body; textFormat: Text.PlainText", panel)
+        self.assertIn("text: modelData.summary; textFormat: Text.PlainText", panel)
         # The Island's bell opens them, in work, Overview and Desk alike (Desk has no tool of its own for them).
-        self.assertIn('glyph: "bell"; open: root.notificationsOpen', qml)
-        self.assertIn("onClicked: root.toggleNotifications()", qml)
-        self.assertIn("required property int index", qml)
+        self.assertIn('glyph: "bell"; open: root.notificationsOpen', QML)
+        self.assertIn("onClicked: root.toggleNotifications()", QML)
 
-    def test_actions_are_explicit_and_touch_sized(self):
-        qml = (Path(__file__).parents[1] / "session/shell.qml").read_text()
-        self.assertIn("implicitHeight: 44", qml)
-        self.assertIn("onClicked: modelData.invoke()", qml)
+    def test_newest_first_with_dismiss_clear_all_and_touch_sized_actions(self):
+        panel = notification_panel()
+        self.assertIn("model: [...notificationServer.trackedNotifications.values].reverse()", panel)
+        self.assertIn('Accessible.name: "Dismiss notification"; onClicked: modelData.dismiss()', panel)
+        self.assertIn("onClicked: [...notificationServer.trackedNotifications.values].forEach(n => n.dismiss())", panel)
+        actions = panel[panel.index("model: modelData.actions"):]
+        self.assertIn("width: Math.max(44, Math.min(200, implicitWidth)); implicitHeight: 44", actions)
+        self.assertIn('visible: modelData.text !== ""', actions)
+        self.assertIn("onClicked: modelData.invoke()", actions)
 
-    def test_empty_state_has_sized_scroll_content_and_mobile_targets(self):
-        qml = (Path(__file__).parents[1] / "session/shell.qml").read_text()
-        self.assertIn("contentWidth: availableWidth; contentHeight: notificationColumn.implicitHeight", qml)
-        self.assertIn('visible: notificationServer.trackedNotifications.values.length === 0', qml)
-        self.assertIn("index === notificationServer.trackedNotifications.values.length - 1", qml)
-        self.assertIn("width: parent.width; height: 88; verticalAlignment: Text.AlignVCenter", qml)
-        self.assertIn("FlowButton { width: 80; implicitHeight: 44; text: \"Close\"", qml)
-        self.assertIn("screen.height - 80", qml)
+    def test_empty_state(self):
+        panel = notification_panel()
+        self.assertIn("visible: notificationServer.trackedNotifications.values.length === 0", panel)
+        self.assertIn('text: "No notifications"', panel)
 
 
 if __name__ == "__main__":

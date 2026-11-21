@@ -285,7 +285,7 @@ The Island and Desk now follow the prototype (`docs/Flow_v1.0_Contextual_Menus.h
   - **Headline:** "Everything in its place." as display type, in DemiBold (600). It is 7.9% of the screen's width, between 40 and 116 px and at most 11% of the screen's height, and 44 px when Desk is narrower than 600 px. On a screen under 600 px tall the space around the search field shrinks too.
     - Lines are at 0.97 of the size. That is a fixed line height: a proportional one multiplies Noto Sans's own line gap.
     - Tracking is −5%, and "place." is in the accent.
-  - **Headline font:** the tokens name Manrope as the brand face, but nixpkgs removed it ("its source has been pulled"). The brand guidelines rule out forcing a remote font download, so the headline falls back to Noto Sans until Manrope is packaged.
+  - **Headline font:** the tokens name Manrope as the brand face, but nixpkgs removed it ("its source has been pulled"). The brand guidelines rule out forcing a remote font download, so the headline uses the Noto Sans fallback. On 2026-11-21 it was decided to keep Noto Sans rather than fetch Manrope from Google Fonts.
   - **Eyebrow:** "FLOE / YOUR DESK", after a small accent light.
   - **Search field:** "Search anything, start anywhere…" with *Super K*, 59 px tall with a 15 px radius.
   - **Pinned spaces:** cards, two to a row (one per row in *Edit pins*, with its arrows and ×), with the pin number in the accent. A long display name in the section label is cut short with an ellipsis.
@@ -307,6 +307,47 @@ Verified:
 - **The existing smokes** pass. They drive the shell over IPC and never render Desk, so they cover none of this layout.
 
 Not verified: hover and pressed states, because the guest has no pointer injection.
+
+### The prototype's system panels (2026-11-21)
+
+Quick settings and notifications now follow the prototype's Island panel (`hub-panel` in `docs/Flow_v1.0_Contextual_Menus.html`). Both are one component, `SystemPanel`:
+- **The panel:** it hangs 12 px below the Island, 370 px wide (less on a narrow screen), with a 19 px radius and 23 px inside. It has a title, any tools, and a close button whose glyph lines up with the notifications' dismiss glyphs. It drops in over 220 ms, or at once when motion is reduced.
+- **Height:** it is capped 80 px short of the screen and scrolls beyond that. Tab scrolls the focused control into view, as on Desk.
+- **Keyboard:** a shown panel holds the keyboard; Desk underneath gives it up for either panel (before this, only for notifications and search). Escape and the close button ask the panel to close; each panel clears only its own flag.
+- **Rows:** a label, a value at the right and a chevron when the row opens something, over a hairline. A row that only shows a value (*Sound*) is plain text, not a button.
+
+**Quick settings:**
+- **Rows:** *Network* shows the connectivity (in the success colour when connected) and opens the Wi-Fi chooser. *Edit connections* opens the connection editor. *On-screen keyboard* shows or hides it.
+- **Sound:** the level, then a volume slider and *Mute*.
+  - The slider replaces the − 5% and + 5% buttons. It can be dragged, tapped, or moved with the arrow keys, 5% a step.
+  - It follows changes made elsewhere, except while it is pressed, so a drag never jumps back to a PipeWire update that is a step behind. Its `Binding` restores nothing when it pauses: Qt 6's default would put back the value from when the `Binding` last took over, and a key press counts as a press, so the first arrow key would have set the volume to 5%.
+- **Media and errors:** the media player row and any audio error follow, as before. The separate *Close* button is gone, since the header has one.
+
+**Notifications:**
+- **Order:** newest first, each with its app in small capitals, its summary (up to three lines), its body (plain text, up to six lines), its actions and a dismiss button. Actions without a label are not shown, since they would be blank buttons without a name; each action is at least 44 px wide.
+- **Clearing:** *Clear all* in the header dismisses every one (*Clear* on a narrow panel, so the title keeps its room).
+- **Empty:** a bell, "No notifications" and "They gather here, above every space."
+- **The list is rebuilt on each change.** Newest first is a reversed copy of the server's list, so reading and Tab order match the screen. A notification arriving or going therefore loses keyboard focus inside the list. It holds at most 20.
+- **Opening:** the shell's IPC gained `notifications`, which toggles the panel as `quick` does quick settings, for scripted checks.
+
+Tests:
+- **What they check:** `test_system_panels.py` and the rewritten `test_notifications.py` check the source text, because the harness cannot render QML or send input. They cover:
+  - the panel's place, screen cap and scrolling, its keyboard focus, and Escape and close;
+  - each panel clearing its own flag, and Desk giving up the keyboard;
+  - the rows' commands and focus, the Sound row not being a button;
+  - the slider's step, its setter, the bodies of `setVolume` and `toggleMute`, and its `Binding` with `RestoreNone`;
+  - touch sizes, from each control's own properties: a width must be a plain number of at least 44, or `Math.max(44, …)`;
+  - newest first, dismiss, *Clear all*, labelled and sized actions, and the empty state.
+- **Mutations:** 31 mutations of the shell each fail one of the two files. Among them are the review's wiring cases: a scope that never takes focus, no layer-shell keyboard, rows or the slider without focus, no-op volume and mute bodies, a 50% step, a removed screen cap, a 30 px button width on its own line, unbounded and blank actions, and the restore mode removed.
+
+Screenshots: both panels in the guest at 1280×800 in both appearances and at scale 2 (640×400), with three notifications (two with actions) and with none. The guest has no audio device, so the slider was shown with a temporary null sink created for the run, at a volume set with `wpctl`; it showed 65%, a change made outside the shell. The scale-2 shot also shows a row's hover tint, from where the pointer happened to rest.
+
+A NEMESIS review of the first version found the slider's restore-mode bug, a false comment and test that ruled out its fix, tests that missed the wiring, a touch-size check that read only a button's first lines, a focus ring clipped by 1 px, no scrolling to the focused control, blank action buttons, Desk keeping the keyboard under quick settings, and stale docs. All are fixed as described above.
+
+Not verified:
+- **Slider input:** dragging, tapping or the arrow keys, because the guest has no pointer or key injection. The restore-mode fix rests on Qt 6's documented `Binding` behaviour.
+- **Mute:** a click on *Mute*.
+- **Long panels:** scrolling to the focused control was not tried with enough notifications to need it.
 
 ### Moving along a row in Overview (2026-11-21)
 
@@ -490,6 +531,11 @@ The `checks.module` assert was built in the guest (aarch64). It passed on this b
 - **The leak check:** no key reaching the app while a surface is open. A mutation that lets keys through stops focus moving first.
 
 **Guest check of the module (19:27 UTC).** A build of this branch, main's #19 included, was activated in the guest without a new generation. `org.a11y.Bus` was then activatable on the session bus, and the final smoke passed through `run_focus_walk_smoke.sh` with no extra bus configuration. The previous system was activated again afterward.
+
+**After main's #21 (system panels).** #21 rebuilt Quick settings and Notifications as system panels with rows, a volume slider and their own scrolling to the focused control. After merging it:
+- **Shell:** the panels' ScrollView is hidden from screen readers again, and the `controls` call reports the rows and the slider with their rings.
+- **Smoke:** it holds their ring positions too, and accepts a hint as a description (the Network row's "Choose a Wi-Fi network") where no state applies.
+- **Result:** the unmutated smoke passed on the merged shell. The mutations above ran before #21, so the copies aimed at the old panels (their ScrollViews, and scrolling in Notifications) prove the shell they ran on, not #21's panels. They were not rerun.
 
 **Three quirks of the guest shape the smoke:**
 - **Stale keymaps.** Niri does not resend a virtual keymap equal to the previous one, so a client that took focus in between reads the keys with the physical keymap (Tab arrives as Escape). The smoke sends a lone Shift or Control first, alternating, so every call's keymap differs.
