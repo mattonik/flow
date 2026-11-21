@@ -153,10 +153,10 @@ def main():
             ipc("toggle")
             wait_for(lambda: ipc("desk_state") == "open", "Desk to open", timeout=3)
             notify("Under Desk")
-            stays("", 1.5)
+            stays("", 6)  # longer than the banner's 5 s: it counts only while it can be seen
             ipc("leave")
             wait_for(lambda: ipc("banner") == "Under Desk", "the banner once Desk closed", timeout=3)
-            steps.append("Desk hid a banner while open, and it showed when Desk closed")
+            steps.append("Desk hid a banner for 6 s, and it showed when Desk closed, its 5 s not spent")
 
             ipc("notifications")
             notify("While the panel is open")
