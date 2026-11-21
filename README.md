@@ -59,6 +59,8 @@ From this checkout, with flakes enabled:
 ```sh
 python3 -B -m unittest discover -s tests -v
 nix build .#checks.aarch64-linux.spaces
+# Flow's wrappers and the rendered Niri config, which `niri validate` must accept (also run by CI):
+nix build .#checks.aarch64-linux.module
 nix flake show
 # In a running graphical session with a default audio output:
 quickshell -p "$PWD/tests/audio-probe.qml"
