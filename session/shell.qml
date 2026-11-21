@@ -1189,8 +1189,10 @@ ShellRoot {
     }
     PanelWindow {
         // Work indicator: the focused app of an active Group, and the space's place in this display's Flow.
+        // It stays in Overview, where its arrows and position are the way along the row for a pointer
+        // or a finger, next to Super+Left/Right and the wheel.
         id: workIndicatorWindow
-        visible: !root.deskOpen && !root.switcherOpen && !root.overviewOpen && !root.appMenuOpen && !root.launcherActive && (!!root.activeSpace || !!root.activeLayer)
+        visible: !root.deskOpen && !root.switcherOpen && !root.appMenuOpen && !root.launcherActive && (!!root.activeSpace || !!root.activeLayer)
         anchors { bottom: true; right: true }
         // Where the bottom controls and this indicator cannot share a row, it rises above them: below 560 px,
         // or below 900 px for an active Layer's wider controls.

@@ -220,6 +220,13 @@ Stopping the shell had leaked its `niri msg event-stream`, a bug older than Acti
 
 Not tested: a Flatpak app as the owner, and the narrow-screen dot outside the layout code.
 
+### Moving along a row in Overview (2026-11-21)
+
+Niri has no binds that apply only in Overview, so plain arrow keys cannot move through a display's row of spaces there. What does:
+- **Super+Left/Right:** Flow's space navigation keeps Overview open. In the guest, with three apps in a row, it moved from the third to the second, then the first. Niri's own column focus moved back.
+- **Super+wheel, in every direction:** it moves along the row; down and right go to the next space, up and left to the previous. A display's spaces are one row, so vertical scrolling has nothing else to do. Niri's documentation says Overview takes scroll binds without the modifier held, so a plain wheel or touchpad should walk the row there. That was not exercised, because the guest has no input injection. Niri 26.04 validated the binds.
+- **The work indicator:** it stays visible in Overview, so its arrows and its position (02 / 05) are there for a pointer or a finger.
+
 ### Shell visual polish (2026-11-21)
 
 The shell's controls follow one system instead of one bordered rectangle:

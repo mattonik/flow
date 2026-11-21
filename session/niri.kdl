@@ -43,6 +43,12 @@ binds {
     Super+L allow-when-locked=true { spawn "@lock@"; }
     Super+Left { spawn "@spaces@" "navigate" "left"; }
     Super+Right { spawn "@spaces@" "navigate" "right"; }
+    // A display's spaces are one row, so every scroll direction moves along it. Niri takes these binds
+    // in Overview without Super held, so a wheel or touchpad walks the row there too.
+    Super+WheelScrollDown cooldown-ms=150 { spawn "@spaces@" "navigate" "right"; }
+    Super+WheelScrollUp cooldown-ms=150 { spawn "@spaces@" "navigate" "left"; }
+    Super+WheelScrollRight cooldown-ms=150 { spawn "@spaces@" "navigate" "right"; }
+    Super+WheelScrollLeft cooldown-ms=150 { spawn "@spaces@" "navigate" "left"; }
     Super+Up { spawn "@spaces@" "focus-member" "up"; }
     Super+Down { spawn "@spaces@" "focus-member" "down"; }
     Super+Shift+Left { move-column-left; }
