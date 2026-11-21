@@ -684,7 +684,8 @@ ShellRoot {
         id: control
         // secondary: the ordinary control. primary: the one main action of a surface. quiet: a soft tint, for
         // repeated and low-priority actions. danger: a quiet action that removes or closes. plain: no fill at
-        // rest, for a control whose container already draws its boundary (a switcher card). glass: the
+        // rest, for a control whose container already draws its boundary (a switcher card), or a link-like
+        // way on in a quiet row of them (Desk's foot), which hover and focus still reveal. glass: the
         // prototype's Desk field, cards and tiles: a faint wash of the text colour over the backdrop, with a
         // quiet edge that turns to the accent under the pointer. Each one is named by its text or icon.
         property string variant: "secondary"
@@ -697,7 +698,7 @@ ShellRoot {
         property string glyph: ""
         property real radius: 10
         readonly property color labelColor: variant === "primary" ? floeTheme.onAccent : variant === "danger" ? floeTheme.danger
-            : selected || variant === "secondary" || variant === "glass" ? floeTheme.textPrimary : floeTheme.textSecondary
+            : selected || variant === "secondary" ? floeTheme.textPrimary : floeTheme.textSecondary
         focusPolicy: Qt.StrongFocus
         hoverEnabled: true
         Keys.onReturnPressed: control.clicked()
@@ -744,7 +745,8 @@ ShellRoot {
                     : control.variant === "secondary" ? floeTheme.surface
                     : control.variant === "danger" ? Qt.alpha(floeTheme.danger, 0.1)
                     : control.variant === "plain" ? "transparent" : Qt.alpha(floeTheme.surfaceSelected, 0.6)
-                // Functional borders stay at full strength (3:1 against the surfaces, brand guidelines).
+                // Functional borders stay at full strength (3:1 against the surfaces, brand guidelines), except
+                // glass, whose controls are named by their text and icons (design/ACCESSIBILITY_AUDIT.md).
                 border.width: control.selected || control.open ? 2 : control.variant === "secondary" || control.variant === "glass" ? 1 : 0
                 border.color: control.selected || control.open ? floeTheme.borderStrong
                     : control.variant === "glass" ? (control.hovered ? Qt.alpha(floeTheme.accent, 0.6) : Qt.alpha(floeTheme.border, 0.5))
@@ -761,9 +763,8 @@ ShellRoot {
         }
     }
     component IslandButton: FlowButton {
-        // Inset 4 px in the Island's tab: radius 14 − 4 = 10, concentric with the tab's lower corners. The
-        // tab meets the screen's top edge, so a pointer thrown upwards lands on it: the edge adds the
-        // height that the 40 px tab does not draw.
+        // Inset 4 px in the Island's tab: 44 px to touch (the brand's minimum), 36 px to see, and radius
+        // 14 − 4 = 10, concentric with the tab's lower corners.
         id: islandButton
         variant: "quiet"
         leftPadding: 12; rightPadding: 12
@@ -819,7 +820,7 @@ ShellRoot {
     component SystemIsland: Rectangle {
         // The width of the screen the island is on; an activity chip only takes what is left.
         property real room: 1280
-        implicitWidth: islandControls.implicitWidth + 12; implicitHeight: 40
+        implicitWidth: islandControls.implicitWidth + 12; implicitHeight: 44
         color: floeTheme.canvas
         topLeftRadius: 0; topRightRadius: 0; bottomLeftRadius: 14; bottomRightRadius: 14
         border.width: 1; border.color: Qt.alpha(floeTheme.border, 0.55)
@@ -833,7 +834,7 @@ ShellRoot {
             anchors.centerIn: parent; spacing: 0
             IslandButton {
                 id: wordmark
-                implicitHeight: 40; text: "floe."
+                implicitHeight: 44; text: "floe."
                 Accessible.name: root.deskOpen ? "Return to work" : "Open Floe Desk"
                 open: root.deskOpen
                 contentItem: Text {
@@ -845,7 +846,7 @@ ShellRoot {
             }
             IslandButton {
                 property bool closeOnRelease: false
-                implicitHeight: 40
+                implicitHeight: 44
                 text: root.searchOpen ? "Close" : "Apps"
                 open: root.searchOpen
                 Accessible.name: root.searchOpen ? "Close search and apps" : "Open apps"
@@ -862,7 +863,7 @@ ShellRoot {
                 property bool compact: budget < 120
                 property bool determinate: !!current && current.progress >= 0
                 visible: !!current
-                width: (compact ? 36 : Math.min(budget, activityLabel.implicitWidth + 30)) + 8; height: 40
+                width: (compact ? 36 : Math.min(budget, activityLabel.implicitWidth + 30)) + 8; height: 44
                 Rectangle {
                     // Inset like the buttons: radius 10.
                     id: chipBody
@@ -906,23 +907,23 @@ ShellRoot {
                     + (root.activities.length > 1 ? ", and " + (root.activities.length - 1) + " more in Desk" : "") : ""
             }
             Text {
-                width: 56; height: 40; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                width: 56; height: 44; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                 text: Qt.formatTime(clock.date, "hh:mm"); color: floeTheme.textPrimary
                 font.pixelSize: 14; font.weight: Font.Medium; font.family: floeTheme.interfaceFont; font.features: { "tnum": 1 }
             }
             IslandButton {
-                width: 44; implicitHeight: 40; glyph: "bell"; open: root.notificationsOpen
+                width: 44; implicitHeight: 44; glyph: "bell"; open: root.notificationsOpen
                 Accessible.name: notificationServer.trackedNotifications.values.length
                     ? "Notifications, " + notificationServer.trackedNotifications.values.length + " waiting" : "Notifications"
                 onClicked: root.toggleNotifications()
                 Rectangle {
                     // Something is waiting: a dot, and the count in the accessible name.
                     visible: notificationServer.trackedNotifications.values.length > 0
-                    x: 26; y: 9; width: 7; height: 7; radius: 3.5
+                    x: 26; y: 11; width: 7; height: 7; radius: 3.5
                     color: floeTheme.accent; border.width: 1.5; border.color: floeTheme.canvas
                 }
             }
-            IslandButton { width: 44; implicitHeight: 40; glyph: "sliders"; open: root.quickSettingsOpen; Accessible.name: "Quick settings"; onClicked: root.toggleQuickSettings() }
+            IslandButton { width: 44; implicitHeight: 44; glyph: "sliders"; open: root.quickSettingsOpen; Accessible.name: "Quick settings"; onClicked: root.toggleQuickSettings() }
         }
     }
     component FlowSwitch: Switch {
@@ -1124,14 +1125,6 @@ ShellRoot {
                 z: 2; width: 160; height: 44
                 anchors { bottom: parent.bottom; horizontalCenter: parent.horizontalCenter }
             }
-            FlowButton {
-                // As in the prototype and Overview: Niri's list of keys, in the lower right corner.
-                z: 2; visible: parent.width >= 760
-                anchors { right: parent.right; bottom: parent.bottom; rightMargin: 40; bottomMargin: 40 }
-                variant: "quiet"; implicitHeight: 40; radius: 20; text: "?  Shortcuts"
-                Accessible.name: "Show keyboard shortcuts"
-                onClicked: { root.deskOpen = false; Quickshell.execDetached(["niri", "msg", "action", "show-hotkey-overlay"]) }
-            }
             Flickable {
                 id: deskScroller
                 function ensureVisible(item) {
@@ -1140,7 +1133,9 @@ ShellRoot {
                     else if (top + item.height > contentY + height)
                         contentY = Math.min(contentHeight - height, top + item.height - height)
                 }
-                anchors.fill: parent; anchors.topMargin: 60
+                // Below the Island's 44 px tab, and above the home indicator's 44 px band: content never
+                // scrolls under either, whose input would take its clicks.
+                anchors.fill: parent; anchors.topMargin: 44 + 12; anchors.bottomMargin: 44
                 contentWidth: width
                 contentHeight: Math.max(height, deskContent.implicitHeight + 40)
                 boundsBehavior: Flickable.StopAtBounds
@@ -1165,14 +1160,14 @@ ShellRoot {
                     }
                     Text {
                         // Display type in the brand face, sized to the screen as in the prototype (7.9% of
-                        // its width, at most 116 px, and short screens get less), set tight: −5% of its
+                        // its width, at most 116 px, and at most 11% of its height), set tight: −5% of its
                         // size, lines at 0.97. Styled text, not rich text: rich text ignores the line height.
                         readonly property real size: deskScroller.width < 600 ? 44
-                            : Math.round(Math.max(56, Math.min(116, deskScroller.width * 0.079, deskScroller.height * 0.125)))
+                            : Math.round(Math.max(40, Math.min(116, deskScroller.width * 0.079, deskScroller.height * 0.11)))
                         topPadding: 10; bottomPadding: 6
                         text: "Everything<br>in its <font color='" + floeTheme.accent + "'>place.</font>"
                         textFormat: Text.StyledText
-                        color: floeTheme.textPrimary; font.weight: Font.Bold; font.family: floeTheme.brandFont
+                        color: floeTheme.textPrimary; font.weight: Font.DemiBold; font.family: floeTheme.brandFont
                         font.pixelSize: size; font.letterSpacing: -size * 0.05
                         // As CSS's line-height: a fixed 0.97 of the size. A proportional one multiplies the
                         // face's own line gap (Noto Sans: about 1.36), which leaves the lines far apart.
@@ -1181,7 +1176,8 @@ ShellRoot {
                     Text {
                         text: "Your tools are here. Your work is right where you left it."
                         color: floeTheme.textMuted; font.pixelSize: deskScroller.width < 600 ? 15 : 18; font.family: floeTheme.interfaceFont
-                        wrapMode: Text.Wrap; width: Math.min(parent.width, 560); lineHeight: 1.3; bottomPadding: 34
+                        wrapMode: Text.Wrap; width: Math.min(parent.width, 560); lineHeight: 1.3
+                        bottomPadding: deskScroller.height < 600 ? 20 : 34
                     }
                     FlowButton {
                         id: searchButton
@@ -1217,7 +1213,7 @@ ShellRoot {
                         }
                         onClicked: root.openSearch()
                     }
-                    Item { width: 1; height: 36 }
+                    Item { width: 1; height: deskScroller.height < 600 ? 20 : 36 }
                     Item {
                         // Pinned spaces and tools side by side, as in the prototype (1 : 0.72, 37 px apart);
                         // one above the other on a narrow screen.
@@ -1233,6 +1229,7 @@ ShellRoot {
                             spacing: 12
                             SectionLabel {
                                                         text: "PINNED SPACES" + (root.displayCount > 1 && root.displayName ? "  ·  " + root.displayName.toUpperCase() + (root.displayLabel ? "  ·  " + root.displayLabel.toUpperCase() : "") : "")
+                                                        width: parent.width; elide: Text.ElideRight
                             }
                             Text {
                                 visible: root.displayCount > 1 && root.displayName !== ""
@@ -1304,7 +1301,8 @@ ShellRoot {
                                                 : modelData.display_state === "ambiguous" ? " · cannot be told apart" : " · disconnected")
                                             enabled: (modelData.display_state === "connected" || modelData.available) && (!spacesProcess.running || spacesProcess.command[1] === "refresh")
                                             contentItem: Column {
-                                                                                        Text { width: otherPinButton.width - 28; text: otherPinButton.text; textFormat: Text.PlainText; elide: Text.ElideRight; color: otherPinButton.enabled ? floeTheme.textPrimary : floeTheme.textMuted; font.weight: Font.DemiBold; font.pixelSize: 14; font.family: floeTheme.interfaceFont }
+                                                topPadding: 12
+                                                Text { width: otherPinButton.width - 28; text: otherPinButton.text; textFormat: Text.PlainText; elide: Text.ElideRight; color: otherPinButton.enabled ? floeTheme.textPrimary : floeTheme.textMuted; font.weight: Font.DemiBold; font.pixelSize: 14; font.family: floeTheme.interfaceFont }
                                                 Text { width: otherPinButton.width - 28; text: otherPinButton.detail; textFormat: Text.PlainText; elide: Text.ElideRight; color: floeTheme.textMuted; font.pixelSize: 12; font.family: floeTheme.interfaceFont }
                                             }
                                             Accessible.name: (modelData.display_state === "connected" ? "Go to " : "Focus ") + modelData.label + " on " + otherPinButton.detail
@@ -1509,11 +1507,16 @@ ShellRoot {
                         Text { id: recoveryStatus; visible: root.recoveryMessage !== ""; text: root.recoveryMessage; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
                     }
                     Item {
-                        // The prototype's foot: what is on this display, and the ways on from here.
-                        width: parent.width; height: 44 + 32
+                        // The prototype's foot: what is on this display, and the ways on from here, with Niri's
+                        // list of keys among them. On a narrow screen the summary takes a line of its own.
+                        id: deskFoot
+                        readonly property bool stacked: width < 560
+                        width: parent.width; height: 32 + (stacked ? 24 : 0) + 44
                         Text {
-                            anchors { left: parent.left; bottom: parent.bottom; right: deskWays.left; rightMargin: 12 }
-                            height: 44; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
+                            anchors.left: parent.left
+                            y: deskFoot.stacked ? 32 : deskFoot.height - 44
+                            width: deskFoot.stacked ? parent.width : parent.width - deskWays.width - 12
+                            height: deskFoot.stacked ? 24 : 44; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
                             textFormat: Text.PlainText; color: floeTheme.textMuted; font.pixelSize: 12; font.family: floeTheme.interfaceFont
                             font.features: { "tnum": 1 }
                             text: {
@@ -1524,27 +1527,32 @@ ShellRoot {
                         }
                         Row {
                             id: deskWays
-                            anchors { right: parent.right; bottom: parent.bottom }
+                            x: deskFoot.stacked ? -8 : parent.width - width; anchors.bottom: parent.bottom
                             spacing: 2
                             Repeater {
-                                model: ["Overview", "Spaces", "Return to work"]
+                                model: ["Overview", "Spaces", "Shortcuts", "Return to work"]
                                 FlowButton {
                                     id: deskWay
                                     required property string modelData
                                     onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(deskWay)
-                                    variant: "plain"; implicitHeight: 44; leftPadding: 12; rightPadding: 12
+                                    variant: "plain"; implicitHeight: 44
+                                    leftPadding: deskFoot.stacked ? 8 : 12; rightPadding: deskFoot.stacked ? 8 : 12
                                     text: modelData
                                     contentItem: Text {
-                                        text: deskWay.text + (deskWay.modelData === "Return to work" ? "  ↓" : ""); textFormat: Text.PlainText
+                                        text: (deskWay.modelData === "Shortcuts" ? "?  " : "") + deskWay.text
+                                            + (deskWay.modelData === "Return to work" && !deskFoot.stacked ? "  ↓" : ""); textFormat: Text.PlainText
                                         color: deskWay.hovered || deskWay.activeFocus ? floeTheme.textPrimary : floeTheme.textMuted
                                         font.pixelSize: 12; font.family: floeTheme.interfaceFont
                                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                                     }
-                                    Accessible.name: modelData
+                                    Accessible.name: modelData === "Shortcuts" ? "Show keyboard shortcuts" : modelData
                                     onClicked: {
                                         if (modelData === "Overview") root.openSpacesOverview()
                                         else if (modelData === "Spaces") root.toggleSwitcher()
-                                        else root.deskOpen = false
+                                        else if (modelData === "Shortcuts") {
+                                            root.deskOpen = false
+                                            Quickshell.execDetached(["niri", "msg", "action", "show-hotkey-overlay"])
+                                        } else root.deskOpen = false
                                     }
                                 }
                             }
@@ -1668,8 +1676,9 @@ ShellRoot {
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
         readonly property real edge: Math.max(20, Math.min(52, width * 0.03))
         readonly property real cardWidth: Math.max(220, Math.min(480, width * 0.3))
-        // A snapshot without the shell's bands: the Island's 40 px tab above and the home indicator below (44).
-        readonly property real bandTop: 40
+        // A snapshot without the shell's bands: the Island's 44 px tab (and the app-menu trigger on its row)
+        // above, and the home indicator below (44).
+        readonly property real bandTop: 44
         readonly property real bandBottom: 44
         readonly property real cardHeight: cardWidth * Math.max(0.3, (height - bandTop - bandBottom) / Math.max(1, width))
         onVisibleChanged: if (visible) { overviewRow.positionViewAtIndex(root.overviewIndex, ListView.Center); overviewFocus.forceActiveFocus() }
@@ -2559,8 +2568,9 @@ ShellRoot {
         visible: menuPreferences.appMenuEnabled && !root.deskOpen && !root.overviewOpen && root.appMenu && !root.appMenuOpen
         anchors { top: true; left: true }
         implicitWidth: 220; implicitHeight: 44; margins.left: 8
-        // Leave 8px between the left trigger and the centered Island on the shared row.
-        margins.top: screen && screen.width < workIslandContent.implicitWidth + 472 ? 52 : 8
+        // On the Island's row, flush with the top edge as the tab is, leaving 8px before the centred tab;
+        // below it on a narrow screen, where panels hang too.
+        margins.top: screen && screen.width < workIslandContent.implicitWidth + 472 ? 56 : 0
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         FlowButton {
@@ -2627,7 +2637,7 @@ ShellRoot {
     PanelWindow {
         visible: root.quickSettingsOpen
         anchors.top: true
-        implicitWidth: Math.max(0, Math.min(340, screen.width - 24)); implicitHeight: Math.min(screen.height - 80, Math.max(235, quickSettingsColumn.implicitHeight + 40)); margins.top: 52
+        implicitWidth: Math.max(0, Math.min(340, screen.width - 24)); implicitHeight: Math.min(screen.height - 80, Math.max(235, quickSettingsColumn.implicitHeight + 40)); margins.top: 56
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
@@ -2698,7 +2708,7 @@ ShellRoot {
         visible: root.notificationsOpen
         anchors.top: true
         implicitWidth: Math.min(420, screen.width - 24); implicitHeight: Math.min(notificationColumn.implicitHeight + 24, screen.height - 80)
-        margins.top: 52
+        margins.top: 56
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: root.notificationsOpen ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None

@@ -277,22 +277,36 @@ Not verified: a real wheel and touch drag on the home indicator, because the gue
 ### The prototype's Island and Desk (2026-11-21)
 
 The Island and Desk now follow the prototype (`docs/Flow_v1.0_Contextual_Menus.html`, desktop mode) instead of the generic capsule and button rows:
-- **The Island** is a 40 px tab hanging from the screen's top edge: square above, a 14 px radius below, no line along the top. It is the same in work, Overview and Desk, and has the same controls as before: *floe.*, *Apps*, an activity, the clock, notifications and quick settings.
-  - Its buttons are inset 4 px with a 10 px radius, concentric with the tab. They are 40 px tall, but a pointer pushed against the top edge lands on them.
-  - Quick settings, notifications and, on a narrow screen, the app-menu trigger now hang 12 px below it, as the prototype's panels do. Overview's snapshots are cropped below its 40 px.
+- **The Island** is a 44 px tab hanging from the screen's top edge: square above, a 14 px radius below, no line along the top. It is the same in work, Overview and Desk, and has the same controls as before: *floe.*, *Apps*, an activity, the clock, notifications and quick settings.
+  - Its buttons are 44 px tall, the brand's touch minimum (the prototype's tab is 36). They draw 36 px with a 10 px radius, concentric with the tab's lower corners.
+  - The opt-in app-menu trigger shares the tab's row, flush with the top edge too. Overview's snapshots are cropped below that 44 px row.
+  - Quick settings, notifications and, on a narrow screen, the app-menu trigger hang 12 px below it, as the prototype's panels do.
 - **Desk:**
-  - **Headline:** "Everything in its place." as display type. It is 7.9% of the screen's width, at most 116 px, less on a short screen, and 44 px on a narrow one. Lines are at 0.97 of the size (a fixed line height: a proportional one multiplies Noto Sans's own line gap). Tracking is −5%, and "place." is in the accent.
-  - **Headline font:** the tokens name Manrope as the brand face, but nixpkgs removed it ("its source has been pulled"), so the headline falls back to Noto Sans Bold until Manrope is packaged.
+  - **Headline:** "Everything in its place." as display type, in DemiBold (600). It is 7.9% of the screen's width, between 40 and 116 px and at most 11% of the screen's height, and 44 px when Desk is narrower than 600 px. On a screen under 600 px tall the space around the search field shrinks too.
+    - Lines are at 0.97 of the size. That is a fixed line height: a proportional one multiplies Noto Sans's own line gap.
+    - Tracking is −5%, and "place." is in the accent.
+  - **Headline font:** the tokens name Manrope as the brand face, but nixpkgs removed it ("its source has been pulled"). The brand guidelines rule out forcing a remote font download, so the headline falls back to Noto Sans until Manrope is packaged.
   - **Eyebrow:** "FLOE / YOUR DESK", after a small accent light.
   - **Search field:** "Search anything, start anywhere…" with *Super K*, 59 px tall with a 15 px radius.
-  - **Pinned spaces:** cards, two to a row, with the pin number in the accent.
-  - **Tools:** four square tiles: *Search*, *Apps*, *Files* and *Settings*. Below 700 px of width the pins and tools stack.
-  - **The foot:** what is on this display ("3 spaces · 2 pinned · 1 Group") and the ways on: *Overview*, *Spaces* (the switcher) and *Return to work*. *Notifications* left Desk's tools; the Island's bell, which Desk also shows, opens them.
-  - **Shortcuts:** *? Shortcuts* in the lower right corner opens Niri's hotkey overlay, as in Overview.
+  - **Pinned spaces:** cards, two to a row (one per row in *Edit pins*, with its arrows and ×), with the pin number in the accent. A long display name in the section label is cut short with an ellipsis.
+  - **Tools:** four tiles, 80 px tall: *Search*, *Apps*, *Files* and *Settings*. On a screen narrower than about 750 px (content under 700 px), the pins and tools stack.
+  - **The foot:** what is on this display ("3 spaces · 2 pinned · 1 Group"), then the ways on: *Overview*, *Spaces* (the switcher), *? Shortcuts* (Niri's hotkey overlay) and *Return to work*. They are quiet, link-like 44 px buttons that hover and focus reveal. On a narrow screen (content under 560 px) the summary takes a line of its own above them.
+  - **Notifications** left Desk's tools: the Island's bell, which Desk also shows, opens them.
+  - **No overlaps:** Desk's content stays between the Island's 44 px band and the home indicator's 44 px band, and never scrolls under either one. Their input would otherwise take the foot's clicks.
   - **Glass:** the field, cards and tiles share a new `glass` button variant: a 4% wash of the text colour (8% under the pointer), and an edge at half the border's strength that turns to the accent under the pointer. See the accessibility audit for why the edge may be faint.
   - **Backdrop:** the prototype's ambient light, a soft accent glow above the headline and a fainter one low on the right, over a faint 46 px grid. It is decoration and takes no input.
 
-Verified by screenshots in the guest, in both appearances, with no pins and with two pinned spaces, and with the existing smokes and unit tests. The new layout has no behaviour of its own to test beyond the buttons it routes to (`openSearch`, `openApps`, Files, Settings, `openSpacesOverview`, `toggleSwitcher`), which are unchanged. Not verified: the narrow, stacked layout on a real narrow display (the guest's display is 1280 × 800), and hover and pressed states, because the guest has no pointer injection.
+Verified:
+- **Screenshots** in the guest, with two pinned spaces:
+  - at 1280 × 800 in both appearances, also with no pins;
+  - at output scales 1.25, 1.6 and 2 (logical 1024 × 640, 800 × 500 and 640 × 400), each scrolled to the top and to the end;
+  - at 2.4 (533 × 333), for the foot's narrow layout.
+
+  Nothing overlaps at any of them. On the short screens Desk scrolls, and its content stops at the Island's and the home indicator's bands.
+- **Source checks** in `test_desk_layout.py`, scoped to Desk's window: its Island, the four tools and the four foot entries, the handler each one runs, and that the content keeps clear of the Island's and home indicator's bands. Each assertion was shown to fail when the code it covers was changed.
+- **The existing smokes** pass. They drive the shell over IPC and never render Desk, so they cover none of this layout.
+
+Not verified: hover and pressed states, because the guest has no pointer injection.
 
 ### Moving along a row in Overview (2026-11-21)
 
@@ -310,11 +324,11 @@ Niri has no binds that apply only in Overview, so plain arrow keys cannot move t
 
 The shell's controls follow one system instead of one bordered rectangle:
 - **Buttons** come in four variants: secondary, primary, quiet and danger, plus plain inside cards. A selected button has a leading dot, a 2 px border, a heavier label and "Current" as its accessible description, so selection never depends on tint alone.
-- **Borders and targets:** functional borders stay at full token strength (3:1). Quiet buttons rest on a soft tint, so they read as controls on touch screens without hover. Every target is still at least 44 px.
+- **Borders and targets:** functional borders stay at full token strength (3:1), except Desk's glass controls (see *The prototype's Island and Desk* below). Quiet buttons rest on a soft tint, so they read as controls on touch screens without hover. Every target is still at least 44 px.
 - **Focus** is a 2 px ring 3 px outside the control, concentric with it. Clipped panels keep 4 px inside the clip, so rings stay whole.
-- **Capsules:** the island, the work indicator and the bottom controls share one capsule bar. Their 44 px buttons draw 36 px capsules, concentric with the bar.
+- **Capsules:** the work indicator is a capsule bar; its 44 px buttons draw 36 px capsules, concentric with the bar. (The island was one too, until it became a tab: see *The prototype's Island and Desk* below.)
 - **Radii** are on the token scale: cards 20, panels 14, controls 10, with in-card controls concentric with their card.
-- **Type** follows the scale (11/12/14/16/18/32/52), with 13 px kept for compact labels in the island and cards, and weights 500–600. Clock, percentages and counts use tabular figures.
+- **Type** follows the scale (11/12/14/16/18/32/52), with 13 px kept for compact labels in the island and cards, and weights 500–600. Desk's display headline is the one exception, sized to the screen (see below). Clock, percentages and counts use tabular figures.
 - **Icons:** line icons for notifications, quick settings, search, chevrons, close, plus and minus are drawn by the shell. They use multisampled geometry because curve-rendered strokes break up under virgl. Only buttons with a glyph load one.
 - **Motion** uses the brand's quick (120 ms) and standard (220 ms) tokens and its standard curve. A *Reduce motion* setting in Desk makes every change instant, because Linux gives Quickshell no system signal for it. All "busy" indicators share one clock, so a card rebuilt by an activity update continues its sweep.
 
