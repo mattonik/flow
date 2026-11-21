@@ -257,7 +257,7 @@ Flow used Niri's own Overview (a vertical zoom of workspaces), fuzzel for search
 - **The home indicator:** a 48 × 4 line on a dark halo, so it reads over light and dark apps (65 px and accent on hover). It replaces the *Overview* and *Spaces* buttons.
   - It takes input in only the bottom 126 × 24, the prototype's size, because Flow's columns reach the screen's edge.
   - Tap it or drag it up: from work to Overview, from Overview to Desk, from Desk back to work.
-  - The Spaces switcher moved to Desk's tools and stays on Super+Tab.
+  - The Spaces switcher moved to Desk (now its foot, *Spaces*) and stays on Super+Tab.
 - **Search** (Super+K, Desk's search, the Island's *Apps*, which shows apps only):
   - **The palette:** a shade and a 620 px palette with an 18 px radius. The field has a search icon and a close button.
   - **Results:** each has an icon tile (the app's icon, or a line icon for its kind), a title, a detail line and ↗. The chosen row has a 2 px focus edge.
@@ -273,6 +273,26 @@ Tests:
 - **Screenshots:** both appearances were captured in the guest with three apps.
 
 Not verified: a real wheel and touch drag on the home indicator, because the guest has no pointer injection, and the Overview with several displays. On a second display it shows that display's spaces, but snapshots come from the island's screen.
+
+### The prototype's Island and Desk (2026-11-21)
+
+The Island and Desk now follow the prototype (`docs/Flow_v1.0_Contextual_Menus.html`, desktop mode) instead of the generic capsule and button rows:
+- **The Island** is a 40 px tab hanging from the screen's top edge: square above, a 14 px radius below, no line along the top. It is the same in work, Overview and Desk, and has the same controls as before: *floe.*, *Apps*, an activity, the clock, notifications and quick settings.
+  - Its buttons are inset 4 px with a 10 px radius, concentric with the tab. They are 40 px tall, but a pointer pushed against the top edge lands on them.
+  - Quick settings, notifications and, on a narrow screen, the app-menu trigger now hang 12 px below it, as the prototype's panels do. Overview's snapshots are cropped below its 40 px.
+- **Desk:**
+  - **Headline:** "Everything in its place." as display type. It is 7.9% of the screen's width, at most 116 px, less on a short screen, and 44 px on a narrow one. Lines are at 0.97 of the size (a fixed line height: a proportional one multiplies Noto Sans's own line gap). Tracking is −5%, and "place." is in the accent.
+  - **Headline font:** the tokens name Manrope as the brand face, but nixpkgs removed it ("its source has been pulled"), so the headline falls back to Noto Sans Bold until Manrope is packaged.
+  - **Eyebrow:** "FLOE / YOUR DESK", after a small accent light.
+  - **Search field:** "Search anything, start anywhere…" with *Super K*, 59 px tall with a 15 px radius.
+  - **Pinned spaces:** cards, two to a row, with the pin number in the accent.
+  - **Tools:** four square tiles: *Search*, *Apps*, *Files* and *Settings*. Below 700 px of width the pins and tools stack.
+  - **The foot:** what is on this display ("3 spaces · 2 pinned · 1 Group") and the ways on: *Overview*, *Spaces* (the switcher) and *Return to work*. *Notifications* left Desk's tools; the Island's bell, which Desk also shows, opens them.
+  - **Shortcuts:** *? Shortcuts* in the lower right corner opens Niri's hotkey overlay, as in Overview.
+  - **Glass:** the field, cards and tiles share a new `glass` button variant: a 4% wash of the text colour (8% under the pointer), and an edge at half the border's strength that turns to the accent under the pointer. See the accessibility audit for why the edge may be faint.
+  - **Backdrop:** the prototype's ambient light, a soft accent glow above the headline and a fainter one low on the right, over a faint 46 px grid. It is decoration and takes no input.
+
+Verified by screenshots in the guest, in both appearances, with no pins and with two pinned spaces, and with the existing smokes and unit tests. The new layout has no behaviour of its own to test beyond the buttons it routes to (`openSearch`, `openApps`, Files, Settings, `openSpacesOverview`, `toggleSwitcher`), which are unchanged. Not verified: the narrow, stacked layout on a real narrow display (the guest's display is 1280 × 800), and hover and pressed states, because the guest has no pointer injection.
 
 ### Moving along a row in Overview (2026-11-21)
 
