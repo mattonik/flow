@@ -16,9 +16,9 @@ NAME = "io.github.mattonik.Flow1"
 VERSION = (1, 2)
 FEATURES = ("spaces.list", "spaces.focus", "spaces.changed", "control.spaces", "control.pin", "control.reorder",
             "system.ui", "activities")
-ACTIVITY_LIMIT = 3  # live activities per caller
-ACTIVITY_IDLE = 600.0  # an activity without an update for this many seconds ends
+ACTIVITY_LIMIT = 3  # live activities per caller: a Flatpak app across all its connections
 TITLE_MAX, DETAIL_MAX = 80, 120
+BLANK = {"\u2800", "\u3164", "\u115f", "\u1160", "\uffa0"}  # print as nothing, though not whitespace
 UI = {"desk": "desk_open", "overview": "overview_open", "launcher": "apps_open"}  # System requests → shell IPC
 RATE = (20, 10.0)  # calls per caller within this many seconds
 
@@ -285,16 +285,35 @@ def clean(text, limit):
     """Text an app shows in the island: printable characters only, on one line, at most ``limit`` long."""
     if not isinstance(text, str):
         raise ApiError("InvalidArgs", "Activity text must be a string")
-    kept = "".join(c if unicodedata.category(c)[0] != "C" else " " for c in text)
-    kept = " ".join(kept.split())
+    kept, marks = [], 0
+    for c in text:
+        kind = unicodedata.category(c)
+        if kind[0] == "C" or c in BLANK:
+            c, kind = " ", "Zs"
+        marks = marks + 1 if kind in ("Mn", "Me") else 0
+        if marks <= 2:  # combining marks may accent a letter, not stack into a tower
+            kept.append(c)
+    kept = " ".join("".join(kept).split())
     return kept[:limit - 1] + "…" if len(kept) > limit else kept
 
 
-def owner_label(identity, app_name=lambda app_id: None):
-    """Who an activity comes from, decided by the service, never by the app."""
+def owner_label(identity, proc=Path("/proc")):
+    """Who an activity comes from, decided by the service, never by the app.
+
+    A Flatpak app is shown by its app ID, the identity Flatpak verifies; the name in its desktop entry
+    is written by its developer and is not shown. An unsandboxed caller is shown by its process name;
+    when that is the flow CLI or a Python interpreter, the program that ran it is shown instead.
+    """
     if identity["sandboxed"]:
-        return clean(app_name(identity["app_id"]) or identity["app_id"], 60)
-    return clean(identity.get("name") or "an app", 60)
+        return clean(identity["app_id"], 60)
+    name, pid = identity.get("name") or "", identity.get("pid")
+    if (name == "flow" or name.startswith("python")) and isinstance(pid, int):
+        try:
+            parent = int((proc / str(pid) / "stat").read_text().rsplit(")", 1)[1].split()[1])
+            name = (proc / str(parent) / "comm").read_text().strip() or name
+        except (OSError, ValueError, IndexError):
+            pass
+    return clean(name or "an app", 60)
 
 
 def progress_of(value):
@@ -308,20 +327,25 @@ def progress_of(value):
 
 
 class ActivityBook:
-    """Live activities, each owned by the bus connection that started it (ADR-0010)."""
+    """Live activities, each owned by the bus connection that started it (ADR-0010).
+
+    An activity ends when its owner finishes it or its connection closes. ``caller`` is the rate-limit
+    identity: the limit of three follows a Flatpak app across all its connections.
+    """
 
     def __init__(self, clock=time.monotonic):
         self.clock = clock
         self.items = {}
 
-    def start(self, connection, owner, title, options):
-        if sum(a["connection"] == connection for a in self.items.values()) >= ACTIVITY_LIMIT:
+    def start(self, connection, owner, title, options, caller=None):
+        caller = caller or connection
+        if sum(a["caller"] == caller for a in self.items.values()) >= ACTIVITY_LIMIT:
             raise ApiError("RateLimited", f"A caller may show at most {ACTIVITY_LIMIT} activities at once")
         title = clean(title, TITLE_MAX)
         if not title:
             raise ApiError("InvalidArgs", "An activity needs a title")
         ident = uuid.uuid4().hex[:12]
-        activity = {"connection": connection, "owner": owner, "title": title, "detail": "",
+        activity = {"connection": connection, "caller": caller, "owner": owner, "title": title, "detail": "",
                     "progress": -1.0, "updated": self.clock()}
         self.change(activity, options)  # invalid options refuse the start; nothing is added
         self.items[ident] = activity
@@ -361,14 +385,6 @@ class ActivityBook:
         for ident in gone:
             del self.items[ident]
         return bool(gone)
-
-    def expire(self):
-        """End activities without an update for ACTIVITY_IDLE seconds; True if any ended."""
-        now = self.clock()
-        stale = [i for i, a in self.items.items() if now - a["updated"] >= ACTIVITY_IDLE]
-        for ident in stale:
-            del self.items[ident]
-        return bool(stale)
 
     def public(self):
         """What the shell shows, newest first; connections and timestamps stay inside the service."""

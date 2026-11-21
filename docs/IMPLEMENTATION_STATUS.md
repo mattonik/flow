@@ -182,33 +182,42 @@ Not done: the shell does not use the API yet, the service was not run as the ins
 
 ### Activities
 
-[ADR-0010](engineering/ADR-0010-activities.md) adds `io.github.mattonik.Flow1.Activities` to the Platform API (version 1.2) with `Start`, `Update` and `Finish`. Each activity belongs to the bus connection that started it:
-- It ends when that connection closes, or after 10 minutes without an update.
-- A caller may have three at once.
-- Text is cut to one printable line.
+[ADR-0010](engineering/ADR-0010-activities.md) adds `io.github.mattonik.Flow1.Activities` to the Platform API (version 1.2) with `Start`, `Update` and `Finish`. An activity belongs to the bus connection that started it:
+- It ends when finished or when that connection closes; there is no idle timeout.
+- A caller may have three at once, and a Flatpak app counts once across its connections.
+- Text is cut to one printable line; blank-looking characters and stacked combining marks are removed.
 
-The service labels each activity with its owner: a Flatpak app's name, or the caller's process name. An app can therefore set any title but cannot appear to come from Flow or from another app. For unsandboxed callers the process name is a convenience, not a boundary.
+The service labels each activity with its owner, never with a name the app chose:
+- **Flatpak app:** its verified app ID.
+- **Unsandboxed caller:** its process name, or the program that ran the `flow` CLI.
 
 The service publishes live activities to `$XDG_RUNTIME_DIR/flow-activities.json`, and the shell watches that file:
-- The island shows the newest as a chip with the owner, the title, a progress fill and a count of the others.
-- Desk lists them all under *Activities*.
+- The island shows the newest as a chip with the owner, the title, a progress fill and a count of the others. The chip fits the space the island has left on its screen and becomes a dot on narrow screens.
+- Desk lists every activity under *Activities*.
 
 The CLI adds two commands:
-- `flow activity run TITLE -- COMMAND` holds an activity while a command runs and passes on its exit code.
-- `flow activity progress TITLE` shows percentages read from standard input, at most two updates a second. The latest value always goes out, and other lines become the detail.
+- `flow activity run TITLE -- COMMAND` holds an activity while a command runs. It forwards termination signals and always returns the command's own exit status.
+- `flow activity progress TITLE` shows percentages read from standard input, one update a second at most. The last value always goes out, even without a final newline, and carriage-return progress such as rsync's works.
 
-`niri_activities_smoke.py` passed in the guest on a private bus, against a development shell:
+Neither command lets a refused or failed activity call stop the work it reports: standard input is still drained, so a pipeline never breaks.
+
+`niri_activities_smoke.py` passed in the guest on a private bus and its own runtime directory, against a development shell:
 - Progress went from 25% to 60% with a detail line and ended at end of input.
 - A build showed while its command ran and ended with it.
 - A caller was refused a fourth activity, and its three ended when it was killed.
-- The service and the shell stopped without leaving a Niri event stream behind.
+- A service killed with SIGKILL, and a shell and service stopped normally, left no Niri event stream behind. The test is a child subreaper, so a leaked stream would be re-parented to it and caught.
 
-Unit tests cover ownership, limits, expiry, text cleaning and owner labels; each check fails when neutralised.
+Unit tests cover:
+- the activity book: ownership, the per-app limit, text cleaning and owner labels
+- the CLI through a stand-in for PyGObject: refused calls that are not fatal, a pipe that never breaks, the last line, carriage returns, non-numeric lines, exit statuses and forwarded signals
 
-The smoke test found two bugs, both fixed:
-- **CLI throttle:** it could hold back the last value until more input came.
-- **Leaked event stream:** stopping the shell left its `niri msg event-stream` running, so each shell restart leaked one process. This predates Activities. The shell's and the service's event streams now run under `setpriv --pdeathsig`, so they end with their parent, even after SIGKILL. Without that the test fails.
+A NEMESIS review of the first version found the bugs these tests now pin down:
+- The CLI's throttle ran at exactly the service's rate limit, so `flow activity progress` failed after about ten seconds and broke the pipe it was reading.
+- `flow activity run` reported failure for any command over the ten-minute expiry, which has been removed.
+- A Flatpak app could get around the limit with more connections, and could pick its own owner label.
 
-The user unit removes the activity file after the service stops, crashes included, so the island never shows activities nobody owns. Screenshots showed the chip and Desk's list. Not tested: a Flatpak app as the owner, and expiry outside unit tests.
+Stopping the shell had leaked its `niri msg event-stream`, a bug older than Activities. The event streams of the shell and the service now run under `setpriv --pdeathsig`, so they end with their parent, and fall back to a plain stream without `setpriv`.
+
+Not tested: a Flatpak app as the owner, and the narrow-screen dot outside the layout code.
 
 Limitations: The changes run from a development copy, not an installed NixOS generation. An older generation cannot read a version 2 pin file and reports *Invalid saved spaces* without changing it. Restoring `spaces.v1.json` rolls back, but it holds the pins from before the first conversion, so pins made since are lost. An older generation also rejects a `groups.json` that contains a Group of three or four apps, which stops every `flow-spaces` call; dissolve or shrink such Groups to two apps before rolling back. Touch, physical rotation and real hotplug remain open.

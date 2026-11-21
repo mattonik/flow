@@ -144,8 +144,8 @@ class Service:
 
     def activity(self, sender, identity, method, params):
         if method == "Start":
-            owner = core.owner_label(identity, spaces.app_name)
-            ident = self.activities.start(sender, owner, params[0], dict(params[1]))
+            owner = core.owner_label(identity)
+            ident = self.activities.start(sender, owner, params[0], dict(params[1]), core.limit_key(identity, sender))
             self.write_activities()
             return GLib.Variant("(s)", (ident,))
         if method == "Update":
@@ -172,11 +172,6 @@ class Service:
     def owner_gone(self, name):
         if self.activities.drop_connection(name):
             self.write_activities()
-
-    def expire_activities(self):
-        if self.activities.expire():
-            self.write_activities()
-        return True  # keep the timer
 
     def show(self, ipc):
         try:
@@ -219,8 +214,10 @@ def variant(value):
 
 def watch_niri(service, children):
     """Turn Niri's event stream into debounced Changed signals; reconnect if it ends."""
-    # setpriv: the kernel ends the stream if the service dies, even by SIGKILL.
-    process = Gio.Subprocess.new(["setpriv", "--pdeathsig", "TERM", "niri", "msg", "-j", "event-stream"],
+    # setpriv: the kernel ends the stream if the service dies, even by SIGKILL; without it the stream
+    # still runs, only without that guarantee.
+    process = Gio.Subprocess.new(["sh", "-c", "command -v setpriv >/dev/null && exec setpriv --pdeathsig TERM"
+                                  " niri msg -j event-stream; exec niri msg -j event-stream"],
                                  Gio.SubprocessFlags.STDOUT_PIPE)
     children[:] = [process]  # stopped when the service exits, so no stream outlives it
     stream = Gio.DataInputStream.new(process.get_stdout_pipe())
@@ -278,7 +275,7 @@ def main():
 
         connection.signal_subscribe("org.freedesktop.DBus", "org.freedesktop.DBus", "NameOwnerChanged",
                                     "/org/freedesktop/DBus", None, Gio.DBusSignalFlags.NONE, name_owner_changed)
-        GLib.timeout_add_seconds(30, holder["service"].expire_activities)
+
         watch_niri(holder["service"], children)
 
     def lost(_connection, _name):

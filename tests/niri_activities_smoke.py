@@ -2,11 +2,13 @@
 """Activities (ADR-0010) from the flow CLI to the island of a development shell, on a private bus.
 
 Run inside a Niri session from the Flow checkout under ``dbus-run-session``, with ``FLOW_GI_PYTHON`` set
-to a Python with PyGObject and ``FLOW_SHELL`` to the development ``shell.qml``. The service publishes
-``$XDG_RUNTIME_DIR/flow-activities.json``, which must not exist beforehand and is removed when the
-service stops. Flow state is isolated and real state files are checksummed.
+to a Python with PyGObject and ``FLOW_SHELL`` to the development ``shell.qml``. The test runs with its own ``XDG_RUNTIME_DIR``
+(Wayland and Niri are reached by absolute paths), so a real Flow API service or shell never sees
+its activities. It is a child subreaper, so any event stream a stopped shell or service leaks is
+re-parented to the test and caught. Flow state is isolated and real state files are checksummed.
 """
 
+import ctypes
 import hashlib
 import json
 import os
@@ -40,24 +42,28 @@ def main():
     bus = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "")
     if not python or not shell or "unix:" not in bus:
         raise RuntimeError("Run under dbus-run-session with FLOW_GI_PYTHON and FLOW_SHELL set")
-    published = Path(os.environ["XDG_RUNTIME_DIR"]) / "flow-activities.json"
-    if published.exists():
-        raise RuntimeError(f"{published} already exists; another Flow API service may be running")
+    real_runtime = Path(os.environ["XDG_RUNTIME_DIR"])
+    wayland = os.environ.get("WAYLAND_DISPLAY", "wayland-1")
+    ctypes.CDLL(None).prctl(36, 1, 0, 0, 0)  # PR_SET_CHILD_SUBREAPER: orphans of our children come to us
+    real_published_before = (real_runtime / "flow-activities.json").exists()
     real_state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "flow"
     real_files = [real_state / name for name in ("spaces.json", "groups.json", "session.json")]
     real_digests = [digest(path) for path in real_files]
     steps, result, processes = [], None, []
+    me = Path("/proc/self/comm").read_text().strip()  # the CLI is run by this test, so it is the owner
 
     def orphans():
-        """Niri event streams whose parent died: a shell or service that leaked one."""
+        """Niri event streams re-parented to this test: a shell or service that leaked one."""
         out = subprocess.run(["ps", "-eo", "pid,ppid,cmd"], text=True, stdout=subprocess.PIPE).stdout
         return {line.split()[0] for line in out.splitlines()[1:]
-                if line.split()[1] == "1" and "event-stream" in line}
-
-    orphans_before = orphans()
+                if line.split()[1] == str(os.getpid()) and "event-stream" in line}
 
     with tempfile.TemporaryDirectory(prefix="flow-activities-") as tmp:
-        env = dict(os.environ, XDG_STATE_HOME=tmp, PYTHONPATH=str(CODE))
+        runtime = Path(tmp) / "runtime"
+        runtime.mkdir(mode=0o700)
+        published = runtime / "flow-activities.json"
+        env = dict(os.environ, XDG_STATE_HOME=tmp, PYTHONPATH=str(CODE), XDG_RUNTIME_DIR=str(runtime),
+                   WAYLAND_DISPLAY=wayland if wayland.startswith("/") else str(real_runtime / wayland))
 
         def start(*command, **kw):
             process = subprocess.Popen(list(command), env=env, text=True, **kw)
@@ -70,13 +76,13 @@ def main():
         def shown():
             try:
                 return json.loads(subprocess.run(["quickshell", "ipc", "-p", shell, "call", "desk", "activity_list"],
-                                                 text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                                 env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                                  timeout=10).stdout or "null")
             except (subprocess.SubprocessError, ValueError):
                 return None
 
         try:
-            start(python, str(CODE / "flow_api.py"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            service = start(python, str(CODE / "flow_api.py"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             wait_for(lambda: published.exists(), "the service to publish its activity file")
             start("quickshell", "-p", shell, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                   stderr=subprocess.DEVNULL)
@@ -85,11 +91,11 @@ def main():
             copy = flow("activity", "progress", "Copy photos", stdin=subprocess.PIPE)
             copy.stdin.write("25\n")
             copy.stdin.flush()
-            wait_for(lambda: shown() == ["flow  ·  Copy photos  25%"], f"the island to show 25% ({shown()})")
+            wait_for(lambda: shown() == [f"{me}  ·  Copy photos  25%"], f"the island to show 25% ({shown()})")
             time.sleep(0.6)
             copy.stdin.write("Copying IMG_2041.jpg\n60\n")
             copy.stdin.flush()
-            wait_for(lambda: shown() == ["flow  ·  Copy photos  60%"], f"the island to show 60% ({shown()})")
+            wait_for(lambda: shown() == [f"{me}  ·  Copy photos  60%"], f"the island to show 60% ({shown()})")
             if json.loads(published.read_text())["activities"][0]["detail"] != "Copying IMG_2041.jpg":
                 raise RuntimeError("The detail line did not reach the published activity")
             copy.stdin.close()
@@ -98,7 +104,7 @@ def main():
             steps.append("flow activity progress showed 25% then 60% with a detail line, and ended at end of input")
 
             build = flow("activity", "run", "Build", "--", "sleep", "3")
-            wait_for(lambda: shown() == ["flow  ·  Build  …"], f"an indeterminate build ({shown()})")
+            wait_for(lambda: shown() == [f"{me}  ·  Build  …"], f"an indeterminate build ({shown()})")
             if build.wait(timeout=15) != 0:
                 raise RuntimeError("flow activity run did not pass on the command's exit code")
             wait_for(lambda: shown() == [], "the build to end with its command")
@@ -122,6 +128,28 @@ def main():
             jobs.wait(timeout=10)
             wait_for(lambda: shown() == [], "a killed caller's activities to end with its connection")
             steps.append("a caller was refused a fourth activity, and its three ended when it was killed")
+
+            # A service killed outright must not leave its event stream behind either. The first service
+            # gives up the name, so the new one owns it and starts its stream before it is killed.
+            service.terminate()
+            service.wait(timeout=10)
+
+            def owns_name():
+                listed = subprocess.run(["busctl", f"--address={bus}", "list", "--no-pager"], text=True,
+                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
+                return NAME in listed
+
+            wait_for(lambda: not owns_name(), "the first service to give up its name")
+            doomed = start(python, str(CODE / "flow_api.py"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            wait_for(owns_name, "the second service to own the name")
+            wait_for(lambda: "event-stream" in subprocess.run(["ps", "-o", "cmd=", "--ppid", str(doomed.pid)], text=True,
+                                                              stdout=subprocess.PIPE).stdout, "its event stream")
+            doomed.send_signal(signal.SIGKILL)
+            doomed.wait(timeout=10)
+            time.sleep(1)
+            if orphans():
+                raise RuntimeError(f"A killed service left its event stream running: {orphans()}")
+            steps.append("a service killed with SIGKILL left no event stream behind")
             steps.append("the service and the development shell stopped without leaving an event stream")
             result = {"result": "pass", "steps": steps}
         finally:
@@ -132,10 +160,11 @@ def main():
                         process.wait(timeout=5)
                     except subprocess.TimeoutExpired:
                         process.kill()
-    wait_for(lambda: not published.exists(), "the service to remove its activity file", timeout=10)
-    time.sleep(1)
-    if orphans() - orphans_before:
-        raise RuntimeError(f"The service or shell left its event stream running: {orphans() - orphans_before}")
+        time.sleep(1)
+        if orphans():
+            raise RuntimeError(f"The service or shell left its event stream running: {orphans()}")
+        if (real_runtime / "flow-activities.json").exists() != real_published_before:
+            raise RuntimeError("The test touched the real runtime directory's activity file")
     if [digest(path) for path in real_files] != real_digests:
         raise RuntimeError("A real Flow Group, pin, or session file changed")
     print(json.dumps(result, indent=1))
