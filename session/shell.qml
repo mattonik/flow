@@ -2987,8 +2987,8 @@ ShellRoot {
     PanelWindow {
         id: notificationBanner
         readonly property var notification: root.bannerNotification
-        visible: !!notification && notificationServer.trackedNotifications.values.indexOf(notification) >= 0
-            && !root.notificationsOpen && !root.quickSettingsOpen && !root.searchOpen
+        // A notification the app closes is destroyed, which empties the property, so the banner leaves.
+        visible: !!notification && !root.notificationsOpen && !root.quickSettingsOpen && !root.searchOpen
         anchors.top: true
         implicitWidth: Math.max(0, Math.min(370, screen.width - 24))
         implicitHeight: Math.max(bannerText.implicitHeight, 44) + 24

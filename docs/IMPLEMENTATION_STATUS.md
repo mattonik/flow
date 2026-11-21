@@ -374,7 +374,7 @@ Tests:
   - one the app closes leaves at once;
   - quick settings hides a banner, which shows again when quick settings closes;
   - a critical one stays past 7 s, leaves when the panel opens and doesn't come back.
-- **Mutations:** MUTATION_RESULT
+- **Mutations:** seven mutations each fail the smoke, at the step that covers them: no banner, low urgency shown, no timeout, a critical one timing out, the panel not taking the banner, a banner over quick settings, and a newer notification not replacing it. An eighth, dropping a check that the notification was still tracked, did not fail it. The check was redundant: a notification the app closes is destroyed, which empties the banner's property. It was removed.
 - **`test_notification_banner.py`:** checks the source for what the smoke can't see. The banner never takes the keyboard, its dismiss button is 44 px, it is announced, it sits where the panels sit, and its text is plain and bounded.
 
 Not verified:
