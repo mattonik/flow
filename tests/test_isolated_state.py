@@ -46,7 +46,7 @@ class IsolatedStateTest(unittest.TestCase):
         self.assertEqual(self.state.remove(), [f"process {late.pid}"])
 
     def test_kills_and_reports_a_process_that_never_exits(self):
-        stuck = self.start("sleep 30")
+        stuck = self.start("exec sleep 30")  # one process whichever sh runs it: dash would fork the sleep
         time.sleep(0.2)
         leftover = self.state.remove(timeout=1)
         self.assertEqual(len(leftover), 1)
