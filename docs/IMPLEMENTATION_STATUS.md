@@ -228,7 +228,7 @@ The shell's controls follow one system instead of one bordered rectangle:
 - **Focus** is a 2 px ring 3 px outside the control, concentric with it. Clipped panels keep 4 px inside the clip, so rings stay whole.
 - **Capsules:** the island, the work indicator and the bottom controls share one capsule bar. Their 44 px buttons draw 36 px capsules, concentric with the bar.
 - **Radii** are on the token scale: cards 20, panels 14, controls 10, with in-card controls concentric with their card.
-- **Type** follows the scale (11/12/14/16/18/32/52) with weights 500–600. Clock, percentages and counts use tabular figures.
+- **Type** follows the scale (11/12/14/16/18/32/52), with 13 px kept for compact labels in the island and cards, and weights 500–600. Clock, percentages and counts use tabular figures.
 - **Icons:** line icons for notifications, quick settings, search, chevrons, close, plus and minus are drawn by the shell. They use multisampled geometry because curve-rendered strokes break up under virgl. Only buttons with a glyph load one.
 - **Motion** uses the brand's quick (120 ms) and standard (220 ms) tokens and its standard curve. A *Reduce motion* setting in Desk makes every change instant, because Linux gives Quickshell no system signal for it. All "busy" indicators share one clock, so a card rebuilt by an activity update continues its sweep.
 
@@ -236,19 +236,21 @@ Surface by surface:
 - **Desk:** a larger search field, pins as cards, activities as cards with a progress track, and tools sized to their labels.
 - **Switcher:** a rounded bottom sheet. Each space is a card, and a Group's actions sit in a two-column grid with *Dissolve* as the danger action.
 - **Quick settings, notifications and the toast** are rounded panels.
-- **Narrow screens:** below 560 px the work indicator rises above the bottom controls instead of overlapping them, an overlap that predates this pass. The Layer label is dropped, and Layer controls wrap.
+- **Narrow screens:** the work indicator rises above the bottom controls instead of overlapping them, below 560 px, or below 900 px when a Layer is active. That overlap predates this pass. The Layer label is dropped, and Layer controls wrap.
 
 Screenshots were taken before and after in the guest with a development shell, on an isolated runtime directory and state, with the installed shell paused and respawned. They cover the work view, switcher, Desk, Desk settings, quick settings and a focused Layer at 1280×800 in both themes, and the work view, switcher, Desk and a Layer at 320×512 portrait. The output's transform and scale were restored. All eleven guest smokes passed against the polished shell, and real state files were unchanged.
 
 A NEMESIS review of the first version found these problems, which the second version fixes:
 - Desk's busy bar restarted on every activity update.
 - Borders dropped below 3:1 through reduced opacity.
-- Selection was shown by tint alone.
+- Selection was shown by tint alone, and buttons that open panels were marked "Current".
 - Focus rings were clipped in panels.
 - Labels were cut off, and an accessible name did not contain its visible label.
 - The Layer's Close lost its word.
 - Radii and type were off the token scale.
 - The sheet had a drag handle without a gesture.
+- The Mute button kept its label once audio was muted.
+- The shared busy clock ticked while nothing visible used it.
 
 Not verified:
 - **Keyboard focus walk:** the guest has no key injection tool.

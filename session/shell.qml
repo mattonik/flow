@@ -458,7 +458,8 @@ ShellRoot {
     property real busyPhase: 0
     NumberAnimation on busyPhase {
         from: 0; to: 1; duration: 1600; loops: Animation.Infinite
-        running: root.motionQuick > 0 && root.activities.some(a => !(a.progress >= 0))
+        running: root.motionQuick > 0 && (root.deskOpen ? root.activities.some(a => !(a.progress >= 0))
+            : root.activities.length > 0 && !(root.activities[0].progress >= 0))
     }
     // Line icons on a 24-unit grid, drawn by the shell so no icon font is needed.
     readonly property var iconPaths: ({
@@ -502,6 +503,9 @@ ShellRoot {
         // The current choice among siblings (the focused app, the active Layer): a leading dot, a 2 px
         // border, a heavier label and "Current" for assistive technology, so it never depends on tint alone.
         property bool selected: false
+        // The panel this button opens is showing (Desk, search, quick settings): the same fill and border as
+        // a selected button, no dot, and "Open" for assistive technology. It is not a choice among siblings.
+        property bool open: false
         property string glyph: ""
         property real radius: 10
         readonly property color labelColor: variant === "primary" ? floeTheme.onAccent : variant === "danger" ? floeTheme.danger
@@ -515,7 +519,7 @@ ShellRoot {
         opacity: enabled ? 1 : 0.45
         scale: control.down && root.motionQuick ? 0.96 : 1
         Behavior on scale { NumberAnimation { duration: root.motionQuick; easing.type: Easing.BezierSpline; easing.bezierCurve: root.standardCurve } }
-        Accessible.description: selected ? "Current" : ""
+        Accessible.description: selected ? "Current" : open ? "Open" : ""
         contentItem: Item {
             readonly property real dotRoom: control.selected && !control.glyph ? 12 : 0
             implicitWidth: control.glyph ? 18 : label.implicitWidth + dotRoom; implicitHeight: label.implicitHeight
@@ -546,13 +550,13 @@ ShellRoot {
                 // Quiet and danger buttons rest on a soft tint, so they read as controls on touch screens too,
                 // where there is no hover to reveal them.
                 color: control.variant === "primary" ? (control.down || control.hovered ? floeTheme.accentStrong : floeTheme.accent)
-                    : control.selected || control.down || control.hovered ? floeTheme.surfaceSelected
+                    : control.selected || control.open || control.down || control.hovered ? floeTheme.surfaceSelected
                     : control.variant === "secondary" ? floeTheme.surface
                     : control.variant === "danger" ? Qt.alpha(floeTheme.danger, 0.1)
                     : control.variant === "plain" ? "transparent" : Qt.alpha(floeTheme.surfaceSelected, 0.6)
                 // Functional borders stay at full strength (3:1 against the surfaces, brand guidelines).
-                border.width: control.selected ? 2 : control.variant === "secondary" ? 1 : 0
-                border.color: control.selected || control.hovered ? floeTheme.borderStrong : floeTheme.border
+                border.width: control.selected || control.open ? 2 : control.variant === "secondary" ? 1 : 0
+                border.color: control.selected || control.open || control.hovered ? floeTheme.borderStrong : floeTheme.border
                 Behavior on color { ColorAnimation { duration: root.motionQuick } }
             }
             Rectangle {
@@ -571,8 +575,8 @@ ShellRoot {
         background: Item {
             Rectangle {
                 anchors.fill: parent; anchors.margins: 4; radius: height / 2
-                color: islandButton.selected || islandButton.down || islandButton.hovered ? floeTheme.surfaceSelected : "transparent"
-                border.width: islandButton.selected ? 2 : 0; border.color: floeTheme.borderStrong
+                color: islandButton.selected || islandButton.open || islandButton.down || islandButton.hovered ? floeTheme.surfaceSelected : "transparent"
+                border.width: islandButton.selected || islandButton.open ? 2 : 0; border.color: floeTheme.borderStrong
                 Behavior on color { ColorAnimation { duration: root.motionQuick } }
             }
             Rectangle {
@@ -599,7 +603,7 @@ ShellRoot {
                 id: wordmark
                 implicitHeight: 44; text: "floe."
                 Accessible.name: root.deskOpen ? "Return to work" : "Open Floe Desk"
-                selected: root.deskOpen
+                open: root.deskOpen
                 contentItem: Text {
                     text: wordmark.text; textFormat: Text.PlainText
                     color: floeTheme.textPrimary; font.pixelSize: 16; font.weight: Font.DemiBold; font.letterSpacing: -0.4
@@ -611,7 +615,7 @@ ShellRoot {
                 property bool closeOnRelease: false
                 implicitHeight: 44
                 text: root.launcherActive ? "Close" : "Apps"
-                selected: root.launcherActive
+                open: root.launcherActive
                 Accessible.name: root.launcherActive ? "Close search and apps" : "Open apps"
                 onPressed: closeOnRelease = root.launcherActive
                 onClicked: { if (closeOnRelease) root.closeLauncher(); else root.openApps(); closeOnRelease = false }
@@ -675,7 +679,7 @@ ShellRoot {
                 font.pixelSize: 14; font.weight: Font.Medium; font.family: floeTheme.interfaceFont; font.features: { "tnum": 1 }
             }
             IslandButton {
-                width: 44; implicitHeight: 44; glyph: "bell"; selected: root.notificationsOpen
+                width: 44; implicitHeight: 44; glyph: "bell"; open: root.notificationsOpen
                 Accessible.name: notificationServer.trackedNotifications.values.length
                     ? "Notifications, " + notificationServer.trackedNotifications.values.length + " waiting" : "Notifications"
                 onClicked: root.toggleNotifications()
@@ -686,7 +690,7 @@ ShellRoot {
                     color: floeTheme.accent; border.width: 1.5; border.color: floeTheme.canvas
                 }
             }
-            IslandButton { width: 44; implicitHeight: 44; glyph: "sliders"; selected: root.quickSettingsOpen; Accessible.name: "Quick settings"; onClicked: root.toggleQuickSettings() }
+            IslandButton { width: 44; implicitHeight: 44; glyph: "sliders"; open: root.quickSettingsOpen; Accessible.name: "Quick settings"; onClicked: root.toggleQuickSettings() }
         }
     }
     component FlowSwitch: Switch {
@@ -1067,7 +1071,7 @@ ShellRoot {
                                 required property string modelData
                                 onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(toolButton)
                                 implicitHeight: 44; leftPadding: 18; rightPadding: 18
-                                selected: modelData === "Settings" && root.settingsOpen
+                                open: modelData === "Settings" && root.settingsOpen
                                 text: modelData
                                 onClicked: {
                                     if (modelData === "Settings") {
@@ -1168,8 +1172,9 @@ ShellRoot {
         id: workIndicatorWindow
         visible: !root.deskOpen && !root.switcherOpen && !root.overviewOpen && !root.appMenuOpen && !root.launcherActive && (!!root.activeSpace || !!root.activeLayer)
         anchors { bottom: true; right: true }
-        // Below 560 px the bottom controls and this indicator cannot share a row, so it rises above them.
-        readonly property bool narrow: !!screen && screen.width < 560
+        // Where the bottom controls and this indicator cannot share a row, it rises above them: below 560 px,
+        // or below 900 px for an active Layer's wider controls.
+        readonly property bool narrow: !!screen && screen.width < (root.activeLayer ? 900 : 560)
         margins { bottom: narrow ? 68 : 8; right: 12 }
         implicitWidth: workIndicator.implicitWidth + 8; implicitHeight: 52
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
@@ -1876,7 +1881,7 @@ ShellRoot {
                     width: parent.width; spacing: 6
                     FlowButton { width: 70; implicitHeight: 44; text: "− 5%"; Accessible.name: "Decrease volume"; enabled: root.audioAvailable; onClicked: root.changeVolume(-0.05) }
                     FlowButton { width: 70; implicitHeight: 44; text: "+ 5%"; Accessible.name: "Increase volume"; enabled: root.audioAvailable; onClicked: root.changeVolume(0.05) }
-                    FlowButton { width: Math.max(70, parent.width - 152); implicitHeight: 44; variant: "quiet"; text: "Mute"; enabled: root.audioAvailable; onClicked: root.changeVolume("mute") }
+                    FlowButton { width: Math.max(70, parent.width - 152); implicitHeight: 44; variant: "quiet"; text: root.audioAvailable && root.audioSink.audio.muted ? "Unmute" : "Mute"; enabled: root.audioAvailable; onClicked: root.changeVolume("mute") }
                 }
                 Row {
                     visible: !!root.mediaPlayer
