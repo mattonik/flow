@@ -13,7 +13,7 @@ The recorded test environment is an Apple Silicon Mac running UTM 5.0.8, QEMU AR
 | F-005 Group identity | Partial | Groups of two to four apps can be explicitly created; since 2026-11-20 they are bound to their windows within a Niri session (see *Groups beside other windows of their apps*), and automatic layout reflows them by orientation. Originally, two unambiguous apps could be explicitly grouped, named, pinned and dissolved using a registry independent of session snapshots. An isolated ARM64 guest test exercised migration and the Group lifecycle without changing the real snapshot; the existing guest Group also migrated. Manual stack/tabs remains available. The switcher can open an absent app and explicitly rejoin two adjacent, unambiguous single-window columns, including a pinned Group at the end of the strip. A manual side-by-side layout now appears as one switcher and keyboard-navigation destination; an ARM64 guest test preserved its pin, focus and neighboring pin across a stack → side-by-side → stack journey. If another app separates the two columns, the switcher can explicitly repair the Group when intervening columns are safe; recovery, touch navigation, automatic orientation reflow and the full lifecycle remain open. |
 | F-006 Layer dismissal | Partial | A Layer is a compact floating window over the current space; floating windows are no longer counted as spaces (2026-11-20). Search can open any app as a Layer, and the switcher can make the focused standalone app one. In the guest, a Layer was opened over a pinned, resized side-by-side Group and closed again. The Group, its pin, every column and width, and the Flow state were unchanged, and focus returned to the same Group app. Portrait outputs get a bottom sheet, open Layers reshape when the output rotates, and a Layer can join the Group beneath it. Touch is not implemented. |
 | F-007 Desk/Overview | Partial | In the ARM64 guest, opening and closing Desk and Niri Overview retained the same four window IDs, workspace, scrolling positions and focused window. At a simulated 320×512 logical portrait size, Group switcher keyboard navigation and pin editing remained visible; the original display and window state were restored. Gesture, physical touch, multi-display and visual-transition acceptance remain open. |
-| F-008 Search | Partial | Search covers recent local files within the user’s home folder, Flow settings, quick settings, installed applications, open windows and saved pins, including closed apps. File indexing and commands are missing. The settings shell actions were checked through IPC. A recent-file result from an isolated history was selected in the guest and opened in Kate; naturally populated history and the settings results still need end-to-end validation. |
+| F-008 Search | Partial | Search covers recent local files within the user’s home folder, Flow settings, quick settings, installed applications, open windows and saved pins, including closed apps. File indexing and commands are missing. The settings shell actions were checked through IPC. Until 2026-11-21 the installed search listed nothing and opened nothing (see *Search on the installed system*); since then an app was found and opened from it on the installed configuration. A recent-file result from an isolated history was selected in the guest and opened in Kate; naturally populated history and the settings results still need end-to-end validation. |
 | F-009 Island/system | Partial | Island, quick settings, lock, a temporary notification inbox and notification banners exist. Apps can show Activities with progress in the island through the Platform API (ADR-0010, 2026-11-21); they are labelled with their owner and end with the app's connection. Quick Settings opens GNOME's Wi-Fi panel and the connection-profile editor, and controls one unambiguous MPRIS player. The guest showed the no-adapter Wi-Fi state; real scanning/authentication, durable notification history and independent availability across all contexts remain unverified. |
 | F-010 Real accounts | Open | Two-user and guest isolation and switching have not been verified. |
 | F-011 Display hotplug | Partial | In the guest, a second virtual output was disconnected and reconnected through its DRM connector (2026-11-20). Its pins stayed with it and nothing on the other display was reordered, then the pins came back in order. A pinned three-app Group and a single app were moved between the two outputs as one destination each. Physical monitors, docks, connector changes and serial-number identity are unit-tested only. |
@@ -262,9 +262,9 @@ Flow used Niri's own Overview (a vertical zoom of workspaces), fuzzel for search
   - **The palette:** a shade and a 620 px palette with an 18 px radius. The field has a search icon and a close button.
   - **Results:** each has an icon tile (the app's icon, or a line icon for its kind), a title, a detail line and ↗. The chosen row has a 2 px focus edge.
   - **Footer:** "Enter to open · ↑ ↓ to choose · Esc to close". Escape works from anywhere in the panel.
-  - **Behaviour:** `search.py --json` lists the results, the shell filters them as you type and runs the choice, and apps open in their own scope.
+  - **Behaviour:** `flow-search --json` lists the results, the shell filters them as you type and runs the choice. Apps and files open through `flow-search --open`, in their own scope. See *Search on the installed system*.
   - **What is listed:** the same results fuzzel showed, except apps without a desktop file, which cannot be opened by name.
-  - **The old commands:** `flow-apps` and `flow-search` still exist as standalone fuzzel launchers. Nothing in the shell uses them.
+  - **The old command:** `flow-apps` still exists as a standalone fuzzel launcher. Nothing in the shell uses it. `flow-search`'s fuzzel mode was removed (2026-11-21).
 - **Platform API:** `ShowOverview` opens Flow's Overview, and `ShowLauncher` opens the panel's app view. Both count an Overview that is still opening as open.
 
 Tests:
@@ -399,6 +399,29 @@ Not verified:
 - **Screen reader:** the announcement was not heard with a running screen reader.
 - **Super+N:** not pressed, because the guest has no key injection; the binding passes `niri validate`.
 - **Several displays:** not tried.
+
+### Search on the installed system (2026-11-21)
+
+On an installed Flow, search never worked. Opening it showed the old fuzzel picker over the shell's panel; the panel said "Nothing matches “”" over its own footer, and choosing anything opened nothing. Screenshots: `docs/screenshots/2026-11-21-search`.
+
+Causes, and fixes:
+- **The installed `flow-search` dropped its arguments.** Its wrapper ran `search.py` without `"$@"`, so the shell's `flow-search --json` started the fuzzel picker instead of printing results. The wrapper now forwards them.
+- **`gio` was not on the installed shell's PATH.** The shell opened apps and files with `gio launch` and `gio open`, which failed silently. They now open through `flow-search --open app|file VALUE`, whose wrapper puts glib on PATH as `flow-spaces` and `flow-recovery` do.
+- **The fuzzel mode is gone.** Nothing but the shell called `flow-search`, and the fallback is what put a second picker on screen. Called otherwise, it prints its usage.
+- **The guest tests could not see either.** They ran the shell with their own `flow-search` wrapper and glib on PATH. `checks.module` now runs the installed wrapper itself: `--json` must print results, and `--open` must find gio. Without `"$@"`, or without glib, the check fails.
+- **Ranking:** an exact title now ranks first, and ties keep `search.py`'s order. Qt's JavaScript sort is not stable, so typing "Foot" put "Foot Client · Open as Layer" first, and Return opened nothing.
+- **Messages:** with no results the message has its own space above the footer. A `flow-search` that does not print a list says that search failed, not "Nothing matches", and an app or file that fails to open shows a toast naming it.
+- **Icons:** an icon with fallbacks reaches the shell by its name, and an absolute icon path loads as a file.
+
+Tests:
+- **`niri_search_smoke.py` (guest):** drives a development shell with a stand-in `flow-search` and types with wtype. It checks the listed results, the ranking and Return opening the Notes app through `--open`, the no-match message staying clear of the footer, the failure toast and the failed-search message. Seven mutations each fail it: the unstable sort, no exact rank, `gio launch` from the shell again, no toast, no failed flag, and the old empty-state layout.
+- **`checks.module` (CI):** fails with the wrapper's `"$@"` or its glib PATH removed, both shown in the guest.
+- **Installed configuration:** this branch, activated in the guest without a new generation, listed 17 results with 14 app icons and no fuzzel. Typing "Foot" and pressing Return opened a Foot window in its own scope. The system was then switched back to generation 26.
+- **Unit tests:** `test_search.py` covers `--json`, `--open` and its failures, and icon names.
+
+The wtype-driven tests had a latent flaw, fixed in both `niri_search_smoke.py` and `niri_focus_walk_smoke.py`. Niri does not resend a virtual keymap equal to the last one, so a run that stopped right after its first typed call left the next run's shell reading keys with the physical keymap. Each run now starts with a keymap no other call sends.
+
+Not verified: clicking a result with a pointer, and opening a recent file from the installed shell.
 
 ### Moving along a row in Overview (2026-11-21)
 
