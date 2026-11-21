@@ -14,7 +14,7 @@ The recorded test environment is an Apple Silicon Mac running UTM 5.0.8, QEMU AR
 | F-006 Layer dismissal | Partial | A Layer is a compact floating window over the current space; floating windows are no longer counted as spaces (2026-11-20). Search can open any app as a Layer, and the switcher can make the focused standalone app one. In the guest, a Layer was opened over a pinned, resized side-by-side Group and closed again. The Group, its pin, every column and width, and the Flow state were unchanged, and focus returned to the same Group app. Portrait outputs get a bottom sheet, open Layers reshape when the output rotates, and a Layer can join the Group beneath it. Touch is not implemented. |
 | F-007 Desk/Overview | Partial | In the ARM64 guest, opening and closing Desk and Niri Overview retained the same four window IDs, workspace, scrolling positions and focused window. At a simulated 320×512 logical portrait size, Group switcher keyboard navigation and pin editing remained visible; the original display and window state were restored. Gesture, physical touch, multi-display and visual-transition acceptance remain open. |
 | F-008 Search | Partial | Search covers recent local files within the user’s home folder, Flow settings, quick settings, installed applications, open windows and saved pins, including closed apps. File indexing and commands are missing. The settings shell actions were checked through IPC. A recent-file result from an isolated history was selected in the guest and opened in Kate; naturally populated history and the settings results still need end-to-end validation. |
-| F-009 Island/system | Partial | Island, quick settings, lock and a temporary notification inbox exist. Apps can show Activities with progress in the island through the Platform API (ADR-0010, 2026-11-21); they are labelled with their owner and end with the app's connection. Quick Settings opens GNOME's Wi-Fi panel and the connection-profile editor, and controls one unambiguous MPRIS player. The guest showed the no-adapter Wi-Fi state; real scanning/authentication, durable notification history and independent availability across all contexts remain unverified. |
+| F-009 Island/system | Partial | Island, quick settings, lock, a temporary notification inbox and notification banners exist. Apps can show Activities with progress in the island through the Platform API (ADR-0010, 2026-11-21); they are labelled with their owner and end with the app's connection. Quick Settings opens GNOME's Wi-Fi panel and the connection-profile editor, and controls one unambiguous MPRIS player. The guest showed the no-adapter Wi-Fi state; real scanning/authentication, durable notification history and independent availability across all contexts remain unverified. |
 | F-010 Real accounts | Open | Two-user and guest isolation and switching have not been verified. |
 | F-011 Display hotplug | Partial | In the guest, a second virtual output was disconnected and reconnected through its DRM connector (2026-11-20). Its pins stayed with it and nothing on the other display was reordered, then the pins came back in order. A pinned three-app Group and a single app were moved between the two outputs as one destination each. Physical monitors, docks, connector changes and serial-number identity are unit-tested only. |
 | F-012 Portal correctness | Partial | The guest's portal broker is active and owns its session D-Bus name. A disposable unsandboxed chooser request returned the selected test-file URI, and a second request returned a cancel response. Sandboxed file access, saving, screenshots, screenshare, clipboard and drag/drop remain unverified. |
@@ -257,7 +257,7 @@ Flow used Niri's own Overview (a vertical zoom of workspaces), fuzzel for search
 - **The home indicator:** a 48 × 4 line on a dark halo, so it reads over light and dark apps (65 px and accent on hover). It replaces the *Overview* and *Spaces* buttons.
   - It takes input in only the bottom 126 × 24, the prototype's size, because Flow's columns reach the screen's edge.
   - Tap it or drag it up: from work to Overview, from Overview to Desk, from Desk back to work.
-  - The Spaces switcher moved to Desk's tools and stays on Super+Tab.
+  - The Spaces switcher moved to Desk (now its foot, *Spaces*) and stays on Super+Tab.
 - **Search** (Super+K, Desk's search, the Island's *Apps*, which shows apps only):
   - **The palette:** a shade and a 620 px palette with an 18 px radius. The field has a search icon and a close button.
   - **Results:** each has an icon tile (the app's icon, or a line icon for its kind), a title, a detail line and ↗. The chosen row has a 2 px focus edge.
@@ -273,6 +273,132 @@ Tests:
 - **Screenshots:** both appearances were captured in the guest with three apps.
 
 Not verified: a real wheel and touch drag on the home indicator, because the guest has no pointer injection, and the Overview with several displays. On a second display it shows that display's spaces, but snapshots come from the island's screen.
+
+### The prototype's Island and Desk (2026-11-21)
+
+The Island and Desk now follow the prototype (`docs/Flow_v1.0_Contextual_Menus.html`, desktop mode) instead of the generic capsule and button rows:
+- **The Island** is a 44 px tab hanging from the screen's top edge: square above, a 14 px radius below, no line along the top. It is the same in work, Overview and Desk, and has the same controls as before: *floe.*, *Apps*, an activity, the clock, notifications and quick settings.
+  - Its buttons are 44 px tall, the brand's touch minimum (the prototype's tab is 36). They draw 36 px with a 10 px radius, concentric with the tab's lower corners.
+  - The opt-in app-menu trigger shares the tab's row, flush with the top edge too. Overview's snapshots are cropped below that 44 px row.
+  - Quick settings, notifications and, on a narrow screen, the app-menu trigger hang 12 px below it, as the prototype's panels do.
+- **Desk:**
+  - **Headline:** "Everything in its place." as display type, in DemiBold (600). It is 7.9% of the screen's width, between 40 and 116 px and at most 11% of the screen's height, and 44 px when Desk is narrower than 600 px. On a screen under 600 px tall the space around the search field shrinks too.
+    - Lines are at 0.97 of the size. That is a fixed line height: a proportional one multiplies Noto Sans's own line gap.
+    - Tracking is −5%, and "place." is in the accent.
+  - **Headline font:** the tokens name Manrope as the brand face, but nixpkgs removed it ("its source has been pulled"). The brand guidelines rule out forcing a remote font download, so the headline uses the Noto Sans fallback. On 2026-11-21 it was decided to keep Noto Sans rather than fetch Manrope from Google Fonts.
+  - **Eyebrow:** "FLOE / YOUR DESK", after a small accent light.
+  - **Search field:** "Search anything, start anywhere…" with *Super K*, 59 px tall with a 15 px radius.
+  - **Pinned spaces:** cards, two to a row (one per row in *Edit pins*, with its arrows and ×), with the pin number in the accent. A long display name in the section label is cut short with an ellipsis.
+  - **Tools:** four tiles, 80 px tall: *Search*, *Apps*, *Files* and *Settings*. On a screen narrower than about 750 px (content under 700 px), the pins and tools stack.
+  - **The foot:** what is on this display ("3 spaces · 2 pinned · 1 Group"), then the ways on: *Overview*, *Spaces* (the switcher), *? Shortcuts* (Niri's hotkey overlay) and *Return to work*. They are quiet, link-like 44 px buttons that hover and focus reveal. On a narrow screen (content under 560 px) the summary takes a line of its own above them.
+  - **Notifications** left Desk's tools: the Island's bell, which Desk also shows, opens them.
+  - **No overlaps:** Desk's content stays between the Island's 44 px band and the home indicator's 44 px band, and never scrolls under either one. Their input would otherwise take the foot's clicks.
+  - **Glass:** the field, cards and tiles share a new `glass` button variant: a 4% wash of the text colour (8% under the pointer), and an edge at half the border's strength that turns to the accent under the pointer. See the accessibility audit for why the edge may be faint.
+  - **Backdrop:** the prototype's ambient light, a soft accent glow above the headline and a fainter one low on the right, over a faint 46 px grid. It is decoration and takes no input.
+
+Verified:
+- **Screenshots** in the guest, with two pinned spaces:
+  - at 1280 × 800 in both appearances, also with no pins;
+  - at output scales 1.25, 1.6 and 2 (logical 1024 × 640, 800 × 500 and 640 × 400), each scrolled to the top and to the end;
+  - at 2.4 (533 × 333), for the foot's narrow layout.
+
+  Nothing overlaps at any of them. On the short screens Desk scrolls, and its content stops at the Island's and the home indicator's bands.
+- **Source checks** in `test_desk_layout.py`, scoped to Desk's window: its Island, the four tools and the four foot entries, the handler each one runs, and that the content keeps clear of the Island's and home indicator's bands. Each assertion was shown to fail when the code it covers was changed.
+- **The existing smokes** pass. They drive the shell over IPC and never render Desk, so they cover none of this layout.
+
+Not verified: hover and pressed states, because the guest has no pointer injection.
+
+### The prototype's system panels (2026-11-21)
+
+Quick settings and notifications now follow the prototype's Island panel (`hub-panel` in `docs/Flow_v1.0_Contextual_Menus.html`). Both are one component, `SystemPanel`:
+- **The panel:** it hangs 12 px below the Island, 370 px wide (less on a narrow screen), with a 19 px radius and 23 px inside. It has a title, any tools, and a close button whose glyph lines up with the notifications' dismiss glyphs. It drops in over 220 ms, or at once when motion is reduced.
+- **Height:** it is capped 80 px short of the screen and scrolls beyond that. Tab scrolls the focused control into view, as on Desk.
+- **Keyboard:** a shown panel holds the keyboard; Desk underneath gives it up for either panel (before this, only for notifications and search). Escape and the close button ask the panel to close; each panel clears only its own flag.
+- **Rows:** a label, a value at the right and a chevron when the row opens something, over a hairline. A row that only shows a value (*Sound*) is plain text, not a button.
+
+**Quick settings:**
+- **Rows:** *Network* shows the connectivity (in the success colour when connected) and opens the Wi-Fi chooser. *Edit connections* opens the connection editor. *On-screen keyboard* shows or hides it.
+- **Sound:** the level, then a volume slider and *Mute*.
+  - The slider replaces the − 5% and + 5% buttons. It can be dragged, tapped, or moved with the arrow keys, 5% a step.
+  - It follows changes made elsewhere, except while it is pressed, so a drag never jumps back to a PipeWire update that is a step behind. Its `Binding` restores nothing when it pauses: Qt 6's default would put back the value from when the `Binding` last took over, and a key press counts as a press, so the first arrow key would have set the volume to 5%.
+- **Media and errors:** the media player row and any audio error follow, as before. The separate *Close* button is gone, since the header has one.
+
+**Notifications:**
+- **Order:** newest first, each with its app in small capitals, its summary (up to three lines), its body (plain text, up to six lines), its actions and a dismiss button. Actions without a label are not shown, since they would be blank buttons without a name; each action is at least 44 px wide.
+- **Clearing:** *Clear all* in the header dismisses every one (*Clear* on a narrow panel, so the title keeps its room).
+- **Empty:** a bell, "No notifications" and "They gather here, above every space."
+- **The list is rebuilt on each change.** Newest first is a reversed copy of the server's list, so reading and Tab order match the screen. A notification arriving or going therefore loses keyboard focus inside the list. It holds at most 20.
+- **Opening:** the shell's IPC gained `notifications`, which toggles the panel as `quick` does quick settings, for scripted checks.
+
+Tests:
+- **What they check:** `test_system_panels.py` and the rewritten `test_notifications.py` check the source text, because the harness cannot render QML or send input. They cover:
+  - the panel's place, screen cap and scrolling, its keyboard focus, and Escape and close;
+  - each panel clearing its own flag, and Desk giving up the keyboard;
+  - the rows' commands and focus, the Sound row not being a button;
+  - the slider's step, its setter, the bodies of `setVolume` and `toggleMute`, and its `Binding` with `RestoreNone`;
+  - touch sizes, from each control's own properties: a width must be a plain number of at least 44, or `Math.max(44, …)`;
+  - newest first, dismiss, *Clear all*, labelled and sized actions, and the empty state.
+- **Mutations:** 31 mutations of the shell each fail one of the two files. Among them are the review's wiring cases: a scope that never takes focus, no layer-shell keyboard, rows or the slider without focus, no-op volume and mute bodies, a 50% step, a removed screen cap, a 30 px button width on its own line, unbounded and blank actions, and the restore mode removed.
+
+Screenshots: both panels in the guest at 1280×800 in both appearances and at scale 2 (640×400), with three notifications (two with actions) and with none. The guest has no audio device, so the slider was shown with a temporary null sink created for the run, at a volume set with `wpctl`; it showed 65%, a change made outside the shell. The scale-2 shot also shows a row's hover tint, from where the pointer happened to rest.
+
+A NEMESIS review of the first version found the slider's restore-mode bug, a false comment and test that ruled out its fix, tests that missed the wiring, a touch-size check that read only a button's first lines, a focus ring clipped by 1 px, no scrolling to the focused control, blank action buttons, Desk keeping the keyboard under quick settings, and stale docs. All are fixed as described above.
+
+Not verified:
+- **Slider input:** dragging, tapping or the arrow keys, because the guest has no pointer or key injection. The restore-mode fix rests on Qt 6's documented `Binding` behaviour.
+- **Mute:** a click on *Mute*.
+- **Long panels:** scrolling to the focused control was not tried with enough notifications to need it.
+
+### Notification banners (2026-11-21)
+
+Before this, a notification that arrived with its panel closed showed only as a dot on the Island's bell. Now a banner shows it, as a phone does:
+- **What shows:** the newest notification, 12 px below the Island where the panels hang, in the panels' style. It shows the app in small capitals, the summary and the body (two lines each, plain text) and a dismiss button.
+- **Replacements:** a notification that replaces an earlier one (`replaces_id`: a chat's next message, a download's progress) shows again. Quickshell updates the object in place without a new signal, so the shell listens for its summary and body changing.
+- **How long:** 5 s of being seen.
+  - The count runs only while the banner can be seen and the pointer is not resting on it, and each time it starts it starts from 5 s.
+  - A critical notification stays until it is dismissed or opened, and only another critical one replaces it; anything else waits in the panel.
+  - A low-urgency one never shows a banner and waits in the panel, with the bell's dot.
+  - The notification's own expiry time is ignored; it governs the notification, not the banner.
+- **Where it shows:** only in the plain work view, as the work indicator. Desk, Overview and the switcher would cover it (the surface mapped later is on top), and the panels, search and the app menu sit where it does. While any of them is open the banner waits, without counting, and shows when it closes.
+- **Opening the panel:** this takes the banner, so it doesn't come back. A notification that arrives with the panel open shows no banner.
+- **Clicking:** a click runs the notification's default action, as freedesktop clients expect (a chat opens its conversation), or else opens the panel. × dismisses the notification.
+- **Keyboard:** the banner never takes the keyboard, so a notification cannot pull typing away from an app. The new Super+N opens the panel, which also takes the banner. The banner is announced as an alert, with the body as its description.
+- **Display:** the banner shows on the display niri chooses, normally the focused one; neither it nor the Island names a screen.
+- **IPC:** `banner` returns the summary (or app name) the banner is set to show, or "" when it is hidden. It reports the shell's state, not what the compositor draws.
+
+Tests:
+- **`niri_notification_banner_smoke.py`:** drives a development shell on a private bus (`dbus-run-session`), sending notifications with `busctl` and reading the banner's state through the IPC. It checks:
+  - a normal notification goes after 5.4 s, and a low-urgency one shows nothing;
+  - a newer one replaces the shown one, and one sent with `replaces_id` shows again;
+  - one the app closes leaves at once;
+  - quick settings hides a banner, which shows when quick settings closes;
+  - Desk hides one for 6 s, and it then shows with its time unspent;
+  - one that arrives with the panel open shows nothing after;
+  - a critical one stays past 9 s, a normal one doesn't push it off, and the panel takes it for good.
+- **Mutations:** thirteen mutations each fail the smoke, at the step that covers them:
+  - no banner, low urgency shown, a banner shown while the panel is open;
+  - no timeout, a 7 s timeout, a critical one timing out, a normal one evicting a critical one;
+  - the timer counting while hidden, replacements ignored, the panel not taking the banner;
+  - a banner over Desk or over quick settings, and a newer notification not replacing the shown one.
+  
+  An earlier version also checked that the notification was still tracked. Removing that check broke nothing: a notification the app closes is destroyed, which empties the banner's property. So the check was dropped.
+- **`test_notification_banner.py`:** checks the source for what the smoke can't see or reach:
+  - the banner never takes the keyboard, and Super+N is bound;
+  - the exact set of conditions that hide it, in any order;
+  - it sits where the panels sit;
+  - the dismiss button is 44 px and calls `dismiss()`;
+  - the card has the alert role;
+  - new and replaced notifications both reach `showBanner`, and a click runs the default action.
+  
+  Eleven mutations of the shell and the Niri config were checked against it. Ten fail it, among them an extra `|| root.deskOpen`, quick settings dropped from `workViewOnly`, a scaled or dead dismiss, a hidden card, a missing `showBanner` call, an ignored default action, and Super+N removed. The eleventh, a harmless reordering of the conditions, passes, as it should.
+
+A NEMESIS review of the first version found that replaced notifications never showed, that a normal notification pushed a critical banner off, that the timer ran while the banner was hidden or held, that the banner ignored Desk, Overview, the switcher and the app menu, no keyboard path outside Desk, no default action on click, false claims about the IPC and the display, and weak tests. All are fixed as described above.
+
+Not verified:
+- **Pointer:** clicking the banner, the default action and the pointer holding it, because the guest has no pointer injection.
+- **Screen reader:** the announcement was not heard with a running screen reader.
+- **Super+N:** not pressed, because the guest has no key injection; the binding passes `niri validate`.
+- **Several displays:** not tried.
 
 ### Moving along a row in Overview (2026-11-21)
 
@@ -290,11 +416,11 @@ Niri has no binds that apply only in Overview, so plain arrow keys cannot move t
 
 The shell's controls follow one system instead of one bordered rectangle:
 - **Buttons** come in four variants: secondary, primary, quiet and danger, plus plain inside cards. A selected button has a leading dot, a 2 px border, a heavier label and "Current" as its accessible description, so selection never depends on tint alone.
-- **Borders and targets:** functional borders stay at full token strength (3:1). Quiet buttons rest on a soft tint, so they read as controls on touch screens without hover. Every target is still at least 44 px.
+- **Borders and targets:** functional borders stay at full token strength (3:1), except Desk's glass controls (see *The prototype's Island and Desk* below). Quiet buttons rest on a soft tint, so they read as controls on touch screens without hover. Every target is still at least 44 px.
 - **Focus** is a 2 px ring 3 px outside the control, concentric with it. Clipped panels keep 4 px inside the clip, so rings stay whole.
-- **Capsules:** the island, the work indicator and the bottom controls share one capsule bar. Their 44 px buttons draw 36 px capsules, concentric with the bar.
+- **Capsules:** the work indicator is a capsule bar; its 44 px buttons draw 36 px capsules, concentric with the bar. (The island was one too, until it became a tab: see *The prototype's Island and Desk* below.)
 - **Radii** are on the token scale: cards 20, panels 14, controls 10, with in-card controls concentric with their card.
-- **Type** follows the scale (11/12/14/16/18/32/52), with 13 px kept for compact labels in the island and cards, and weights 500–600. Clock, percentages and counts use tabular figures.
+- **Type** follows the scale (11/12/14/16/18/32/52), with 13 px kept for compact labels in the island and cards, and weights 500–600. Desk's display headline is the one exception, sized to the screen (see below). Clock, percentages and counts use tabular figures.
 - **Icons:** line icons for notifications, quick settings, search, chevrons, close, plus and minus are drawn by the shell. They use multisampled geometry because curve-rendered strokes break up under virgl. Only buttons with a glyph load one.
 - **Motion** uses the brand's quick (120 ms) and standard (220 ms) tokens and its standard curve. A *Reduce motion* setting in Desk makes every change instant, because Linux gives Quickshell no system signal for it. All "busy" indicators share one clock, so a card rebuilt by an activity update continues its sweep.
 
@@ -359,9 +485,124 @@ A NEMESIS review of the first version found these problems, which the second ver
 - The Mute button kept its label once audio was muted.
 - The shared busy clock ticked while nothing visible used it.
 
+**Keyboard and screen reader (2026-11-21).** `tests/niri_focus_walk_smoke.py` checks the shell's keyboard focus and what it tells screen readers. `tests/run_focus_walk_smoke.sh` runs it from a checkout, in a Niri session where Flow is installed and its shell stopped. It drives the keyboard with `wtype`, through Niri's virtual-keyboard protocol, and takes screenshots with `grim`, which leaves the clipboard alone. Flow's module installs `grim` but not `wtype`. In the UTM guest, the machine configuration (`/etc/floe-test`, outside this repository) gained `wtype` in generation 20 and `grim` in generation 21, because the guest's installed Flow predates the module's `grim`. Those generations are kept as guest tooling.
+
+**What it opens.** On the output's empty workspace it opens its own Foot window and six more, two of them stacked in one column, so the switcher has six cards in a scrolling row, one with two members. It sends eight notifications, which overflow their panel. Then it opens, in turn:
+- Desk, without and then with its settings;
+- Overview, where Tab goes through the Island and the tools (the cards are chosen with the arrow keys);
+- search, where focus starts in the field;
+- the Spaces switcher, first with the test's window as the current space, then with it as a Layer;
+- Quick settings;
+- Notifications.
+
+**What it checks on each surface:**
+- **Tab and Shift+Tab** go round every enabled control. The test decides which controls Tab must reach, not the shell: every enabled control, except a list the test names (Overview's edge rails), which must stay out of the Tab order. Each step must land on the next control in reading order that is enabled at that moment: rows top to bottom, with a switcher card's controls as one block. Once the card row scrolls, its "‹" button becomes enabled. If the controls change during a walk, the walk fails.
+- **The focus ring** surrounds the focused control in the `focus` token, and no other control has one. Screenshot pixels are sampled where the design puts the ring, which the test holds: 3 px outside a button, 1 px inside an Island pill, 1 px outside a switch's indicator, at a text field's edge. Surfaces are placed from the anchors and margins the shell reports.
+- **Return and keypad Enter** activate the focused control: they open Desk settings, toggle a switch both ways, move Overview's selection, close the switcher, search and Quick settings, and dismiss a notification.
+- **Escape, or Return or Enter on Close,** shuts the surface. Keys then reach the app and focus is back on it, and no key reached it while the surface was open.
+
+**Over AT-SPI.** Accessibility is switched on the way a screen reader does it, through `org.a11y.Status`, not forced in Qt. On every visible surface, including the Island and the work indicator, the smoke checks that:
+- each button and switch has a name containing the text it shows (WCAG 2.5.3). Names are compared as normalised strings from a word start, so "Pin" is not found in "Unpin", but a label the shell cuts short still matches;
+- selected controls, and cards that show "Current", are described as "Current";
+- buttons whose panel is showing are described as "Open";
+- activity chips in the Island and in Desk are progress bars;
+- every other button it exposes (Overview's cards, search results, the home indicator) has a name.
+
+The shell's read-only `controls` IPC call reports what each control shows. Qt exposes only controls in view, so a control scrolled out of view is checked when it takes focus. `test_focus_walk_helpers.py` checks the smoke's own judgements in CI: label matching, reading order and screenshot decoding.
+
+**Defects it found, now fixed:**
+- **No accessibility bus.** The Flow module did not enable at-spi2-core, so on an installed Flow no screen reader could reach the shell or apps, nor could the opt-in app menu. The module now enables it, and CI's `checks.module` asserts the evaluated setting, so another module that forces it off fails the build.
+- **Return did nothing on a switch.** Qt's Switch toggles only on Space. Now Return and Enter flip it once, even when the key is held.
+- **Clipped or hidden focus.** A control scrolled into view sat flush with the clipped edge, so its ring was cut off (Save session at the bottom of Desk). Quick settings and Notifications never scrolled to the focused control at all. One `reveal` now scrolls every view around a control that takes focus from the keyboard, keeping 8 px clear: Desk, the switcher and its row of cards, and both panels. It replaces some 60 per-control handlers, main's new Desk included.
+- **A focused unnamed panel.** Quick settings and Notifications scroll in a ScrollView, a focus scope that reported focus along with the control inside it. Screen readers now skip it.
+- **Focus dropped by background work.** Session recovery and most switcher actions were disabled while `flow-spaces` ran, including the periodic refresh (every 30 s, and after Niri events) and automatic layout (every 2 s while a Group asks for it), and while automatic recovery ran. A focused control that turns disabled loses keyboard focus. Neither now disables them:
+  - space actions queue behind a refresh;
+  - `flow-recovery` waits for `flow-spaces` on `spaces.lock`;
+  - space actions also queue behind automatic layout and automatic recovery, and run when they end;
+  - Save session, Restore session and the recovery switch refuse while automatic recovery runs and say so (the switch flips back);
+  - renaming a Group no longer refuses during a refresh.
+- **Names without their visible label:**
+  - the Desk wordmark ("Return to work" for "floe.");
+  - Desk's search button;
+  - the volume steps;
+  - Make Layer;
+  - Make space and Add to Group on Layers, in the switcher and the work indicator;
+  - Overview's Open selected and Pin space;
+  - the appearance switch, whose label changed with its state. It now always reads "Arctic Daylight · Light".
+
+  Names in states the smoke does not reach were fixed the same way but are not checked:
+  - Pin here and Make this the main display;
+  - a Group's window buttons, now named by the app they show;
+  - the Group card and repair actions.
+
+  Add to Group on a card now shows the whole app name, elided, instead of a 24-character cut that the name could not contain.
+- **"Current" missing.** The current space's card showed "Current" but did not report it to assistive technology.
+- **Search field:** it showed no focus at all. It now draws the 2 px ring at its edge, as the Group name field does.
+- **Overview's edge rails:** they sat half off the screen, so their rings could not be whole. They are now for a pointer or a finger only, hidden from screen readers. The keyboard and screen readers have the arrow keys and the tools' ← →.
+
+**Shown to fail.** The final smoke was run against copies of the shell, each with a line or two neutralised. Every copy failed, at the check that covers its change.
+
+Thirty copies were cut from the shell at commit a2f6499. The shell's later changes touch none of the lines they neutralise: the recovery switch, queuing behind automatic work, automatic layout, and the Group name field's pointer guard. The thirty were:
+- **Names (one copy):** eleven name fixes and the card's "Current" reverted together. All twelve were reported.
+- **States:** "Open" dropped from open buttons, which predates this work (five reports), and separately "Current" dropped from selected ones.
+- **Progress roles:** removed from the Island's chip, and separately from Desk's cards.
+- **Switches:** Return doing nothing, and a switch that does not scroll itself into view.
+- **Scrolling:**
+  - no room kept for the ring: Desk's foot;
+  - no sideways scrolling: the switcher's last card;
+  - no scrolling in the Notifications panel: Tab then moves focus out of view, where AT-SPI does not expose it.
+- **Unnamed panels:** the ScrollView of Quick settings, and separately of Notifications, exposed again.
+- **Rings:** hidden, always on, in another colour, drawn inside the button, missing from the search field.
+- **Tab:**
+  - one Quick settings button taken out of the Tab order;
+  - every button taken out;
+  - an Overview rail put back in;
+  - Return doing nothing on a button;
+  - a Tab detour (`KeyNavigation.backtab`, which Qt mirrors onto the other control's Tab);
+  - Desk's tools laid out right to left while Tab goes left to right.
+- **Closing:** Escape doing nothing on each of the six surfaces, and Quick settings handing focus to another window as it closes.
+
+Two more copies were cut from the final shell:
+- **Shift+Tab only:** a detour on the backward step alone. It failed in the Shift+Tab walk.
+- **Rails exposed:** Overview's rails visible to screen readers again. They were reported.
+
+**CI tests and the module assert.** `test_focus_walk_helpers.py` was shown to fail when:
+- labels matched inside words, `%` was dropped, or case was kept;
+- a row was not sorted left to right, or items joined rows by their top;
+- cards were ignored;
+- the ring was sampled with a looser band, or a PNG filter was decoded wrongly.
+
+The `checks.module` assert was built in the guest (aarch64). It passed on this branch, and failed at the assert both when the module's line was deleted and when the test configuration forced at-spi2-core off.
+
+**Not shown to fail:**
+- **Things the guest does not have or stage:**
+  - Quick settings never overflows in the guest, so its scrolling is unproven;
+  - keeping controls enabled through background work, and queuing behind it, would need races the smoke does not stage;
+  - the held-key and pointer-focus guards need a held key and a pointer.
+- **The leak check:** no key reaching the app while a surface is open. A mutation that lets keys through stops focus moving first.
+
+**Guest check of the module (19:27 UTC).** A build of this branch, main's #19 included, was activated in the guest without a new generation. `org.a11y.Bus` was then activatable on the session bus, and the final smoke passed through `run_focus_walk_smoke.sh` with no extra bus configuration. The previous system was activated again afterward.
+
+**After main's #21 (system panels).** #21 rebuilt Quick settings and Notifications as system panels with rows, a volume slider and their own scrolling to the focused control. After merging it:
+- **Shell:** the panels' ScrollView is hidden from screen readers again, and the `controls` call reports the rows and the slider with their rings.
+- **Smoke:** it holds their ring positions too, and accepts a hint as a description (the Network row's "Choose a Wi-Fi network") where no state applies.
+- **Result:** the unmutated smoke passed on the merged shell. The mutations above ran before #21, so the copies aimed at the old panels (their ScrollViews, and scrolling in Notifications) prove the shell they ran on, not #21's panels. They were not rerun.
+
+**Three quirks of the guest shape the smoke:**
+- **Stale keymaps.** Niri does not resend a virtual keymap equal to the previous one, so a client that took focus in between reads the keys with the physical keymap (Tab arrives as Escape). The smoke sends a lone Shift or Control first, alternating, so every call's keymap differs.
+- **Shift+Tab is Tab with Shift.** wtype's keymap has no ISO_Left_Tab, so Qt receives Tab with Shift held where a real keyboard sends Backtab. Qt's focus chain treats both as a step back, but a handler for Backtab alone would not see the smoke's key.
+- **No audio.** PipeWire does not reach a shell with its own runtime directory, so the volume steps were disabled: their names were checked, but they were not walked.
+
 Not verified:
-- **Keyboard focus walk:** the guest has no key injection tool.
-- **Screen reader:** names and descriptions were not checked with a running screen reader.
+- **A running screen reader:** the accessibility tree was checked, but Orca was not run, so speech and focus announcements were not heard.
+- **The opt-in app menu** and Group card controls: the smoke does not open them.
+- **Focus lost when content is rebuilt or a control disables itself:**
+  - A window title that changes rebuilds the switcher's cards.
+  - A space action started from the keyboard disables the cards until it ends. On Desk, Pin current space, Make this the main display, Pin here and the pin edit buttons disable themselves while their own action runs, and the pins are rebuilt, so reordering pins from the keyboard loses focus at every step.
+  - A successful Group rename hides the rename row.
+  - Overview's ← → and the switcher's ‹ › disable themselves at the row's ends.
+
+  Each drops the focus of the control involved.
 - **Touch and 200% text.**
 - **Manrope:** the brand font is not installed in the guest, so the wordmark uses Noto Sans.
 

@@ -16,9 +16,9 @@ class ShellTextTest(unittest.TestCase):
                 for renderer in renderers:
                     self.assertIn("textFormat: Text.PlainText", renderer)
 
-    def test_desk_heading_keeps_intentional_rich_text(self):
+    def test_desk_heading_keeps_intentional_markup(self):
         qml = (Path(__file__).parents[1] / "session/shell.qml").read_text()
-        self.assertRegex(qml, r'(?s)text: "Everything<br>.*?textFormat: Text\.RichText')
+        self.assertRegex(qml, r'(?s)text: "Everything<br>.*?textFormat: Text\.StyledText')
 
     def test_spaces_errors_have_accessible_dismiss_controls_in_desk_and_switcher(self):
         qml = (Path(__file__).parents[1] / "session/shell.qml").read_text()
