@@ -14,6 +14,8 @@ SOURCE = ROOT / "design/tokens/floe.tokens.json"
 QML_PATH = ROOT / "session/FloeTheme.qml"
 CSS_PATH = ROOT / "design/generated/floe.css"
 FUZZEL_PATHS = {mode: ROOT / f"design/generated/fuzzel-{mode}.ini" for mode in ("dark", "light")}
+NIRI_PATHS = {mode: ROOT / f"design/generated/niri-{mode}.kdl" for mode in ("dark", "light")}
+SWAYLOCK_PATHS = {mode: ROOT / f"design/generated/swaylock-{mode}.conf" for mode in ("dark", "light")}
 
 def camel(name):
     parts = name.split("-")
@@ -108,6 +110,54 @@ def render_fuzzel(tokens, mode):
         "",
     ])
 
+def render_niri(tokens, mode):
+    """Niri's colours in one appearance; niri.kdl includes one, and the shell keeps a per-user copy in
+    step with the Desk's appearance switch."""
+    c = {role: entry["$value"] for role, entry in tokens["semantic"][mode].items()}
+    return "\n".join([
+        "// Generated from design/tokens/floe.tokens.json by design/scripts/generate_theme.py. Do not edit.",
+        "layout {",
+        # Niri draws the inactive colour on the focused window of an unfocused display: where focus returns.
+        f'    focus-ring {{ active-color "{c["focus"]}"; inactive-color "{c["border"]}"; }}',
+        f'    background-color "{c["canvas"]}"',
+        "}",
+        # The functional border: workspaces stand out from it at 3:1, as interactive targets must.
+        f'overview {{ backdrop-color "{c["border"]}"; }}',
+        "",
+    ])
+
+def render_swaylock(tokens, mode):
+    """The lock screen: the canvas, and a quiet indicator whose feedback colours carry the meaning."""
+    c = {role: entry["$value"].lstrip("#").lower() for role, entry in tokens["semantic"][mode].items()}
+    family = tokens["typography"]["family"]["interface"]["$value"][0]
+    clear = "00000000"
+    return "\n".join([
+        "# Generated from design/tokens/floe.tokens.json by design/scripts/generate_theme.py. Do not edit.",
+        f"color={c['canvas']}",
+        f"font={family}",
+        f"font-size={px(tokens['typography']['size']['title-sm'])}",
+        "indicator-radius=72",
+        "indicator-thickness=6",
+        "indicator-idle-visible",
+        "show-failed-attempts",
+        "ignore-empty-password",
+        f"inside-color={c['surface']}", f"ring-color={c['surface-selected']}", f"line-color={clear}",
+        f"separator-color={clear}", f"text-color={c['text-primary']}",
+        f"key-hl-color={c['accent']}", f"bs-hl-color={c['text-muted']}",
+        f"inside-clear-color={c['surface']}", f"ring-clear-color={c['text-muted']}", f"line-clear-color={clear}",
+        f"text-clear-color={c['text-primary']}",
+        f"inside-ver-color={c['surface']}", f"ring-ver-color={c['accent']}", f"line-ver-color={clear}",
+        f"text-ver-color={c['text-primary']}",
+        f"inside-wrong-color={c['surface']}", f"ring-wrong-color={c['danger']}", f"line-wrong-color={clear}",
+        f"text-wrong-color={c['danger']}",
+        # Caps Lock is a warning; the keyboard layout label sits on the panel tone.
+        f"inside-caps-lock-color={c['surface']}", f"ring-caps-lock-color={c['warning']}",
+        f"line-caps-lock-color={clear}", f"text-caps-lock-color={c['warning']}",
+        f"caps-lock-key-hl-color={c['accent']}", f"caps-lock-bs-hl-color={c['text-muted']}",
+        f"layout-bg-color={c['surface']}", f"layout-border-color={c['border']}", f"layout-text-color={c['text-primary']}",
+        "",
+    ])
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
@@ -115,7 +165,9 @@ def main():
     tokens = json.loads(SOURCE.read_text(encoding="utf-8"))
     outdated = []
     outputs = [(QML_PATH, render_qml(tokens)), (CSS_PATH, render_css(tokens)),
-               *((path, render_fuzzel(tokens, mode)) for mode, path in FUZZEL_PATHS.items())]
+               *((path, render_fuzzel(tokens, mode)) for mode, path in FUZZEL_PATHS.items()),
+               *((path, render_niri(tokens, mode)) for mode, path in NIRI_PATHS.items()),
+               *((path, render_swaylock(tokens, mode)) for mode, path in SWAYLOCK_PATHS.items())]
     for path, content in outputs:
         if args.check:
             if not path.exists() or path.read_text(encoding="utf-8") != content:

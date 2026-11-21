@@ -1,0 +1,6 @@
+// Generated from design/tokens/floe.tokens.json by design/scripts/generate_theme.py. Do not edit.
+layout {
+    focus-ring { active-color "#28584C"; inactive-color "#667F86"; }
+    background-color "#DFE9E6"
+}
+overview { backdrop-color "#667F86"; }

@@ -233,6 +233,40 @@ The shell's controls follow one system instead of one bordered rectangle:
 - **Motion** uses the brand's quick (120 ms) and standard (220 ms) tokens and its standard curve. A *Reduce motion* setting in Desk makes every change instant, because Linux gives Quickshell no system signal for it. All "busy" indicators share one clock, so a card rebuilt by an activity update continues its sweep.
 
 Surface by surface:
+- **Niri and the lock screen follow the appearance switch** (audit UI-04). The theme generator writes `design/generated/niri-{dark,light}.kdl` and `swaylock-{dark,light}.conf`, so `session/niri.kdl` holds no colour of its own:
+  - **Niri colours:**
+    - the focus colour for the active ring
+    - the functional border for the inactive one, which marks the focused window of an unfocused display, where focus returns
+    - the canvas behind workspaces
+    - the functional border for the Overview backdrop, so workspaces stand out from it at 3:1, as targets must. In Polar Night that backdrop is a mid sea-grey rather than near-black, a deliberate trade-off.
+  - **How Niri follows the switch:**
+    - `niri.kdl` includes Polar Night, then optionally `~/.config/flow/niri-appearance.kdl`.
+    - `flow-niri-appearance` (`session/flow-niri-appearance.sh`) keeps that a symlink to `/etc/flow/niri-<mode>.kdl`. It reads the mode under a lock when it runs.
+    - The installed shell runs it at startup and on the Desk switch. A development shell never does.
+    - Because it is a link, it follows upgrades and rollbacks: a generation without the target leaves a dangling link, which the optional include treats as missing. Niri reloads when the link changes.
+  - **The lock screen:** `flow-lock` picks the matching swaylock file:
+    - the canvas, with a quiet ring
+    - the accent while typing and checking, danger for a wrong password, warning for Caps Lock
+    - a themed keyboard-layout label
+
+    A user's own swaylock configuration takes precedence. The colours are no longer on the command line. swayidle runs its commands through `sh`, where a word starting with `#` begins a comment, so a token colour there would silently have stopped locking.
+  - **A user's own Niri configuration:** `~/.config/niri/config.kdl` replaces Flow's, so the switch only reaches it if it adds `include optional=true "~/.config/flow/niri-appearance.kdl"`.
+  - **Tests:** `test_compositor_appearance.py` covers:
+    - the generated files, role by role and for contrast
+    - that every swaylock option exists in swaylock 1.8.6, which stops reading a configuration at an unknown line
+    - the include order and path, and that the installed shell syncs at startup and on the switch
+    - the sync script run for real in a temporary home, including leftovers and an old copy
+    - the lock wrapper with a stand-in swaylock
+
+    Thirteen mutations of the wiring each fail it.
+  - **In the guest (generation 17):**
+    - Niri validated the configuration, and the shell set the link at startup.
+    - With the appearance file set to light and the shell restarted, the link moved and Niri switched to the light colours. Setting it back to dark did the reverse.
+    - The setting was restored byte for byte.
+  - **Not exercised:** the lock screen itself, because unlocking needs a password typed.
+  - **Not yet effective:** swayidle is a Niri startup command, so its new lock command applies from the next sign-in.
+  - **Focus ring:** one colour cannot stand out against both light and dark app content.
+  - **CI:** it evaluates no Nix, so the module is only checked when the guest builds it.
 - **App launcher and search (fuzzel):** themed from the same tokens. The theme generator writes `design/generated/fuzzel-dark.ini` and `fuzzel-light.ini`:
   - the panel in the surface tone, with a full-strength border and a 14 px radius
   - Noto Sans at the 16 px body size, with rows as tall as the 44 px touch target

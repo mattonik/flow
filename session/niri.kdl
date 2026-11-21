@@ -5,13 +5,15 @@ input {
 layout {
     gaps 0
     default-column-width { proportion 1.0; }
-    focus-ring { width 2; active-color "#b8ddcb"; inactive-color "#172128"; }
-    background-color "#0b1015"
+    focus-ring { width 2; }
 }
-overview { backdrop-color "#0d1313"; }
+// Colours come from the design tokens. The first include is Polar Night; the second is the Desk's
+// current appearance, which the installed shell writes and Niri reloads when it changes.
+include "@niriAppearance@"
+include optional=true "~/.config/flow/niri-appearance.kdl"
 hotkey-overlay { skip-at-startup; }
 // The shell is the flow-shell user unit, started with niri.service (modules/flow.nix).
-spawn-at-startup "@idle@" "-C" "/dev/null" "-w" "lock" "@lock@ -f -c 0b1015" "before-sleep" "@lock@ -f -c 0b1015"
+spawn-at-startup "@idle@" "-C" "/dev/null" "-w" "lock" "@lock@ -f" "before-sleep" "@lock@ -f"
 
 binds {
     Super+I { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "quick"; }
@@ -38,7 +40,7 @@ binds {
     Super+Alt+8 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "display_digit" "8"; }
     Super+Alt+9 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "display_digit" "9"; }
     Super+Return { spawn "@terminal@"; }
-    Super+L allow-when-locked=true { spawn "@lock@" "-c" "0b1015"; }
+    Super+L allow-when-locked=true { spawn "@lock@"; }
     Super+Left { spawn "@spaces@" "navigate" "left"; }
     Super+Right { spawn "@spaces@" "navigate" "right"; }
     Super+Up { spawn "@spaces@" "focus-member" "up"; }
