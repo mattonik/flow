@@ -11,6 +11,7 @@ import time
 import uuid
 import groups as group_store
 import pin_store
+from launching import app_command
 
 MAX_MEMBERS = group_store.MAX_MEMBERS
 RESIZE_STEP = 0.1  # share of the Group's width moved per Narrower/Wider step
@@ -528,7 +529,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
         if not desktop:
             raise ValueError("No matching installed application for the missing Group app")
         try:
-            subprocess.run(["gio", "launch", str(desktop)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(app_command(["gio", "launch", str(desktop)]), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except (OSError, subprocess.SubprocessError) as exc:
             raise ValueError("Could not open the missing Group app") from exc
         for _ in range(30):
@@ -733,7 +734,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
                 expected.add(line.split("=", 1)[1].strip())
         known = {w["id"] for w in windows}
         try:
-            subprocess.run(["gio", "launch", str(desktop)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(app_command(["gio", "launch", str(desktop)]), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except (OSError, subprocess.SubprocessError) as exc:
             raise ValueError("Could not open the application") from exc
         for _ in range(30):
@@ -912,7 +913,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
                 if not desktop:
                     raise ValueError("No matching installed application for this pin")
                 try:
-                    subprocess.run(["gio", "launch", str(desktop)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run(app_command(["gio", "launch", str(desktop)]), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 except (OSError, subprocess.SubprocessError) as exc:
                     raise ValueError("Could not open the pinned application") from exc
                 workspace_id = workspace["id"]

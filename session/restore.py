@@ -14,6 +14,7 @@ import uuid
 import spaces
 import groups as group_store
 import pin_store
+from launching import app_command
 
 
 def state_path():
@@ -680,7 +681,7 @@ def main():
                 current, _ = checked_state()
                 if current["id"] != workspace["id"]:
                     raise ValueError("Workspace changed; session recovery stopped")
-                subprocess.run(["gio", "launch", str(desktop)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(app_command(["gio", "launch", str(desktop)]), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             report, count = restore(data, workspace, windows, dirs, launch, checked_state, spaces.command,
                                     pinned=pinned_apps(pins), session=session, pinned_groups=pins, registered=registered)
             print(json.dumps({"message": f"Restored {count} windows." + (" " + "; ".join(report) if report else "")}))

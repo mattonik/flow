@@ -271,10 +271,13 @@ The UTM guest now runs Flow from an installed NixOS generation built from `main`
 - **Reloads are unreliable:** its file watching noticed the generation 4 → 5 switch but not 5 → 6, so even a reload that would work may never happen.
 
 So the shell is now the `flow-shell` user unit instead of a Niri `spawn-at-startup` command:
-- **Lifecycle:** it is wanted by and part of `niri.service`, so it starts with a Niri session and stops with it, and never starts in the Plasma fallback. It restarts on failure.
-- **Restarts on a switch:** its restart triggers are the shell's files (one store directory, also installed as `/etc/flow`) and the Quickshell package. A switch therefore restarts it exactly when either changes, as `switch-to-configuration` does for any changed user unit. The installed shell turns Quickshell's file watching off, so it never half-reloads; a development shell keeps live reload.
-- **Apps survive:** apps opened from the shell are its children, so the unit uses `KillMode=process`, and stopping or restarting the shell leaves them running.
-- **First switch:** a switch does not start a new unit wanted by `niri.service`. Per-user activation therefore starts `flow-shell` while Niri runs, which is a no-op once it is running. Its launcher first ends any older installed shell, matched by its command line with or without the store path.
+- **Lifecycle:** it is wanted by and part of `niri.service`, so it starts with a Niri session and stops with it, and never starts in the Plasma fallback. A Niri started some other way (from a TTY, or nested) gets no shell; Flow needs the `niri.service` session that `niri-session` starts.
+- **Failures:** it restarts on failure two seconds apart, and gives up after five starts in a minute.
+- **Environment:** its launcher takes `PATH` from the user manager, which holds the login session's environment because Niri imports it. Before this, a NixOS unit's own `PATH` would have dropped `~/.nix-profile/bin` and the like for every app opened from Desk or search.
+- **Restarts on a switch:** its restart triggers are the shell's files (one store directory, also installed as `/etc/flow`) and the Quickshell package. A switch therefore restarts it when either changes, or when its launcher does (a change to coreutils, procps, gnused or systemd also counts), as `switch-to-configuration` does for any changed user unit. The installed shell turns Quickshell's file watching off, so it never half-reloads; a development shell keeps live reload.
+- **Apps get their own scopes:** the unit sets `FLOW_APP_SCOPES=1`. Every launch path then starts the app with `systemd-run --user --scope`: the shell's own launches, the app launcher's prefix, search, and the `gio launch` of opening a Layer, a missing Group member or a restored session (`session/launching.py`). So apps are never part of the shell's unit, and stopping or restarting the shell, or a limit on it, never touches them. `KillMode=process` stays as a safeguard for any path that misses a scope. Development shells and tests launch directly.
+- **First switch:** a switch does not start a new unit wanted by `niri.service`. Per-user activation therefore starts `flow-shell` while Niri runs, but only if the unit has never run under this user manager, so a user who stopped it to run a development shell keeps it stopped. The launcher first ends any older installed shell, matched by its command line with or without the store path, and waits up to five seconds for it to exit. That also ends a test shell someone started on `/etc/flow/shell.qml`.
+- **Rolling back** to a generation from before this one stops the `flow-shell` unit, and that generation only starts its shell when Niri starts. Sign in again after such a rollback.
 
 Checks in the guest, generations 8 to 11 and a cold start:
 - The first switch to the unit replaced the shell Niri had spawned with one shell under `flow-shell.service`.
@@ -288,6 +291,6 @@ Not covered:
 - Two Niri sessions of one user: the launcher keeps one installed shell per user.
 - A switch while Desk or a menu is open: that switch closes them, because the shell restarts.
 - A real Quickshell upgrade.
-- Startup's `watchFiles` switch has no automated test; it was checked in the guest with a development copy.
+- Startup's `watchFiles` switch has no automated test. A development copy that sets it unconditionally did not reload after an edit, while an unchanged copy did. The `/etc/flow` condition itself relies on Quickshell's `shellDir` not resolving symlinks; Quickshell 0.3.2 does not.
 
 Limitations: An older generation cannot read a version 2 pin file and reports *Invalid saved spaces* without changing it. Restoring `spaces.v1.json` rolls back, but it holds the pins from before the first conversion, so pins made since are lost. An older generation also rejects a `groups.json` that contains a Group of three or four apps, which stops every `flow-spaces` call; dissolve or shrink such Groups to two apps before rolling back. Touch, physical rotation and real hotplug remain open.

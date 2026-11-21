@@ -727,6 +727,12 @@ ShellRoot {
         }
     }
 
+    // Apps get a systemd scope of their own when the installed shell's unit asks for it
+    // (session/launching.py), so restarting the shell never touches them.
+    function launchApp(command) {
+        Quickshell.execDetached(Quickshell.env("FLOW_APP_SCOPES") === "1"
+            ? ["systemd-run", "--user", "--scope", "--collect", "--quiet", "--"].concat(command) : command)
+    }
     // The installed shell does not live-reload: a NixOS switch restarts its user unit instead.
     // Quickshell cannot reload a configuration that adds an inline component, and its file watching
     // does not reliably notice a switch. A development shell keeps live reload.
@@ -1088,7 +1094,7 @@ ShellRoot {
                                     else if (modelData === "Overview") root.showOverview()
                                     else {
                                         root.deskOpen = false
-                                        if (modelData === "Files") Quickshell.execDetached(["nautilus"])
+                                        if (modelData === "Files") root.launchApp(["nautilus"])
                                     }
                                 }
                             }
@@ -1877,8 +1883,8 @@ ShellRoot {
                 x: 4; width: parent.width - 8; topPadding: 4; bottomPadding: 4; spacing: 10
                 SectionLabel { text: "NETWORK" }
                 Text { text: root.networkStatus; color: floeTheme.textPrimary; font.pixelSize: 16; font.weight: Font.DemiBold; font.family: floeTheme.interfaceFont }
-                FlowButton { width: parent.width; implicitHeight: 44; text: "Choose Wi-Fi network"; onClicked: { root.quickSettingsOpen = false; Quickshell.execDetached(["flow-wifi-settings"]) } }
-                FlowButton { width: parent.width; implicitHeight: 44; variant: "quiet"; text: "Toggle on-screen keyboard"; Accessible.name: "Toggle on-screen keyboard"; onClicked: { Quickshell.execDetached(["flow-keyboard"]); root.quickSettingsOpen = false } }
+                FlowButton { width: parent.width; implicitHeight: 44; text: "Choose Wi-Fi network"; onClicked: { root.quickSettingsOpen = false; root.launchApp(["flow-wifi-settings"]) } }
+                FlowButton { width: parent.width; implicitHeight: 44; variant: "quiet"; text: "Toggle on-screen keyboard"; Accessible.name: "Toggle on-screen keyboard"; onClicked: { root.launchApp(["flow-keyboard"]); root.quickSettingsOpen = false } }
                 SectionLabel { text: "SOUND"; topPadding: 8 }
                 Text { text: root.volumeStatus; color: floeTheme.textPrimary; font.pixelSize: 16; font.weight: Font.DemiBold; font.family: floeTheme.interfaceFont; font.features: { "tnum": 1 } }
                 Flow {
@@ -1916,7 +1922,7 @@ ShellRoot {
                 Rectangle { width: parent.width; height: 1; color: Qt.alpha(floeTheme.border, 0.35) }
                 Flow {
                     width: parent.width; spacing: 6
-                    FlowButton { implicitHeight: 44; variant: "quiet"; text: "Edit connections"; onClicked: { root.quickSettingsOpen = false; Quickshell.execDetached(["nm-connection-editor"]) } }
+                    FlowButton { implicitHeight: 44; variant: "quiet"; text: "Edit connections"; onClicked: { root.quickSettingsOpen = false; root.launchApp(["nm-connection-editor"]) } }
                     FlowButton { implicitHeight: 44; variant: "quiet"; text: "Close"; onClicked: root.quickSettingsOpen = false }
                 }
                 }
