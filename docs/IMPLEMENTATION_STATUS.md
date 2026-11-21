@@ -14,7 +14,7 @@ The recorded test environment is an Apple Silicon Mac running UTM 5.0.8, QEMU AR
 | F-006 Layer dismissal | Partial | A Layer is a compact floating window over the current space; floating windows are no longer counted as spaces (2026-11-20). Search can open any app as a Layer, and the switcher can make the focused standalone app one. In the guest, a Layer was opened over a pinned, resized side-by-side Group and closed again. The Group, its pin, every column and width, and the Flow state were unchanged, and focus returned to the same Group app. Portrait outputs get a bottom sheet, open Layers reshape when the output rotates, and a Layer can join the Group beneath it. Touch is not implemented. |
 | F-007 Desk/Overview | Partial | In the ARM64 guest, opening and closing Desk and Niri Overview retained the same four window IDs, workspace, scrolling positions and focused window. At a simulated 320×512 logical portrait size, Group switcher keyboard navigation and pin editing remained visible; the original display and window state were restored. Gesture, physical touch, multi-display and visual-transition acceptance remain open. |
 | F-008 Search | Partial | Search covers recent local files within the user’s home folder, Flow settings, quick settings, installed applications, open windows and saved pins, including closed apps. File indexing and commands are missing. The settings shell actions were checked through IPC. A recent-file result from an isolated history was selected in the guest and opened in Kate; naturally populated history and the settings results still need end-to-end validation. |
-| F-009 Island/system | Partial | Island, quick settings, lock and a temporary notification inbox exist. Apps can show Activities with progress in the island through the Platform API (ADR-0010, 2026-11-21); they are labelled with their owner and end with the app's connection. Quick Settings opens GNOME's Wi-Fi panel and the connection-profile editor, and controls one unambiguous MPRIS player. The guest showed the no-adapter Wi-Fi state; real scanning/authentication, durable notification history and independent availability across all contexts remain unverified. |
+| F-009 Island/system | Partial | Island, quick settings, lock, a temporary notification inbox and notification banners exist. Apps can show Activities with progress in the island through the Platform API (ADR-0010, 2026-11-21); they are labelled with their owner and end with the app's connection. Quick Settings opens GNOME's Wi-Fi panel and the connection-profile editor, and controls one unambiguous MPRIS player. The guest showed the no-adapter Wi-Fi state; real scanning/authentication, durable notification history and independent availability across all contexts remain unverified. |
 | F-010 Real accounts | Open | Two-user and guest isolation and switching have not been verified. |
 | F-011 Display hotplug | Partial | In the guest, a second virtual output was disconnected and reconnected through its DRM connector (2026-11-20). Its pins stayed with it and nothing on the other display was reordered, then the pins came back in order. A pinned three-app Group and a single app were moved between the two outputs as one destination each. Physical monitors, docks, connector changes and serial-number identity are unit-tested only. |
 | F-012 Portal correctness | Partial | The guest's portal broker is active and owns its session D-Bus name. A disposable unsandboxed chooser request returned the selected test-file URI, and a second request returned a cancel response. Sandboxed file access, saving, screenshots, screenshare, clipboard and drag/drop remain unverified. |
@@ -348,6 +348,39 @@ Not verified:
 - **Slider input:** dragging, tapping or the arrow keys, because the guest has no pointer or key injection. The restore-mode fix rests on Qt 6's documented `Binding` behaviour.
 - **Mute:** a click on *Mute*.
 - **Long panels:** scrolling to the focused control was not tried with enough notifications to need it.
+
+### Notification banners (2026-11-21)
+
+Before this, a notification that arrived with its panel closed showed only as a dot on the Island's bell. Now a banner shows it, as a phone does:
+- **What shows:** the newest notification, 12 px below the Island where the panels hang, in the panels' style. It shows the app in small capitals, the summary and the body (two lines each, plain text) and a dismiss button.
+- **How long:**
+  - About 5 s, held while the pointer rests on it.
+  - A critical notification stays until it is dismissed or opened.
+  - A low-urgency one never shows a banner and waits in the panel, with the bell's dot.
+- **What replaces or hides it:**
+  - A newer notification replaces it.
+  - One the app closes leaves at once.
+  - It hides while the notifications panel, quick settings or search is open.
+  - Opening the notifications panel takes it, so it doesn't come back when the panel closes.
+- **Clicking:** a click opens the notifications panel, where the actions are. × dismisses the notification.
+- **Keyboard:** the banner never takes the keyboard, so a notification cannot pull typing away from an app. The bell opens the panel from the keyboard, and the banner is announced as an alert.
+- **IPC:** `banner` returns the summary on screen, or "", for scripted checks.
+
+Tests:
+- **`niri_notification_banner_smoke.py`:** drives a development shell on a private bus (`dbus-run-session`), sending notifications with `busctl` and reading the banner through the IPC. It checks:
+  - a normal notification shows and goes after 5.3 s;
+  - a low-urgency one shows nothing;
+  - a newer one replaces the shown one;
+  - one the app closes leaves at once;
+  - quick settings hides a banner, which shows again when quick settings closes;
+  - a critical one stays past 7 s, leaves when the panel opens and doesn't come back.
+- **Mutations:** MUTATION_RESULT
+- **`test_notification_banner.py`:** checks the source for what the smoke can't see. The banner never takes the keyboard, its dismiss button is 44 px, it is announced, it sits where the panels sit, and its text is plain and bounded.
+
+Not verified:
+- **Pointer:** clicking the banner and the pointer holding it, because the guest has no pointer injection.
+- **Screen reader:** the announcement was not heard with a running screen reader.
+- **Several displays:** banners show on the Island's screen.
 
 ### Moving along a row in Overview (2026-11-21)
 

@@ -74,7 +74,7 @@ def main():
                 return None
 
         def notify(summary, urgency="normal"):
-            out = subprocess.run(["busctl", f"--address={bus}", "call", NAME, "/org/freedesktop/Notifications", NAME,
+            out = subprocess.run(["busctl", f"--address={bus}", "--", "call", NAME, "/org/freedesktop/Notifications", NAME,
                                   "Notify", "susssasa{sv}i", "Smoke", "0", "", summary, "A body line", "0",
                                   "1", "urgency", "y", str(URGENCY[urgency]), "-1"],
                                  text=True, stdout=subprocess.PIPE, check=True).stdout
