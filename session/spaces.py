@@ -133,8 +133,10 @@ def member_candidates(group, app, windows):
     In the Niri session that bound the Group, the member is its bound window while that window lives.
     If it closed, a window of that app stands in only when it shares a column with another of the
     Group's bound windows, i.e. the user stacked it back into the Group; otherwise the member is closed
-    and opening it from the Group binds the new window. Without a binding from this session, every
-    window of the app is a candidate, and several are a repair case, never a guess.
+    and opening it from the Group binds the new window. A member app the binding does not cover yet
+    (after the user chose only some windows) takes the windows stacked with the bound ones, or else
+    every window of the app. Without a binding from this session, every window of the app is a
+    candidate, and several are a repair case, never a guess.
     """
     bound = group.get("bound")
     windows_of_app = [w for w in windows if w.get("app_id") == app]
@@ -149,8 +151,11 @@ def member_candidates(group, app, windows):
     columns = {(w.get("workspace_id"), position(w)[0]) for other, i in bound["windows"].items()
                if other != app and other in group["members"] and (w := by_id.get(i)) and w.get("app_id") == other
                and not w.get("is_floating") and position(w)}
-    return None, [w for w in windows_of_app if not w.get("is_floating") and position(w)
-                  and (w.get("workspace_id"), position(w)[0]) in columns]
+    stacked = [w for w in windows_of_app if not w.get("is_floating") and position(w)
+               and (w.get("workspace_id"), position(w)[0]) in columns]
+    if app in bound["windows"]:
+        return None, stacked  # its bound window closed: only a window stacked back in stands in
+    return None, stacked or windows_of_app  # never bound here: the Group's own column narrows the choice
 
 
 def group_members(group, windows):
@@ -746,6 +751,23 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
     elif op == "close-layer":
         window = layer_window(arg, workspace, windows)
         command("action", "close-window", "--id", window["id"])
+    elif op == "choose-member":
+        group_id, _, ident = (arg or "").partition(":")
+        group = find_group(groups, group_id)
+        window = next((w for w in windows if str(w.get("id")) == ident), None)
+        if not window or window.get("app_id") not in group["members"]:
+            raise ValueError("That window is not one of this Group's apps")
+        match, others = member_candidates(group, window["app_id"], windows)
+        if match or len(others) < 2 or window not in others:
+            raise ValueError("This Group app is not ambiguous; nothing to choose")
+        if window.get("workspace_id") != workspace["id"]:
+            raise ValueError("Choose a window on this workspace")
+        if not SESSION:
+            raise ValueError("Cannot identify this Niri session; the window was not chosen")
+        known = group_members(group, windows)  # members that are already unambiguous stay as they are
+        bound = {w["app_id"]: w["id"] for w in known if w}
+        bound[window["app_id"]] = window["id"]
+        group["bound"] = {"session": SESSION, "windows": bound}
     elif op == "adopt-group-order":
         group = find_group(groups, arg)
         if group.get("pending_layout"):
@@ -910,7 +932,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
     if op not in ("focus", "focus-window", "focus-member", "navigate", "stack", "unstack", "group-view", "create-group",
                   "dissolve-group", "open-group-member", "rejoin-group", "add-to-group", "remove-from-group",
                   "member-left", "member-right", "adopt-group-order", "member-wider", "member-narrower",
-                  "make-layer", "open-layer", "layer-to-space", "close-layer"):
+                  "make-layer", "open-layer", "layer-to-space", "close-layer", "choose-member"):
         reconcile(here, workspace, windows, socket, groups)
     return [describe(p) for p in here]
 
@@ -1097,7 +1119,10 @@ def incomplete_groups(workspace, windows, groups, pins):
         if group.get("pending_layout"):
             status = "Layout change interrupted; finish it when every Group app is available."
         elif any(len(found) > 1 for found in candidates):
-            status = "Multiple windows match a Group app; resolve duplicates."
+            status = ("Several windows match a Group app; choose the ones that belong to it."
+                      if any(len(found) > 1 and any(w.get("workspace_id") == workspace["id"] for w in found)
+                             for found in candidates)
+                      else "Several windows of a Group app are on another workspace; choose them there.")
         elif any(found and found[0].get("workspace_id") != workspace["id"] for found in candidates):
             status = "A Group app is on another workspace."
         elif missing:
@@ -1128,9 +1153,15 @@ def incomplete_groups(workspace, windows, groups, pins):
                 status = str(exc) + "."
         can_open = bool(missing) and not any(len(found) > 1 or
                        (found and found[0].get("workspace_id") != workspace["id"]) for found in candidates)
+        # Several windows of a member app: the user says which one, never Flow.
+        choices = [{"app": app, "app_name": app_name(app) or app,
+                    "windows": [{"id": w["id"], "label": w.get("title") or app} for w in found
+                                if w.get("workspace_id") == workspace["id"]]}
+                   for app, found in zip(group["members"], candidates) if len(found) > 1]
+        choices = [choice for choice in choices if len(choice["windows"]) > 0]
         result.append({"id": group["id"], "label": group["label"], "status": status,
                        "can_open": can_open, "can_rejoin": can_rejoin, "can_resume_layout": can_resume,
-                       "can_repair": can_repair, "can_adopt_order": can_adopt,
+                       "can_repair": can_repair, "can_adopt_order": can_adopt, "choices": choices,
                        "missing_app": missing[0] if can_open else ""})
     return result
 

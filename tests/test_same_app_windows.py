@@ -96,7 +96,7 @@ class SameAppTest(unittest.TestCase):
         self.session = "session-2"
         result = self.invoke("refresh")
         self.assertEqual(self.group_space(result), [])
-        self.assertIn("Multiple windows", result["incomplete_groups"][0]["status"])
+        self.assertIn("choose the ones that belong", result["incomplete_groups"][0]["status"])
         self.invoke("group-layout", self.groups()[0]["id"], expect_error="unavailable or ambiguous")
         # Neither terminal can be told apart from the Group's, so neither is floated out as a Layer.
         self.niri("action", "focus-window", "--id", 5)
@@ -151,6 +151,43 @@ class SameAppTest(unittest.TestCase):
              patch.object(spaces, "live_group", return_value=(group, live)), \
              self.assertRaisesRegex(ValueError, "not a Group member"):
             spaces.group_of_window([group], 5, ws, windows, "s")
+
+    def test_after_a_restart_the_user_chooses_which_window_belongs_to_the_group(self):
+        self.invoke("create-group")
+        group = self.groups()[0]["id"]
+        self.session = "session-2"
+        (incomplete,) = self.invoke("refresh")["incomplete_groups"]
+        self.assertEqual([(c["app"], [w["id"] for w in c["windows"]]) for c in incomplete["choices"]],
+                         [("terminal", [1, 5]), ("editor", [2, 6])])
+        # Choosing the terminal also settles the editor stacked with it; nothing else is guessed.
+        result = self.invoke("choose-member", f"{group}:1")
+        self.assertEqual([[m["id"] for m in s["members"]] for s in self.group_space(result)], [[1, 2]])
+        self.assertEqual(self.groups()[0]["bound"], {"session": "session-2", "windows": {"terminal": 1, "editor": 2}})
+        self.assertEqual(self.niri.columns, [[1, 2], [5], [6]])
+
+    def test_a_side_by_side_group_needs_a_choice_for_each_ambiguous_app(self):
+        self.niri.columns = [[1], [2], [5], [6]]
+        self.niri("action", "focus-window", "--id", 1)
+        self.invoke("stack")
+        group = self.invoke("create-group") and self.groups()[0]["id"]
+        self.invoke("group-layout", group)
+        self.session = "session-2"
+        self.invoke("choose-member", f"{group}:1")
+        (incomplete,) = self.invoke("refresh")["incomplete_groups"]
+        self.assertEqual([c["app"] for c in incomplete["choices"]], ["editor"])
+        result = self.invoke("choose-member", f"{group}:2")
+        self.assertEqual([len(s["members"]) for s in self.group_space(result)], [2])
+
+    def test_only_an_ambiguous_member_app_on_this_workspace_can_be_chosen(self):
+        self.invoke("create-group")
+        group = self.groups()[0]["id"]
+        self.invoke("choose-member", f"{group}:5", expect_error="not ambiguous")
+        self.session = "session-2"
+        self.niri.apps[9] = "viewer"
+        self.niri.columns.append([9])
+        self.invoke("choose-member", f"{group}:9", expect_error="not one of this Group")
+        self.invoke("choose-member", f"{group}:77", expect_error="not one of this Group")
+        self.assertNotEqual(self.groups()[0]["bound"]["session"], "session-2")
 
     def test_the_added_window_is_bound_even_when_its_app_has_another_window(self):
         self.niri.columns = [[1], [2], [5], [6]]

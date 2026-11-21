@@ -1276,6 +1276,7 @@ ShellRoot {
                     Repeater {
                         model: root.incompleteGroups
                         Column {
+                            id: attentionCard
                             required property var modelData
                             width: parent.width; spacing: 4
                             Text {
@@ -1287,6 +1288,37 @@ ShellRoot {
                                 width: parent.width; text: modelData.status; textFormat: Text.PlainText
                                 color: floeTheme.textSecondary; font.pixelSize: 14; font.family: floeTheme.interfaceFont
                                 wrapMode: Text.WrapAnywhere
+                            }
+                            Repeater {
+                                // Several windows of a member app: the user picks the one in the Group.
+                                model: modelData.choices || []
+                                Column {
+                                    id: memberChoice
+                                    required property var modelData
+                                    property string groupId: attentionCard.modelData.id
+                                    width: parent.width; spacing: 4
+                                    Text {
+                                        width: parent.width; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                                        text: "Which " + memberChoice.modelData.app_name + " window belongs to this Group?"
+                                        color: floeTheme.textSecondary; font.pixelSize: 14; font.family: floeTheme.interfaceFont
+                                    }
+                                    Flow {
+                                        width: parent.width; spacing: 4
+                                        Repeater {
+                                            model: memberChoice.modelData.windows
+                                            FlowButton {
+                                                id: chooseWindowButton
+                                                required property var modelData
+                                                width: Math.min(memberChoice.width, 220); implicitHeight: 44
+                                                text: modelData.label.slice(0, 28)
+                                                Accessible.name: "Use " + modelData.label + " as the Group's " + memberChoice.modelData.app_name + " window"
+                                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(chooseWindowButton)
+                                                onClicked: root.spaceAction("choose-member", memberChoice.groupId + ":" + modelData.id)
+                                            }
+                                        }
+                                    }
+                                }
                             }
                             FlowButton {
                                 id: openGroupMember
