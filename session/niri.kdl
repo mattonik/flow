@@ -10,7 +10,6 @@ layout {
 // Colours come from the design tokens. The first include is Polar Night; the second is the Desk's
 // current appearance, which the installed shell writes and Niri reloads when it changes.
 include "@niriAppearance@"
-// Throwaway CI proof, reverted in the next commit: @ciProofPlaceholder@
 include optional=true "~/.config/flow/niri-appearance.kdl"
 hotkey-overlay { skip-at-startup; }
 // The shell is the flow-shell user unit, started with niri.service (modules/flow.nix).
