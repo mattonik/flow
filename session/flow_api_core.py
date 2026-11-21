@@ -189,8 +189,8 @@ def focus_target(identity, space_id, spaces, windows, control):
         if not own_window(identity, focused):
             raise ApiError("NotAuthorized", "An app may change focus only while one of its own windows has it")
     if space_id.startswith("pin:"):
-        return "focus", space_id[4:]
-    # In a space shared with other apps, an app focuses its own window, never hands focus to another app.
+        return "focus", space_id[4:]  # as Super+number does, on the pin's own display
+    # In an unpinned space shared with other apps, an app focuses its own window, never another app's.
     targets = space["window_ids"] if control else [i for i in space["window_ids"]
                                                    if own_window(identity, windows.get(i))]
     if not targets:
@@ -305,6 +305,7 @@ def clean(text, limit):
     kept, marks = [], 0
     # Nothing past the limit is shown, so a huge string costs no more than a short one; four times the
     # limit leaves room for accents and spaces that are folded away below.
+    cut = len(text) > limit * 4
     for c in text[:limit * 4]:
         kind = unicodedata.category(c)
         if kind[0] == "C" or c in BLANK:
@@ -313,7 +314,7 @@ def clean(text, limit):
         if marks <= 2:  # combining marks may accent a letter, not stack into a tower
             kept.append(c)
     kept = " ".join("".join(kept).split())
-    return kept[:limit - 1] + "…" if len(kept) > limit else kept
+    return kept[:limit - 1] + "…" if len(kept) > limit or (cut and kept) else kept
 
 
 def owner_label(identity, proc=Path("/proc")):

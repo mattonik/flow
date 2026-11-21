@@ -16,6 +16,7 @@ installs it for the user in place of any earlier build, and uninstalls it with i
 calls the test asks for, through Flatpak's D-Bus proxy, onto this private bus. The service, the
 development shell and FlowProbe each get their own ``XDG_RUNTIME_DIR``, so neither a real Flow service
 nor the real runtime directory sees them. Flow state is isolated, and real state files are checksummed.
+Run one copy at a time: two runs would install and uninstall the same app under each other.
 """
 
 import hashlib
@@ -78,7 +79,7 @@ def run(*command, **kw):
 
 
 def build_probe(tmp):
-    """Build FlowProbe on the bare runtime and install it for the user, replacing any earlier build."""
+    """Build FlowProbe on the bare runtime as a bundle, to install for the user in place of any earlier build."""
     build = Path(tmp) / "probe-build"
     build.mkdir()
     app = build / "app"
@@ -90,11 +91,7 @@ def build_probe(tmp):
     run("flatpak", "build-finish", str(app), "--command=flow-probe", "--socket=wayland", f"--talk-name={NAME}")
     run("flatpak", "build-export", str(build / "repo"), str(app))
     run("flatpak", "build-bundle", str(build / "repo"), str(build / "probe.flatpak"), APP)
-    run("flatpak", "install", "--user", "--bundle", "--reinstall", "--no-related", "-y", "--noninteractive",
-        str(build / "probe.flatpak"))
-    metadata = run("flatpak", "info", "--user", "--show-metadata", APP)
-    if "sockets=wayland;" not in metadata or f"{NAME}=talk" not in metadata or "session-bus" in metadata:
-        raise RuntimeError(f"FlowProbe was not installed with only Wayland and the API name: {metadata}")
+    return build / "probe.flatpak"
 
 
 class Probe:
@@ -224,8 +221,13 @@ def main():
             return json.loads(published.read_text())["activities"] if published.exists() else None
 
         try:
+            bundle = build_probe(tmp)
             installed = True  # from here on, whatever happens, the probe is uninstalled again
-            build_probe(tmp)
+            run("flatpak", "install", "--user", "--bundle", "--reinstall", "--no-related", "-y", "--noninteractive",
+                str(bundle))
+            metadata = run("flatpak", "info", "--user", "--show-metadata", APP)
+            if "sockets=wayland;" not in metadata or f"{NAME}=talk" not in metadata or "session-bus" in metadata:
+                raise RuntimeError(f"FlowProbe was not installed with only Wayland and the API name: {metadata}")
             steps.append("FlowProbe was built on the bare freedesktop runtime with only --socket=wayland and "
                          f"--talk-name={NAME}, and installed for the user")
 
@@ -357,7 +359,11 @@ def main():
 
             # The call rate limit follows the app across connections: 20 calls in 10 s, wherever they come from.
             time.sleep(RATE_WINDOW)
-            lanes = [0, probe.connect()["conn"], probe.connect()["conn"]]
+            extra = [probe.connect(), probe.connect()]
+            names = [probe.ready["name"]] + [c["name"] for c in extra]
+            if len(set(names)) != 3 or None in map(pid_of, names):
+                raise RuntimeError(f"FlowProbe's connections were not three bus connections of their own: {names}")
+            lanes = [0] + [c["conn"] for c in extra]
             burst = [probe.call("Spaces", "GetCapabilities", conn=lanes[n % 3]) for n in range(core.RATE[0] + 1)]
             if not all("ok" in a for a in burst[:-1]) or not refused(burst[-1], "RateLimited") \
                     or "Too many requests" not in burst[-1]["message"]:
@@ -380,7 +386,7 @@ def main():
             if not refused(stolen, "NotFound") or len(live or []) != 3:
                 raise RuntimeError(f"One connection finished another's activity: {stolen} {live}")
             if {a["owner"] for a in live} != {APP} or "Flow shell: update ready" not in {a["title"] for a in live}:
-                raise RuntimeError(f"FlowProbe's activities did not carry its verified app ID as owner: {live}")
+                raise RuntimeError(f"FlowProbe's activities did not carry its sandbox's app ID as owner: {live}")
             steps.append("FlowProbe's activities showed its app ID as owner, not the owner it asked for; a fourth "
                          "on another connection was refused, and one connection could not finish another's")
 

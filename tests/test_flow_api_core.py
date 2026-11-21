@@ -171,6 +171,19 @@ class CoreTest(unittest.TestCase):
         self.assertEqual([s["id"] for s in core.visible(chat, self.spaces, self.windows, control=False)], ["pin:c"])
         self.assertEqual(core.focus_target(command, "pin:c", self.spaces, self.windows, True), ("focus", "c"))
 
+    def test_in_a_shared_space_spaces_focuses_the_callers_window_and_control_the_first(self):
+        # A command run from Paint (window 2, pid 102) while Paint has focus; Notes is first in the Studio Group.
+        self.proc.process(PIDS[2], 1, comm="paint")
+        self.proc.process(610, PIDS[2], comm="flow")
+        command = core.caller(610, self.proc.root)
+        self.niri("action", "focus-window", "--id", 2)
+        self.spaces, self.windows = core.project(self.observe(), "session")
+        self.assertEqual(core.focus_target(command, "group:g", self.spaces, self.windows, False), ("focus-window", "2"))
+        # Control acts for the user, not for an app: any listed space, its first window, even another app's.
+        self.assertEqual(core.focus_target(command, "group:g", self.spaces, self.windows, True), ("focus-window", "1"))
+        self.assertEqual(core.focus_target(command, core.opaque("session", 4), self.spaces, self.windows, True),
+                         ("focus-window", "4"))
+
     def test_unidentifiable_or_nameless_sandboxed_callers_are_refused(self):
         self.proc.process(700, 1, flatpak="[Application]\n")
         # A sandbox root that cannot be read counts as sandboxed, never as a trusted caller.
