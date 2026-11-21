@@ -494,6 +494,8 @@ ShellRoot {
         textFormat: Text.PlainText; color: floeTheme.textMuted
         font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 1.6; font.family: floeTheme.interfaceFont
     }
+    // How far a control scrolled into view keeps from the edge: its focus ring is 3 px outside it.
+    readonly property real focusRoom: 8
     component FlowButton: Button {
         id: control
         // secondary: the ordinary control. primary: the one main action of a surface. quiet: a soft tint, for
@@ -508,6 +510,8 @@ ShellRoot {
         property bool open: false
         property string glyph: ""
         property real radius: 10
+        // Where the 2 px focus ring starts, from the control's edge: 3 px outside, concentric.
+        property real focusRingInset: -3
         readonly property color labelColor: variant === "primary" ? floeTheme.onAccent : variant === "danger" ? floeTheme.danger
             : selected || variant === "secondary" ? floeTheme.textPrimary : floeTheme.textSecondary
         focusPolicy: Qt.StrongFocus
@@ -562,7 +566,7 @@ ShellRoot {
             Rectangle {
                 // Keyboard focus: a 2 px ring 3 px outside the control, concentric with it.
                 visible: control.activeFocus
-                anchors.fill: parent; anchors.margins: -3; radius: control.radius + 3
+                anchors.fill: parent; anchors.margins: control.focusRingInset; radius: control.radius - control.focusRingInset
                 color: "transparent"; border.width: 2; border.color: floeTheme.focus
             }
         }
@@ -572,6 +576,8 @@ ShellRoot {
         id: islandButton
         variant: "quiet"
         leftPadding: 12; rightPadding: 12
+        // Inside the 44 px target, around the 36 px capsule: the bar leaves no room outside.
+        focusRingInset: 1
         background: Item {
             Rectangle {
                 anchors.fill: parent; anchors.margins: 4; radius: height / 2
@@ -581,7 +587,7 @@ ShellRoot {
             }
             Rectangle {
                 visible: islandButton.activeFocus
-                anchors.fill: parent; anchors.margins: 1; radius: height / 2
+                anchors.fill: parent; anchors.margins: islandButton.focusRingInset; radius: height / 2
                 color: "transparent"; border.width: 2; border.color: floeTheme.focus
             }
         }
@@ -602,7 +608,7 @@ ShellRoot {
             IslandButton {
                 id: wordmark
                 implicitHeight: 44; text: "floe."
-                Accessible.name: root.deskOpen ? "Return to work" : "Open Floe Desk"
+                Accessible.name: root.deskOpen ? "Floe: return to work" : "Open Floe Desk"
                 open: root.deskOpen
                 contentItem: Text {
                     text: wordmark.text; textFormat: Text.PlainText
@@ -697,6 +703,12 @@ ShellRoot {
         id: toggle
         focusPolicy: Qt.StrongFocus
         hoverEnabled: true
+        // The focus ring surrounds the indicator, 1 px outside it.
+        readonly property real focusRingInset: -1
+        // Return and Enter flip it like Space and a click, as they activate every button.
+        function activate() { if (enabled) { toggle.toggle(); toggle.toggled() } }
+        Keys.onReturnPressed: activate()
+        Keys.onEnterPressed: activate()
         implicitWidth: contentItem.implicitWidth; implicitHeight: 44
         opacity: enabled ? 1 : 0.45
         contentItem: Text {
@@ -708,7 +720,7 @@ ShellRoot {
             x: 0; y: (toggle.height - height) / 2
             width: 52; height: 44
             Rectangle {
-                anchors.fill: parent; anchors.margins: -1; radius: 14
+                anchors.fill: parent; anchors.margins: toggle.focusRingInset; radius: 14
                 visible: toggle.activeFocus; color: "transparent"; border.width: 2; border.color: floeTheme.focus
             }
             Rectangle {
@@ -755,6 +767,42 @@ ShellRoot {
         function desk_state(): string { return root.deskOpen ? "open" : "closed" }
         function activity_list(): string { return JSON.stringify(root.activities.map(a => root.activityText(a))) }
         function launcher_state(): string { return root.launcherBusy() ? "open" : "closed" }
+        // Read-only, for tests/niri_focus_walk_smoke.py: the visible buttons and switches of every shell surface
+        // but the opt-in app menu, with the words each shows, its state, its place in its window and where its
+        // focus ring is drawn, so a check over AT-SPI can hold each accessible name to its visible label.
+        function controls(): string {
+            const found = []
+            const visit = (item, surface, size) => {
+                if (!item || !item.visible) return
+                const isSwitch = item.checkable === true && item.indicator !== undefined
+                if (item.glyph !== undefined || isSwitch) {
+                    const words = []
+                    const read = node => {
+                        if (!node || !node.visible) return
+                        if (typeof node.text === "string" && node.textFormat !== undefined && node.text !== "")
+                            words.push(node.text.replace(/<[^>]*>/g, ""))
+                        for (const child of node.children) read(child)
+                    }
+                    read(item.contentItem)
+                    const at = item.mapToItem(null, 0, 0)
+                    // The ring surrounds a switch's indicator and a button itself.
+                    const host = isSwitch ? item.indicator : item
+                    const ring = host.mapToItem(null, 0, 0)
+                    found.push({ surface: surface, window: size, kind: isSwitch ? "switch" : item.glyph ? "glyph" : "button",
+                                 text: item.text, words: words, enabled: item.enabled, selected: item.selected === true, open: item.open === true,
+                                 rect: [at.x, at.y, item.width, item.height],
+                                 ring: [ring.x, ring.y, host.width, host.height, item.focusRingInset] })
+                    return
+                }
+                for (const child of item.children) visit(child, surface, size)
+            }
+            for (const [surface, window] of [["desk", deskWindow], ["switcher", switcherWindow],
+                                             ["quick", quickSettingsWindow], ["notifications", notificationsWindow],
+                                             ["island", workIsland], ["navigation", navigationWindow],
+                                             ["indicator", workIndicatorWindow]])
+                if (window.visible) visit(window.contentItem, surface, [window.width, window.height])
+            return JSON.stringify(found)
+        }
         function menu(): void {
             if (menuPreferences.appMenuEnabled && root.appMenu && !root.deskOpen && !root.overviewOpen) {
                 if (root.appMenuOpen) root.appMenuOpen = false
@@ -763,6 +811,7 @@ ShellRoot {
         }
         function quick(): void { root.toggleQuickSettings() }
         function quick_open(): void { if (!root.quickSettingsOpen) root.toggleQuickSettings() }
+        function notifications(): void { root.toggleNotifications() }
         function settings(): void {
             if (!root.deskOpen) root.toggleDesk()
             root.settingsOpen = true
@@ -809,6 +858,7 @@ ShellRoot {
     // shortcut: Desk content settles in (220 ms fade and rise) but apps do not move away; add the spatial
     // transition when compositor integration supports it.
     PanelWindow {
+        id: deskWindow
         visible: root.deskOpen
         anchors { top: true; bottom: true; left: true; right: true }
         color: floeTheme.canvas
@@ -832,11 +882,13 @@ ShellRoot {
             }
             Flickable {
                 id: deskScroller
+                // Scroll a focused control into view with room for its focus ring (3 px outside) and some air.
                 function ensureVisible(item) {
-                    const top = item.mapToItem(contentItem, 0, 0).y
+                    const top = item.mapToItem(contentItem, 0, 0).y - root.focusRoom
+                    const bottom = top + item.height + 2 * root.focusRoom
                     if (top < contentY) contentY = Math.max(0, top)
-                    else if (top + item.height > contentY + height)
-                        contentY = Math.min(contentHeight - height, top + item.height - height)
+                    else if (bottom > contentY + height)
+                        contentY = Math.min(contentHeight - height, bottom - height)
                 }
                 anchors.fill: parent; anchors.topMargin: 60
                 contentWidth: width
@@ -984,7 +1036,7 @@ ShellRoot {
                                     id: movePinHereButton
                                     onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(movePinHereButton)
                                     width: 132; implicitHeight: 64; variant: "quiet"; text: "Pin here"
-                                    Accessible.name: "Pin " + modelData.label + " on this display instead"
+                                    Accessible.name: "Pin here: " + modelData.label + ", on this display instead"
                                     enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"
                                     onClicked: root.spaceAction("move-pin-here", modelData.id)
                                 }
@@ -1013,7 +1065,7 @@ ShellRoot {
                             onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(makeMainButton)
                             visible: root.displayCount > 1 && root.displayName !== "" && root.displayName !== "Main"
                             implicitHeight: 44; variant: "quiet"; text: "Make this the main display"
-                            Accessible.name: "Make " + root.displayLabel + " the main display; Super and a number will open its pinned spaces"
+                            Accessible.name: "Make this the main display: " + root.displayLabel + "; Super and a number will open its pinned spaces"
                             enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"
                             onClicked: root.spaceAction("make-main", (root.displays.find(d => d.current) || {}).key)
                         }
@@ -1115,7 +1167,8 @@ ShellRoot {
                         SectionLabel { text: "SETTINGS"; topPadding: 12 }
                         FlowSwitch {
                             id: appearanceSwitch
-                            text: appearancePreferences.lightMode ? "Arctic Daylight · Light" : "Polar Night · Dark"
+                            // A fixed label: the switch shows the state, so the words never contradict the accessible name.
+                            text: "Arctic Daylight · Light"
                             checked: appearancePreferences.lightMode
                             Accessible.name: "Use Arctic Daylight light mode"
                             onActiveFocusChanged: if (activeFocus) deskScroller.ensureVisible(appearanceSwitch)
@@ -1165,6 +1218,7 @@ ShellRoot {
         }
     }
     PanelWindow {
+        id: navigationWindow
         visible: !root.deskOpen && !root.switcherOpen && !root.appMenuOpen && !root.launcherActive
         anchors.bottom: true
         implicitWidth: navigationControls.implicitWidth + 8; implicitHeight: 52; margins.bottom: 8
@@ -1216,7 +1270,7 @@ ShellRoot {
                     }
                     IslandButton {
                         implicitHeight: 44; text: "Make space"
-                        Accessible.name: "Make this Layer its own space"
+                        Accessible.name: "Make space: this Layer becomes a space of its own"
                         onClicked: root.spaceAction("layer-to-space", String(root.activeLayer.id))
                     }
                     IslandButton {
@@ -1238,7 +1292,7 @@ ShellRoot {
                             width: Math.min(148, Math.max(64, implicitWidth)); implicitHeight: 44
                             selected: modelData.active
                             text: (modelData.app_name || modelData.label).slice(0, 16)
-                            Accessible.name: (modelData.active ? "Focused: " : "Focus ") + modelData.label + " in Group " + root.activeSpace.label
+                            Accessible.name: (modelData.active ? "Focused: " : "Focus ") + (modelData.app_name || modelData.label) + " in Group " + root.activeSpace.label
                             onClicked: if (!modelData.active) root.spaceAction("focus-window", String(modelData.id))
                         }
                     }
@@ -1271,6 +1325,7 @@ ShellRoot {
     }
     // shortcut: window titles stand in for live previews until compositor capture is available.
     PanelWindow {
+        id: switcherWindow
         visible: root.switcherOpen
         anchors { bottom: true; left: true; right: true }
         implicitHeight: Math.min(screen.height - 16, Math.max(300, switcherContent.implicitHeight + 40)); color: "transparent"; exclusionMode: ExclusionMode.Ignore
@@ -1293,9 +1348,10 @@ ShellRoot {
                 boundsBehavior: Flickable.StopAtBounds
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
                 function ensureVisible(item) {
-                    const top = item.mapToItem(switcherContent, 0, 0).y
-                    if (top < contentY) contentY = top
-                    else if (top + item.height > contentY + height) contentY = Math.max(0, Math.min(contentHeight - height, top + item.height - height))
+                    const top = item.mapToItem(switcherContent, 0, 0).y - root.focusRoom
+                    const bottom = top + item.height + 2 * root.focusRoom
+                    if (top < contentY) contentY = Math.max(-topMargin, top)
+                    else if (bottom > contentY + height) contentY = Math.max(0, Math.min(contentHeight - height, bottom - height))
                 }
             Column {
                 id: switcherContent
@@ -1336,7 +1392,7 @@ ShellRoot {
                         onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(makeLayerButton)
                         variant: "quiet"; implicitHeight: 44; text: "Make Layer"
                         visible: !root.activeLayer
-                        Accessible.name: "Float the focused app as a Layer over its neighbors"
+                        Accessible.name: "Make Layer: float the focused app over its neighbors"
                         enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                         onClicked: root.spaceAction("make-layer")
                     }
@@ -1388,7 +1444,7 @@ ShellRoot {
                                 id: layerSpaceButton
                                 onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(layerSpaceButton)
                                 variant: "quiet"; implicitHeight: 44; text: "Make space"
-                                Accessible.name: "Make Layer " + (modelData.app_name || modelData.label) + " its own space"
+                                Accessible.name: "Make space: Layer " + (modelData.app_name || modelData.label) + " becomes a space of its own"
                                 enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                 onClicked: root.spaceAction("layer-to-space", String(modelData.id))
                             }
@@ -1396,7 +1452,7 @@ ShellRoot {
                                 id: layerGroupButton
                                 onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(layerGroupButton)
                                 variant: "quiet"; implicitHeight: 44; text: "Add to Group"
-                                Accessible.name: "Add Layer " + (modelData.app_name || modelData.label) + " to the Group beneath it"
+                                Accessible.name: "Add to Group: Layer " + (modelData.app_name || modelData.label) + " joins the Group beneath it"
                                 enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                 onClicked: root.spaceAction("layer-to-group", String(modelData.id))
                             }
@@ -1419,9 +1475,10 @@ ShellRoot {
                     boundsBehavior: Flickable.StopAtBounds; clip: true
                     function ensureVisible(item) {
                         switcherScroller.ensureVisible(item)
-                        const left = item.mapToItem(windowRow, 0, 0).x
-                        if (left < contentX) contentX = left
-                        else if (left + item.width > contentX + width) contentX = Math.min(contentWidth - width, left + item.width - width)
+                        const left = item.mapToItem(windowRow, 0, 0).x - root.focusRoom
+                        const right = left + item.width + 2 * root.focusRoom
+                        if (left < contentX) contentX = Math.max(-leftMargin, left)
+                        else if (right > contentX + width) contentX = Math.min(contentWidth - width, right - width)
                     }
                     Row {
                         id: windowRow; spacing: 12
@@ -1448,6 +1505,8 @@ ShellRoot {
                                         width: parent.width; height: modelData.members.length > 1 ? 52 : 84; radius: 10
                                         variant: "plain"; leftPadding: 10; rightPadding: 10
                                         text: modelData.label
+                                        // The card shows "Current" in its meta line; assistive technology hears it too.
+                                        Accessible.description: modelData.active ? "Current" : ""
                                         readonly property string meta: [modelData.active ? "Current" : "",
                                             modelData.group_id ? "Group" : modelData.members.length > 1 ? "Stack" : "",
                                             spaceCard.groupPin ? "Pinned" : "", modelData.members.length > 1 ? modelData.members.length + " apps" : ""]
@@ -1563,7 +1622,7 @@ ShellRoot {
                                         visible: !!spaceCard.modelData.can_add
                                         onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(addMemberButton)
                                         width: parent.width; implicitHeight: 44; radius: 10; text: "Add " + (spaceCard.modelData.add_label || "next app").slice(0, 24) + " to Group"
-                                        Accessible.name: "Add the next space, " + spaceCard.modelData.add_label + ", to Group " + spaceCard.modelData.label
+                                        Accessible.name: "Add " + (spaceCard.modelData.add_label || "next app") + " to Group " + spaceCard.modelData.label
                                         enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                         onClicked: root.spaceAction("add-to-group", spaceCard.modelData.group_id)
                                     }
@@ -1572,7 +1631,7 @@ ShellRoot {
                                         visible: !!spaceCard.modelData.order_changed
                                         onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(keepOrderButton)
                                         width: parent.width; implicitHeight: 44; radius: 10; text: "Keep new app order"
-                                        Accessible.name: "Keep the new app order for Group " + spaceCard.modelData.label
+                                        Accessible.name: "Keep new app order for Group " + spaceCard.modelData.label
                                         enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                         onClicked: root.spaceAction("adopt-group-order", spaceCard.modelData.group_id)
                                     }
@@ -1593,7 +1652,7 @@ ShellRoot {
                                             width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 10; leftPadding: 6; rightPadding: 6; variant: "quiet"; text: "Tabs / stack"
                                             visible: spaceCard.modelData.group_layout !== "side-by-side"
                                             enabled: spaceCard.modelData.active && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
-                                            Accessible.name: "Toggle tabs or stack for " + spaceCard.modelData.label
+                                            Accessible.name: "Tabs / stack: switch the view of " + spaceCard.modelData.label
                                             onClicked: root.spaceAction("group-view", spaceCard.modelData.group_id)
                                         }
                                         FlowButton {
@@ -1646,7 +1705,7 @@ ShellRoot {
                                             onActiveFocusChanged: if (activeFocus) spaceScroller.ensureVisible(moveDisplayButton)
                                             width: cardColumn.width; implicitHeight: 44; radius: 10; variant: "quiet"
                                             text: "Move to " + modelData.label.slice(0, 22)
-                                            Accessible.name: "Move " + spaceCard.modelData.label + (spaceCard.modelData.group_id ? ", the whole Group," : "") + " to display " + modelData.label
+                                            Accessible.name: "Move to " + modelData.label + ": " + spaceCard.modelData.label + (spaceCard.modelData.group_id ? ", the whole Group" : "")
                                             enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                             onClicked: root.spaceAction("move-to-display", modelData.key)
                                         }
@@ -1776,7 +1835,7 @@ ShellRoot {
                                     id: adoptGroupOrder
                                     visible: modelData.can_adopt_order
                                     width: Math.min(parent.width, 220); implicitHeight: 44; radius: 10; text: "Keep current order"
-                                    Accessible.name: "Keep the current app order for Group " + modelData.label
+                                    Accessible.name: "Keep current order for Group " + modelData.label
                                     enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                     onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(adoptGroupOrder)
                                     onClicked: root.spaceAction("adopt-group-order", modelData.id)
@@ -1785,7 +1844,7 @@ ShellRoot {
                                     id: repairGroupLayout
                                     visible: modelData.can_repair
                                     width: Math.min(parent.width, 220); implicitHeight: 44; radius: 10; text: "Repair Group layout"
-                                    Accessible.name: "Repair layout for Group " + modelData.label
+                                    Accessible.name: "Repair Group layout for " + modelData.label
                                     enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                     onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(repairGroupLayout)
                                     onClicked: root.spaceAction("repair-side-group", modelData.id)
@@ -1870,6 +1929,7 @@ ShellRoot {
         }
     }
     PanelWindow {
+        id: quickSettingsWindow
         visible: root.quickSettingsOpen
         anchors.top: true
         implicitWidth: Math.max(0, Math.min(340, screen.width - 24)); implicitHeight: Math.min(screen.height - 80, Math.max(235, quickSettingsColumn.implicitHeight + 40)); margins.top: 60
@@ -1885,6 +1945,9 @@ ShellRoot {
             anchors.fill: parent; focus: true
             Keys.onEscapePressed: root.quickSettingsOpen = false
             ScrollView {
+                // A focus scope, so it holds active focus with the control inside and would be announced as
+                // an unnamed focused panel. Its controls are exposed without it.
+                Accessible.ignored: true
                 anchors.fill: parent; anchors.margins: 16; anchors.topMargin: 20; clip: true
                 contentWidth: availableWidth; contentHeight: quickSettingsColumn.implicitHeight
                 Column {
@@ -1899,8 +1962,8 @@ ShellRoot {
                 Text { text: root.volumeStatus; color: floeTheme.textPrimary; font.pixelSize: 16; font.weight: Font.DemiBold; font.family: floeTheme.interfaceFont; font.features: { "tnum": 1 } }
                 Flow {
                     width: parent.width; spacing: 6
-                    FlowButton { width: 70; implicitHeight: 44; text: "− 5%"; Accessible.name: "Decrease volume"; enabled: root.audioAvailable; onClicked: root.changeVolume(-0.05) }
-                    FlowButton { width: 70; implicitHeight: 44; text: "+ 5%"; Accessible.name: "Increase volume"; enabled: root.audioAvailable; onClicked: root.changeVolume(0.05) }
+                    FlowButton { width: 70; implicitHeight: 44; text: "− 5%"; Accessible.name: "Decrease volume by 5%"; enabled: root.audioAvailable; onClicked: root.changeVolume(-0.05) }
+                    FlowButton { width: 70; implicitHeight: 44; text: "+ 5%"; Accessible.name: "Increase volume by 5%"; enabled: root.audioAvailable; onClicked: root.changeVolume(0.05) }
                     FlowButton { width: Math.max(70, parent.width - 152); implicitHeight: 44; variant: "quiet"; text: root.audioAvailable && root.audioSink.audio.muted ? "Unmute" : "Mute"; enabled: root.audioAvailable; onClicked: root.changeVolume("mute") }
                 }
                 Row {
@@ -1940,6 +2003,7 @@ ShellRoot {
         }
     }
     PanelWindow {
+        id: notificationsWindow
         visible: root.notificationsOpen
         anchors.top: true
         implicitWidth: Math.min(420, screen.width - 24); implicitHeight: Math.min(notificationColumn.implicitHeight + 24, screen.height - 80)
@@ -1956,6 +2020,8 @@ ShellRoot {
             anchors.fill: parent; focus: root.notificationsOpen
             Keys.onEscapePressed: root.notificationsOpen = false
             ScrollView {
+            // Not announced as a focused panel: see Quick settings.
+            Accessible.ignored: true
             anchors.fill: parent; anchors.margins: 8; clip: true
             contentWidth: availableWidth; contentHeight: notificationColumn.implicitHeight
             Column {
