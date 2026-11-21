@@ -232,6 +232,16 @@ class RoutingTest(unittest.TestCase):
             key, connected = restore.focused_display({"output": "DP-1"}, self.state)
         self.assertEqual((key, connected), ("port:DP-1|Dell|U2723QE", {"port:DP-1|Dell|U2723QE"}))
 
+    def test_observing_neither_writes_state_nor_moves_windows(self):
+        legacy = [{"id": "m", "label": "Mail", "app_id": "mail"}]
+        (self.state / "spaces.json").write_text(json.dumps(legacy))
+        before = (self.state / "spaces.json").read_bytes()
+        result = self.invoke("observe")
+        self.assertEqual((self.state / "spaces.json").read_bytes(), before)
+        self.assertFalse([a for a in self.actions if a[0] == "action"])
+        self.assertEqual(result["pins"][0]["window_ids"], [1])
+        self.assertEqual({w["id"] for w in result["all_windows"]}, {1, 2, 3})
+
     def test_reordering_refuses_a_pin_from_another_display(self):
         self.pins([{"id": "t", "label": "Terminal", "app_id": "terminal", "display": MONITOR_KEY},
                    {"id": "m", "label": "Mail", "app_id": "mail", "display": LAPTOP_KEY}])

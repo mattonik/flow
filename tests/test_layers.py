@@ -25,6 +25,8 @@ class LayerTest(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.data = Path(directory.name)
         (self.data / "applications").mkdir()
+        spaces.app_name.cache_clear()
+        self.addCleanup(spaces.app_name.cache_clear)
         (self.data / "applications/org.example.Notes.desktop").write_text(
             "[Desktop Entry]\nType=Application\nName=Notes\nExec=notes\nStartupWMClass=notes\n")
         for item in (patch.object(spaces, "snapshot", side_effect=self.niri.snapshot),

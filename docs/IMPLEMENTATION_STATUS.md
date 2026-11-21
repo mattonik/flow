@@ -22,7 +22,7 @@ The recorded test environment is an Apple Silicon Mac running UTM 5.0.8, QEMU AR
 | F-014 Figma day | Open | No recorded Figma workload, screenshare or browser-load test. |
 | F-015 Development day | Open | Terminal and editors run, but the native-host development, container and VM workflow is not verified. |
 | F-016 Touch day | Open | A manually invoked on-screen keyboard entered a letter, Shift and Enter into a guest terminal with a simulated pointer. Real touch, automatic text-field activation, rotation and tablet Group testing remain open. |
-| F-017 API app test | Open | No versioned Flow Platform API, non-Qt client or authorization test exists. |
+| F-017 API app test | Partial | Version 1 of the Flow Platform API (ADR-0009) is a session D-Bus service with a spaces interface scoped to the caller's own app and a control interface for unsandboxed callers (2026-11-21). Two non-Qt clients were used in the guest on a private bus: the Python/Gio `flow` CLI and `busctl`. A command run inside one app listed and focused only that app's space, and its attempt to focus another app's space was refused as `NotAuthorized`. The packaged service also started by D-Bus activation. A real Flatpak app was not tested, because Flatpak is not installed in the guest; sandbox detection is unit-tested with a fake `/proc`. |
 | F-018 Shell restart | Partial | `niri_shell_restart_smoke.py` (2026-11-20) started a development shell and restarted it with SIGTERM, then SIGKILL. It ran beside a pinned app, a pinned, resized side-by-side Group and an unpinned app, with isolated state. Pins, Groups, window IDs, columns, widths and focus were unchanged from before the first start, and Super+1 and Super+2 still reached both pins. A shell that moves focus on startup fails the test. The installed shell and session, and a restart during a Flow action, were not tested. |
 | F-019 DisplayLink hardware | Open | No named dock or monitor test. |
 | F-020 App menu fallback | Partial | The opt-in AT-SPI experiment showed and invoked Kate commands; native menus are retained. Coverage, same-process ambiguity and the complete fallback journey remain unverified. |
@@ -136,5 +136,35 @@ Before, a second window of any member app, on any workspace, made a Group unreco
 - Opening the missing app bound its new window.
 
 With stand-ins allowed from older windows, the test fails. The same test then marks the Group's binding as coming from an earlier Niri session, simulating a restart without ending the guest session. Both apps' windows were offered as a choice, and choosing the terminal brought the stacked Group back. Ignoring stack evidence makes this step fail. The development shell showed the choice on the Group's repair card. A real Niri restart was not performed, because it would end the guest's session.
+
+### Flow Platform API, version 1
+
+[ADR-0009](engineering/ADR-0009-platform-api-v1.md) defines the first slice. The `flow-api` service owns `io.github.mattonik.Flow1` on the session bus and exports two interfaces:
+- `…Spaces`, for any caller: `GetCapabilities`, `ListSpaces`, `FocusSpace` and a `Changed` signal with no payload.
+- `…Control`, for unsandboxed callers only: `ListSpaces` and `FocusSpace`.
+
+Spaces have stable IDs. A pin is `pin:` plus its ID and a Group is `group:` plus its ID. A space that is neither gets a session-scoped `window:` ID hashed from the window, so raw Niri IDs are never exposed. Errors are structured D-Bus errors such as `NotFound`, `NotAuthorized`, `DisplayUnavailable` and `RateLimited`.
+
+Callers are identified the way XDG portals identify them:
+- **Flatpak apps:** `/proc/<pid>/root/.flatpak-info` gives the app ID. A Flatpak app sees and focuses only spaces with its own windows, and `Control` refuses it.
+- **Unsandboxed callers:** they may use `Control`. On `Spaces` they act as the app whose process they descend from, for example a command run in a terminal acts as that terminal.
+
+Rate limits follow a Flatpak app across all its connections. The service reads state through a new read-only `flow-spaces observe`, which neither reconciles pins nor writes state. It focuses through the same `flow-spaces` actions as the shell, and turns Niri's event stream into debounced `Changed` signals. The NixOS module installs the `flow` CLI, a D-Bus activation file and a `flow-api` systemd user service.
+
+`niri_flow_api_smoke.py` passed in the guest on a private bus from `dbus-run-session`, using the development copy:
+- Version 1.0 and its feature list were negotiated.
+- `flow spaces list` showed a pin ID and an opaque window ID.
+- `busctl` focused a space through `Control`.
+- A command inside a third app saw only its own space, and focusing another app's space was `NotAuthorized`.
+- An unknown space was `NotFound`.
+- `flow events watch` reported a change after focus moved.
+- Of 25 rapid calls on one connection, the last 5 were `RateLimited`.
+- SIGTERM stopped the service together with its event-stream child.
+
+With apps allowed to see every space, or without the child cleanup, the test fails. Unit tests cover the policy against a fake `/proc` and a real `observe` snapshot from the Niri model.
+
+The module was evaluated in the guest from the flake. The built activation file, user unit and CLI were checked, and a private bus started the packaged service by activation on the first `flow version` call. That run found the event-stream child surviving the service, which is now fixed.
+
+Not done: the shell does not use the API yet, the service was not run as the installed systemd unit, and a real Flatpak app was not tested. Pinning, Groups, displays, search providers and activities are not in this version.
 
 Limitations: The changes run from a development copy, not an installed NixOS generation. An older generation cannot read a version 2 pin file and reports *Invalid saved spaces* without changing it. Restoring `spaces.v1.json` rolls back, but it holds the pins from before the first conversion, so pins made since are lost. An older generation also rejects a `groups.json` that contains a Group of three or four apps, which stops every `flow-spaces` call; dissolve or shrink such Groups to two apps before rolling back. Touch, physical rotation and real hotplug remain open.

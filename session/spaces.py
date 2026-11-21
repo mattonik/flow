@@ -242,6 +242,14 @@ def pin_window(pin, workspace, windows, socket, groups=()):
     return window if eligible(window, workspace, windows) else None
 
 
+def live_pin_windows(pin, workspace, windows, socket, groups):
+    """The live window IDs of a pinned space on this workspace, in member order; empty when unavailable."""
+    if "members" in pin:
+        return [w["id"] for w in group_windows(pin, workspace, windows, socket, groups) or []]
+    window = pin_window(pin, workspace, windows, socket, groups)
+    return [window["id"]] if window else []
+
+
 def has_side_layout(workspace, windows, groups):
     here = [w for w in windows if w.get("workspace_id") == workspace["id"]]
     return any((g.get("pending_layout") or g.get("layout") == "side-by-side") and
@@ -436,7 +444,8 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
     def describe(p):
         return {"id": p["id"], "label": p.get("label", ""), "kind": "group" if "members" in p else "app",
                 "group_id": p.get("group_id"), "display": p.get("display"), "size": len(p.get("members") or [1]),
-                "available": bool(pin_window(p, workspace, windows, socket, groups))}
+                "available": bool(pin_window(p, workspace, windows, socket, groups)),
+                "window_ids": live_pin_windows(p, workspace, windows, socket, groups)}
 
     if op == "repair-side-group":
         repair_side_group(arg, workspace, windows, groups, pins)
@@ -964,14 +973,14 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
         if space:
             member = next(w for w in space["members"] if w["id"] == window["id"])
             remember_focus(space, member)
-    elif op != "refresh":
+    elif op not in ("refresh", "observe"):
         raise ValueError("Unknown action")
     here = local_pins(pins, display)
     if op not in ("focus", "focus-window", "focus-member", "navigate", "stack", "unstack", "group-view", "create-group",
                   "dissolve-group", "open-group-member", "rejoin-group", "add-to-group", "remove-from-group",
                   "member-left", "member-right", "adopt-group-order", "member-wider", "member-narrower",
                   "make-layer", "open-layer", "layer-to-space", "close-layer", "choose-member",
-                  "layer-to-group"):
+                  "layer-to-group", "observe"):
         reconcile(here, workspace, windows, socket, groups)
     return [describe(p) for p in here]
 
@@ -1555,8 +1564,9 @@ def other_pins(pins, display, displays, connected, ambiguous, workspaces, window
         if key not in labels:
             labels[key] = next((r["label"] for r in connected.values() if r["key"] == key), None) or \
                           (displays.get(key, {}).get("label") if key else None) or "No display"
-        live = any(pin_window(pin, ws, windows, socket, groups) for ws in workspaces)
-        result.append({"id": pin["id"], "label": pin["label"], "kind": "group" if "members" in pin else "app",
+        live_ids = next((ids for ws in workspaces if (ids := live_pin_windows(pin, ws, windows, socket, groups))), [])
+        live = bool(live_ids)
+        result.append({"window_ids": live_ids, "id": pin["id"], "label": pin["label"], "kind": "group" if "members" in pin else "app",
                        "size": len(pin.get("members") or [1]), "group_id": pin.get("group_id"), "display": key, "display_label": labels[key],
                        "display_name": pin_store.display_name(displays.get(key)) if key else "",
                        "display_state": state, "available": live})
@@ -1734,6 +1744,8 @@ def _run_locked(state):
             if space.get("group_id"):
                 group = find_group(groups, space["group_id"])
                 bind_group(group, [next(w for w in windows if w["id"] == m["id"]) for m in space["members"]], windows)
+        if op == "observe":
+            before_groups = json.dumps(groups, sort_keys=True)  # observing never writes state
         if before_groups != json.dumps(groups, sort_keys=True):
             try:
                 group_store.write(state / "groups.json", groups)
@@ -1741,7 +1753,7 @@ def _run_locked(state):
                 if op == "dissolve-group":
                     raise ValueError("Could not confirm Group update; if it remains saved, stack its apps and retry") from exc
                 raise ValueError("Could not confirm Group update; check the Group state before retrying") from exc
-        if before != json.dumps([pins, displays, 2], sort_keys=True):
+        if op != "observe" and before != json.dumps([pins, displays, 2], sort_keys=True):
             pin_store.write(path, pins, displays, version)
         ordered = sorted((w for w in windows if w.get("workspace_id") == workspace["id"]),
                          key=lambda w: (position(w) or [99999, 0]))
@@ -1762,6 +1774,8 @@ def _run_locked(state):
                                         "number": displays[key].get("number"), "current": key == display}
                                        for key in screen_order],
                           "notice": notice,
+                          "all_windows": [{"id": w["id"], "app_id": w.get("app_id") or "", "pid": w.get("pid"),
+                                           "workspace_id": w.get("workspace_id")} for w in windows],
                           "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
 
 
