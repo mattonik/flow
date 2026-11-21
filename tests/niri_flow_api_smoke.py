@@ -48,7 +48,7 @@ def wait_for(test, label, timeout=15):
         if value:
             return value
         time.sleep(0.2)
-    raise RuntimeError(f"Timed out waiting for {label}")
+    raise RuntimeError(f"Timed out waiting for {label() if callable(label) else label}")
 
 
 def main():
@@ -94,7 +94,14 @@ def main():
             pin = json.loads(pinned.stdout)["pins"][0]["id"]
             service = subprocess.Popen([python, str(CODE / "flow_api.py")], env=env, stdout=subprocess.DEVNULL,
                                        stderr=subprocess.PIPE, text=True)
-            wait_for(lambda: NAME in busctl("list", "--no-pager").stdout, "the API service on the bus")
+            # Asked of the bus driver, which never starts a service: an installed Flow puts an activation
+            # file for the same name on every bus, and that service must not answer in this one's place.
+            def owner():
+                answer = busctl("call", "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+                                "GetConnectionUnixProcessID", "s", NAME)
+                return int(answer.stdout.split()[1]) if answer.returncode == 0 else None
+
+            wait_for(lambda: owner() == service.pid, lambda: f"this checkout's API service to own the name ({owner()})")
 
             version = json.loads(flow("version").stdout)
             if version != {"version": "1.2", "features": ["spaces.list", "spaces.focus", "spaces.changed",

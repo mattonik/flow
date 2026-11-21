@@ -21,7 +21,11 @@ let
   '';
   appLaunch = pkgs.writeShellScriptBin "flow-app-launch" ''
     ${lib.getExe pkgs.quickshell} ipc -p /etc/flow/shell.qml call desk leave >/dev/null 2>&1 || true
-    # Launched apps must not inherit the launcher's closed output pipes.
+    # Launched apps must not inherit the launcher's closed output pipes. From the installed shell they
+    # get an app scope of their own (session/launching.py).
+    if [ "''${FLOW_APP_SCOPES:-}" = 1 ]; then
+      exec ${pkgs.systemd}/bin/systemd-run --user --scope --collect --quiet -- "$@" </dev/null >/dev/null 2>&1
+    fi
     exec "$@" </dev/null >/dev/null 2>&1
   '';
   launcher = pkgs.writeShellScriptBin "flow-apps" ''
@@ -33,7 +37,30 @@ let
     user_name="$(${pkgs.coreutils}/bin/id -un)"
     export XDG_DATA_DIRS="''${XDG_DATA_DIRS:+$XDG_DATA_DIRS:}$HOME/.nix-profile/share:$HOME/.local/state/nix/profile/share:/etc/profiles/per-user/$user_name/share:/nix/var/nix/profiles/default/share:/run/current-system/sw/share:/usr/local/share:/usr/share"
     export GI_TYPELIB_PATH="${pkgs.glib}/lib/girepository-1.0:${pkgs.gobject-introspection}/lib/girepository-1.0''${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
+    export PYTHONPATH="${../session}"
     exec ${pkgs.python3.withPackages (p: [ p.pygobject3 ])}/bin/python3 ${../session/search.py}
+  '';
+  # The shell's files, as one store directory: /etc/flow, and the restart trigger of the shell's unit.
+  shellFiles = pkgs.linkFarm "flow-shell" [
+    { name = "shell.qml"; path = ../session/shell.qml; }
+    { name = "FloeTheme.qml"; path = ../session/FloeTheme.qml; }
+  ];
+  shellLauncher = pkgs.writeShellScriptBin "flow-shell" ''
+    # A NixOS unit gets its own PATH; the shell and the apps it opens need the login session's, which
+    # Niri imported into the user manager.
+    session_path="$(${pkgs.systemd}/bin/systemctl --user show-environment | ${pkgs.gnused}/bin/sed -n 's/^PATH=//p')"
+    export PATH="''${session_path:-/run/wrappers/bin:/etc/profiles/per-user/$(${pkgs.coreutils}/bin/id -un)/bin:/run/current-system/sw/bin}"
+    # Apps the shell opens get app scopes of their own (session/launching.py).
+    export FLOW_APP_SCOPES=1
+    # One installed shell per user. This also ends a shell Niri started before the shell was a unit.
+    shell_line='(/[^ ]*/)?quickshell -p /etc/flow/shell\.qml'
+    if ${pkgs.procps}/bin/pkill -u "$(${pkgs.coreutils}/bin/id -u)" -f -x "$shell_line"; then
+      for _ in $(${pkgs.coreutils}/bin/seq 50); do
+        ${pkgs.procps}/bin/pgrep -u "$(${pkgs.coreutils}/bin/id -u)" -f -x "$shell_line" >/dev/null || break
+        ${pkgs.coreutils}/bin/sleep 0.1
+      done
+    fi
+    exec ${lib.getExe pkgs.quickshell} -p /etc/flow/shell.qml
   '';
   # Flow Platform API (docs/engineering/ADR-0009-platform-api-v1.md): a session D-Bus service and its CLI.
   apiPython = pkgs.python3.withPackages (p: [ p.pygobject3 ]);
@@ -132,9 +159,39 @@ in {
         Restart = "on-failure";
       };
     };
+    # The shell is a user unit of the Niri session. A switch restarts it when its files or Quickshell
+    # change, as it does any changed user unit: Quickshell's own live reload cannot load a
+    # configuration that adds an inline component, and does not reliably notice a switch.
+    # A switch restarts a changed unit but does not start a new one wanted by niri.service, so the
+    # first switch to this module would leave a shell Niri spawned before; start the unit while Niri
+    # runs (a no-op when it is running). Its launcher replaces the older shell.
+    # Only a unit that has never run in this user manager: a user who stopped it to run a development
+    # shell keeps it stopped.
+    system.userActivationScripts.flow-shell = ''
+      if ${pkgs.systemd}/bin/systemctl --user is-active --quiet niri.service \
+        && [ "$(${pkgs.systemd}/bin/systemctl --user show flow-shell.service -p ActiveEnterTimestampMonotonic --value)" = 0 ]; then
+        ${pkgs.systemd}/bin/systemctl --user start flow-shell.service || true
+      fi
+    '';
+    systemd.user.services.flow-shell = {
+      description = "Flow shell";
+      wantedBy = [ "niri.service" ];
+      partOf = [ "niri.service" ];
+      after = [ "niri.service" ];
+      restartTriggers = [ shellFiles pkgs.quickshell ];
+      # A shell that keeps failing stops trying after five starts in a minute, two seconds apart.
+      unitConfig = { StartLimitIntervalSec = 60; StartLimitBurst = 5; };
+      serviceConfig = {
+        ExecStart = "${shellLauncher}/bin/flow-shell";
+        Restart = "on-failure";
+        RestartSec = 2;
+        # Apps get scopes of their own; this is the safeguard for any launch path that missed one, so
+        # that stopping or restarting the shell never ends an app.
+        KillMode = "process";
+      };
+    };
     environment.etc."niri/config.kdl".source = niriConfig;
-    environment.etc."flow/shell.qml".source = ../session/shell.qml;
-    environment.etc."flow/FloeTheme.qml".source = ../session/FloeTheme.qml;
+    environment.etc."flow".source = shellFiles;
     environment.etc."xdg/fuzzel/fuzzel.ini".text = ''
       [main]
       font=sans:size=12

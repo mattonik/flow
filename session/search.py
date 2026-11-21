@@ -9,6 +9,8 @@ import sys
 from urllib.parse import unquote, urlsplit
 import xml.etree.ElementTree as ET
 
+from launching import app_command
+
 
 def recent_files(history, home):
     try:
@@ -83,9 +85,15 @@ def main():
             return
         kind, value = choices[index][1]
         if kind == "app":
-            value.launch([], None)
+            if os.environ.get("FLOW_APP_SCOPES") == "1" and value.get_filename():
+                subprocess.run(app_command(["gio", "launch", value.get_filename()]), check=True)
+            else:
+                value.launch([], None)
         elif kind == "file":
-            Gio.AppInfo.launch_default_for_uri(value, None)
+            if os.environ.get("FLOW_APP_SCOPES") == "1":
+                subprocess.run(app_command(["gio", "open", value]), check=True)
+            else:
+                Gio.AppInfo.launch_default_for_uri(value, None)
         else:
             action = {"settings": value, "pin": "focus_pin", "window": "focus_window", "layer": "open_layer"}[kind]
             args = ["quickshell", "ipc", "-p", "/etc/flow/shell.qml", "call", "desk", action]
