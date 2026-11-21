@@ -128,6 +128,7 @@ def main():
             steps.append("closing the Layer returned focus to the same Group app with the same Group, pins and state")
             del closed
 
+
             niri("action", "focus-window", "--id", window("u")["id"])
             spaces("make-layer")
             if not window("u").get("is_floating") or {k: v for k, v in tiles().items()} != {
@@ -139,6 +140,19 @@ def main():
             if tiles() != before_tiles:
                 raise RuntimeError(f"The Layer did not return as its own space after the Group: {tiles()}")
             steps.append("the neighbor became a Layer and returned as its own space after the Group")
+            niri("action", "focus-window", "--id", window("a")["id"])
+            spaces("open-layer", apps["l"])
+            spaces("layer-to-group", str(window("l")["id"]))
+
+            def joined():
+                space = next((s for s in spaces("refresh")["spaces"] if s.get("group_id") == group), None)
+                ok = (space and [m["id"] for m in space["members"]] == [window(s)["id"] for s in "abl"]
+                      and not window("l").get("is_floating") and abs(sum(space["shares"]) - 100) <= 2
+                      and abs(space["shares"][2] - 33) <= 4)
+                return space if ok else None
+
+            shares = wait_for(joined, "the Layer in the side-by-side Group with a fair share")["shares"]
+            steps.append(f"a Layer joined the side-by-side Group beneath it with shares {shares}")
             result = {"result": "pass", "niri": niri("version").strip(), "steps": steps}
     finally:
         for process in processes:

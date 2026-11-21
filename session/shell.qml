@@ -347,7 +347,7 @@ ShellRoot {
     Timer { interval: niriEvents.running ? 30000 : 3000; running: true; repeat: true; triggeredOnStart: true; onTriggered: root.spaceAction("refresh") }
     Timer {
         interval: 2000; repeat: true
-        running: root.displaySpaces.some(space => space.auto_layout)
+        running: root.displaySpaces.some(space => space.auto_layout) || root.layers.length > 0
         onTriggered: if (!root.deskOpen && !root.switcherOpen && !root.overviewOpen && !root.launcherActive && !root.appMenuOpen && !root.quickSettingsOpen && !root.notificationsOpen && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length) root.spaceAction("auto-layout")
     }
     function toggleDesk() {
@@ -1029,6 +1029,14 @@ ShellRoot {
                                 Accessible.name: "Make Layer " + (modelData.app_name || modelData.label) + " its own space"
                                 enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
                                 onClicked: root.spaceAction("layer-to-space", String(modelData.id))
+                            }
+                            FlowButton {
+                                id: layerGroupButton
+                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(layerGroupButton)
+                                width: 120; implicitHeight: 44; text: "Add to Group"
+                                Accessible.name: "Add Layer " + (modelData.app_name || modelData.label) + " to the Group beneath it"
+                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                onClicked: root.spaceAction("layer-to-group", String(modelData.id))
                             }
                             FlowButton {
                                 id: layerCloseButton

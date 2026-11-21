@@ -103,6 +103,18 @@ def main():
             if abs(pos[0] + size[0] / 2 - width / 2) > 8 or abs(pos[1] + size[1] / 2 - height / 2) > 8:
                 raise RuntimeError(f"The landscape Layer is not centered: {pos} {size} on {width}x{height}")
             steps.append(f"landscape {width}x{height}: centered Layer at {pos}, size {size}")
+
+            # Rotate with the Layer open: the next automatic-layout pass gives it the portrait shape.
+            niri("action", "focus-window", "--id", window(apps[0])["id"])
+            niri("output", output, "transform", "90" if original in ("normal", "180") else "normal")
+            width, height = wait_for(when(logical, lambda v: v[1] > v[0]), "portrait output again")
+            spaces("auto-layout")
+            pos, size = wait_for(when(geometry, lambda g: g[0] and abs(g[1][0] - width) <= 8), "the reshaped sheet")
+            if abs(pos[0]) > 4 or abs(pos[1] - height / 2) > 8 or abs(size[1] - height / 2) > 12:
+                raise RuntimeError(f"The open Layer did not become a bottom sheet: {pos} {size}")
+            if next(w for w in read("workspaces") if w["is_focused"])["active_window_id"] != window(apps[0])["id"]:
+                raise RuntimeError("Reshaping the Layer took focus from the app beneath")
+            steps.append(f"rotated with the Layer open: reshaped to a sheet at {pos}, focus kept")
             result = {"result": "pass", "niri": niri("version").strip(), "steps": steps}
     finally:
         try:

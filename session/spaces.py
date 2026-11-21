@@ -712,7 +712,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
             raise ValueError("Unpin this app before making it a Layer")
         if not eligible(window, workspace, windows):
             raise ValueError("Separate this app from its stack before making it a Layer")
-        float_as_layer(window["id"], layer_output(workspace))
+        float_as_layer(window["id"], layer_output(workspace), workspace.get("output"))
     elif op == "open-layer":
         desktop = desktop_file(arg, data_dirs())
         if not desktop:
@@ -740,7 +740,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
             raise ValueError("The app opened more than one window or opened elsewhere; it was left as it is")
         if not new[0].get("is_floating"):
             # Niri reactivates the column the window was opened from, so closing the Layer returns there.
-            float_as_layer(new[0]["id"], layer_output(workspace))
+            float_as_layer(new[0]["id"], layer_output(workspace), workspace.get("output"))
     elif op == "layer-to-space":
         window = layer_window(arg, workspace, windows)
         command("action", "move-window-to-tiling", "--id", window["id"])
@@ -748,6 +748,44 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
         command("action", "set-window-width", "--id", window["id"], "100%")
         command("action", "reset-window-height", "--id", window["id"])
         command("action", "focus-window", "--id", window["id"])
+    elif op == "layer-to-group":
+        layer = layer_window(arg, workspace, windows)
+        command("action", "focus-tiling")
+        ws, live = snapshot()
+        beneath = next((space for space in display_spaces(ws, live, groups, pins) if space["active"]), None)
+        if not beneath or not beneath.get("group_id"):
+            command("action", "focus-window", "--id", layer["id"])
+            raise ValueError("The space beneath this Layer is not a Group")
+        group, found = live_group(groups, beneath["group_id"], ws, live, socket)
+        app = layer.get("app_id")
+        problem = (f"Groups can have up to {MAX_MEMBERS} apps" if len(group["members"]) >= MAX_MEMBERS
+                   else "That app belongs to another Group or pin" if not app or app in pinned_apps(pins)
+                   or any(app in g["members"] for g in groups) else "")
+        if problem:
+            command("action", "focus-window", "--id", layer["id"])
+            raise ValueError(problem)
+        shares = group_store.ratios(group)
+        # Tiled after the Group's last column, the Layer is the neighbor that add-to-group takes in.
+        command("action", "focus-window", "--id", found[-1]["id"])
+        command("action", "focus-window", "--id", layer["id"])
+        command("action", "move-window-to-tiling", "--id", layer["id"])
+        command("action", "set-window-width", "--id", layer["id"], "100%")
+        command("action", "reset-window-height", "--id", layer["id"])
+        ws, live = snapshot()
+        try:
+            run(pins, "add-to-group", group["id"], ws, live, socket, groups, display)
+        except ValueError as exc:
+            raise ValueError(f"The Layer is now a space after the Group but did not join it: {exc}") from exc
+        if group.get("layout") == "side-by-side":
+            # The new app takes an equal share; the others keep their proportions to each other.
+            n = len(shares) + 1
+            group_store.set_ratios(group, [r * (n - 1) / n for r in shares] + [1 / n])
+            ws, live = snapshot()
+            members = group_members(group, live)
+            for member, ratio in zip(members, group_store.ratios(group)):
+                if member:
+                    command("action", "set-window-width", "--id", member["id"], f"{round(ratio * 100, 2)}%")
+        command("action", "focus-window", "--id", layer["id"])
     elif op == "close-layer":
         window = layer_window(arg, workspace, windows)
         command("action", "close-window", "--id", window["id"])
@@ -932,7 +970,8 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
     if op not in ("focus", "focus-window", "focus-member", "navigate", "stack", "unstack", "group-view", "create-group",
                   "dissolve-group", "open-group-member", "rejoin-group", "add-to-group", "remove-from-group",
                   "member-left", "member-right", "adopt-group-order", "member-wider", "member-narrower",
-                  "make-layer", "open-layer", "layer-to-space", "close-layer", "choose-member"):
+                  "make-layer", "open-layer", "layer-to-space", "close-layer", "choose-member",
+                  "layer-to-group"):
         reconcile(here, workspace, windows, socket, groups)
     return [describe(p) for p in here]
 
@@ -984,13 +1023,43 @@ def layer_output(workspace):
     return size if all(isinstance(v, int) and v > 0 for v in size) else None
 
 
-def float_as_layer(window_id, size=None):
-    """Lift one window out of the strip; the columns around it close up and keep their sizes.
+def orientation_memory():
+    """Each output's last seen orientation, kept beside Flow's state so Layers reshape only on a change."""
+    return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "flow" / "layer-orientation.json"
 
-    In landscape the Layer is a compact centered window; in portrait it is a bottom sheet across
-    the output, leaving the top of the space in view.
-    """
+
+def remember_orientation(output, size):
+    """Record an output's orientation; return the one recorded before, or None."""
+    path = orientation_memory()
+    if not path or not output or not size:
+        return None
+    try:
+        memory = json.loads(path.read_text()) if path.exists() else {}
+        memory = memory if isinstance(memory, dict) else {}
+    except (OSError, ValueError):
+        memory = {}
+    current = "portrait" if size[1] > size[0] else "landscape"
+    previous = memory.get(output)
+    if previous != current:
+        memory[output] = current
+        try:
+            path.write_text(json.dumps(memory))
+        except OSError:
+            pass
+    return previous
+
+
+def float_as_layer(window_id, size=None, output=None):
+    """Lift one window out of the strip; the columns around it close up and keep their sizes."""
     command("action", "move-window-to-floating", "--id", window_id)
+    remember_orientation(output, size)
+    shape_layer(window_id, size)
+    command("action", "focus-window", "--id", window_id)
+
+
+def shape_layer(window_id, size):
+    """In landscape a Layer is a compact centered window; in portrait a bottom sheet across the output,
+    leaving the top of the space in view."""
     if size and size[1] > size[0]:
         command("action", "set-window-width", "--id", window_id, "100%")
         command("action", "set-window-height", "--id", window_id, f"{round(SHEET_HEIGHT * 100)}%")
@@ -1015,7 +1084,6 @@ def float_as_layer(window_id, size=None):
             if current is None or current != initial or abs(current - expected) <= 16:
                 break
         command("action", "center-window", "--id", window_id)
-    command("action", "focus-window", "--id", window_id)
 
 
 def layer_window(arg, workspace, windows):
@@ -1632,6 +1700,18 @@ def _run_locked(state):
                                         allow_unfocused=True)
                     workspace, windows = snapshot()
                     before_groups = json.dumps(groups, sort_keys=True)
+            open_layers = layers(workspace, windows)
+            if open_layers:
+                size = layer_output(workspace)
+                previous = remember_orientation(workspace.get("output"), size)
+                current = size and ("portrait" if size[1] > size[0] else "landscape")
+                if previous and current and previous != current:
+                    # The output rotated: Layers take the new orientation's shape; focus stays where it was.
+                    for layer in open_layers:
+                        shape_layer(layer["id"], size)
+                    if workspace.get("active_window_id"):
+                        command("action", "focus-window", "--id", workspace["active_window_id"])
+                    workspace, windows = snapshot()
             result = run(pins, "refresh", None, workspace, windows, socket, groups, display)
         elif op in ("group-layout", "resume-group-layout"):
             if op == "group-layout":
@@ -1647,7 +1727,7 @@ def _run_locked(state):
             result = run(pins, op, arg, workspace, windows, socket, groups, display)
         if op in ("dissolve-group", "open-group-member", "rejoin-group", "add-to-group", "remove-from-group",
                   "member-left", "member-right", "member-wider", "member-narrower",
-                  "make-layer", "open-layer", "layer-to-space", "close-layer"):
+                  "make-layer", "open-layer", "layer-to-space", "close-layer", "layer-to-group"):
             workspace, windows = snapshot()
         # Groups recognized here are bound to their windows, so other windows of their apps stay apart.
         for space in display_spaces(workspace, windows, groups, pins):
