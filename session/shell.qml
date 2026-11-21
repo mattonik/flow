@@ -508,6 +508,7 @@ ShellRoot {
         // Read-only, for scripted checks of shell feedback.
         function toast(): string { return root.toast }
         function spaces_error(): string { return root.spacesError }
+        function desk_state(): string { return root.deskOpen ? "open" : "closed" }
         function menu(): void {
             if (menuPreferences.appMenuEnabled && root.appMenu && !root.deskOpen && !root.overviewOpen) {
                 if (root.appMenuOpen) root.appMenuOpen = false
@@ -535,6 +536,10 @@ ShellRoot {
         }
         function display_digit(digit: int): void { if (digit > 0 && digit <= 9) root.displayDigit(digit) }
         function toggle(): void { root.toggleDesk() }
+        // Show-only requests (the Platform API's System interface): never close what is already open.
+        function desk_open(): void { if (!root.deskOpen) root.toggleDesk() }
+        function overview_open(): void { root.showOverview("open-overview") }
+        function apps_open(): void { if (!root.launcherActive && !appsLauncher.running && !searchLauncher.running) root.openApps() }
         function leave(): void { root.deskOpen = false }
         function switcher(): void { root.toggleSwitcher() }
         function overview(): void {

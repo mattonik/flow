@@ -52,9 +52,10 @@ def wait_for(test, label, timeout=15):
 
 def main():
     python = os.environ.get("FLOW_GI_PYTHON")
+    shell = os.environ.get("FLOW_SHELL")
     bus = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "")
-    if not python or "unix:" not in bus:
-        raise RuntimeError("Run under dbus-run-session with FLOW_GI_PYTHON set")
+    if not python or not shell or "unix:" not in bus:
+        raise RuntimeError("Run under dbus-run-session with FLOW_GI_PYTHON and FLOW_SHELL set")
     workspace = focus()
     real_state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "flow"
     real_files = [real_state / name for name in ("spaces.json", "groups.json", "session.json")]
@@ -63,13 +64,13 @@ def main():
         raise RuntimeError("The focused output's active workspace must be empty")
     token = uuid.uuid4().hex[:8]
     apps = {s: f"flow-api-{token}-{s}" for s in "abc"}
-    processes, steps, result, service = [], [], None, None
+    processes, steps, result, service, shell_process = [], [], None, None, None
 
     def window(suffix):
         return next(w for w in read("windows") if w.get("app_id") == apps[suffix])
 
     with tempfile.TemporaryDirectory(prefix="flow-api-") as tmp:
-        env = dict(os.environ, XDG_STATE_HOME=tmp, PYTHONPATH=str(CODE))
+        env = dict(os.environ, XDG_STATE_HOME=tmp, PYTHONPATH=str(CODE), FLOW_SHELL_CONFIG=shell)
 
         def flow(*args, check=True):
             process = subprocess.run([python, str(CODE / "flow_cli.py"), *args], env=env, text=True,
@@ -95,8 +96,9 @@ def main():
             wait_for(lambda: NAME in busctl("list", "--no-pager").stdout, "the API service on the bus")
 
             version = json.loads(flow("version").stdout)
-            if version != {"version": "1.0", "features": ["spaces.list", "spaces.focus", "spaces.changed",
-                                                          "control.spaces"]}:
+            if version != {"version": "1.1", "features": ["spaces.list", "spaces.focus", "spaces.changed",
+                                                          "control.spaces", "control.pin", "control.reorder",
+                                                          "system.ui"]}:
                 raise RuntimeError(f"Unexpected capabilities: {version}")
             steps.append(f"capabilities negotiated: {version}")
 
@@ -168,6 +170,60 @@ def main():
                 raise RuntimeError(f"No spaces-changed event after a focus change: {line!r}")
             steps.append("flow events watch reported a spaces-changed event after focus moved")
 
+            # API 1.1: Control pins, reorders and unpins; System opens shell UI without closing it.
+            def listed_now():
+                return {(s["apps"] or ["?"])[0]: s for s in json.loads(flow("spaces", "list").stdout)}
+
+            niri("action", "focus-window", "--id", window("a")["id"])
+            flow("spaces", "pin", b_id)
+            now = listed_now()
+            b_pin = now[apps["b"]]["id"]
+            if not now[apps["b"]]["pinned"] or not b_pin.startswith("pin:") or focus()["active_window_id"] != window("a")["id"]:
+                raise RuntimeError(f"Pinning b through Control failed or kept focus on b: {now}")
+            flow("spaces", "move", b_pin, "left")
+            if [s["apps"][0] for s in sorted(listed_now().values(), key=lambda s: s["position"]) if s["pinned"]] \
+                    != [apps["b"], apps["a"]]:
+                raise RuntimeError("Moving b's pin left did not reorder the pins")
+            flow("spaces", "unpin", b_pin)
+            again = flow("spaces", "unpin", b_pin, check=False)
+            if listed_now()[apps["b"]]["pinned"] or json.loads(again.stderr)["error"] != "NotFound":
+                raise RuntimeError("Unpinning b failed, or unpinning twice was not NotFound")
+            steps.append("Control pinned b with focus kept on a, moved its pin before a, and unpinned it")
+
+            shell_process = subprocess.Popen(["quickshell", "-p", shell], env=env, stdin=subprocess.DEVNULL,
+                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            def desk():
+                try:
+                    return subprocess.run(["quickshell", "ipc", "-p", shell, "call", "desk", "desk_state"], text=True,
+                                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10).stdout.strip()
+                except subprocess.SubprocessError:
+                    return ""
+
+            wait_for(lambda: desk() == "closed", "the development shell", timeout=20)
+            flow("desk", "show")
+            wait_for(lambda: desk() == "open", "Desk opened through System")
+            flow("desk", "show")
+            time.sleep(0.5)
+            if desk() != "open":
+                raise RuntimeError("A second ShowDesk closed Desk")
+            subprocess.run(["quickshell", "ipc", "-p", shell, "call", "desk", "leave"], timeout=10)
+            wait_for(lambda: desk() == "closed", "Desk closed again")
+            steps.append("System ShowDesk opened Desk, and asking again left it open")
+
+            def overview():
+                return json.loads(niri("-j", "overview-state"))["is_open"]
+
+            flow("overview", "show")
+            wait_for(overview, "Niri's overview opened through System")
+            flow("overview", "show")
+            time.sleep(0.5)
+            if not overview():
+                raise RuntimeError("A second ShowOverview closed the overview")
+            niri("action", "close-overview")
+            wait_for(lambda: not overview(), "the overview closed again")
+            steps.append("System ShowOverview opened Niri's overview, and asking again left it open")
+
             burst = ("from gi.repository import Gio, GLib\n"
                      "bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)\n"
                      "limited = 0\n"
@@ -198,6 +254,13 @@ def main():
             if service and service.poll() is None:
                 service.terminate()
                 service.wait(timeout=5)
+            try:
+                niri("action", "close-overview")
+            except (OSError, subprocess.SubprocessError):
+                pass
+            if shell_process and shell_process.poll() is None:
+                shell_process.terminate()
+                shell_process.wait(timeout=5)
             for process in processes:
                 if process.poll() is None:
                     process.terminate()

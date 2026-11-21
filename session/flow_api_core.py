@@ -11,8 +11,10 @@ from pathlib import Path
 import time
 
 NAME = "io.github.mattonik.Flow1"
-VERSION = (1, 0)
-FEATURES = ("spaces.list", "spaces.focus", "spaces.changed", "control.spaces")
+VERSION = (1, 1)
+FEATURES = ("spaces.list", "spaces.focus", "spaces.changed", "control.spaces", "control.pin", "control.reorder",
+            "system.ui")
+UI = {"desk": "desk_open", "overview": "overview_open", "launcher": "apps_open"}  # System requests → shell IPC
 RATE = (20, 10.0)  # calls per caller within this many seconds
 
 
@@ -169,6 +171,60 @@ def focus_target(identity, space_id, spaces, windows, control):
     return "focus-window", str(space["window_ids"][0])
 
 
+def control_space(identity, space_id, spaces):
+    """A space for a Control action; sandboxed callers never get here."""
+    if identity["sandboxed"]:
+        raise ApiError("NotAuthorized", "Sandboxed apps may only use their own spaces")
+    space = next((s for s in spaces if s["id"] == space_id), None)
+    if not space:
+        raise ApiError("NotFound", "No such space")
+    return space
+
+
+def pin_steps(identity, space_id, spaces, windows):
+    """flow-spaces steps that pin a space and then give focus back to the window that had it."""
+    space = control_space(identity, space_id, spaces)
+    if space["pinned"]:
+        raise ApiError("InvalidState", "This space is already pinned")
+    if space_id.startswith("group:"):
+        return [("pin-group", space_id[6:])]
+    if not space["window_ids"]:
+        raise ApiError("AppNotRunning", "The space has no open window")
+    focused = next((w["id"] for w in windows.values() if w.get("focused")), None)
+    # flow-spaces pins the focused window, so this space is focused for the moment of pinning.
+    steps = [("focus-window", str(space["window_ids"][0])), ("pin", None)]
+    if focused is not None and focused not in space["window_ids"]:
+        steps.append(("focus-window", str(focused)))
+    return steps
+
+
+def unpin_steps(identity, space_id, spaces):
+    space = control_space(identity, space_id, spaces)
+    if not space["pinned"]:
+        raise ApiError("InvalidState", "This space is not pinned")
+    return [("unpin", space_id[4:])]
+
+
+def move_steps(identity, space_id, direction, spaces):
+    space = control_space(identity, space_id, spaces)
+    if direction not in ("left", "right"):
+        raise ApiError("InvalidArgs", "Move a pinned space left or right")
+    if not space["pinned"]:
+        raise ApiError("InvalidState", "Only pinned spaces have an order to change")
+    return [(direction, space_id[4:])]
+
+
+def ui_request(identity, what, windows):
+    """The shell IPC call for a System request. Apps may ask for system UI only while they have focus."""
+    if what not in UI:
+        raise ApiError("InvalidArgs", "Ask for the desk, the overview or the launcher")
+    if identity["sandboxed"]:
+        focused = next((w for w in windows.values() if w.get("focused")), None)
+        if not own_window(identity, focused):
+            raise ApiError("NotAuthorized", "An app may ask for system UI only while one of its own windows has focus")
+    return UI[what]
+
+
 def error_from(message):
     """Map a flow-spaces error message to an API error kind."""
     text = message.lower()
@@ -178,6 +234,8 @@ def error_from(message):
         return ApiError("NotFound", message)
     if "unavailable" in text or "no matching installed" in text:
         return ApiError("AppNotRunning", message)
+    if "already pinned" in text or "before reordering" in text or "already belongs" in text:
+        return ApiError("InvalidState", message)
     return ApiError("Failed", message)
 
 

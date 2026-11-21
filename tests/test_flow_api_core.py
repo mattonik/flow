@@ -105,7 +105,7 @@ class CoreTest(unittest.TestCase):
         self.assertEqual([(s["id"], s["label"], s["apps"]) for s in shown],
                          [("group:g", "org.example.Paint", ["org.example.Paint"])])
         self.assertNotIn("MyBank", json.dumps([core.public(s) for s in shown]))
-        self.assertEqual(core.capabilities(paint), (1, 0, ["spaces.list", "spaces.focus", "spaces.changed"]))
+        self.assertEqual(core.capabilities(paint), (1, 1, ["spaces.list", "spaces.focus", "spaces.changed", "system.ui"]))
 
     def test_an_app_moves_focus_only_while_it_has_focus(self):
         self.proc.process(500, 1, flatpak="[Application]\nname=org.example.Paint\n")
@@ -153,9 +153,62 @@ class CoreTest(unittest.TestCase):
                 core.caller(pid, self.proc.root)
             self.assertEqual(raised.exception.kind, "NotAuthorized")
 
+    def run_steps(self, steps):
+        for action, target in steps:
+            with patch.object(sys, "argv", ["flow-spaces", action] + ([target] if target is not None else [])), \
+                 patch.object(spaces, "snapshot", side_effect=self.niri.snapshot), \
+                 patch.object(spaces, "display_state", side_effect=self.niri.display_state), \
+                 patch.object(spaces, "session_id", return_value="session"), \
+                 patch.object(spaces, "command", side_effect=self.niri), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                spaces.run_locked(self.state)
+
+    def test_control_pins_a_space_and_gives_focus_back(self):
+        self.proc.process(900, 1)
+        tool = core.caller(900, self.proc.root)
+        terminal = core.opaque("session", 4)
+        steps = core.pin_steps(tool, terminal, self.spaces, self.windows)
+        self.assertEqual(steps, [("focus-window", "4"), ("pin", None), ("focus-window", "1")])
+        self.run_steps(steps)
+        self.spaces, self.windows = core.project(self.observe(), "session")
+        self.assertEqual([s["label"] for s in self.spaces if s["pinned"] and s["display"] == "Main"],
+                         ["Mail", "org.example.Term"])
+        self.assertEqual(self.niri.active["eDP-1"], 1)
+        pinned = next(s["id"] for s in self.spaces if s["label"] == "org.example.Term")
+        self.assertEqual(core.move_steps(tool, pinned, "left", self.spaces), [("left", pinned[4:])])
+        self.assertEqual(core.unpin_steps(tool, pinned, self.spaces), [("unpin", pinned[4:])])
+        self.assertEqual(core.pin_steps(tool, "group:g", self.spaces, self.windows), [("pin-group", "g")])
+        for call, kind in ((lambda: core.pin_steps(tool, "pin:m", self.spaces, self.windows), "InvalidState"),
+                           (lambda: core.unpin_steps(tool, "group:g", self.spaces), "InvalidState"),
+                           (lambda: core.move_steps(tool, "pin:m", "up", self.spaces), "InvalidArgs"),
+                           (lambda: core.move_steps(tool, "pin:nope", "left", self.spaces), "NotFound")):
+            with self.subTest(kind=kind), self.assertRaises(core.ApiError) as raised:
+                call()
+            self.assertEqual(raised.exception.kind, kind)
+
+    def test_sandboxed_apps_cannot_pin_and_ask_for_system_ui_only_with_focus(self):
+        self.proc.process(500, 1, flatpak="[Application]\nname=org.example.Paint\n")
+        paint = core.caller(500, self.proc.root)
+        with self.assertRaises(core.ApiError) as raised:
+            core.pin_steps(paint, "group:g", self.spaces, self.windows)
+        self.assertEqual(raised.exception.kind, "NotAuthorized")
+        with self.assertRaises(core.ApiError) as raised:
+            core.ui_request(paint, "overview", self.windows)
+        self.assertEqual(raised.exception.kind, "NotAuthorized")
+        self.niri("action", "focus-window", "--id", 2)
+        self.spaces, self.windows = core.project(self.observe(), "session")
+        self.assertEqual(core.ui_request(paint, "overview", self.windows), "overview_open")
+        self.proc.process(900, 1)
+        self.assertEqual(core.ui_request(core.caller(900, self.proc.root), "desk", self.windows), "desk_open")
+        with self.assertRaises(core.ApiError) as raised:
+            core.ui_request(paint, "settings", self.windows)
+        self.assertEqual(raised.exception.kind, "InvalidArgs")
+
     def test_flow_spaces_errors_map_to_structured_kinds(self):
         cases = {"External 1 is not connected": "DisplayUnavailable", "Pinned space no longer exists": "NotFound",
-                 "This pinned app is unavailable or ambiguous": "AppNotRunning", "Workspace changed": "Failed"}
+                 "This pinned app is unavailable or ambiguous": "AppNotRunning", "Workspace changed": "Failed",
+                 "Move this pin to this display before reordering it": "InvalidState",
+                 "This app is already pinned": "InvalidState"}
         self.assertEqual({m: core.error_from(m).kind for m in cases}, cases)
 
     def test_a_flatpak_app_is_rate_limited_across_its_connections(self):

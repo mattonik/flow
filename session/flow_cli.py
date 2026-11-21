@@ -4,6 +4,8 @@
     flow version
     flow spaces list [--mine]
     flow spaces focus ID [--mine]
+    flow spaces pin ID | unpin ID | move ID left|right
+    flow desk show | overview show | launcher show
     flow events watch
 
 Without --mine it uses the Control interface (every space; unsandboxed callers only). With --mine it
@@ -36,6 +38,14 @@ def main(argv):
         print(json.dumps(spaces, indent=1))
     elif len(args) == 3 and args[:2] == ["spaces", "focus"]:
         call(bus, interface, "FocusSpace", GLib.Variant("(s)", (args[2],)))
+    elif len(args) == 3 and args[:2] == ["spaces", "pin"]:
+        call(bus, "Control", "PinSpace", GLib.Variant("(s)", (args[2],)))
+    elif len(args) == 3 and args[:2] == ["spaces", "unpin"]:
+        call(bus, "Control", "UnpinSpace", GLib.Variant("(s)", (args[2],)))
+    elif len(args) == 4 and args[:2] == ["spaces", "move"]:
+        call(bus, "Control", "MoveSpace", GLib.Variant("(ss)", (args[2], args[3])))
+    elif len(args) == 2 and args[0] in ("desk", "overview", "launcher") and args[1] == "show":
+        call(bus, "System", {"desk": "ShowDesk", "overview": "ShowOverview", "launcher": "ShowLauncher"}[args[0]])
     elif args == ["events", "watch"]:
         loop = GLib.MainLoop()
 
