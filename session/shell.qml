@@ -54,6 +54,8 @@ ShellRoot {
     }
     Timer { interval: 4000; running: root.quickSettingsOpen; repeat: true; triggeredOnStart: true; onTriggered: if (!networkStatusProcess.running) networkStatusProcess.running = true }
     function toggleNotifications() {
+        overviewPending = false
+        spacesOverviewOpen = false   // one surface at a time
         if (!notificationsOpen) {
             quickSettingsOpen = false; appMenuOpen = false; openMenuWhenReady = false
             switcherOpen = false
@@ -62,6 +64,8 @@ ShellRoot {
         notificationsOpen = !notificationsOpen
     }
     function toggleQuickSettings() {
+        overviewPending = false
+        spacesOverviewOpen = false   // one surface at a time
         notificationsOpen = false
         if (!quickSettingsOpen) {
             appMenuOpen = false
@@ -90,7 +94,7 @@ ShellRoot {
     property string appMenuError: ""
     property bool openMenuWhenReady: false
     function requestAppMenu() {
-        if (!menuPreferences.appMenuEnabled || root.deskOpen || root.overviewOpen || appMenuProcess.running) return
+        if (!menuPreferences.appMenuEnabled || root.deskOpen || root.overviewOpen || root.spacesOverviewOpen || root.searchOpen || appMenuProcess.running) return
         root.switcherOpen = false
         root.quickSettingsOpen = false
         root.openMenuWhenReady = true
@@ -174,7 +178,7 @@ ShellRoot {
                     }
                     if (event.OverviewOpenedOrClosed) {
                         root.overviewOpen = event.OverviewOpenedOrClosed.is_open
-                        if (root.overviewOpen) { root.deskOpen = false; root.notificationsOpen = false; root.appMenuOpen = false; root.openMenuWhenReady = false; root.switcherOpen = false; root.quickSettingsOpen = false }
+                        if (root.overviewOpen) { root.deskOpen = false; root.spacesOverviewOpen = false; root.overviewPending = false; root.searchOpen = false; root.notificationsOpen = false; root.appMenuOpen = false; root.openMenuWhenReady = false; root.switcherOpen = false; root.quickSettingsOpen = false }
                     }
                 } catch (e) {}
             }
@@ -257,9 +261,16 @@ ShellRoot {
             showToast((member.app_name || member.label).slice(0, 40) + " is now focused" + (menuPreferences.appMenuEnabled ? " · menus updated" : ""))
         lastFocusedGroup = member ? space.group_id : ""
         lastFocusedMember = member ? member.id : null
+        // Overview's snapshot of this space once it has settled; a refresh hands over a new object
+        // for the same space (a title changes), which is not a move.
+        if (space && String(space.id) !== settledSpaceId) { settledSpaceId = String(space.id); snapshotSettle.restart() }
     }
     property string spacesError: ""
     property var pendingSpaceActions: []
+    // An action of the user's, not the background refresh. Controls stay enabled through a refresh: one that
+    // turned disabled would drop keyboard focus, and the periodic refresh runs every 30 s. Space actions queue
+    // behind it, and flow-recovery waits for flow-spaces on spaces.lock.
+    readonly property bool spacesWorking: spacesProcess.running && spacesProcess.command[1] !== "refresh"
     function renameGroup(id, label) {
         if (recoveryProcess.running || spacesProcess.running || pendingSpaceActions.length) { spacesError = "Wait for the current action"; return }
         recoveryProcess.command = ["flow-recovery", "rename-group", id, label]
@@ -293,7 +304,11 @@ ShellRoot {
                     const result = JSON.parse(this.text)
                     if (result.error) {
                         root.spacesError = result.error
-                        if (spacesProcess.command[1] !== "refresh" && spacesProcess.command[1] !== "auto-layout" && !root.switcherOpen) root.deskOpen = true
+                        if (spacesProcess.command[1] !== "refresh" && spacesProcess.command[1] !== "auto-layout" && !root.switcherOpen) {
+                            // Over Overview or search the error is a toast; elsewhere Desk shows it.
+                            if (root.spacesOverviewOpen || root.searchOpen) root.showToast(result.error)
+                            else root.deskOpen = true
+                        }
                     } else {
                         if (JSON.stringify(root.windows) !== JSON.stringify(result.windows)) root.windows = result.windows
                         if (JSON.stringify(root.displaySpaces) !== JSON.stringify(result.spaces)) root.displaySpaces = result.spaces
@@ -308,7 +323,7 @@ ShellRoot {
                         if (result.action !== "refresh") root.spacesError = ""
                         if (result.notice) root.showToast(result.notice)
                         if (["focus", "focus-number", "focus-window", "move-to-display"].includes(result.action)) { root.deskOpen = false; root.switcherOpen = false }
-                        else if (result.action === "pin") root.deskOpen = true
+                        else if (result.action === "pin" && !root.spacesOverviewOpen) root.deskOpen = true
                     }
                 } catch (e) { root.spacesError = "Could not read pinned spaces" }
             }
@@ -371,9 +386,11 @@ ShellRoot {
     Timer {
         interval: 2000; repeat: true
         running: root.displaySpaces.some(space => space.auto_layout) || root.layers.some(layer => layer.shaped)
-        onTriggered: if (!root.deskOpen && !root.switcherOpen && !root.overviewOpen && !root.launcherActive && !root.appMenuOpen && !root.quickSettingsOpen && !root.notificationsOpen && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length) root.spaceAction("auto-layout")
+        onTriggered: if (!root.deskOpen && !root.switcherOpen && !root.overviewOpen && !root.spacesOverviewOpen && !root.searchOpen && !root.appMenuOpen && !root.quickSettingsOpen && !root.notificationsOpen && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length) root.spaceAction("auto-layout")
     }
     function toggleDesk() {
+        overviewPending = false
+        spacesOverviewOpen = false   // one surface at a time
         notificationsOpen = false
         quickSettingsOpen = false
         switcherOpen = false
@@ -384,43 +401,23 @@ ShellRoot {
         if (deskOpen) spaceAction("refresh")
     }
 
-    property bool launcherActive: false
-    Process { id: appsLauncher; command: ["flow-apps"]; onExited: launcherDismissDelay.restart() }
-    Process { id: searchLauncher; command: ["flow-search"]; onExited: launcherDismissDelay.restart() }
-    // shortcut: retain the open state for 500ms after exit to handle Island clicks; replace with lifecycle IPC if needed.
-    Timer { id: launcherDismissDelay; interval: 500; onTriggered: if (!appsLauncher.running && !searchLauncher.running) root.launcherActive = false }
-    function closeLauncher() {
-        launcherDismissDelay.stop()
-        launcherActive = false
-        if (appsLauncher.running) appsLauncher.running = false
-        if (searchLauncher.running) searchLauncher.running = false
-    }
+    // The search panel is the launcher; closeLauncher remains the name its callers know.
+    function closeLauncher() { closeSearch() }
     function openSearch() {
-        if (launcherActive || appsLauncher.running || searchLauncher.running) { closeLauncher(); return }
-        notificationsOpen = false
-        quickSettingsOpen = false
-        openMenuWhenReady = false
-        appMenuOpen = false
-        deskOpen = false
-        switcherOpen = false
-        launcherActive = true
-        searchLauncher.running = true
+        if (searchOpen) { closeSearch(); return }
+        openSearchPanel(false)
     }
 
-    function launcherBusy() { return launcherActive || appsLauncher.running || searchLauncher.running || launcherDismissDelay.running }
+    function launcherBusy() { return searchOpen }
     function otherSurfaceOpen() { return switcherOpen || quickSettingsOpen || notificationsOpen || appMenuOpen }
     function openApps() {
-        if (launcherActive || appsLauncher.running || searchLauncher.running) { closeLauncher(); return }
-        notificationsOpen = false
-        quickSettingsOpen = false
-        openMenuWhenReady = false
-        appMenuOpen = false
-        switcherOpen = false
-        launcherActive = true
-        appsLauncher.running = true
+        if (searchOpen) { closeSearch(); return }
+        openSearchPanel(true)
     }
 
     function toggleSwitcher() {
+        overviewPending = false
+        spacesOverviewOpen = false   // one surface at a time
         notificationsOpen = false
         quickSettingsOpen = false
         if (switcherOpen) { switcherOpen = false; return }
@@ -432,11 +429,195 @@ ShellRoot {
         spaceAction("refresh")
     }
 
+    // Niri's live Overview: real windows, zoomed out. It stays a button in the Spaces switcher.
     function showOverview(action = "open-overview") {
+        overviewPending = false
         closeLauncher()
         deskOpen = false
         switcherOpen = false
+        spacesOverviewOpen = false
         Quickshell.execDetached(["niri", "msg", "action", action])
+    }
+
+    // Flow's Overview, as in the prototype: this display's spaces in one row. Niri offers no capture of
+    // a single window, but a space fills its display while it is focused, so each card shows the
+    // snapshot taken the last time its space was on screen, the way a phone's app switcher does.
+    // Snapshots are taken by grim (wlr-screencopy) into the session's runtime directory: Qt's own
+    // grabToImage crashed Quickshell 0.3.2 on Niri, and Niri's screenshot action fills the clipboard.
+    property bool spacesOverviewOpen: false
+    // Opening waits for a fresh snapshot; any other surface opening meanwhile cancels it.
+    property bool overviewPending: false
+    // The selection is a space, not a position: refreshes replace the list (a title changes, a window
+    // opens) and the selection must stay on the same space.
+    property string overviewSpaceId: ""
+    readonly property int overviewIndex: {
+        const found = displaySpaces.findIndex(space => String(space.id) === overviewSpaceId)
+        return found >= 0 ? found : Math.max(0, Math.min(displaySpaces.length - 1, activeSpaceIndex))
+    }
+    property var spaceSnapshots: ({})   // space id -> version of its snapshot file
+    // Snapshots are screen contents: only in the session's private runtime directory, never /tmp.
+    readonly property string snapshotDir: Quickshell.env("XDG_RUNTIME_DIR") ? Quickshell.env("XDG_RUNTIME_DIR") + "/flow-snapshots" : ""
+    function snapshotUrl(space) {
+        const version = space ? spaceSnapshots[String(space.id)] : 0
+        return version ? "file://" + snapshotDir + "/" + space.id + ".jpg?v=" + version : ""
+    }
+    readonly property var overviewSpace: displaySpaces[overviewIndex] || null
+    function pinOfSpace(space) {
+        return space ? pins.find(pin => (pin.window_ids || []).some(id => space.members.some(m => m.id === id))) || null : null
+    }
+    function openSpacesOverview() {
+        // Only the plain work view shows the space itself; from Desk or a panel the screen shows them instead.
+        const plain = workViewOnly
+        notificationsOpen = false
+        quickSettingsOpen = false
+        switcherOpen = false
+        appMenuOpen = false
+        openMenuWhenReady = false
+        closeLauncher()
+        closeSearch()
+        if (overviewOpen) Quickshell.execDetached(["niri", "msg", "action", "close-overview"])
+        deskOpen = false
+        overviewPending = true
+        const show = () => {
+            // Desk, search or another panel opened meanwhile: they win, Overview does not stack on them.
+            if (!overviewPending || deskOpen || searchOpen || switcherOpen || quickSettingsOpen
+                || notificationsOpen || appMenuOpen || overviewOpen) { overviewPending = false; return }
+            overviewPending = false
+            overviewSpaceId = activeSpace ? String(activeSpace.id) : ""
+            spacesOverviewOpen = true
+        }
+        // The space on screen now is the freshest: snapshot it, then show the row. Not while a move is
+        // still settling, which would catch the scroll halfway under the old space's name.
+        if (plain && !snapshotSettle.running) snapshotActiveSpace(show)
+        else show()
+    }
+    function closeSpacesOverview() { overviewPending = false; spacesOverviewOpen = false }
+    function selectOverview(index) {
+        const space = displaySpaces[Math.max(0, Math.min(displaySpaces.length - 1, index))]
+        if (space) overviewSpaceId = String(space.id)
+    }
+    function moveOverview(step) { selectOverview(overviewIndex + step) }
+    function chooseOverviewSpace(index) {
+        const space = displaySpaces[index]
+        closeSpacesOverview()
+        if (space && !space.active) spaceAction("focus-window", String(space.id))
+    }
+    // "Again to reveal your desk": the same gesture or key that opened Overview goes one level further.
+    function revealDeskFromOverview() {
+        closeSpacesOverview()
+        if (!deskOpen) toggleDesk()
+    }
+    function toggleSpacesOverview() {
+        if (overviewPending) return
+        if (spacesOverviewOpen) revealDeskFromOverview()
+        else if (deskOpen) toggleDesk()
+        else openSpacesOverview()
+    }
+
+    // Snapshots: only in the plain work view, after a space has settled, never of the shell's own surfaces.
+    property string settledSpaceId: ""
+    readonly property bool workViewOnly: !deskOpen && !switcherOpen && !spacesOverviewOpen && !overviewOpen
+        && !searchOpen && !appMenuOpen && !quickSettingsOpen && !notificationsOpen
+    Timer { id: snapshotSettle; interval: 700; onTriggered: if (root.workViewOnly) root.snapshotActiveSpace(null) }
+    Component.onDestruction: if (snapshotDir) Quickshell.execDetached(["rm", "-rf", "--", snapshotDir])
+    function snapshotActiveSpace(done) {
+        const space = activeSpace
+        const screen = workIsland.screen
+        if (!space || !workViewOnly || !screen || !snapshotDir || snapshotProcess.running) { if (done) done(); return }
+        snapshotProcess.key = String(space.id)
+        snapshotProcess.done = done
+        // About 640 px wide whatever the display; written whole, then renamed, so a card never shows half.
+        snapshotProcess.command = ["sh", "-c", 'mkdir -p -m 700 "$1" && grim -o "$2" -s "$3" -t jpeg -q 72 "$1/$4.tmp" && mv -f "$1/$4.tmp" "$1/$4.jpg"',
+            "sh", root.snapshotDir, screen.name, String(Math.min(1, 640 / Math.max(1, screen.width))), snapshotProcess.key]
+        snapshotProcess.running = true
+    }
+    Process {
+        id: snapshotProcess
+        property string key: ""
+        property var done: null
+        onExited: code => {
+            const done = snapshotProcess.done
+            snapshotProcess.done = null
+            if (code === 0) {
+                const next = {}, gone = []
+                // Keep only spaces that still exist; the others' pictures are deleted.
+                for (const id in root.spaceSnapshots)
+                    if (root.displaySpaces.some(space => String(space.id) === id)) next[id] = root.spaceSnapshots[id]
+                    else gone.push(root.snapshotDir + "/" + id + ".jpg")
+                next[snapshotProcess.key] = (root.spaceSnapshots[snapshotProcess.key] || 0) + 1
+                root.spaceSnapshots = next
+                if (gone.length) Quickshell.execDetached(["rm", "-f", "--"].concat(gone))
+            }
+            if (done) done()
+        }
+    }
+
+    // Flow's search, as in the prototype: one palette for apps, spaces, windows, files and settings.
+    // search.py --json lists the results; the shell filters them as you type and runs the chosen one.
+    property bool searchOpen: false
+    property bool searchAppsOnly: false
+    property var searchResults: []
+    property string searchQuery: ""
+    property int searchIndex: 0
+    readonly property var searchMatches: {
+        const query = searchQuery.trim().toLowerCase()
+        const pool = searchAppsOnly ? searchResults.filter(r => r.kind === "app") : searchResults
+        if (!query) return pool.slice(0, 60)
+        const scored = []
+        for (const result of pool) {
+            const title = result.title.toLowerCase(), detail = result.detail.toLowerCase()
+            const words = title.split(/[\s·:/._-]+/)
+            const score = title.startsWith(query) ? 0 : words.some(w => w.startsWith(query)) ? 1
+                : title.includes(query) ? 2 : detail.includes(query) ? 3 : -1
+            if (score >= 0) scored.push({score: score, result: result})
+        }
+        scored.sort((a, b) => a.score - b.score)
+        return scored.slice(0, 60).map(entry => entry.result)
+    }
+    onSearchMatchesChanged: searchIndex = 0
+    Process {
+        id: searchList
+        command: ["flow-search", "--json"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try { root.searchResults = JSON.parse(this.text) } catch (error) { root.searchResults = [] }
+            }
+        }
+    }
+    function openSearchPanel(appsOnly) {
+        overviewPending = false
+        notificationsOpen = false
+        quickSettingsOpen = false
+        openMenuWhenReady = false
+        appMenuOpen = false
+        switcherOpen = false
+        spacesOverviewOpen = false
+        closeLauncher()
+        searchAppsOnly = appsOnly
+        searchQuery = ""
+        searchIndex = 0
+        searchResults = []   // never the last run's: its windows may have closed
+        searchOpen = true
+        if (!searchList.running) searchList.running = true
+    }
+    function closeSearch() { searchOpen = false }
+    function runSearchResult(result) {
+        if (!result) return
+        searchOpen = false
+        if (result.kind !== "settings") deskOpen = false
+        if (result.kind === "app") root.launchApp(["gio", "launch", result.value])
+        else if (result.kind === "file") root.launchApp(["gio", "open", result.value])
+        else if (result.kind === "pin") spaceAction("focus", result.value)
+        else if (result.kind === "window") spaceAction("focus-window", result.value)
+        else if (result.kind === "layer") spaceAction("open-layer", result.value)
+        else if (result.kind === "settings") {
+            if (result.value === "quick_open") { if (!quickSettingsOpen) toggleQuickSettings() }
+            else {
+                if (!deskOpen) toggleDesk()
+                settingsOpen = true
+                Qt.callLater(function() { root.reveal(menuSwitch) })
+            }
+        }
     }
 
     // Floe's appearance preference is per-user and does not change app/window state.
@@ -468,7 +649,13 @@ ShellRoot {
         "search": "M4.5 11a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0 M16 16l4 4",
         "left": "M14.5 6l-6 6l6 6", "right": "M9.5 6l6 6l-6 6",
         "up": "M6 14.5l6 -6l6 6", "down": "M6 9.5l6 6l6 -6",
-        "close": "M7 7l10 10 M17 7l-10 10", "plus": "M12 5.5v13 M5.5 12h13", "minus": "M5.5 12h13"
+        "close": "M7 7l10 10 M17 7l-10 10", "plus": "M12 5.5v13 M5.5 12h13", "minus": "M5.5 12h13",
+        // Search result kinds.
+        "app": "M8 4.5h8a3.5 3.5 0 0 1 3.5 3.5v8a3.5 3.5 0 0 1 -3.5 3.5h-8a3.5 3.5 0 0 1 -3.5 -3.5v-8a3.5 3.5 0 0 1 3.5 -3.5z",
+        "window": "M7 4.5h10a2.5 2.5 0 0 1 2.5 2.5v10a2.5 2.5 0 0 1 -2.5 2.5h-10a2.5 2.5 0 0 1 -2.5 -2.5v-10a2.5 2.5 0 0 1 2.5 -2.5z M4.5 9h15",
+        "file": "M7.5 3.5h6l5 5v10.5a1.5 1.5 0 0 1 -1.5 1.5h-9.5a1.5 1.5 0 0 1 -1.5 -1.5v-14a1.5 1.5 0 0 1 1.5 -1.5z M13.5 3.5v5h5",
+        "pin": "M9 4h6 M10 4l-1 6l-3 3h12l-3 -3l-1 -6 M12 13v7",
+        "layer": "M12 4.5l7.5 4l-7.5 4l-7.5 -4z M4.5 12.5l7.5 4l7.5 -4 M4.5 16.5l7.5 4l7.5 -4"
     })
     component FlowIcon: Item {
         id: flowIcon
@@ -614,6 +801,33 @@ ShellRoot {
             }
         }
     }
+    // The home indicator: a short line, after iOS. Tap it or drag it up: from work to Overview, from
+    // Overview to Desk ("again to reveal your desk"), from Desk back to work.
+    component HomeIndicator: MouseArea {
+        id: homeArea
+        hoverEnabled: true
+        property real pressY: 0
+        property bool dragged: false
+        onPressed: mouse => { pressY = mouse.y; dragged = false }
+        onPositionChanged: mouse => { if (pressed && pressY - mouse.y > 14 && !dragged) { dragged = true; root.toggleSpacesOverview() } }
+        onClicked: if (!dragged) root.toggleSpacesOverview()
+        Accessible.role: Accessible.Button
+        Accessible.name: root.spacesOverviewOpen ? "Reveal your Desk" : root.deskOpen ? "Return to work" : "Show Overview"
+        Rectangle {
+            // The halo: the line stands out on light and dark apps alike.
+            anchors.centerIn: line
+            width: line.width + 6; height: line.height + 6; radius: height / 2
+            color: Qt.alpha(floeTheme.canvas, 0.55)
+        }
+        Rectangle {
+            id: line
+            anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 8 }
+            width: homeArea.containsMouse || homeArea.pressed ? 65 : 48; height: 4; radius: 2
+            color: homeArea.containsMouse || homeArea.pressed ? floeTheme.accent : floeTheme.textSecondary
+            Behavior on width { NumberAnimation { duration: root.motionQuick; easing.type: Easing.BezierSpline; easing.bezierCurve: root.standardCurve } }
+            Behavior on color { ColorAnimation { duration: root.motionQuick } }
+        }
+    }
     // A capsule bar for system and position controls: the island, the work indicator, the bottom controls.
     component CapsuleBar: Rectangle {
         radius: height / 2; color: floeTheme.canvas
@@ -642,11 +856,11 @@ ShellRoot {
             IslandButton {
                 property bool closeOnRelease: false
                 implicitHeight: 44
-                text: root.launcherActive ? "Close" : "Apps"
-                open: root.launcherActive
-                Accessible.name: root.launcherActive ? "Close search and apps" : "Open apps"
-                onPressed: closeOnRelease = root.launcherActive
-                onClicked: { if (closeOnRelease) root.closeLauncher(); else root.openApps(); closeOnRelease = false }
+                text: root.searchOpen ? "Close" : "Apps"
+                open: root.searchOpen
+                Accessible.name: root.searchOpen ? "Close search and apps" : "Open apps"
+                onPressed: closeOnRelease = root.searchOpen
+                onClicked: { if (closeOnRelease) { root.closeLauncher(); root.closeSearch() } else root.openApps(); closeOnRelease = false }
                 onCanceled: closeOnRelease = false
             }
             Item {
@@ -772,6 +986,8 @@ ShellRoot {
     // Quickshell cannot reload a configuration that adds an inline component, and its file watching
     // does not reliably notice a switch. A development shell keeps live reload.
     Component.onCompleted: {
+        // A new shell starts with no pictures: an earlier session's window ids must never show its screens.
+        if (root.snapshotDir) Quickshell.execDetached(["rm", "-rf", "--", root.snapshotDir])
         if (Quickshell.shellDir !== "/etc/flow") return
         Quickshell.watchFiles = false
         root.syncCompositorAppearance()
@@ -788,6 +1004,18 @@ ShellRoot {
         function toast(): string { return root.toast }
         function spaces_error(): string { return root.spacesError }
         function desk_state(): string { return root.deskOpen ? "open" : "closed" }
+        function overview_state(): string { return root.spacesOverviewOpen ? "open" : "closed" }
+        // Back to work without choosing, as Escape does.
+        function overview_close(): void { root.closeSpacesOverview() }
+        function overview_selected(): string { return root.spacesOverviewOpen && root.overviewSpace ? String(root.overviewSpace.id) : "" }
+        function overview_move(step: int): void { if (root.spacesOverviewOpen) root.moveOverview(step) }
+        // Which shell surfaces are open, for checks that two never are at once.
+        function surfaces(): string {
+            return JSON.stringify({desk: root.deskOpen, overview: root.spacesOverviewOpen, pending: root.overviewPending,
+                                   search: root.searchOpen, switcher: root.switcherOpen, quick: root.quickSettingsOpen,
+                                   notifications: root.notificationsOpen, niri_overview: root.overviewOpen})
+        }
+        function search_state(): string { return root.searchOpen ? (root.searchAppsOnly ? "apps" : "open") : "closed" }
         function activity_list(): string { return JSON.stringify(root.activities.map(a => root.activityText(a))) }
         function launcher_state(): string { return root.launcherBusy() ? "open" : "closed" }
         // Read-only, for tests/niri_focus_walk_smoke.py: the visible buttons and switches of every shell surface
@@ -802,6 +1030,16 @@ ShellRoot {
                     card = [corner.x, corner.y, item.width, item.height]
                 }
                 const isSwitch = item.checkable === true && item.indicator !== undefined
+                // A text field shows what was typed, not a label; its focus ring is its own border.
+                if (item.placeholderText !== undefined && item.echoMode !== undefined) {
+                    const corner = item.mapToItem(null, 0, 0)
+                    found.push({ surface: surface, window: size, kind: "field", text: "", icon: false, words: [],
+                                 enabled: item.enabled, tabbable: (item.focusPolicy & Qt.TabFocus) !== 0,
+                                 selected: false, open: false, card: card || null,
+                                 rect: [corner.x, corner.y, item.width, item.height],
+                                 ring: [corner.x, corner.y, item.width, item.height, 0] })
+                    return
+                }
                 if (item.glyph !== undefined || isSwitch) {
                     const words = []
                     const read = node => {
@@ -816,7 +1054,8 @@ ShellRoot {
                     const host = isSwitch ? item.indicator : item
                     const ring = host.mapToItem(null, 0, 0)
                     found.push({ surface: surface, window: size, kind: isSwitch ? "switch" : item.capsule ? "capsule" : item.glyph ? "glyph" : "button",
-                                 text: item.text, icon: !!item.glyph, words: words, enabled: item.enabled, selected: item.selected === true, open: item.open === true,
+                                 text: item.text, icon: !!item.glyph, words: words, enabled: item.enabled,
+                                 tabbable: (item.focusPolicy & Qt.TabFocus) !== 0, selected: item.selected === true, open: item.open === true,
                                  rect: [at.x, at.y, item.width, item.height], card: card || null,
                                  ring: [ring.x, ring.y, host.width, host.height, item.focusRingInset] })
                     return
@@ -825,13 +1064,13 @@ ShellRoot {
             }
             for (const [surface, window] of [["desk", deskWindow], ["switcher", switcherWindow],
                                              ["quick", quickSettingsWindow], ["notifications", notificationsWindow],
-                                             ["island", workIsland], ["navigation", navigationWindow],
-                                             ["indicator", workIndicatorWindow]])
+                                             ["overview", spacesOverview], ["search", searchPanel],
+                                             ["island", workIsland], ["indicator", workIndicatorWindow]])
                 if (window.visible) visit(window.contentItem, surface, [window.width, window.height], null)
             return JSON.stringify(found)
         }
         function menu(): void {
-            if (menuPreferences.appMenuEnabled && root.appMenu && !root.deskOpen && !root.overviewOpen) {
+            if (menuPreferences.appMenuEnabled && root.appMenu && !root.deskOpen && !root.overviewOpen && !root.spacesOverviewOpen && !root.searchOpen) {
                 if (root.appMenuOpen) root.appMenuOpen = false
                 else root.requestAppMenu()
             }
@@ -858,28 +1097,35 @@ ShellRoot {
         }
         function display_digit(digit: int): void { if (digit > 0 && digit <= 9) root.displayDigit(digit) }
         function toggle(): void { root.toggleDesk() }
+        // One step along the row, for the wheel: a notch that arrives while a step is still running or
+        // queued is dropped, so a fast spin never queues moves that keep going after the wheel stops.
+        function navigate(direction: string): void {
+            if (direction !== "left" && direction !== "right") return
+            if ((spacesProcess.running && spacesProcess.command[1] === "navigate")
+                || root.pendingSpaceActions.some(a => a.action === "navigate")) return
+            root.spaceAction("navigate", direction)
+        }
         // Show-only requests (the Platform API's System interface). They never close anything: while
         // any other shell surface is open they do nothing and answer "busy"; otherwise "open" or "opened".
         function desk_open(): string {
-            if (root.overviewOpen || root.launcherBusy() || root.otherSurfaceOpen()) return "busy"
+            if (root.overviewOpen || root.spacesOverviewOpen || root.overviewPending || root.launcherBusy() || root.otherSurfaceOpen()) return "busy"
             if (root.deskOpen) return "open"
             root.toggleDesk(); return "opened"
         }
         function overview_open(): string {
-            if (root.deskOpen || root.launcherBusy() || root.otherSurfaceOpen()) return "busy"
-            if (root.overviewOpen) return "open"
-            root.showOverview("open-overview"); return "opened"
+            if (root.deskOpen || root.overviewOpen || root.launcherBusy() || root.otherSurfaceOpen()) return "busy"
+            if (root.spacesOverviewOpen || root.overviewPending) return "open"
+            root.openSpacesOverview(); return "opened"
         }
         function apps_open(): string {
-            if (root.deskOpen || root.overviewOpen || root.otherSurfaceOpen()) return "busy"
+            if (root.deskOpen || root.overviewOpen || root.spacesOverviewOpen || root.overviewPending || root.otherSurfaceOpen()) return "busy"
             if (root.launcherBusy()) return "open"
             root.openApps(); return "opened"
         }
         function leave(): void { root.deskOpen = false }
         function switcher(): void { root.toggleSwitcher() }
-        function overview(): void {
-            root.showOverview(root.deskOpen ? "open-overview" : "toggle-overview")
-        }
+        // Super+O and the home indicator: Overview, then again for Desk, then back to work.
+        function overview(): void { root.toggleSpacesOverview() }
     }
 
     // shortcut: Desk content settles in (220 ms fade and rise) but apps do not move away; add the spatial
@@ -891,7 +1137,7 @@ ShellRoot {
         color: floeTheme.canvas
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: root.notificationsOpen ? WlrKeyboardFocus.None : root.launcherActive ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive
+        WlrLayershell.keyboardFocus: root.notificationsOpen || root.searchOpen ? WlrKeyboardFocus.None : WlrKeyboardFocus.Exclusive
         onVisibleChanged: if (visible && root.motionQuick) deskEnter.restart()
         ParallelAnimation {
             id: deskEnter
@@ -906,6 +1152,10 @@ ShellRoot {
             SystemIsland {
                 room: parent.width
                 anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; anchors.topMargin: 8
+            }
+            HomeIndicator {
+                z: 2; width: 160; height: 44
+                anchors { bottom: parent.bottom; horizontalCenter: parent.horizontalCenter }
             }
             Flickable {
                 id: deskScroller
@@ -1010,13 +1260,13 @@ ShellRoot {
                                             Text { width: parent.width; text: pinnedSpaceButton.detail; textFormat: Text.PlainText; elide: Text.ElideRight; color: floeTheme.textMuted; font.pixelSize: 12; font.family: floeTheme.interfaceFont }
                                         }
                                     }
-                                    enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"
+                                    enabled: !root.spacesWorking
                                     Accessible.name: (modelData.available ? "Focus " : modelData.kind === "group" ? "Unavailable Group " : "Open ") + modelData.label + ", pinned space " + (index + 1)
                                     onClicked: root.spaceAction("focus", modelData.id)
                                 }
-                                FlowButton { id: pinLeftButton; visible: root.editPins; width: 44; implicitHeight: 64; variant: "quiet"; glyph: "left"; text: "‹"; Accessible.name: "Move " + modelData.label + " left"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("left", modelData.id) }
-                                FlowButton { id: pinRightButton; visible: root.editPins; width: 44; implicitHeight: 64; variant: "quiet"; glyph: "right"; text: "›"; Accessible.name: "Move " + modelData.label + " right"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; onClicked: root.spaceAction("right", modelData.id) }
-                                FlowButton { id: unpinButton; visible: root.editPins; width: 44; implicitHeight: 64; variant: "danger"; glyph: "close"; text: "×"; enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"; Accessible.name: "Unpin " + modelData.label; onClicked: root.spaceAction("unpin", modelData.id) }
+                                FlowButton { id: pinLeftButton; visible: root.editPins; width: 44; implicitHeight: 64; variant: "quiet"; glyph: "left"; text: "‹"; Accessible.name: "Move " + modelData.label + " left"; enabled: !root.spacesWorking; onClicked: root.spaceAction("left", modelData.id) }
+                                FlowButton { id: pinRightButton; visible: root.editPins; width: 44; implicitHeight: 64; variant: "quiet"; glyph: "right"; text: "›"; Accessible.name: "Move " + modelData.label + " right"; enabled: !root.spacesWorking; onClicked: root.spaceAction("right", modelData.id) }
+                                FlowButton { id: unpinButton; visible: root.editPins; width: 44; implicitHeight: 64; variant: "danger"; glyph: "close"; text: "×"; enabled: !root.spacesWorking; Accessible.name: "Unpin " + modelData.label; onClicked: root.spaceAction("unpin", modelData.id) }
                             }
                         }
                     }
@@ -1039,7 +1289,7 @@ ShellRoot {
                                     property string detail: (modelData.display_name ? modelData.display_name + " · " : "") + modelData.display_label + (modelData.display_state === "connected" ? ""
                                         : modelData.display_state === "unassigned" ? " · not assigned"
                                         : modelData.display_state === "ambiguous" ? " · cannot be told apart" : " · disconnected")
-                                    enabled: (modelData.display_state === "connected" || modelData.available) && (!spacesProcess.running || spacesProcess.command[1] === "refresh")
+                                    enabled: (modelData.display_state === "connected" || modelData.available) && !root.spacesWorking
                                     contentItem: Column {
                                         topPadding: 12
                                         Text { width: 210; text: otherPinButton.text; textFormat: Text.PlainText; elide: Text.ElideRight; color: otherPinButton.enabled ? floeTheme.textPrimary : floeTheme.textMuted; font.weight: Font.DemiBold; font.pixelSize: 14; font.family: floeTheme.interfaceFont }
@@ -1052,7 +1302,7 @@ ShellRoot {
                                     id: movePinHereButton
                                     width: 132; implicitHeight: 64; variant: "quiet"; text: "Pin here"
                                     Accessible.name: "Pin here: " + modelData.label + ", on this display instead"
-                                    enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"
+                                    enabled: !root.spacesWorking
                                     onClicked: root.spaceAction("move-pin-here", modelData.id)
                                 }
                             }
@@ -1070,7 +1320,7 @@ ShellRoot {
                                 font.pixelSize: 14; font.weight: Font.Medium; font.family: floeTheme.interfaceFont
                                 horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
                             }
-                            enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"
+                            enabled: !root.spacesWorking
                             onClicked: root.spaceAction("pin")
                         }
                         FlowButton { id: editPinsButton; visible: root.pins.length > 0; implicitHeight: 44; variant: root.editPins ? "primary" : "quiet"; text: root.editPins ? "Done" : "Edit pins"; onClicked: root.editPins = !root.editPins }
@@ -1079,7 +1329,7 @@ ShellRoot {
                             visible: root.displayCount > 1 && root.displayName !== "" && root.displayName !== "Main"
                             implicitHeight: 44; variant: "quiet"; text: "Make this the main display"
                             Accessible.name: "Make this the main display: " + root.displayLabel + "; Super and a number will open its pinned spaces"
-                            enabled: !spacesProcess.running || spacesProcess.command[1] === "refresh"
+                            enabled: !root.spacesWorking
                             onClicked: root.spaceAction("make-main", (root.displays.find(d => d.current) || {}).key)
                         }
                     }
@@ -1150,7 +1400,7 @@ ShellRoot {
                         width: parent.width
                         spacing: 8
                         Repeater {
-                            model: ["Apps", "Files", "Overview", "Notifications", "Settings", "Return to work"]
+                            model: ["Apps", "Files", "Overview", "Spaces", "Notifications", "Settings", "Return to work"]
                             FlowButton {
                                 id: toolButton
                                 required property string modelData
@@ -1165,7 +1415,8 @@ ShellRoot {
                                     }
                                     if (modelData === "Apps") root.openApps()
                                     else if (modelData === "Notifications") root.toggleNotifications()
-                                    else if (modelData === "Overview") root.showOverview()
+                                    else if (modelData === "Overview") root.openSpacesOverview()
+                                    else if (modelData === "Spaces") root.toggleSwitcher()
                                     else {
                                         root.deskOpen = false
                                         if (modelData === "Files") root.launchApp(["nautilus"])
@@ -1204,7 +1455,7 @@ ShellRoot {
                             id: autoRecoverySwitch
                             text: "Automatically save and restore session"
                             checked: menuPreferences.autoRecovery
-                            enabled: !recoveryProcess.running && !spacesProcess.running
+                            enabled: !recoveryProcess.running && !root.spacesWorking
                             Accessible.name: text
                             onToggled: {
                                 menuPreferences.autoRecovery = checked; menuPreferences.sync()
@@ -1215,8 +1466,8 @@ ShellRoot {
                         Text { text: "Save your documents, then save the current window list before restarting."; color: floeTheme.textMuted; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 14; font.family: floeTheme.interfaceFont }
                         Flow {
                             width: parent.width; spacing: 8
-                            FlowButton { id: saveSession; implicitHeight: 44; text: "Save session"; enabled: !recoveryProcess.running && !spacesProcess.running; onClicked: { recoveryProcess.command = ["flow-recovery", "save"]; recoveryProcess.running = true } }
-                            FlowButton { id: restoreSession; implicitHeight: 44; variant: "quiet"; text: "Restore session"; enabled: !recoveryProcess.running && !spacesProcess.running; onClicked: { root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
+                            FlowButton { id: saveSession; implicitHeight: 44; text: "Save session"; enabled: !recoveryProcess.running && !root.spacesWorking; onClicked: { recoveryProcess.command = ["flow-recovery", "save"]; recoveryProcess.running = true } }
+                            FlowButton { id: restoreSession; implicitHeight: 44; variant: "quiet"; text: "Restore session"; enabled: !recoveryProcess.running && !root.spacesWorking; onClicked: { root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
                         }
                         Text { id: recoveryStatus; visible: root.recoveryMessage !== ""; text: root.recoveryMessage; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
                     }
@@ -1226,33 +1477,24 @@ ShellRoot {
         }
     }
     PanelWindow {
-        id: navigationWindow
-        visible: !root.deskOpen && !root.switcherOpen && !root.appMenuOpen && !root.launcherActive
+        // The home indicator (the prototype's, after iOS): a short line. Tap it, or drag it up, for
+        // Overview; again for Desk. Only the bottom 126 × 24 takes input, so it covers little of the app
+        // beneath (Flow's columns reach the screen's edge).
+        id: homeIndicator
+        // Desk and Overview carry their own (a surface opened later stacks above this one).
+        visible: !root.deskOpen && !root.spacesOverviewOpen && !root.switcherOpen && !root.appMenuOpen && !root.searchOpen
         anchors.bottom: true
-        implicitWidth: navigationControls.implicitWidth + 8; implicitHeight: 52; margins.bottom: 8
+        implicitWidth: 126; implicitHeight: 24
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
-        CapsuleBar {
-            anchors.fill: parent
-            Row {
-                id: navigationControls
-                anchors.centerIn: parent
-                IslandButton {
-                    implicitHeight: 44
-                    text: root.overviewOpen ? "Desk" : "Overview"
-                    onClicked: {
-                        if (root.overviewOpen) root.toggleDesk()
-                        else root.showOverview()
-                    }
-                }
-                IslandButton { implicitHeight: 44; text: "Spaces"; onClicked: root.toggleSwitcher() }
-            }
-        }
+        HomeIndicator { anchors.fill: parent }
     }
     PanelWindow {
         // Work indicator: the focused app of an active Group, and the space's place in this display's Flow.
+        // It stays in Overview, where its arrows and position are the way along the row for a pointer
+        // or a finger, next to Super+Left/Right and the wheel.
         id: workIndicatorWindow
-        visible: !root.deskOpen && !root.switcherOpen && !root.overviewOpen && !root.appMenuOpen && !root.launcherActive && (!!root.activeSpace || !!root.activeLayer)
+        visible: !root.deskOpen && !root.switcherOpen && !root.spacesOverviewOpen && !root.appMenuOpen && !root.searchOpen && (!!root.activeSpace || !!root.activeLayer)
         anchors { bottom: true; right: true }
         // Where the bottom controls and this indicator cannot share a row, it rises above them: below 560 px,
         // or below 900 px for an active Layer's wider controls.
@@ -1267,7 +1509,8 @@ ShellRoot {
                 id: workIndicator
                 anchors.centerIn: parent; spacing: 0
                 Row {
-                    visible: !!root.activeLayer
+                    // Layer actions belong to the work view; in Overview the indicator is the way along the row.
+                    visible: !!root.activeLayer && !root.overviewOpen
                     spacing: 4
                     SectionLabel { visible: !workIndicatorWindow.narrow; anchors.verticalCenter: parent.verticalCenter; leftPadding: 14; rightPadding: 4; text: "LAYER" }
                     Text {
@@ -1307,9 +1550,11 @@ ShellRoot {
                     Rectangle { width: 1; height: 20; anchors.verticalCenter: parent.verticalCenter; color: Qt.alpha(floeTheme.border, 0.5) }
                 }
                 IslandButton {
-                    visible: !root.activeLayer
+                    // From a Layer, navigation starts at the space beneath it (spaces.py), so in Overview the
+                    // arrows stay even then.
+                    visible: !root.activeLayer || root.overviewOpen
                     width: 44; implicitHeight: 44; glyph: "left"; text: "‹"
-                    enabled: root.activeSpaceIndex > 0
+                    enabled: root.activeLayer ? root.displaySpaces.length > 0 : root.activeSpaceIndex > 0
                     Accessible.name: "Previous space"
                     onClicked: root.spaceAction("navigate", "left")
                 }
@@ -1322,13 +1567,390 @@ ShellRoot {
                     Accessible.name: "Space " + (root.activeSpaceIndex + 1) + " of " + root.displaySpaces.length
                 }
                 IslandButton {
-                    visible: !root.activeLayer
+                    visible: !root.activeLayer || root.overviewOpen
                     width: 44; implicitHeight: 44; glyph: "right"; text: "›"
-                    enabled: root.activeSpaceIndex >= 0 && root.activeSpaceIndex < root.displaySpaces.length - 1
+                    enabled: root.activeLayer ? root.displaySpaces.length > 0
+                        : root.activeSpaceIndex >= 0 && root.activeSpaceIndex < root.displaySpaces.length - 1
                     Accessible.name: "Next space"
                     onClicked: root.spaceAction("navigate", "right")
                 }
             }
+        }
+    }
+    PanelWindow {
+        // Flow's Overview: this display's spaces in one row, the selected one centred, each with its last
+        // snapshot (openSpacesOverview). Left/Right or the wheel choose, Enter or a click returns to it,
+        // Up or the home indicator goes on to Desk, Escape returns to work unchanged.
+        id: spacesOverview
+        visible: root.spacesOverviewOpen
+        anchors { top: true; bottom: true; left: true; right: true }
+        color: floeTheme.canvas
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+        readonly property real edge: Math.max(20, Math.min(52, width * 0.03))
+        readonly property real cardWidth: Math.max(220, Math.min(480, width * 0.3))
+        // A snapshot without the shell's bands: the Island above (8 + 44) and the home indicator below (44).
+        readonly property real bandTop: 52
+        readonly property real bandBottom: 44
+        readonly property real cardHeight: cardWidth * Math.max(0.3, (height - bandTop - bandBottom) / Math.max(1, width))
+        onVisibleChanged: if (visible) { overviewRow.positionViewAtIndex(root.overviewIndex, ListView.Center); overviewFocus.forceActiveFocus() }
+        FocusScope {
+            id: overviewFocus
+            anchors.fill: parent; focus: true
+            Keys.onEscapePressed: root.closeSpacesOverview()
+            Keys.onLeftPressed: root.moveOverview(-1)
+            Keys.onRightPressed: root.moveOverview(1)
+            Keys.onUpPressed: root.revealDeskFromOverview()
+            Keys.onReturnPressed: root.chooseOverviewSpace(root.overviewIndex)
+            Keys.onEnterPressed: root.chooseOverviewSpace(root.overviewIndex)
+            Keys.onPressed: event => {
+                if (event.key === Qt.Key_Home) { root.overviewIndex = 0; event.accepted = true }
+                else if (event.key === Qt.Key_End) { root.overviewIndex = Math.max(0, root.displaySpaces.length - 1); event.accepted = true }
+            }
+            SystemIsland {
+                room: parent.width; z: 3
+                anchors { top: parent.top; horizontalCenter: parent.horizontalCenter; topMargin: 8 }
+            }
+            Column {
+                x: spacesOverview.edge; y: 72; spacing: 12
+                Row {
+                    spacing: 11
+                    Rectangle { anchors.verticalCenter: parent.verticalCenter; width: 8; height: 8; radius: 4; color: floeTheme.accent }
+                    SectionLabel {
+                        text: "YOUR WORK  /  " + (root.displayName ? root.displayName.toUpperCase() + " DISPLAY" : "THIS DISPLAY")
+                        color: floeTheme.textSecondary; font.letterSpacing: 2
+                    }
+                }
+                Text {
+                    text: "Overview<font color='" + floeTheme.accent + "'>.</font>"
+                    textFormat: Text.RichText; color: floeTheme.textPrimary
+                    font.pixelSize: spacesOverview.width >= 720 ? 52 : 32; font.weight: Font.DemiBold
+                    font.letterSpacing: -(spacesOverview.width >= 720 ? 52 : 32) * 0.05; font.family: floeTheme.interfaceFont
+                }
+                Text {
+                    text: root.displaySpaces.length ? "Every space in its place. Select one to return." : "No open spaces yet. Open an app from Desk or search."
+                    textFormat: Text.PlainText; color: floeTheme.textMuted; font.pixelSize: 14; font.family: floeTheme.interfaceFont
+                }
+            }
+            ListView {
+                id: overviewRow
+                anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; verticalCenterOffset: 24 }
+                height: spacesOverview.cardHeight + 52
+                orientation: ListView.Horizontal
+                spacing: 32
+                model: root.displaySpaces
+                // Assigning a new model resets currentIndex to 0, so it is set from the selection, which is
+                // a space id (root.overviewIndex), whenever either changes; only a drag writes it back.
+                function follow() { if (currentIndex !== root.overviewIndex) currentIndex = root.overviewIndex }
+                Connections { target: root; function onOverviewIndexChanged() { overviewRow.follow() } }
+                onCountChanged: Qt.callLater(follow)
+                onModelChanged: Qt.callLater(follow)
+                onCurrentIndexChanged: if (moving && currentIndex >= 0) root.selectOverview(currentIndex)
+                highlightRangeMode: ListView.StrictlyEnforceRange
+                preferredHighlightBegin: width / 2 - spacesOverview.cardWidth / 2
+                preferredHighlightEnd: width / 2 + spacesOverview.cardWidth / 2
+                highlightMoveDuration: root.motionStandard
+                boundsBehavior: Flickable.StopAtBounds
+                WheelHandler {
+                    // One space per notch, either direction.
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    property real carry: 0
+                    onWheel: event => {
+                        carry += (event.angleDelta.y || event.angleDelta.x)
+                        while (Math.abs(carry) >= 120) { root.moveOverview(carry > 0 ? -1 : 1); carry -= carry > 0 ? 120 : -120 }
+                    }
+                }
+                delegate: Item {
+                    id: spaceCard
+                    required property var modelData
+                    required property int index
+                    readonly property bool selected: index === root.overviewIndex
+                    readonly property string snapshot: root.snapshotUrl(modelData)
+                    readonly property var pin: root.pinOfSpace(modelData)
+                    width: spacesOverview.cardWidth; height: overviewRow.height
+                    Rectangle {
+                        // The selection ring: 2 px, 3 px outside the card, concentric with it.
+                        visible: spaceCard.selected
+                        x: -5; y: -5; width: card.width + 10; height: card.height + 10; radius: card.radius + 5
+                        color: "transparent"; border.width: 2; border.color: floeTheme.focus
+                    }
+                    Rectangle {
+                        id: card
+                        width: parent.width; height: spacesOverview.cardHeight; radius: 14
+                        color: floeTheme.surfaceRaised; clip: true
+                        border.width: 1; border.color: spaceCard.selected ? floeTheme.borderStrong : Qt.alpha(floeTheme.border, 0.6)
+                        Image {
+                            anchors.fill: parent; anchors.margins: 1
+                            visible: !!spaceCard.snapshot
+                            source: spaceCard.snapshot
+                            // The snapshot is about 640 px wide (snapshotActiveSpace); cut exactly the bands.
+                            readonly property real scale: 640 / Math.max(1, spacesOverview.width)
+                            sourceClipRect: Qt.rect(0, spacesOverview.bandTop * scale, 640,
+                                                    (spacesOverview.height - spacesOverview.bandTop - spacesOverview.bandBottom) * scale)
+                            // Each new snapshot is a new URL (its version), so caching never shows a stale one.
+                            fillMode: Image.PreserveAspectCrop; smooth: true; asynchronous: true
+                        }
+                        Column {
+                            // Before its first snapshot a space shows its app and title.
+                            visible: !spaceCard.snapshot
+                            anchors.centerIn: parent; width: parent.width - 48; spacing: 6
+                            Text {
+                                width: parent.width; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight
+                                text: spaceCard.modelData.members.map(m => m.app_name || m.app_id).join("  +  ")
+                                textFormat: Text.PlainText; color: floeTheme.textPrimary
+                                font.pixelSize: 18; font.weight: Font.DemiBold; font.family: floeTheme.interfaceFont
+                            }
+                            Text {
+                                width: parent.width; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight
+                                text: spaceCard.modelData.label; textFormat: Text.PlainText
+                                color: floeTheme.textMuted; font.pixelSize: 12; font.family: floeTheme.interfaceFont
+                            }
+                        }
+                        MouseArea {
+                            anchors.fill: parent; hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: spaceCard.selected ? root.chooseOverviewSpace(spaceCard.index) : (root.overviewIndex = spaceCard.index)
+                            onDoubleClicked: root.chooseOverviewSpace(spaceCard.index)
+                        }
+                        Accessible.role: Accessible.Button
+                        Accessible.name: "Return to " + spaceCard.modelData.label
+                        Accessible.description: spaceCard.selected ? "Current" : ""
+                    }
+                    Row {
+                        // The caption: its pin number (or a dot), its name, what it is.
+                        anchors { top: card.bottom; topMargin: 14; left: parent.left; right: parent.right }
+                        spacing: 10
+                        Rectangle {
+                            width: Math.max(26, number.implicitWidth + 12); height: 22; radius: 6
+                            color: "transparent"; border.width: 1; border.color: Qt.alpha(floeTheme.accent, 0.5)
+                            Text {
+                                id: number; anchors.centerIn: parent; textFormat: Text.PlainText
+                                text: spaceCard.pin ? ((root.pins.indexOf(spaceCard.pin) < 9 ? "0" : "") + (root.pins.indexOf(spaceCard.pin) + 1)) : "·"
+                                color: floeTheme.accent; font.pixelSize: 11; font.weight: Font.DemiBold
+                                font.family: floeTheme.interfaceFont; font.features: { "tnum": 1 }
+                            }
+                        }
+                        Text {
+                            width: parent.width - 36 - 10 - kind.implicitWidth - 10; elide: Text.ElideRight
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: spaceCard.modelData.group_id || spaceCard.modelData.members.length === 1 ? spaceCard.modelData.label
+                                : spaceCard.modelData.members.map(m => m.app_name || m.label).join(" + ")
+                            textFormat: Text.PlainText; color: floeTheme.textPrimary
+                            font.pixelSize: 14; font.weight: spaceCard.selected ? Font.DemiBold : Font.Medium; font.family: floeTheme.interfaceFont
+                        }
+                        SectionLabel {
+                            id: kind; anchors.verticalCenter: parent.verticalCenter
+                            text: spaceCard.pin ? "PINNED" : spaceCard.modelData.group_id ? "GROUP" : "SPACE"
+                        }
+                    }
+                }
+            }
+            FlowButton {
+                // The rails: half pills at the screen's edges, as in the prototype.
+                id: railPrevious
+                anchors { left: parent.left; leftMargin: -14; verticalCenter: overviewRow.verticalCenter; verticalCenterOffset: -26 }
+                width: 58; implicitHeight: 64; radius: 14; glyph: "left"; text: "‹"; leftPadding: 18
+                // For a pointer or a finger. Half off the screen, they could not show a whole focus ring, and the
+                // keyboard has the arrow keys and the tools' ← → already.
+                focusPolicy: Qt.NoFocus
+                enabled: root.overviewIndex > 0
+                Accessible.name: "Previous space"
+                onClicked: root.moveOverview(-1)
+            }
+            FlowButton {
+                id: railNext
+                anchors { right: parent.right; rightMargin: -14; verticalCenter: overviewRow.verticalCenter; verticalCenterOffset: -26 }
+                width: 58; implicitHeight: 64; radius: 14; glyph: "right"; text: "›"; rightPadding: 18
+                focusPolicy: Qt.NoFocus
+                enabled: root.overviewIndex < root.displaySpaces.length - 1
+                Accessible.name: "Next space"
+                onClicked: root.moveOverview(1)
+            }
+            Rectangle {
+                // The tools: Open selected · Pin · ← → · Your desk.
+                anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 56 }
+                width: overviewTools.implicitWidth + 14; height: 58; radius: 15
+                color: floeTheme.surface; border.width: 1; border.color: Qt.alpha(floeTheme.border, 0.6)
+                Row {
+                    id: overviewTools
+                    anchors.centerIn: parent; spacing: 4
+                    FlowButton {
+                        variant: "quiet"; focusPolicy: Qt.TabFocus; implicitHeight: 44; radius: 8; text: "↗  Open selected"
+                        enabled: !!root.overviewSpace
+                        Accessible.name: root.overviewSpace ? "Open selected: " + root.overviewSpace.label : "Open selected"
+                        onClicked: root.chooseOverviewSpace(root.overviewIndex)
+                    }
+                    Rectangle { width: 1; height: 24; anchors.verticalCenter: parent.verticalCenter; color: Qt.alpha(floeTheme.border, 0.5) }
+                    FlowButton {
+                        readonly property var pin: root.pinOfSpace(root.overviewSpace)
+                        variant: "quiet"; focusPolicy: Qt.TabFocus; implicitHeight: 44; radius: 8
+                        // Pinning acts on the focused space, so it is offered for that one; any pin can be removed.
+                        text: pin ? "Unpin" : "Pin space"
+                        visible: !!root.overviewSpace && (!!pin || root.overviewSpace.active)
+                        Accessible.name: (pin ? "Unpin " : "Pin space: ") + (root.overviewSpace ? root.overviewSpace.label : "")
+                        onClicked: pin ? root.spaceAction("unpin", pin.id) : root.spaceAction(root.overviewSpace.group_id ? "pin-group" : "pin", root.overviewSpace.group_id || undefined)
+                    }
+                    FlowButton { variant: "quiet"; focusPolicy: Qt.TabFocus; implicitHeight: 44; width: 44; radius: 8; glyph: "left"; text: "←"; Accessible.name: "Previous space"; enabled: root.overviewIndex > 0; onClicked: root.moveOverview(-1) }
+                    FlowButton { variant: "quiet"; focusPolicy: Qt.TabFocus; implicitHeight: 44; width: 44; radius: 8; glyph: "right"; text: "→"; Accessible.name: "Next space"; enabled: root.overviewIndex < root.displaySpaces.length - 1; onClicked: root.moveOverview(1) }
+                    Rectangle { width: 1; height: 24; anchors.verticalCenter: parent.verticalCenter; color: Qt.alpha(floeTheme.border, 0.5) }
+                    FlowButton { variant: "primary"; focusPolicy: Qt.TabFocus; implicitHeight: 44; radius: 8; text: "↓  Your desk"; onClicked: root.revealDeskFromOverview() }
+                }
+            }
+            FlowButton {
+                anchors { right: parent.right; bottom: parent.bottom; rightMargin: spacesOverview.edge; bottomMargin: 62 }
+                variant: "quiet"; focusPolicy: Qt.TabFocus; implicitHeight: 44; radius: 22; text: "?  Shortcuts"
+                Accessible.name: "Show keyboard shortcuts"
+                onClicked: { root.closeSpacesOverview(); Quickshell.execDetached(["niri", "msg", "action", "show-hotkey-overlay"]) }
+            }
+            Text {
+                visible: spacesOverview.width >= 720
+                anchors { left: parent.left; bottom: parent.bottom; leftMargin: spacesOverview.edge; bottomMargin: 22 }
+                text: "↑  Again to reveal your desk  ·  ← →  choose  ·  Enter  return  ·  Esc  close"
+                textFormat: Text.PlainText; color: floeTheme.textMuted; font.pixelSize: 12; font.family: floeTheme.interfaceFont
+            }
+            HomeIndicator {
+                z: 2; width: 160; height: 44
+                anchors { bottom: parent.bottom; horizontalCenter: parent.horizontalCenter }
+            }
+        }
+    }
+    PanelWindow {
+        // Flow's search, as in the prototype: a shade over everything and one palette. Typing filters,
+        // Up/Down choose, Enter opens, Escape or the shade closes.
+        id: searchPanel
+        visible: root.searchOpen
+        anchors { top: true; bottom: true; left: true; right: true }
+        color: "transparent"
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+        onVisibleChanged: if (visible) searchField.forceActiveFocus()
+        FocusScope {
+        anchors.fill: parent; focus: true
+        Keys.onEscapePressed: root.closeSearch()
+        Rectangle {
+            anchors.fill: parent; color: Qt.alpha(floeTheme.canvas, 0.72)
+            MouseArea { anchors.fill: parent; onClicked: root.closeSearch() }
+        }
+        Rectangle {
+            id: palette
+            x: (parent.width - width) / 2; y: Math.max(64, Math.min(190, parent.height * 0.17))
+            width: Math.min(620, parent.width - 28)
+            height: searchHeader.height + 1 + Math.min(searchView.contentHeight + 20, 7 * 58 + 20) + 1 + searchFooter.height
+            radius: 18; color: floeTheme.surface; border.width: 1; border.color: floeTheme.border
+            clip: true
+            MouseArea { anchors.fill: parent }   // clicks on the palette never reach the shade
+            Item {
+                id: searchHeader
+                width: parent.width; height: 64
+                FlowIcon { x: 20; anchors.verticalCenter: parent.verticalCenter; name: "search"; size: 20; color: floeTheme.accent }
+                TextField {
+                    id: searchField
+                    x: 54; width: parent.width - 54 - 56; anchors.verticalCenter: parent.verticalCenter; height: 44
+                    text: root.searchQuery; onTextEdited: root.searchQuery = text
+                    placeholderText: root.searchAppsOnly ? "Search apps…" : "Search apps, spaces, windows and files…"
+                    placeholderTextColor: floeTheme.textMuted; color: floeTheme.textPrimary
+                    selectionColor: floeTheme.accent; selectedTextColor: floeTheme.onAccent
+                    font.pixelSize: 18; font.family: floeTheme.interfaceFont
+                    // No box at rest: the palette is the field. Focus draws the 2 px ring at its edge, as the
+                    // Group name field does, since a blinking caret alone is easy to lose.
+                    background: Rectangle {
+                        radius: 10; color: "transparent"
+                        border.width: searchField.activeFocus ? 2 : 0; border.color: floeTheme.focus
+                    }
+                    Accessible.name: root.searchAppsOnly ? "Search apps" : "Search apps, spaces, windows and files"
+                    Keys.onDownPressed: root.searchIndex = Math.max(0, Math.min(root.searchMatches.length - 1, root.searchIndex + 1))
+                    Keys.onUpPressed: root.searchIndex = Math.max(0, root.searchIndex - 1)
+                    Keys.onReturnPressed: root.runSearchResult(root.searchMatches[root.searchIndex])
+                    Keys.onEnterPressed: root.runSearchResult(root.searchMatches[root.searchIndex])
+                }
+                FlowButton {
+                    anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
+                    width: 44; implicitHeight: 44; radius: 10; variant: "plain"; glyph: "close"; text: "×"
+                    Accessible.name: "Close search"
+                    onClicked: root.closeSearch()
+                }
+            }
+            Rectangle { anchors.top: searchHeader.bottom; width: parent.width; height: 1; color: Qt.alpha(floeTheme.border, 0.5) }
+            ListView {
+                id: searchView
+                anchors { top: searchHeader.bottom; topMargin: 11; left: parent.left; right: parent.right; margins: 10 }
+                height: Math.min(contentHeight, 7 * 58)
+                clip: true; boundsBehavior: Flickable.StopAtBounds
+                model: root.searchMatches
+                currentIndex: root.searchIndex
+                onCurrentIndexChanged: positionViewAtIndex(currentIndex, ListView.Contain)
+                delegate: Rectangle {
+                    id: resultRow
+                    required property var modelData
+                    required property int index
+                    readonly property bool chosen: index === root.searchIndex
+                    width: searchView.width; height: 58; radius: 10
+                    color: chosen || rowArea.containsMouse ? floeTheme.surfaceSelected : "transparent"
+                    // The chosen row also gets the focus colour's edge, never tint alone.
+                    border.width: chosen ? 2 : 0; border.color: floeTheme.focus
+                    Rectangle {
+                        id: resultIcon
+                        x: 13; anchors.verticalCenter: parent.verticalCenter; width: 32; height: 32; radius: 9
+                        color: floeTheme.surfaceSelected
+                        Image {
+                            id: appIcon
+                            anchors.centerIn: parent; width: 22; height: 22; sourceSize: Qt.size(44, 44)
+                            visible: status === Image.Ready
+                            source: resultRow.modelData.icon ? Quickshell.iconPath(resultRow.modelData.icon, true) : ""
+                        }
+                        FlowIcon {
+                            visible: !appIcon.visible; anchors.centerIn: parent; size: 16; color: floeTheme.accent
+                            name: ({ "pin": "pin", "window": "window", "file": "file", "settings": "sliders", "layer": "layer", "app": "app" })[resultRow.modelData.kind] || "search"
+                        }
+                    }
+                    Column {
+                        anchors { left: resultIcon.right; leftMargin: 13; right: jump.left; rightMargin: 10; verticalCenter: parent.verticalCenter }
+                        spacing: 3
+                        Text {
+                            width: parent.width; elide: Text.ElideRight; textFormat: Text.PlainText
+                            text: resultRow.modelData.title; color: floeTheme.textPrimary
+                            font.pixelSize: 14; font.weight: resultRow.chosen ? Font.DemiBold : Font.Medium; font.family: floeTheme.interfaceFont
+                        }
+                        Text {
+                            width: parent.width; elide: Text.ElideRight; textFormat: Text.PlainText
+                            text: resultRow.modelData.detail; color: floeTheme.textMuted
+                            font.pixelSize: 12; font.family: floeTheme.interfaceFont
+                        }
+                    }
+                    Text {
+                        id: jump
+                        anchors { right: parent.right; rightMargin: 14; verticalCenter: parent.verticalCenter }
+                        text: "↗"; textFormat: Text.PlainText; color: floeTheme.textMuted; font.pixelSize: 14
+                    }
+                    MouseArea {
+                        id: rowArea
+                        anchors.fill: parent; hoverEnabled: true
+                        onClicked: root.runSearchResult(resultRow.modelData)
+                    }
+                    Accessible.role: Accessible.Button
+                    Accessible.name: resultRow.modelData.title + ", " + resultRow.modelData.detail
+                    Accessible.description: chosen ? "Current" : ""
+                }
+            }
+            Text {
+                visible: root.searchMatches.length === 0
+                anchors { top: searchHeader.bottom; topMargin: 24; horizontalCenter: parent.horizontalCenter }
+                text: searchList.running ? "Looking…" : "Nothing matches “" + root.searchQuery + "”"
+                textFormat: Text.PlainText; color: floeTheme.textMuted; font.pixelSize: 14; font.family: floeTheme.interfaceFont
+            }
+            Rectangle { anchors.bottom: searchFooter.top; width: parent.width; height: 1; color: Qt.alpha(floeTheme.border, 0.5) }
+            Item {
+                id: searchFooter
+                anchors.bottom: parent.bottom; width: parent.width; height: 44
+                Text {
+                    x: 20; anchors.verticalCenter: parent.verticalCenter
+                    text: "Enter to open  ·  ↑ ↓ to choose  ·  Esc to close"
+                    textFormat: Text.PlainText; color: floeTheme.textMuted; font.pixelSize: 12; font.family: floeTheme.interfaceFont
+                }
+            }
+        }
         }
     }
     // shortcut: window titles stand in for live previews until compositor capture is available.
@@ -1394,7 +2016,7 @@ ShellRoot {
                         variant: "quiet"; implicitHeight: 44; text: "Make Layer"
                         visible: !root.activeLayer
                         Accessible.name: "Make Layer: float the focused app over its neighbors"
-                        enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                        enabled: !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                         onClicked: root.spaceAction("make-layer")
                     }
                     FlowButton { id: closeSwitcher; variant: "quiet"; implicitHeight: 44; text: "Close"; Accessible.name: "Close Spaces switcher"; onClicked: root.switcherOpen = false }
@@ -1442,21 +2064,21 @@ ShellRoot {
                                 id: layerSpaceButton
                                 variant: "quiet"; implicitHeight: 44; text: "Make space"
                                 Accessible.name: "Make space: Layer " + (modelData.app_name || modelData.label) + " becomes a space of its own"
-                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                enabled: !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                 onClicked: root.spaceAction("layer-to-space", String(modelData.id))
                             }
                             FlowButton {
                                 id: layerGroupButton
                                 variant: "quiet"; implicitHeight: 44; text: "Add to Group"
                                 Accessible.name: "Add to Group: Layer " + (modelData.app_name || modelData.label) + " joins the Group beneath it"
-                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                enabled: !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                 onClicked: root.spaceAction("layer-to-group", String(modelData.id))
                             }
                             FlowButton {
                                 id: layerCloseButton
                                 variant: "danger"; implicitHeight: 44; text: "Close"
                                 Accessible.name: "Close Layer " + (modelData.app_name || modelData.label) + "; the app is asked to close"
-                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                enabled: !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                 onClicked: root.spaceAction("close-layer", String(modelData.id))
                             }
                         }
@@ -1542,14 +2164,14 @@ ShellRoot {
                                                     FlowButton {
                                                         id: memberLeftButton
                                                         width: 44; implicitHeight: 44; radius: 10; variant: "quiet"; glyph: memberColumn.space.group_layout === "side-by-side" ? "left" : "up"; text: memberColumn.space.group_layout === "side-by-side" ? "‹" : "↑"
-                                                        enabled: memberColumn.index > 0 && !memberColumn.space.order_changed && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                        enabled: memberColumn.index > 0 && !memberColumn.space.order_changed && !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                                         Accessible.name: "Move " + memberColumn.modelData.label + " earlier in Group " + memberColumn.space.label
                                                         onClicked: root.spaceAction("member-left", String(memberColumn.modelData.id))
                                                     }
                                                     FlowButton {
                                                         id: memberRightButton
                                                         width: 44; implicitHeight: 44; radius: 10; variant: "quiet"; glyph: memberColumn.space.group_layout === "side-by-side" ? "right" : "down"; text: memberColumn.space.group_layout === "side-by-side" ? "›" : "↓"
-                                                        enabled: memberColumn.index < memberColumn.space.members.length - 1 && !memberColumn.space.order_changed && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                        enabled: memberColumn.index < memberColumn.space.members.length - 1 && !memberColumn.space.order_changed && !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                                         Accessible.name: "Move " + memberColumn.modelData.label + " later in Group " + memberColumn.space.label
                                                         onClicked: root.spaceAction("member-right", String(memberColumn.modelData.id))
                                                     }
@@ -1557,7 +2179,7 @@ ShellRoot {
                                                         id: memberRemoveButton
                                                         width: 44; implicitHeight: 44; radius: 10; variant: "danger"; glyph: "close"; text: "×"
                                                         visible: !!memberColumn.space.can_remove
-                                                        enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                        enabled: !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                                         Accessible.name: "Remove " + memberColumn.modelData.label + " from Group " + memberColumn.space.label + "; the app stays open"
                                                         onClicked: root.spaceAction("remove-from-group", String(memberColumn.modelData.id))
                                                     }
@@ -1569,7 +2191,7 @@ ShellRoot {
                                                     FlowButton {
                                                         id: memberNarrowerButton
                                                         width: 44; implicitHeight: 44; radius: 10; variant: "quiet"; glyph: "minus"; text: "−"
-                                                        enabled: !!(memberColumn.space.can_narrow && memberColumn.space.can_narrow[memberColumn.index]) && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                        enabled: !!(memberColumn.space.can_narrow && memberColumn.space.can_narrow[memberColumn.index]) && !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                                         Accessible.name: "Make " + memberColumn.modelData.label + " narrower in Group " + memberColumn.space.label
                                                         onClicked: root.spaceAction("member-narrower", String(memberColumn.modelData.id))
                                                     }
@@ -1583,7 +2205,7 @@ ShellRoot {
                                                     FlowButton {
                                                         id: memberWiderButton
                                                         width: 44; implicitHeight: 44; radius: 10; variant: "quiet"; glyph: "plus"; text: "+"
-                                                        enabled: !!(memberColumn.space.can_widen && memberColumn.space.can_widen[memberColumn.index]) && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                        enabled: !!(memberColumn.space.can_widen && memberColumn.space.can_widen[memberColumn.index]) && !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                                         Accessible.name: "Make " + memberColumn.modelData.label + " wider in Group " + memberColumn.space.label
                                                         onClicked: root.spaceAction("member-wider", String(memberColumn.modelData.id))
                                                     }
@@ -1596,7 +2218,7 @@ ShellRoot {
                                         visible: spaceCard.modelData.members.length >= 2 && spaceCard.modelData.members.length <= 4 && !spaceCard.modelData.group_id
                                         width: parent.width; implicitHeight: 44; radius: 10; text: "Create Group"
                                         Accessible.name: "Create Group from " + spaceCard.modelData.label
-                                        enabled: spaceCard.modelData.active && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                        enabled: spaceCard.modelData.active && !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                         onClicked: root.spaceAction("create-group")
                                     }
                                     FlowButton {
@@ -1604,7 +2226,7 @@ ShellRoot {
                                         visible: !!spaceCard.modelData.can_add
                                         width: parent.width; implicitHeight: 44; radius: 10; text: "Add " + (spaceCard.modelData.add_label || "next app") + " to Group"
                                         Accessible.name: "Add " + (spaceCard.modelData.add_label || "next app") + " to Group " + spaceCard.modelData.label
-                                        enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                        enabled: !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                         onClicked: root.spaceAction("add-to-group", spaceCard.modelData.group_id)
                                     }
                                     FlowButton {
@@ -1612,7 +2234,7 @@ ShellRoot {
                                         visible: !!spaceCard.modelData.order_changed
                                         width: parent.width; implicitHeight: 44; radius: 10; text: "Keep new app order"
                                         Accessible.name: "Keep new app order for Group " + spaceCard.modelData.label
-                                        enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                        enabled: !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                         onClicked: root.spaceAction("adopt-group-order", spaceCard.modelData.group_id)
                                     }
                                     Grid {
@@ -1622,14 +2244,14 @@ ShellRoot {
                                             id: renameButton
                                             width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 10; leftPadding: 6; rightPadding: 6; variant: "quiet"; text: "Rename"
                                             Accessible.name: "Rename Group " + spaceCard.modelData.label
-                                            enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                            enabled: !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                             onClicked: { groupName.text = spaceCard.modelData.label; root.renameGroupId = spaceCard.modelData.group_id; groupName.forceActiveFocus() }
                                         }
                                         FlowButton {
                                             id: groupViewButton
                                             width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 10; leftPadding: 6; rightPadding: 6; variant: "quiet"; text: "Tabs / stack"
                                             visible: spaceCard.modelData.group_layout !== "side-by-side"
-                                            enabled: spaceCard.modelData.active && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                            enabled: spaceCard.modelData.active && !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                             Accessible.name: "Tabs / stack: switch the view of " + spaceCard.modelData.label
                                             onClicked: root.spaceAction("group-view", spaceCard.modelData.group_id)
                                         }
@@ -1639,7 +2261,7 @@ ShellRoot {
                                             width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 10; leftPadding: 6; rightPadding: 6; variant: "quiet"
                                             text: spaceCard.modelData.group_layout === "side-by-side" ? "Stack" : "Side by side"
                                             Accessible.name: text + " Group " + spaceCard.modelData.label
-                                            enabled: spaceCard.modelData.active && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                            enabled: spaceCard.modelData.active && !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                             onClicked: root.spaceAction("group-layout", spaceCard.modelData.group_id)
                                         }
                                         FlowButton {
@@ -1648,7 +2270,7 @@ ShellRoot {
                                             width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 10; leftPadding: 6; rightPadding: 6; variant: "quiet"
                                             text: spaceCard.modelData.auto_layout ? "Auto layout: on" : "Auto layout: off"
                                             Accessible.name: text + " for " + spaceCard.modelData.label
-                                            enabled: spaceCard.modelData.active && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                            enabled: spaceCard.modelData.active && !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                             onClicked: root.spaceAction("toggle-auto-layout", spaceCard.modelData.group_id)
                                         }
                                         FlowButton {
@@ -1657,7 +2279,7 @@ ShellRoot {
                                             width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 10; leftPadding: 6; rightPadding: 6; variant: "quiet"
                                             text: spaceCard.groupPin ? "Unpin Group" : spaceCard.modelData.group_layout === "side-by-side" ? "Stack to pin" : "Pin Group"
                                             Accessible.name: text + " " + spaceCard.modelData.label
-                                            enabled: (spaceCard.groupPin || spaceCard.modelData.group_layout !== "side-by-side") && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                            enabled: (spaceCard.groupPin || spaceCard.modelData.group_layout !== "side-by-side") && !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                             onClicked: root.spaceAction(spaceCard.groupPin ? "unpin" : "pin-group", spaceCard.groupPin ? spaceCard.groupPin.id : spaceCard.modelData.group_id)
                                         }
                                         FlowButton {
@@ -1666,7 +2288,7 @@ ShellRoot {
                                             width: (cardColumn.width - 4) / 2; implicitHeight: 44; radius: 10; leftPadding: 6; rightPadding: 6; variant: "danger"
                                             text: spaceCard.groupPin ? "Unpin first" : "Dissolve"
                                             Accessible.name: (spaceCard.groupPin ? "Unpin first to dissolve Group " : "Dissolve Group ") + spaceCard.modelData.label
-                                            enabled: spaceCard.modelData.active && !spaceCard.groupPin && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                            enabled: spaceCard.modelData.active && !spaceCard.groupPin && !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                             onClicked: root.spaceAction("dissolve-group", spaceCard.modelData.group_id)
                                         }
                                     }
@@ -1679,7 +2301,7 @@ ShellRoot {
                                             width: cardColumn.width; implicitHeight: 44; radius: 10; variant: "quiet"
                                             text: "Move to " + modelData.label.slice(0, 22)
                                             Accessible.name: "Move to " + modelData.label + ": " + spaceCard.modelData.label + (spaceCard.modelData.group_id ? ", the whole Group" : "")
-                                            enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                            enabled: !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                             onClicked: root.spaceAction("move-to-display", modelData.key)
                                         }
                                     }
@@ -1705,7 +2327,7 @@ ShellRoot {
                                             Accessible.name: "Group name"
                                             onAccepted: root.renameGroup(spaceCard.modelData.group_id, text)
                                         }
-                                        FlowButton { id: saveGroupName; width: 64; implicitHeight: 44; radius: 10; variant: "primary"; text: "Save"; Accessible.name: "Save name for Group " + spaceCard.modelData.label; enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length; onClicked: root.renameGroup(spaceCard.modelData.group_id, groupName.text) }
+                                        FlowButton { id: saveGroupName; width: 64; implicitHeight: 44; radius: 10; variant: "primary"; text: "Save"; Accessible.name: "Save name for Group " + spaceCard.modelData.label; enabled: !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length; onClicked: root.renameGroup(spaceCard.modelData.group_id, groupName.text) }
                                         FlowButton { id: cancelGroupName; width: 64; implicitHeight: 44; radius: 10; variant: "quiet"; text: "Cancel"; Accessible.name: "Cancel rename for Group " + spaceCard.modelData.label; onClicked: { root.renameGroupId = ""; renameButton.forceActiveFocus() } }
                                     }
                                 }
@@ -1760,7 +2382,7 @@ ShellRoot {
                                                     width: Math.min(memberChoice.width, 220); implicitHeight: 44; radius: 10
                                                     text: modelData.label.slice(0, 28)
                                                     Accessible.name: "Use " + modelData.label + " as the Group's " + memberChoice.modelData.app_name + " window"
-                                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                    enabled: !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                                     onClicked: root.spaceAction("choose-member", memberChoice.groupId + ":" + modelData.id)
                                                 }
                                             }
@@ -1772,7 +2394,7 @@ ShellRoot {
                                     visible: !!modelData.can_forget_choice
                                     width: Math.min(parent.width, 200); implicitHeight: 44; radius: 10; variant: "quiet"; text: "Choose again"
                                     Accessible.name: "Forget the windows chosen for " + modelData.label + " and choose again"
-                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    enabled: !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                     onClicked: root.spaceAction("forget-choice", modelData.id)
                                 }
                                 FlowButton {
@@ -1780,7 +2402,7 @@ ShellRoot {
                                     visible: modelData.can_open
                                     width: Math.min(parent.width, 200); implicitHeight: 44; radius: 10; text: "Open missing app"
                                     Accessible.name: "Open missing app for " + modelData.label
-                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    enabled: !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                     onClicked: root.spaceAction("open-group-member", modelData.id)
                                 }
                                 FlowButton {
@@ -1788,7 +2410,7 @@ ShellRoot {
                                     visible: modelData.can_rejoin
                                     width: Math.min(parent.width, 200); implicitHeight: 44; radius: 10; text: "Rejoin Group"
                                     Accessible.name: "Rejoin Group for " + modelData.label
-                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    enabled: !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                     onClicked: root.spaceAction("rejoin-group", modelData.id)
                                 }
                                 FlowButton {
@@ -1796,7 +2418,7 @@ ShellRoot {
                                     visible: modelData.can_resume_layout
                                     width: Math.min(parent.width, 220); implicitHeight: 44; radius: 10; text: "Finish layout change"
                                     Accessible.name: "Finish layout change for Group " + modelData.label
-                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    enabled: !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                     onClicked: root.spaceAction("resume-group-layout", modelData.id)
                                 }
                                 FlowButton {
@@ -1804,7 +2426,7 @@ ShellRoot {
                                     visible: modelData.can_adopt_order
                                     width: Math.min(parent.width, 220); implicitHeight: 44; radius: 10; text: "Keep current order"
                                     Accessible.name: "Keep current order for Group " + modelData.label
-                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    enabled: !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                     onClicked: root.spaceAction("adopt-group-order", modelData.id)
                                 }
                                 FlowButton {
@@ -1812,7 +2434,7 @@ ShellRoot {
                                     visible: modelData.can_repair
                                     width: Math.min(parent.width, 220); implicitHeight: 44; radius: 10; text: "Repair Group layout"
                                     Accessible.name: "Repair Group layout for " + modelData.label
-                                    enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                    enabled: !root.spacesWorking && !recoveryProcess.running && !root.pendingSpaceActions.length
                                     onClicked: root.spaceAction("repair-side-group", modelData.id)
                                 }
                             }
@@ -2040,7 +2662,7 @@ ShellRoot {
     }
     PanelWindow {
         id: workIsland
-        visible: !root.deskOpen
+        visible: !root.deskOpen && !root.spacesOverviewOpen
         anchors.top: true
         implicitWidth: workIslandContent.implicitWidth; implicitHeight: workIslandContent.implicitHeight; margins.top: 8
         color: "transparent"

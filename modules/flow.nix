@@ -167,7 +167,7 @@ in {
     # Without it the session bus cannot start the accessibility bus and nothing is exposed.
     services.gnome.at-spi2-core.enable = true;
     environment.systemPackages = (with pkgs; [
-      foot fuzzel quickshell swaylock firefox nautilus gnome-control-center networkmanagerapplet spaces launcher appmenu keyboard wvkbd wifiSettings niriAppearanceSync
+      foot fuzzel quickshell swaylock firefox nautilus gnome-control-center networkmanagerapplet spaces launcher appmenu keyboard wvkbd wifiSettings niriAppearanceSync grim
       xwayland-satellite mesa-demos wayland-utils recovery search wireplumber networkmanager flowCli
     ]) ++ lib.optionals config.services.desktopManager.plasma6.enable [ (lib.hiPrio kdeSettings) ];
     services.dbus.packages = [ flowApiActivation ];

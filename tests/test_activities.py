@@ -68,6 +68,8 @@ class ActivityTest(unittest.TestCase):
         self.assertTrue(title.startswith("Build [31m done") and title.endswith("…"))
         self.assertNotIn("\x1b", title)
         self.assertEqual(core.clean("e" + "\u0301" * 9, 80), "e\u0301\u0301")
+        # Only the start of a huge string is read: an app cannot stall the service with one long title.
+        self.assertEqual(core.clean("Copy" + "\x00" * 10_000_000 + "late", 80), "Copy…")
         for changes in ({"progress": 2}, {"progress": True}, {"progress": "half"}, {"progress": float("nan")},
                         {"title": "  \n "},
                         {"detail": 7}, {"title": "Fine", "progress": 3}):

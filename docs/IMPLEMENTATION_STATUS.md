@@ -22,7 +22,7 @@ The recorded test environment is an Apple Silicon Mac running UTM 5.0.8, QEMU AR
 | F-014 Figma day | Open | No recorded Figma workload, screenshare or browser-load test. |
 | F-015 Development day | Open | Terminal and editors run, but the native-host development, container and VM workflow is not verified. |
 | F-016 Touch day | Open | A manually invoked on-screen keyboard entered a letter, Shift and Enter into a guest terminal with a simulated pointer. Real touch, automatic text-field activation, rotation and tablet Group testing remain open. |
-| F-017 API app test | Partial | Version 1.1 of the Flow Platform API (ADR-0009) is a session D-Bus service with a spaces interface scoped to the caller's own app and a control interface for unsandboxed callers (2026-11-21). Two non-Qt clients were used in the guest on a private bus: the Python/Gio `flow` CLI and `busctl`. A command run inside one app listed only its own part of that app's space and focused it while the app had focus. Its attempt to focus another app's space was refused as `NotAuthorized`. The packaged service also started by D-Bus activation. A real Flatpak app was not tested, because Flatpak is not installed in the guest; sandbox detection is unit-tested with a fake `/proc`. |
+| F-017 API app test | Partial | Version 1.1 of the Flow Platform API (ADR-0009) is a session D-Bus service with a spaces interface scoped to the caller's own app and a control interface for unsandboxed callers (2026-11-21). Two non-Qt clients were used in the guest on a private bus: the Python/Gio `flow` CLI and `busctl`. A command run inside one app listed only its own part of that app's space and focused it while the app had focus. Its attempt to focus another app's space was refused as `NotAuthorized`. The packaged service also started by D-Bus activation. Since 2026-11-21 a real Flatpak app, FlowProbe, built on the freedesktop runtime with only Wayland and `--talk-name`, kept the sandbox promises of version 1.2 in the guest (`niri_flatpak_api_smoke.py`, see *Flow Platform API*). A NEMESIS review of that work found that a sandboxed app owned any window carrying its app ID, including a native app's; ownership now follows the window's sandbox, and the test now covers it. Remaining gaps: the shell does not use the API yet; callers and windows are identified by PID, not pidfd; confinement other than Flatpak is not recognised; and a sideloaded Flatpak can take the app ID of a natively installed app. |
 | F-018 Shell restart | Partial | `niri_shell_restart_smoke.py` (2026-11-20) started a development shell and restarted it with SIGTERM, then SIGKILL. It ran beside a pinned app, a pinned, resized side-by-side Group and an unpinned app, with isolated state. Pins, Groups, window IDs, columns, widths and focus were unchanged from before the first start, and Super+1 and Super+2 still reached both pins. A shell that moves focus on startup fails the test. A restart during a Flow action was not tested. The installed shell is the `flow-shell` user unit, restarted by a NixOS switch when its files or Quickshell change; see *Installed generation*. |
 | F-019 DisplayLink hardware | Open | No named dock or monitor test. |
 | F-020 App menu fallback | Partial | The opt-in AT-SPI experiment showed and invoked Kate commands; native menus are retained. Coverage, same-process ambiguity and the complete fallback journey remain unverified. |
@@ -176,9 +176,22 @@ Apps are gated on Niri's per-window `is_focused`, not on the workspace's active 
 
 Through `Control`, the guest smoke test pinned an app's space with focus kept on the other app, moved the pin left, and unpinned it; a second unpin was `NotFound`. Against a development shell, `System` then opened Desk, and a second request left it open. `ShowOverview` with Desk open was `InvalidState`, and Desk stayed open. The overview and the launcher each opened, and a second request left them open. With *show* sent through the toggling shell call, the test fails.
 
-Sandboxed callers of `System` are unit-tested only, because no Flatpak app was available.
+A real Flatpak app, FlowProbe (`tests/flatpak/flow_probe.py`), was tested in the guest with Flatpak 1.18 (2026-11-21). `niri_flatpak_api_smoke.py` builds it on the bare `org.freedesktop.Platform` 25.08 runtime with only `--socket=wayland` and `--talk-name=io.github.mattonik.Flow1`, and drives it through Flatpak's D-Bus proxy on a private bus:
+- The bus names Flatpak's `xdg-dbus-proxy`, inside the sandbox, as the caller, and its `/proc/<pid>/root/.flatpak-info` names the app; the service offered it no `control.*` features.
+- It listed exactly its two spaces. In the column it shares with another app, it saw only its own title and app ID, and no answer contained the titles or app IDs of the test's other windows.
+- A native window that sets FlowProbe's app ID is not FlowProbe's: it was not listed, and while it had focus, `ShowDesk` and `FocusSpace` were `NotAuthorized`.
+- Without focus, `FocusSpace` (its own space and another app's), all five `Control` methods and all three `System` requests were `NotAuthorized`, and nothing moved or opened.
+- With focus, it opened the overview and Desk, and focusing the shared column moved focus to its own window there, not the other app's window above it. `ShowLauncher` and `Control` stayed `NotAuthorized`.
+- Of 21 calls spread over three connections, only the last was `RateLimited`.
 
-Not done: the shell does not use the API yet, the service was not run as the installed systemd unit, and a real Flatpak app was not tested. Callers are identified by PID, not pidfd. Confinement other than Flatpak is not recognised. Calls are answered one at a time. Groups, displays, Layers, search providers and activities are not in this version.
+Each refusal, listing, ownership and limit check failed when the guard it covers was neutralised in a throwaway copy of the service.
+
+NEMESIS reviews of the test found these defects, now fixed:
+- **Window ownership by app ID:** a sandboxed app owned every window whose Wayland app ID equalled its Flatpak ID. A Flatpak sideloaded under a native app's ID could read that app's window titles, act whenever that app had focus, and show its name on activities. A window is now the app's only if Niri's PID for it is inside the app's sandbox.
+- **Focus in a shared space:** focusing an unpinned space shared with another app focused the space's first window, which could be the other app's. An app now gets its own window. A pinned space is still focused as Super+number does.
+- **Unbounded text:** `clean()` read an activity title or detail of any length before cutting it, so a Flatpak could stall the service, which answers one call at a time, with one huge string. Only the first four times the limit is now read, and a cut string ends in "…". This is unit-tested; the smoke does not send such a string.
+
+Not done: the shell does not use the API yet, and the service was not run as the installed systemd unit. Callers and windows are identified by PID, not pidfd. A sideloaded Flatpak can take the app ID of an app installed natively; its windows stay apart, but its activities show that ID. A Flatpak's X11 windows are not its own. Confinement other than Flatpak is not recognised. Calls are answered one at a time. Groups, displays, Layers, search providers and activities are not in this version.
 
 ### Activities
 
@@ -188,7 +201,7 @@ Not done: the shell does not use the API yet, the service was not run as the ins
 - Text is cut to one printable line; blank-looking characters and stacked combining marks are removed.
 
 The service labels each activity with its owner, never with a name the app chose:
-- **Flatpak app:** its verified app ID.
+- **Flatpak app:** the app ID of its sandbox.
 - **Unsandboxed caller:** its process name, or the program that ran the `flow` CLI.
 
 The service publishes live activities to `$XDG_RUNTIME_DIR/flow-activities.json`, and the shell watches that file:
@@ -218,7 +231,60 @@ A NEMESIS review of the first version found the bugs these tests now pin down:
 
 Stopping the shell had leaked its `niri msg event-stream`, a bug older than Activities. The event streams of the shell and the service now run under `setpriv --pdeathsig`, so they end with their parent, and fall back to a plain stream without `setpriv`.
 
-Not tested: a Flatpak app as the owner, and the narrow-screen dot outside the layout code.
+The same FlowProbe run covered activities from a Flatpak app. They showed its app ID as owner, though it asked for another owner. A fourth activity on a fourth connection was refused, one connection could not finish another's activity, and all three ended when the app exited.
+
+Not tested: the narrow-screen dot outside the layout code.
+
+### The prototype's Overview, home indicator and search (2026-11-21)
+
+Flow used Niri's own Overview (a vertical zoom of workspaces), fuzzel for search and two buttons at the bottom; none of it looked like the prototype (`docs/Flow_v1.0_Contextual_Menus.html`). These are now Flow's own surfaces, styled from the tokens:
+- **Overview** (Super+O, the home indicator, Desk's *Overview*, the Platform API's `ShowOverview`):
+  - **Header:** "YOUR WORK / MAIN DISPLAY", **Overview.** and "Every space in its place."
+  - **The row:** this display's spaces in one row, the selected one centred with a 2 px ring. Each card has a caption with its pin number or a dot, its name, and PINNED, GROUP or SPACE.
+  - **Navigation:** half-pill rails at the screen's edges. A tool bar: *Open selected*, *Pin space* or *Unpin*, ← →, and *Your desk*. *Shortcuts* opens Niri's hotkey overlay.
+  - **Keys:** Left/Right, Home/End and the wheel choose; Enter or a click returns; Up, or the home indicator again, goes on to Desk; Escape returns unchanged.
+  - **The selection** is a space, not a position, so it stays put when a refresh replaces the list, for example when a title changes or a window opens.
+  - **Card images:** Niri offers no capture of one window, but a space fills its display while focused. So each card shows the snapshot taken the last time its space was on screen, as a phone's app switcher does: `grim`, at about 640 px wide, cropped exactly to below the Island and above the home indicator.
+  - **When snapshots are taken:** only in the plain work view, and only when the focused space changes and has settled for 0.7 s; a title change is not a move. Opening Overview takes a fresh one unless a move is still settling.
+  - **Where snapshots are kept:** in `$XDG_RUNTIME_DIR/flow-snapshots` only, and never without a runtime directory. They are deleted when their space closes and when the shell starts or stops.
+  - **Why not Qt's own capture:** Qt's `grabToImage` crashed Quickshell 0.3.2 on Niri, in every run that used it. Niri's screenshot action would fill the clipboard.
+- **One surface at a time:**
+  - Desk, search, the switcher, quick settings and notifications each close Overview.
+  - Any of them opening while Overview is still taking its snapshot cancels it.
+  - An error or a pin from Overview is a toast, not a Desk opened underneath.
+  - The Desk gives search the keyboard, and the app menu and the auto-layout timer never act under these surfaces.
+  - Niri's top-left hot corner is off, because Overview is Flow's. Niri's live overview stays in the Spaces switcher, and the touchpad's four-finger swipe still opens it.
+- **The home indicator:** a 48 × 4 line on a dark halo, so it reads over light and dark apps (65 px and accent on hover). It replaces the *Overview* and *Spaces* buttons.
+  - It takes input in only the bottom 126 × 24, the prototype's size, because Flow's columns reach the screen's edge.
+  - Tap it or drag it up: from work to Overview, from Overview to Desk, from Desk back to work.
+  - The Spaces switcher moved to Desk's tools and stays on Super+Tab.
+- **Search** (Super+K, Desk's search, the Island's *Apps*, which shows apps only):
+  - **The palette:** a shade and a 620 px palette with an 18 px radius. The field has a search icon and a close button.
+  - **Results:** each has an icon tile (the app's icon, or a line icon for its kind), a title, a detail line and ↗. The chosen row has a 2 px focus edge.
+  - **Footer:** "Enter to open · ↑ ↓ to choose · Esc to close". Escape works from anywhere in the panel.
+  - **Behaviour:** `search.py --json` lists the results, the shell filters them as you type and runs the choice, and apps open in their own scope.
+  - **What is listed:** the same results fuzzel showed, except apps without a desktop file, which cannot be opened by name.
+  - **The old commands:** `flow-apps` and `flow-search` still exist as standalone fuzzel launchers. Nothing in the shell uses them.
+- **Platform API:** `ShowOverview` opens Flow's Overview, and `ShowLauncher` opens the panel's app view. Both count an Overview that is still opening as open.
+
+Tests:
+- **`niri_prototype_surfaces_smoke.py`:** drives a development shell in the guest through its IPC calls. It checks that Overview opens on the focused space and keeps the chosen space when a window opens, that pinning from it keeps Overview without a Desk, that Overview again goes on to Desk, and that search opens over Desk. Desk during Overview's opening wins, ShowDesk then is busy, and Desk over an open Overview replaces it. With grim, a settled space gets a snapshot and Desk never does. Four mutations of the review's failure cases each fail it: the selection reset, the pending Overview, a pin opening Desk, and Desk over Overview.
+- **`test_prototype_surfaces.py`:** checks the JSON results and the configuration.
+- **Screenshots:** both appearances were captured in the guest with three apps.
+
+Not verified: a real wheel and touch drag on the home indicator, because the guest has no pointer injection, and the Overview with several displays. On a second display it shows that display's spaces, but snapshots come from the island's screen.
+
+### Moving along a row in Overview (2026-11-21)
+
+Niri has no binds that apply only in Overview, so plain arrow keys cannot move through a display's row of spaces there. What does:
+- **Super+Left/Right:** Flow's space navigation keeps Overview open. In the guest, with three apps in a row, it moved from the third to the second, then the first.
+- **Super+wheel, in every direction:** a step along the row. Down and right go to the next space, up and left to the previous; a display's spaces are one row, so vertical scrolling has nothing else to do.
+  - Each notch goes through the running shell's `navigate` IPC call, which drops a notch while a step is running or queued, so a fast spin never queues moves that keep going after the wheel stops.
+  - Niri's documentation says Overview takes Mod+wheel binds without the modifier held, and Flow's Mod is Super, as on a TTY. So a plain wheel should step there too. That is unverified, because the guest has no input injection. Niri 26.04 validated the binds.
+- **A touchpad:** it scrolls Overview with Niri's own gestures.
+- **The work indicator:** it stays visible in Overview, with its arrows and position (02 / 05), for a pointer or a finger. With a Layer focused, Overview shows the arrows instead of the Layer's actions.
+
+`test_overview_navigation.py` checks that every wheel direction is bound and enabled, goes through the shell with a short cooldown, and that a notch is dropped while a step is in progress. It also checks that the indicator and both arrows stay in Overview; seven mutations each fail it.
 
 ### Shell visual polish (2026-11-21)
 

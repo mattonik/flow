@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """Keyboard focus and screen-reader semantics of a development shell's keyboard surfaces.
 
-Desk, the Spaces switcher, Quick settings and Notifications are opened in turn. On each, Tab and
+Desk, Overview, search, the Spaces switcher, Quick settings and Notifications are opened in turn. On each, Tab and
 Shift+Tab walk every enabled control and the test checks that:
 - every enabled control is reached, each Tab and Shift+Tab landing on the next control in reading order
   (a switcher card's controls as one block) that is enabled at that moment;
 - the focus ring is drawn around the focused control in the ``focus`` token and around no other
   (screenshot pixels, sampled where the ring belongs: 3 px outside a button, 1 px inside an island
-  capsule, 1 px outside a switch's indicator);
+  capsule, 1 px outside a switch's indicator, at a text field's edge);
 - Return and keypad Enter activate the focused control;
 - Escape closes the surface and keystrokes reach the app again, and none reached it while the surface
   was open.
 
 Over AT-SPI it checks, on every visible surface, that each button and switch has a name containing
 the text it shows (WCAG 2.5.3), that selected controls are described as "Current" and buttons whose
-panel is showing as "Open", and that activity chips are progress bars. Accessibility is switched on
+panel is showing as "Open", and that activity chips are progress bars. Every other button it exposes
+(Overview's cards, search results, the home indicator) must have a name. Accessibility is switched on
 the way a screen reader does it (``org.a11y.Status.IsEnabled``), not forced in Qt.
 
 The guest's windows: the test's own Foot window (it types into it), and six more Foot windows, two of
@@ -54,9 +55,10 @@ import uuid
 import zlib
 
 CODE = Path(__file__).resolve().parents[1] / "session"
+CONTROL_ROLES = ()  # AT-SPI roles of controls, set once pyatspi is imported
 # Where each kind of control draws its 2 px ring, from its edge (or a switch's indicator's): the design,
 # held here so a shell that moved its rings would fail rather than be sampled where it put them.
-RING_INSET = {"button": -3, "glyph": -3, "capsule": 1, "switch": -1}
+RING_INSET = {"button": -3, "glyph": -3, "capsule": 1, "switch": -1, "field": 0}
 # Foot windows besides the test's own; two share a column, so the switcher shows this many cards.
 SPACES = 6
 NOTIFICATIONS = 8
@@ -170,6 +172,9 @@ def run(shell, bus, steps, problems):
     gi.require_version("Atspi", "2.0")
     from gi.repository import Gio, GLib
     import pyatspi
+    global CONTROL_ROLES
+    CONTROL_ROLES = (pyatspi.ROLE_PUSH_BUTTON, pyatspi.ROLE_CHECK_BOX, pyatspi.ROLE_TOGGLE_BUTTON, pyatspi.ROLE_SWITCH,
+                     pyatspi.ROLE_TEXT, pyatspi.ROLE_ENTRY)
 
     real_runtime = Path(os.environ["XDG_RUNTIME_DIR"])
     wayland = os.environ.get("WAYLAND_DISPLAY", "wayland-1")
@@ -259,8 +264,7 @@ def run(shell, bus, steps, problems):
             if not listed:
                 return None, []
             frame = frame_of(listed[0]["window"])
-            objects = [n for n in nodes(frame) if n.getRole() in (pyatspi.ROLE_PUSH_BUTTON, pyatspi.ROLE_CHECK_BOX,
-                                                                  pyatspi.ROLE_TOGGLE_BUTTON, pyatspi.ROLE_SWITCH)]
+            objects = [n for n in nodes(frame) if n.getRole() in CONTROL_ROLES]
             width, height = listed[0]["window"]
             for control in listed:
                 x, y, w, h = control["rect"]
@@ -270,8 +274,11 @@ def run(shell, bus, steps, problems):
                     raise RuntimeError(f"{surface}: {len(near)} AT-SPI objects at {control['rect']} for {control['text']!r}; "
                                        f"AT-SPI has {[(o.name, rect(o)) for o in objects]}")
                 control["node"] = near[0] if near else None
-            if len(objects) != sum(c["node"] is not None for c in listed):
-                raise RuntimeError(f"{surface}: AT-SPI has controls the shell does not show: {[o.name for o in objects]}")
+            # Buttons that are not shell controls (Overview's cards, search results) still need a name.
+            paired = [c["node"].path for c in listed if c["node"] is not None]
+            for extra in (o for o in objects if o.path not in paired):
+                if not (extra.name or "").strip():
+                    note(f"{surface}: an unnamed {extra.getRoleName()} at {rect(extra)}")
             return frame, listed
 
         def focused(frame):
@@ -294,9 +301,10 @@ def run(shell, bus, steps, problems):
 
         def origin(surface, size):
             """Where a surface sits on screen, from its anchors (Desk fills it, the switcher is a bottom sheet,
-            the panels hang 60 px from the top, centred)."""
+            the panels hang 60 px from the top, centred; Overview and search fill it too)."""
             w, h = size
-            return {"desk": (0, 0), "switcher": (0, screen["height"] - h)}.get(surface, ((screen["width"] - w) // 2, 60))
+            full = {"desk": (0, 0), "overview": (0, 0), "search": (0, 0), "switcher": (0, screen["height"] - h)}
+            return full.get(surface, ((screen["width"] - w) // 2, 60))
 
         def screenshot():
             path = shots / f"{next(shot_number):03}.png"
@@ -346,6 +354,10 @@ def run(shell, bus, steps, problems):
                                        f"focus ring while {'focused' if i == index else 'not focused'}{partly}, "
                                        f"ring at {listed[i]['ring']} in a {listed[i]['window']} window; see {kept}")
 
+        def note(problem):
+            if problem not in problems:
+                problems.append(problem)
+
         def check_control(surface, c, node):
             """WCAG 2.5.3 and state: a name that holds the visible text, "Current" or "Open" when it applies.
             Failures are collected, so one run names them all."""
@@ -353,6 +365,8 @@ def run(shell, bus, steps, problems):
             problem = None
             if not name.strip():
                 problem = f"a {c['kind']} at {c['rect']} has no accessible name"
+            elif c["kind"] == "field":
+                problem = None
             elif not c["icon"] and not any(c["text"] and c["text"] in shown for shown in c["words"]):
                 problem = f"{name!r} does not show its text {c['text']!r} ({c['words']})"
             elif not c["icon"] and not contains(name, c["text"]):
@@ -363,24 +377,25 @@ def run(shell, bus, steps, problems):
                 want = "Current" if c["selected"] or shows_current else "Open" if c["open"] else ""
                 if description != want:
                     problem = f"{name!r} is described as {description!r}, not {want!r}"
-            if problem and f"{surface}: {problem}" not in problems:
-                problems.append(f"{surface}: {problem}")
+            if problem:
+                note(f"{surface}: {problem}")
 
         def walk(surface):
             """Tab round the surface and Shift+Tab back. Each step must land on the next control in reading
             order that is enabled at that moment: a scrolled row of cards enables its "‹" button on the way."""
             frame, listed = matched(surface)
             cycle = [c["at"] for c in reading_order([dict(c, start=c["rect"], at=i) for i, c in enumerate(listed)])]
-            enabled_at_start = {i for i, c in enumerate(listed) if c["enabled"]}
+            reachable = lambda c: c["enabled"] and c["tabbable"]
+            enabled_at_start = {i for i, c in enumerate(listed) if reachable(c)}
             if len(enabled_at_start) < 2:
                 raise RuntimeError(f"{surface}: only {len(enabled_at_start)} enabled controls")
-            label = lambda i: listed[i]["text"] or (listed[i]["node"].name if listed[i]["node"] else f"#{i}")
+            label = lambda i: "nothing" if i is None else listed[i]["text"] or (listed[i]["node"].name if listed[i]["node"] else f"#{i}")
 
             def successor(current, now, step):
                 at = cycle.index(current) if current is not None else (-1 if step > 0 else 0)
                 for k in range(1, len(cycle) + 1):
                     candidate = cycle[(at + step * k) % len(cycle)]
-                    if now[candidate]["enabled"]:
+                    if reachable(now[candidate]):
                         return candidate
                 raise RuntimeError(f"{surface}: no enabled control")
 
@@ -447,6 +462,13 @@ def run(shell, bus, steps, problems):
                     if c["node"] is not None:
                         check_control(surface, c, c["node"])
                         checked += 1
+            app = shell_app()
+            for i in range(app.childCount):
+                window = app.getChildAtIndex(i)
+                if window is not None and window.getState().contains(pyatspi.STATE_SHOWING):
+                    for n in nodes(window):
+                        if n.getRole() in CONTROL_ROLES + (pyatspi.ROLE_PROGRESS_BAR,) and not (n.name or "").strip():
+                            note(f"an unnamed {n.getRoleName()} at {rect(n)} in a {rect(window)[2:]} window")
             steps.append(f"{where}: checked the names and states of {checked} controls in view")
 
         def progress_bars(size):
@@ -512,6 +534,32 @@ def run(shell, bus, steps, problems):
             steps.append("Desk: Return opened Settings; Return and keypad Enter toggled Reduce motion off and on")
             expected = close_and_type("desk", lambda: key("-k", "Escape"), "1", expected)
             steps.append("Desk: Escape closed it and keys reached the app again; none leaked while it was open")
+
+            # Overview: Tab goes through the island and the tools; Return on Next space moves the selection.
+            ipc("overview")
+            wait_for(lambda: ipc("overview_state") == "open" and controls("overview"), "Overview")
+            time.sleep(0.6)
+            check_semantics("Overview")
+            frame = walk("overview")
+            before = ipc("overview_selected")
+            focus_on(frame, "Next space")
+            key("-k", "Return")
+            wait_for(lambda: ipc("overview_selected") not in ("", before), "Return on Next space to move the selection")
+            expected = close_and_type("overview", lambda: key("-k", "Escape"), "a", expected)
+            steps.append("Overview: Return on Next space moved the selection; Escape closed it and keys reached the app")
+
+            # Search: focus starts in its field, which shows a ring; Tab reaches Close.
+            ipc("search")
+            wait_for(lambda: ipc("search_state") == "open" and controls("search"), "search")
+            time.sleep(0.6)
+            check_semantics("Search")
+            walk("search")
+            expected = close_and_type("search", lambda: key("-k", "Escape"), "b", expected)
+            ipc("search")
+            frame = frame_of(wait_for(lambda: controls("search"), "search again")[0]["window"])
+            focus_on(frame, "Close search")
+            expected = close_and_type("search", lambda: key("-k", "Return"), "c", expected)
+            steps.append("Search: Escape, and Return on Close, each closed it and returned keys to the app")
 
             # The switcher with the test's window as the current space ("Current" on its card), then as a Layer
             # (a selected Layer button, and the Layer row's controls). More cards than fit: its row scrolls.
