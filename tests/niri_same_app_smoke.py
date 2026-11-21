@@ -109,6 +109,20 @@ def main():
                 raise RuntimeError(f"The Group did not form beside other windows of its apps: {created['spaces']}")
             steps.append("a Group formed from one window of each app while a second window of each stayed open")
 
+            # As after a restart: the binding belongs to an earlier Niri session and is not trusted.
+            registry = Path(tmp) / "state/flow/groups.json"
+            data = json.loads(registry.read_text())
+            data["groups"][0]["bound"]["session"] = "an-earlier-niri-session"
+            registry.write_text(json.dumps(data))
+            (incomplete,) = spaces("refresh")["incomplete_groups"]
+            offered = {c["app"]: sorted(w["id"] for w in c["windows"]) for c in incomplete["choices"]}
+            if offered != {term: sorted([t1, t2]), edit: sorted([e1, e2])}:
+                raise RuntimeError(f"The ambiguous windows were not offered as a choice: {incomplete}")
+            chosen = spaces("choose-member", f"{gid}:{t1}")
+            if [[m["id"] for m in s["members"]] for s in chosen["spaces"] if s.get("group_id")] != [[t1, e1]]:
+                raise RuntimeError(f"Choosing the terminal did not restore the stacked Group: {chosen['spaces']}")
+            steps.append("with an untrusted binding, the user chose the terminal and the stacked Group came back")
+
             niri("action", "focus-window", "--id", t2)
             spaces("make-layer")
             if not next(w for w in ours() if w["id"] == t2).get("is_floating") or columns()[0] != [t1, e1]:

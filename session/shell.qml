@@ -347,7 +347,7 @@ ShellRoot {
     Timer { interval: niriEvents.running ? 30000 : 3000; running: true; repeat: true; triggeredOnStart: true; onTriggered: root.spaceAction("refresh") }
     Timer {
         interval: 2000; repeat: true
-        running: root.displaySpaces.some(space => space.auto_layout)
+        running: root.displaySpaces.some(space => space.auto_layout) || root.layers.some(layer => layer.shaped)
         onTriggered: if (!root.deskOpen && !root.switcherOpen && !root.overviewOpen && !root.launcherActive && !root.appMenuOpen && !root.quickSettingsOpen && !root.notificationsOpen && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length) root.spaceAction("auto-layout")
     }
     function toggleDesk() {
@@ -1031,6 +1031,14 @@ ShellRoot {
                                 onClicked: root.spaceAction("layer-to-space", String(modelData.id))
                             }
                             FlowButton {
+                                id: layerGroupButton
+                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(layerGroupButton)
+                                width: 120; implicitHeight: 44; text: "Add to Group"
+                                Accessible.name: "Add Layer " + (modelData.app_name || modelData.label) + " to the Group beneath it"
+                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                onClicked: root.spaceAction("layer-to-group", String(modelData.id))
+                            }
+                            FlowButton {
                                 id: layerCloseButton
                                 onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(layerCloseButton)
                                 width: 76; implicitHeight: 44; text: "Close"
@@ -1276,6 +1284,7 @@ ShellRoot {
                     Repeater {
                         model: root.incompleteGroups
                         Column {
+                            id: attentionCard
                             required property var modelData
                             width: parent.width; spacing: 4
                             Text {
@@ -1287,6 +1296,46 @@ ShellRoot {
                                 width: parent.width; text: modelData.status; textFormat: Text.PlainText
                                 color: floeTheme.textSecondary; font.pixelSize: 14; font.family: floeTheme.interfaceFont
                                 wrapMode: Text.WrapAnywhere
+                            }
+                            Repeater {
+                                // Several windows of a member app: the user picks the one in the Group.
+                                model: modelData.choices || []
+                                Column {
+                                    id: memberChoice
+                                    required property var modelData
+                                    property string groupId: attentionCard.modelData.id
+                                    width: parent.width; spacing: 4
+                                    Text {
+                                        width: parent.width; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                                        text: "Which " + memberChoice.modelData.app_name + " window belongs to this Group?"
+                                        color: floeTheme.textSecondary; font.pixelSize: 14; font.family: floeTheme.interfaceFont
+                                    }
+                                    Flow {
+                                        width: parent.width; spacing: 4
+                                        Repeater {
+                                            model: memberChoice.modelData.windows
+                                            FlowButton {
+                                                id: chooseWindowButton
+                                                required property var modelData
+                                                width: Math.min(memberChoice.width, 220); implicitHeight: 44
+                                                text: modelData.label.slice(0, 28)
+                                                Accessible.name: "Use " + modelData.label + " as the Group's " + memberChoice.modelData.app_name + " window"
+                                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(chooseWindowButton)
+                                                onClicked: root.spaceAction("choose-member", memberChoice.groupId + ":" + modelData.id)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            FlowButton {
+                                id: forgetGroupChoice
+                                visible: !!modelData.can_forget_choice
+                                width: Math.min(parent.width, 200); implicitHeight: 44; text: "Choose again"
+                                Accessible.name: "Forget the windows chosen for " + modelData.label + " and choose again"
+                                enabled: !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length
+                                onActiveFocusChanged: if (activeFocus) switcherScroller.ensureVisible(forgetGroupChoice)
+                                onClicked: root.spaceAction("forget-choice", modelData.id)
                             }
                             FlowButton {
                                 id: openGroupMember

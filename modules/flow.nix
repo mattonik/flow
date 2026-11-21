@@ -35,6 +35,26 @@ let
     export GI_TYPELIB_PATH="${pkgs.glib}/lib/girepository-1.0:${pkgs.gobject-introspection}/lib/girepository-1.0''${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
     exec ${pkgs.python3.withPackages (p: [ p.pygobject3 ])}/bin/python3 ${../session/search.py}
   '';
+  # Flow Platform API (docs/engineering/ADR-0009-platform-api-v1.md): a session D-Bus service and its CLI.
+  apiPython = pkgs.python3.withPackages (p: [ p.pygobject3 ]);
+  apiTypelibs = "${pkgs.glib}/lib/girepository-1.0:${pkgs.gobject-introspection}/lib/girepository-1.0";
+  flowApi = pkgs.writeShellScriptBin "flow-api" ''
+    export PYTHONPATH="${../session}"
+    export GI_TYPELIB_PATH="${apiTypelibs}"
+    export PATH="${spaces}/bin:${config.programs.niri.package}/bin:$PATH"
+    exec ${apiPython}/bin/python3 ${../session/flow_api.py}
+  '';
+  flowCli = pkgs.writeShellScriptBin "flow" ''
+    export PYTHONPATH="${../session}"
+    export GI_TYPELIB_PATH="${apiTypelibs}"
+    exec ${apiPython}/bin/python3 ${../session/flow_cli.py} "$@"
+  '';
+  flowApiActivation = pkgs.writeTextDir "share/dbus-1/services/io.github.mattonik.Flow1.service" ''
+    [D-BUS Service]
+    Name=io.github.mattonik.Flow1
+    Exec=${flowApi}/bin/flow-api
+    SystemdService=flow-api.service
+  '';
   wifiSettings = pkgs.writeShellScriptBin "flow-wifi-settings" ''
     export XDG_CURRENT_DESKTOP=GNOME
     export XDG_DATA_DIRS="${pkgs.gnome-control-center}/share:''${XDG_DATA_DIRS:-/run/current-system/sw/share:/usr/share}"
@@ -93,8 +113,22 @@ in {
     security.polkit.enable = true;
     environment.systemPackages = (with pkgs; [
       foot fuzzel quickshell swaylock firefox nautilus gnome-control-center networkmanagerapplet spaces launcher appmenu keyboard wvkbd wifiSettings
-      xwayland-satellite mesa-demos wayland-utils recovery search wireplumber networkmanager
+      xwayland-satellite mesa-demos wayland-utils recovery search wireplumber networkmanager flowCli
     ]) ++ lib.optionals config.services.desktopManager.plasma6.enable [ (lib.hiPrio kdeSettings) ];
+    services.dbus.packages = [ flowApiActivation ];
+    # Started on first use by D-Bus activation; it reads Flow state through flow-spaces.
+    systemd.user.services.flow-api = {
+      description = "Flow Platform API";
+      # Bound to the graphical session, so a user manager that outlives a login never keeps a stale Niri socket.
+      partOf = [ "graphical-session.target" ];
+      after = [ "graphical-session.target" ];
+      serviceConfig = {
+        Type = "dbus";
+        BusName = "io.github.mattonik.Flow1";
+        ExecStart = "${flowApi}/bin/flow-api";
+        Restart = "on-failure";
+      };
+    };
     environment.etc."niri/config.kdl".source = niriConfig;
     environment.etc."flow/shell.qml".source = ../session/shell.qml;
     environment.etc."flow/FloeTheme.qml".source = ../session/FloeTheme.qml;

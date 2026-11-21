@@ -25,6 +25,8 @@ class LayerTest(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.data = Path(directory.name)
         (self.data / "applications").mkdir()
+        spaces.app_name.cache_clear()
+        self.addCleanup(spaces.app_name.cache_clear)
         (self.data / "applications/org.example.Notes.desktop").write_text(
             "[Desktop Entry]\nType=Application\nName=Notes\nExec=notes\nStartupWMClass=notes\n")
         for item in (patch.object(spaces, "snapshot", side_effect=self.niri.snapshot),
@@ -148,6 +150,55 @@ class LayerTest(unittest.TestCase):
         self.assertEqual(self.niri.active, 7)
         self.assertEqual(self.niri.floating, [50])
 
+    def test_a_layer_joins_the_side_by_side_group_beneath_it_with_an_equal_share(self):
+        with self.launch("notes"):
+            self.run_op("open-layer", "org.example.Notes")
+        self.run_op("layer-to-group", "50")
+        self.assertEqual((self.niri.layout(), self.niri.floating, self.niri.active),
+                         ([["mail"], ["a"], ["b"], ["notes"], ["other"]], [], 50))
+        self.assertEqual(self.group["members"], ["a", "b", "notes"])
+        self.assertEqual([self.niri.widths[i] for i in (1, 2, 50)], [40.0, 26.67, 33.33])
+        self.assertEqual(self.pins[1]["members"], ["a", "b", "notes"])
+
+    def test_a_layer_joins_a_stacked_group_at_the_bottom(self):
+        self.niri.columns = [[7], [1, 2], [9]]
+        self.group = {"id": "g", "label": "Pair", "members": ["a", "b"], "layout": "stack"}
+        with self.launch("notes"):
+            self.run_op("open-layer", "org.example.Notes")
+        self.run_op("layer-to-group", "50")
+        self.assertEqual(self.niri.layout(), [["mail"], ["a", "b", "notes"], ["other"]])
+
+    def test_a_second_window_of_a_member_app_does_not_join_its_group(self):
+        # Bound in this session, the Group stays itself beside another window of its app.
+        self.group["bound"] = {"session": "s", "windows": {"a": 1, "b": 2}}
+        patcher = patch.object(spaces, "SESSION", "s")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.niri.apps[51] = "a"
+        self.niri.floating.append(51)
+        self.niri("action", "focus-window", "--id", 1)
+        self.niri("action", "focus-window", "--id", 51)
+        with self.assertRaisesRegex(ValueError, "already in this Group"):
+            self.run_op("layer-to-group", "51")
+        self.assertEqual((self.niri.floating, self.niri.active), ([51], 51))
+
+    def test_a_layer_over_another_space_or_a_full_group_stays_a_layer(self):
+        self.niri("action", "focus-window", "--id", 7)
+        with self.launch("notes"):
+            self.run_op("open-layer", "org.example.Notes")
+        with self.assertRaisesRegex(ValueError, "not a Group"):
+            self.run_op("layer-to-group", "50")
+        self.assertEqual((self.niri.floating, self.niri.active), ([50], 50))
+        self.niri.apps.update({3: "c", 4: "d"})
+        self.niri.columns = [[7], [1], [2], [3], [4], [9]]
+        self.group.update(members=["a", "b", "c", "d"], side_ratios=[0.25] * 4)
+        self.group.pop("side_ratio")
+        self.niri("action", "focus-window", "--id", 1)
+        self.niri("action", "focus-window", "--id", 50)
+        with self.assertRaisesRegex(ValueError, "up to 4"):
+            self.run_op("layer-to-group", "50")
+        self.assertEqual((self.niri.floating, self.niri.active), ([50], 50))
+
     def test_only_a_standalone_unpinned_tiled_app_becomes_a_layer(self):
         for active, message in ((1, "Remove this app from its Group"), (7, "Unpin this app")):
             self.niri("action", "focus-window", "--id", active)
@@ -168,6 +219,88 @@ class LayerTest(unittest.TestCase):
         self.assertEqual(self.niri.floating, [])
         with self.assertRaisesRegex(ValueError, "No matching installed"):
             self.run_op("open-layer", "org.example.Missing")
+
+
+
+class LayerRotationTest(unittest.TestCase):
+    """An open Layer takes the new shape when its output rotates, and only then."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.state = Path(directory.name) / "flow"
+        self.state.mkdir()
+        (self.state / "groups.initialized").touch()
+        (self.state / "groups.json").write_text('{"version": 1, "groups": []}')
+        self.niri = FakeNiri([[7], [9]], {7: "mail", 9: "notes"}, 9)
+        self.size = (1280, 800)
+        for item in (patch.dict(os.environ, {"XDG_STATE_HOME": directory.name}),
+                     patch.object(spaces.time, "sleep")):
+            item.start()
+            self.addCleanup(item.stop)
+
+    def invoke(self, *args):
+        import contextlib
+        import io
+        outputs = {"Virtual-1": {"make": "QEMU", "model": "Monitor", "serial": None,
+                                 "logical": {"x": 0, "y": 0, "width": self.size[0], "height": self.size[1]}}}
+        with patch.object(sys, "argv", ["flow-spaces", *args]), \
+             patch.object(spaces, "snapshot", side_effect=self.niri.snapshot), \
+             patch.object(spaces, "display_state", side_effect=lambda: (outputs, [self.niri.snapshot()[0]])), \
+             patch.object(spaces, "session_id", return_value="s"), \
+             patch.object(spaces, "command", side_effect=self.niri), \
+             contextlib.redirect_stdout(io.StringIO()):
+            spaces.run_locked(self.state)
+
+    def sheet_moves(self):
+        return [a for a in self.niri.log if a[:2] == ("action", "move-floating-window")]
+
+    def test_rotating_reshapes_the_layer_and_leaves_focus_alone(self):
+        self.invoke("make-layer")
+        self.niri("action", "focus-window", "--id", 7)
+        self.invoke("auto-layout")
+        self.assertEqual(self.sheet_moves(), [])
+        self.size = (800, 1280)
+        self.invoke("auto-layout")
+        self.assertEqual(self.sheet_moves(), [("action", "move-floating-window", "--id", 9, "-x", "0", "-y", "640")])
+        self.assertEqual(self.niri.active, 7)
+        # Nothing changes while the orientation stays the same, so a resized Layer is left alone.
+        self.invoke("auto-layout")
+        self.assertEqual(len(self.sheet_moves()), 1)
+        self.size = (1280, 800)
+        start = len(self.niri.log)
+        self.invoke("auto-layout")
+        actions = [a for a in self.niri.log[start:] if a[0] == "action"]
+        self.assertEqual(actions[-2:], [("action", "center-window", "--id", 9), ("action", "focus-window", "--id", 7)])
+
+    def test_a_rotation_right_after_opening_a_layer_is_noticed(self):
+        self.invoke("make-layer")
+        self.size = (800, 1280)
+        self.invoke("auto-layout")
+        self.assertEqual(len(self.sheet_moves()), 1)
+
+    def test_a_floating_window_flow_did_not_shape_is_never_reshaped(self):
+        # An app's own dialog floats; Flow never made it a Layer, so a rotation leaves it alone.
+        self.niri.floating.append(9)
+        self.niri.columns = [[7]]
+        self.size = (800, 1280)
+        self.invoke("auto-layout")
+        self.size = (1280, 800)
+        self.invoke("refresh")
+        self.assertEqual([a for a in self.niri.log if a[0] == "action" and "9" in map(str, a)], [])
+
+    def test_layer_code_outside_a_locked_action_writes_nothing(self):
+        home = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(home))
+        (home / ".local/state/flow").mkdir(parents=True)  # so a stray write would succeed and be seen
+        sized = {"Virtual-1": {"logical": {"x": 0, "y": 0, "width": 1280, "height": 800}}}
+        with patch.object(Path, "home", return_value=home), patch.dict(os.environ, {"XDG_STATE_HOME": ""}), \
+             patch.object(spaces, "display_state", return_value=(sized, [])), \
+             patch.object(spaces, "snapshot", side_effect=self.niri.snapshot), \
+             patch.object(spaces, "command", side_effect=self.niri):
+            ws, windows = self.niri.snapshot()
+            spaces.run([], "make-layer", None, ws, windows, "s", [])
+        self.assertEqual([p for p in home.rglob("*") if p.is_file()], [])
 
 
 if __name__ == "__main__":

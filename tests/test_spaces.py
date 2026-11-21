@@ -159,7 +159,8 @@ class SpacesTest(unittest.TestCase):
         duplicate = only_one + [window(3, "terminal", 2)]
         entry = spaces.incomplete_groups(self.ws, duplicate, [group], [])[0]
         self.assertFalse(entry["can_open"])
-        self.assertIn("Multiple", entry["status"])
+        self.assertIn("choose the ones that belong", entry["status"])
+        self.assertEqual([(c["app"], [w["id"] for w in c["windows"]]) for c in entry["choices"]], [("terminal", [1, 3])])
         other = [{**self.windows[0], "workspace_id": 2}]
         entry = spaces.incomplete_groups(self.ws, other, [group], [])[0]
         self.assertFalse(entry["can_open"])
