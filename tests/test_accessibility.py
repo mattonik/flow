@@ -5,8 +5,9 @@ ROOT = Path(__file__).parents[1]
 
 
 class AccessibilityBusTest(unittest.TestCase):
-    """CI evaluates no Nix, so this guards the one line screen readers depend on.
-    The guest smoke tests/niri_focus_walk_smoke.py checks what it does at run time."""
+    """CI evaluates no Nix, so this guards the line screen readers depend on as text: it does not evaluate
+    the setting (another module could still force it off). The guest smoke tests/niri_focus_walk_smoke.py
+    checks at run time that the session bus can start the accessibility bus."""
 
     def test_module_enables_the_accessibility_bus(self):
         module = (ROOT / "modules/flow.nix").read_text()

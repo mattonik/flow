@@ -293,43 +293,53 @@ A NEMESIS review of the first version found these problems, which the second ver
 - The Mute button kept its label once audio was muted.
 - The shared busy clock ticked while nothing visible used it.
 
-**Keyboard and screen reader (2026-11-21).** `tests/niri_focus_walk_smoke.py` runs a development shell in the guest and drives it with `wtype`, which the guest's machine configuration now installs. Niri supports the virtual-keyboard protocol it uses. The smoke opens Desk (with and without its settings), the Spaces switcher (with the current space, then with a Layer), Quick settings and Notifications. On each:
-- **Tab and Shift+Tab** reach every enabled control once, in reading order, and walk back in reverse.
-- **The focus ring** surrounds the focused control in the `focus` token, and no other control has one. Screenshot pixels are sampled where the control says its ring is drawn: each control's `focusRingInset` places both the ring and the check.
-- **Return and keypad Enter** activate the focused control. They open Desk settings, toggle a switch both ways, close the switcher and Quick settings, and dismiss a notification.
-- **Escape**, and Return or Enter on Close, shut the surface. Keys then reach the app, and none reached it while the surface was open.
+**Keyboard and screen reader (2026-11-21).** `tests/niri_focus_walk_smoke.py` runs a development shell in the guest and drives it with `wtype`, which uses Niri's virtual-keyboard protocol. It takes screenshots with `grim`, which leaves the clipboard alone. The guest's machine configuration now installs both.
 
-Over AT-SPI, on every visible surface including the island and the bottom bars, it checks that:
-- each button and switch has a name that contains the words it shows (WCAG 2.5.3);
+**What it opens.** On the output's empty workspace it opens the smoke's own Foot window and six more, two of them stacked in one column, so the switcher has six cards in a scrolling row, one with two members. It sends eight notifications, which overflow their panel. Then it opens, in turn:
+- Desk, without and then with its settings;
+- the Spaces switcher, first with the test's window as the current space, then with it as a Layer;
+- Quick settings;
+- Notifications.
+
+**What it checks on each surface:**
+- **Tab and Shift+Tab** go round every enabled control. Each step lands on the next control in reading order that is enabled at that moment: rows top to bottom, a switcher card's controls as one block. Once the card row scrolls, its "‹" button becomes enabled.
+- **The focus ring** surrounds the focused control in the `focus` token, and no other control has one. Screenshot pixels are sampled where the design puts the ring, which the test itself holds: 3 px outside a button, 1 px inside an island capsule, 1 px outside a switch's indicator. A control that reports another inset fails.
+- **Return and keypad Enter** activate the focused control: they open Desk settings, toggle a switch both ways, close the switcher and Quick settings, and dismiss a notification.
+- **Escape, or Return or Enter on Close,** shuts the surface. Keys then reach the app and focus is back on it, and no key reached it while the surface was open.
+
+**Over AT-SPI.** Accessibility is switched on the way a screen reader does it, through `org.a11y.Status`, not forced in Qt. On every visible surface, including the island and the bottom bars, the smoke checks that:
+- each button and switch has a name containing the text it shows (WCAG 2.5.3), compared as normalised strings, so a label the shell cuts short still matches;
 - selected controls, and cards that show "Current", are described as "Current";
 - buttons whose panel is showing are described as "Open";
 - activity chips in the island and in Desk are progress bars.
 
 The shell's read-only `controls` IPC call reports what each control shows. Qt exposes only controls in view, so a control scrolled out of view is checked when it takes focus.
 
-The smoke found these defects, now fixed:
-- **No accessibility bus.** The Flow module did not enable at-spi2-core, so on an installed Flow no screen reader could reach the shell or apps, nor could the opt-in app menu. The module now enables it. `test_accessibility.py` guards the line, because CI evaluates no Nix.
+**Defects it found, now fixed:**
+- **No accessibility bus.** The Flow module did not enable at-spi2-core, so on an installed Flow no screen reader could reach the shell or apps, nor could the opt-in app menu. The module now enables it. `test_accessibility.py` checks for the line as text, because CI evaluates no Nix.
 - **Return did nothing on a switch.** Qt's Switch toggles only on Space.
-- **Clipped rings.** A control scrolled into view sat flush with the clipped edge, so its ring was cut off (Save session at the bottom of Desk). Scrolling now keeps 8 px clear.
-- **A focused unnamed panel.** Quick settings and Notifications scroll in a ScrollView, a focus scope that reported focus with the control inside it. Screen readers now skip it.
+- **Clipped or hidden focus.** A control scrolled into view sat flush with the clipped edge, so its ring was cut off (Save session at the bottom of Desk). Quick settings and Notifications never scrolled to the focused control at all. One `reveal` now scrolls every view around a focused control, keeping 8 px clear: Desk, the switcher and its row of cards, and both panels. It replaces 56 per-control handlers.
+- **A focused unnamed panel.** Quick settings and Notifications scroll in a ScrollView, a focus scope that reported focus along with the control inside it. Screen readers now skip it.
 - **Names without their visible label:**
   - the Desk wordmark ("Return to work" for "floe.");
   - the volume steps;
   - Make space and Add to Group on Layers;
   - the appearance switch, whose label changed with its state. It now always reads "Arctic Daylight · Light".
 
-  Names in states the smoke does not reach were fixed the same way: Make Layer, Pin here, Make this the main display, and the Group card and repair actions.
+  Names in states the smoke does not reach were fixed the same way, and are not checked: Pin here, Make this the main display, a Group's window buttons (now named by the app they show), and the Group card and repair actions. Add to Group on a card now shows the whole app name, elided, instead of a 24-character cut that the name could not contain.
 - **"Current" missing.** The current space's card showed "Current" but did not report it to assistive technology.
 
-Each fix, and each of the checks above, was shown to matter: eleven mutations of the shell each fail the smoke for the reason intended. A build of this branch was activated in the guest without a new generation. `org.a11y.Bus` was then activatable on the session bus, and the smoke passed without extra configuration. The previous system was activated again afterward.
+MUTATIONS_PLACEHOLDER
 
-Two quirks of the guest shape the smoke:
-- **Stale keymaps.** Niri does not resend a virtual keymap equal to the previous one, so a client that took focus in between reads the keys with the physical keymap (Tab arrives as Escape). The smoke sends a lone Shift or Control first, in turn, so every call's keymap differs.
-- **No audio.** PipeWire does not reach a shell with its own runtime directory, so the volume steps were disabled and their names were checked but not walked.
+**Guest check of the module.** A build of this branch was activated in the guest without a new generation. `org.a11y.Bus` was then activatable on the session bus, and the smoke passed with no extra session configuration. The previous system was activated again afterward.
+
+**Two quirks of the guest shape the smoke:**
+- **Stale keymaps.** Niri does not resend a virtual keymap equal to the previous one, so a client that took focus in between reads the keys with the physical keymap (Tab arrives as Escape). The smoke sends a lone Shift or Control first, alternating, so every call's keymap differs.
+- **No audio.** PipeWire does not reach a shell with its own runtime directory, so the volume steps were disabled: their names were checked, but they were not walked.
 
 Not verified:
 - **A running screen reader:** the accessibility tree was checked, but Orca was not run, so speech and focus announcements were not heard.
-- **The opt-in app menu** and the Group card controls are not opened by the smoke.
+- **The opt-in app menu** and Group card controls: the smoke does not open them.
 - **Touch and 200% text.**
 - **Manrope:** the brand font is not installed in the guest, so the wordmark uses Noto Sans.
 
