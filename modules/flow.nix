@@ -163,6 +163,9 @@ in {
       emoji = [ "Noto Color Emoji" ];
     };
     security.polkit.enable = true;
+    # Screen readers reach the shell and apps over AT-SPI, and so does the opt-in app menu (flow-appmenu).
+    # Without it the session bus cannot start the accessibility bus and nothing is exposed.
+    services.gnome.at-spi2-core.enable = true;
     environment.systemPackages = (with pkgs; [
       foot fuzzel quickshell swaylock firefox nautilus gnome-control-center networkmanagerapplet spaces launcher appmenu keyboard wvkbd wifiSettings niriAppearanceSync grim
       xwayland-satellite mesa-demos wayland-utils recovery search wireplumber networkmanager flowCli

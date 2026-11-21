@@ -485,9 +485,124 @@ A NEMESIS review of the first version found these problems, which the second ver
 - The Mute button kept its label once audio was muted.
 - The shared busy clock ticked while nothing visible used it.
 
+**Keyboard and screen reader (2026-11-21).** `tests/niri_focus_walk_smoke.py` checks the shell's keyboard focus and what it tells screen readers. `tests/run_focus_walk_smoke.sh` runs it from a checkout, in a Niri session where Flow is installed and its shell stopped. It drives the keyboard with `wtype`, through Niri's virtual-keyboard protocol, and takes screenshots with `grim`, which leaves the clipboard alone. Flow's module installs `grim` but not `wtype`. In the UTM guest, the machine configuration (`/etc/floe-test`, outside this repository) gained `wtype` in generation 20 and `grim` in generation 21, because the guest's installed Flow predates the module's `grim`. Those generations are kept as guest tooling.
+
+**What it opens.** On the output's empty workspace it opens its own Foot window and six more, two of them stacked in one column, so the switcher has six cards in a scrolling row, one with two members. It sends eight notifications, which overflow their panel. Then it opens, in turn:
+- Desk, without and then with its settings;
+- Overview, where Tab goes through the Island and the tools (the cards are chosen with the arrow keys);
+- search, where focus starts in the field;
+- the Spaces switcher, first with the test's window as the current space, then with it as a Layer;
+- Quick settings;
+- Notifications.
+
+**What it checks on each surface:**
+- **Tab and Shift+Tab** go round every enabled control. The test decides which controls Tab must reach, not the shell: every enabled control, except a list the test names (Overview's edge rails), which must stay out of the Tab order. Each step must land on the next control in reading order that is enabled at that moment: rows top to bottom, with a switcher card's controls as one block. Once the card row scrolls, its "‹" button becomes enabled. If the controls change during a walk, the walk fails.
+- **The focus ring** surrounds the focused control in the `focus` token, and no other control has one. Screenshot pixels are sampled where the design puts the ring, which the test holds: 3 px outside a button, 1 px inside an Island pill, 1 px outside a switch's indicator, at a text field's edge. Surfaces are placed from the anchors and margins the shell reports.
+- **Return and keypad Enter** activate the focused control: they open Desk settings, toggle a switch both ways, move Overview's selection, close the switcher, search and Quick settings, and dismiss a notification.
+- **Escape, or Return or Enter on Close,** shuts the surface. Keys then reach the app and focus is back on it, and no key reached it while the surface was open.
+
+**Over AT-SPI.** Accessibility is switched on the way a screen reader does it, through `org.a11y.Status`, not forced in Qt. On every visible surface, including the Island and the work indicator, the smoke checks that:
+- each button and switch has a name containing the text it shows (WCAG 2.5.3). Names are compared as normalised strings from a word start, so "Pin" is not found in "Unpin", but a label the shell cuts short still matches;
+- selected controls, and cards that show "Current", are described as "Current";
+- buttons whose panel is showing are described as "Open";
+- activity chips in the Island and in Desk are progress bars;
+- every other button it exposes (Overview's cards, search results, the home indicator) has a name.
+
+The shell's read-only `controls` IPC call reports what each control shows. Qt exposes only controls in view, so a control scrolled out of view is checked when it takes focus. `test_focus_walk_helpers.py` checks the smoke's own judgements in CI: label matching, reading order and screenshot decoding.
+
+**Defects it found, now fixed:**
+- **No accessibility bus.** The Flow module did not enable at-spi2-core, so on an installed Flow no screen reader could reach the shell or apps, nor could the opt-in app menu. The module now enables it, and CI's `checks.module` asserts the evaluated setting, so another module that forces it off fails the build.
+- **Return did nothing on a switch.** Qt's Switch toggles only on Space. Now Return and Enter flip it once, even when the key is held.
+- **Clipped or hidden focus.** A control scrolled into view sat flush with the clipped edge, so its ring was cut off (Save session at the bottom of Desk). Quick settings and Notifications never scrolled to the focused control at all. One `reveal` now scrolls every view around a control that takes focus from the keyboard, keeping 8 px clear: Desk, the switcher and its row of cards, and both panels. It replaces some 60 per-control handlers, main's new Desk included.
+- **A focused unnamed panel.** Quick settings and Notifications scroll in a ScrollView, a focus scope that reported focus along with the control inside it. Screen readers now skip it.
+- **Focus dropped by background work.** Session recovery and most switcher actions were disabled while `flow-spaces` ran, including the periodic refresh (every 30 s, and after Niri events) and automatic layout (every 2 s while a Group asks for it), and while automatic recovery ran. A focused control that turns disabled loses keyboard focus. Neither now disables them:
+  - space actions queue behind a refresh;
+  - `flow-recovery` waits for `flow-spaces` on `spaces.lock`;
+  - space actions also queue behind automatic layout and automatic recovery, and run when they end;
+  - Save session, Restore session and the recovery switch refuse while automatic recovery runs and say so (the switch flips back);
+  - renaming a Group no longer refuses during a refresh.
+- **Names without their visible label:**
+  - the Desk wordmark ("Return to work" for "floe.");
+  - Desk's search button;
+  - the volume steps;
+  - Make Layer;
+  - Make space and Add to Group on Layers, in the switcher and the work indicator;
+  - Overview's Open selected and Pin space;
+  - the appearance switch, whose label changed with its state. It now always reads "Arctic Daylight · Light".
+
+  Names in states the smoke does not reach were fixed the same way but are not checked:
+  - Pin here and Make this the main display;
+  - a Group's window buttons, now named by the app they show;
+  - the Group card and repair actions.
+
+  Add to Group on a card now shows the whole app name, elided, instead of a 24-character cut that the name could not contain.
+- **"Current" missing.** The current space's card showed "Current" but did not report it to assistive technology.
+- **Search field:** it showed no focus at all. It now draws the 2 px ring at its edge, as the Group name field does.
+- **Overview's edge rails:** they sat half off the screen, so their rings could not be whole. They are now for a pointer or a finger only, hidden from screen readers. The keyboard and screen readers have the arrow keys and the tools' ← →.
+
+**Shown to fail.** The final smoke was run against copies of the shell, each with a line or two neutralised. Every copy failed, at the check that covers its change.
+
+Thirty copies were cut from the shell at commit a2f6499. The shell's later changes touch none of the lines they neutralise: the recovery switch, queuing behind automatic work, automatic layout, and the Group name field's pointer guard. The thirty were:
+- **Names (one copy):** eleven name fixes and the card's "Current" reverted together. All twelve were reported.
+- **States:** "Open" dropped from open buttons, which predates this work (five reports), and separately "Current" dropped from selected ones.
+- **Progress roles:** removed from the Island's chip, and separately from Desk's cards.
+- **Switches:** Return doing nothing, and a switch that does not scroll itself into view.
+- **Scrolling:**
+  - no room kept for the ring: Desk's foot;
+  - no sideways scrolling: the switcher's last card;
+  - no scrolling in the Notifications panel: Tab then moves focus out of view, where AT-SPI does not expose it.
+- **Unnamed panels:** the ScrollView of Quick settings, and separately of Notifications, exposed again.
+- **Rings:** hidden, always on, in another colour, drawn inside the button, missing from the search field.
+- **Tab:**
+  - one Quick settings button taken out of the Tab order;
+  - every button taken out;
+  - an Overview rail put back in;
+  - Return doing nothing on a button;
+  - a Tab detour (`KeyNavigation.backtab`, which Qt mirrors onto the other control's Tab);
+  - Desk's tools laid out right to left while Tab goes left to right.
+- **Closing:** Escape doing nothing on each of the six surfaces, and Quick settings handing focus to another window as it closes.
+
+Two more copies were cut from the final shell:
+- **Shift+Tab only:** a detour on the backward step alone. It failed in the Shift+Tab walk.
+- **Rails exposed:** Overview's rails visible to screen readers again. They were reported.
+
+**CI tests and the module assert.** `test_focus_walk_helpers.py` was shown to fail when:
+- labels matched inside words, `%` was dropped, or case was kept;
+- a row was not sorted left to right, or items joined rows by their top;
+- cards were ignored;
+- the ring was sampled with a looser band, or a PNG filter was decoded wrongly.
+
+The `checks.module` assert was built in the guest (aarch64). It passed on this branch, and failed at the assert both when the module's line was deleted and when the test configuration forced at-spi2-core off.
+
+**Not shown to fail:**
+- **Things the guest does not have or stage:**
+  - Quick settings never overflows in the guest, so its scrolling is unproven;
+  - keeping controls enabled through background work, and queuing behind it, would need races the smoke does not stage;
+  - the held-key and pointer-focus guards need a held key and a pointer.
+- **The leak check:** no key reaching the app while a surface is open. A mutation that lets keys through stops focus moving first.
+
+**Guest check of the module (19:27 UTC).** A build of this branch, main's #19 included, was activated in the guest without a new generation. `org.a11y.Bus` was then activatable on the session bus, and the final smoke passed through `run_focus_walk_smoke.sh` with no extra bus configuration. The previous system was activated again afterward.
+
+**After main's #21 (system panels).** #21 rebuilt Quick settings and Notifications as system panels with rows, a volume slider and their own scrolling to the focused control. After merging it:
+- **Shell:** the panels' ScrollView is hidden from screen readers again, and the `controls` call reports the rows and the slider with their rings.
+- **Smoke:** it holds their ring positions too, and accepts a hint as a description (the Network row's "Choose a Wi-Fi network") where no state applies.
+- **Result:** the unmutated smoke passed on the merged shell. The mutations above ran before #21, so the copies aimed at the old panels (their ScrollViews, and scrolling in Notifications) prove the shell they ran on, not #21's panels. They were not rerun.
+
+**Three quirks of the guest shape the smoke:**
+- **Stale keymaps.** Niri does not resend a virtual keymap equal to the previous one, so a client that took focus in between reads the keys with the physical keymap (Tab arrives as Escape). The smoke sends a lone Shift or Control first, alternating, so every call's keymap differs.
+- **Shift+Tab is Tab with Shift.** wtype's keymap has no ISO_Left_Tab, so Qt receives Tab with Shift held where a real keyboard sends Backtab. Qt's focus chain treats both as a step back, but a handler for Backtab alone would not see the smoke's key.
+- **No audio.** PipeWire does not reach a shell with its own runtime directory, so the volume steps were disabled: their names were checked, but they were not walked.
+
 Not verified:
-- **Keyboard focus walk:** the guest has no key injection tool.
-- **Screen reader:** names and descriptions were not checked with a running screen reader.
+- **A running screen reader:** the accessibility tree was checked, but Orca was not run, so speech and focus announcements were not heard.
+- **The opt-in app menu** and Group card controls: the smoke does not open them.
+- **Focus lost when content is rebuilt or a control disables itself:**
+  - A window title that changes rebuilds the switcher's cards.
+  - A space action started from the keyboard disables the cards until it ends. On Desk, Pin current space, Make this the main display, Pin here and the pin edit buttons disable themselves while their own action runs, and the pins are rebuilt, so reordering pins from the keyboard loses focus at every step.
+  - A successful Group rename hides the rename row.
+  - Overview's ← → and the switcher's ‹ › disable themselves at the row's ends.
+
+  Each drops the focus of the control involved.
 - **Touch and 200% text.**
 - **Manrope:** the brand font is not installed in the guest, so the wordmark uses Noto Sans.
 
