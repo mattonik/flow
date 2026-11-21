@@ -902,20 +902,21 @@ ShellRoot {
             FocusScope {
                 anchors.fill: parent; focus: systemPanel.shown
                 Keys.onEscapePressed: systemPanel.closeRequested()
-                Row {
+                Item {
                     id: panelHeader
-                    // The close glyph lines up with the rows' right edge, so the row runs 12 px past it.
-                    x: 23; y: 13; width: parent.width - 46 + 12; height: 44; spacing: 4
+                    // Its right edge is the rows' right edge, so the close glyph lines up with each dismiss glyph.
+                    x: 23; y: 13; width: parent.width - 46; height: 44
                     Text {
-                        width: parent.width - panelTools.width - panelClose.width - 2 * parent.spacing; height: 44
-                        verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
+                        anchors { left: parent.left; right: panelTools.left; rightMargin: 8 }
+                        height: 44; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
                         text: systemPanel.title; textFormat: Text.PlainText; color: floeTheme.textPrimary
                         font.pixelSize: 18; font.weight: Font.DemiBold; font.letterSpacing: -0.4; font.family: floeTheme.interfaceFont
                         Accessible.role: Accessible.Heading; Accessible.name: text
                     }
-                    Row { id: panelTools; height: 44; spacing: 4 }
+                    Row { id: panelTools; anchors.right: panelClose.left; height: 44; spacing: 4 }
                     FlowButton {
                         id: panelClose
+                        anchors.right: parent.right
                         width: 44; implicitHeight: 44; radius: 12; variant: "plain"; glyph: "close"; text: "×"
                         Accessible.name: "Close " + systemPanel.title.toLowerCase()
                         onClicked: systemPanel.closeRequested()

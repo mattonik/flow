@@ -308,6 +308,38 @@ Verified:
 
 Not verified: hover and pressed states, because the guest has no pointer injection.
 
+### The prototype's system panels (2026-11-21)
+
+Quick settings and notifications now follow the prototype's Island panel (`hub-panel` in `docs/Flow_v1.0_Contextual_Menus.html`). Both are one component, `SystemPanel`:
+- **The panel:** it hangs 12 px below the Island, 370 px wide (less on a narrow screen), with a 19 px radius and 23 px inside. It has a title, any tools, and a close button whose glyph lines up with each row's right edge. It drops in over 220 ms, or at once when motion is reduced.
+- **Closing:** Escape and the close button ask the panel to close; each panel clears only its own flag.
+- **Rows:** a label, a value at the right and a chevron when the row opens something, over a hairline. A row that only shows a value takes no focus and is not a button.
+
+**Quick settings:**
+- **Rows:** *Network* shows the connectivity (in the success colour when connected) and opens the Wi-Fi chooser. *Edit connections* opens the connection editor. *On-screen keyboard* shows or hides it.
+- **Sound:** the level, then a volume slider and *Mute*.
+  - The slider replaces the − 5% and + 5% buttons. It can be dragged, tapped, or moved with the arrow keys, 5% a step.
+  - It follows a change made elsewhere: a `Binding` element, not a property binding, which moving the slider would end.
+- **Media and errors:** the media player row and any audio error follow, as before. The separate *Close* button is gone, since the header has one.
+
+**Notifications:**
+- **Order:** newest first, each with its app in small capitals, its summary, its body (plain text, up to six lines), its actions and a dismiss button.
+- **Clearing:** *Clear all* in the header dismisses every one.
+- **Empty:** a bell, "No notifications" and "They gather here, above every space."
+- **Opening:** the shell's IPC gained `notifications`, which toggles the panel as `quick` does quick settings, for scripted checks.
+
+Tests:
+- **`test_system_panels.py`:** the panel hangs below the Island; Escape and the close button ask to close, and each panel clears its own flag. The quick settings rows open what they name, the Sound row is not a button, the slider sets the volume through a `Binding`, and every control in the panels is at least 44 px.
+- **`test_notifications.py`:** rewritten for the panel. It checks newest first, dismiss, *Clear all*, touch-sized actions and the empty state, scoped to the notifications panel.
+- **Mutations:** fifteen mutations each fail one of the two files, among them a panel over the Island, Escape or close doing nothing, a panel closing the other's flag, a row opening the wrong app, a slider that sets nothing or uses a plain binding, a 40 px row, oldest first, and *Clear all* clearing one.
+
+Screenshots: both panels in the guest at 1280×800 in both appearances and at scale 2 (640×400), with three notifications (two with actions) and with none. The guest has no audio device, so the slider was shown with a temporary null sink created for the run, at a volume set with `wpctl`; it showed 65%, a change made outside the shell. The scale-2 shot also shows a row's hover tint, from where the pointer happened to rest.
+
+Not verified:
+- **Slider input:** dragging, tapping or the arrow keys, because the guest has no pointer or key injection.
+- **Mute:** a click on *Mute*.
+- **Long panels:** a panel taller than the screen scrolls, but that wasn't tried with enough notifications to need it at 1280×800.
+
 ### Moving along a row in Overview (2026-11-21)
 
 Niri has no binds that apply only in Overview, so plain arrow keys cannot move through a display's row of spaces there. What does:
