@@ -782,6 +782,14 @@ ShellRoot {
         }
         function display_digit(digit: int): void { if (digit > 0 && digit <= 9) root.displayDigit(digit) }
         function toggle(): void { root.toggleDesk() }
+        // One step along the row, for the wheel: a notch that arrives while a step is still running or
+        // queued is dropped, so a fast spin never queues moves that keep going after the wheel stops.
+        function navigate(direction: string): void {
+            if (direction !== "left" && direction !== "right") return
+            if ((spacesProcess.running && spacesProcess.command[1] === "navigate")
+                || root.pendingSpaceActions.some(a => a.action === "navigate")) return
+            root.spaceAction("navigate", direction)
+        }
         // Show-only requests (the Platform API's System interface). They never close anything: while
         // any other shell surface is open they do nothing and answer "busy"; otherwise "open" or "opened".
         function desk_open(): string {
@@ -1189,8 +1197,10 @@ ShellRoot {
     }
     PanelWindow {
         // Work indicator: the focused app of an active Group, and the space's place in this display's Flow.
+        // It stays in Overview, where its arrows and position are the way along the row for a pointer
+        // or a finger, next to Super+Left/Right and the wheel.
         id: workIndicatorWindow
-        visible: !root.deskOpen && !root.switcherOpen && !root.overviewOpen && !root.appMenuOpen && !root.launcherActive && (!!root.activeSpace || !!root.activeLayer)
+        visible: !root.deskOpen && !root.switcherOpen && !root.appMenuOpen && !root.launcherActive && (!!root.activeSpace || !!root.activeLayer)
         anchors { bottom: true; right: true }
         // Where the bottom controls and this indicator cannot share a row, it rises above them: below 560 px,
         // or below 900 px for an active Layer's wider controls.
@@ -1205,7 +1215,8 @@ ShellRoot {
                 id: workIndicator
                 anchors.centerIn: parent; spacing: 0
                 Row {
-                    visible: !!root.activeLayer
+                    // Layer actions belong to the work view; in Overview the indicator is the way along the row.
+                    visible: !!root.activeLayer && !root.overviewOpen
                     spacing: 4
                     SectionLabel { visible: !workIndicatorWindow.narrow; anchors.verticalCenter: parent.verticalCenter; leftPadding: 14; rightPadding: 4; text: "LAYER" }
                     Text {
@@ -1245,9 +1256,11 @@ ShellRoot {
                     Rectangle { width: 1; height: 20; anchors.verticalCenter: parent.verticalCenter; color: Qt.alpha(floeTheme.border, 0.5) }
                 }
                 IslandButton {
-                    visible: !root.activeLayer
+                    // From a Layer, navigation starts at the space beneath it (spaces.py), so in Overview the
+                    // arrows stay even then.
+                    visible: !root.activeLayer || root.overviewOpen
                     width: 44; implicitHeight: 44; glyph: "left"; text: "‹"
-                    enabled: root.activeSpaceIndex > 0
+                    enabled: root.activeLayer ? root.displaySpaces.length > 0 : root.activeSpaceIndex > 0
                     Accessible.name: "Previous space"
                     onClicked: root.spaceAction("navigate", "left")
                 }
@@ -1260,9 +1273,10 @@ ShellRoot {
                     Accessible.name: "Space " + (root.activeSpaceIndex + 1) + " of " + root.displaySpaces.length
                 }
                 IslandButton {
-                    visible: !root.activeLayer
+                    visible: !root.activeLayer || root.overviewOpen
                     width: 44; implicitHeight: 44; glyph: "right"; text: "›"
-                    enabled: root.activeSpaceIndex >= 0 && root.activeSpaceIndex < root.displaySpaces.length - 1
+                    enabled: root.activeLayer ? root.displaySpaces.length > 0
+                        : root.activeSpaceIndex >= 0 && root.activeSpaceIndex < root.displaySpaces.length - 1
                     Accessible.name: "Next space"
                     onClicked: root.spaceAction("navigate", "right")
                 }

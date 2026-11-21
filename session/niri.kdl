@@ -43,6 +43,14 @@ binds {
     Super+L allow-when-locked=true { spawn "@lock@"; }
     Super+Left { spawn "@spaces@" "navigate" "left"; }
     Super+Right { spawn "@spaces@" "navigate" "right"; }
+    // A display's spaces are one row (one workspace per display), so every wheel direction moves along
+    // it. The wheel goes through the running shell, which drops a notch while a step is in progress.
+    // Niri's documentation says Overview takes Mod+wheel binds without the modifier held; Flow's Mod
+    // is Super, as on a TTY. A touchpad scrolls Overview with Niri's own gestures.
+    Super+WheelScrollDown cooldown-ms=150 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "navigate" "right"; }
+    Super+WheelScrollUp cooldown-ms=150 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "navigate" "left"; }
+    Super+WheelScrollRight cooldown-ms=150 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "navigate" "right"; }
+    Super+WheelScrollLeft cooldown-ms=150 { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "navigate" "left"; }
     Super+Up { spawn "@spaces@" "focus-member" "up"; }
     Super+Down { spawn "@spaces@" "focus-member" "down"; }
     Super+Shift+Left { move-column-left; }

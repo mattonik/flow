@@ -220,6 +220,18 @@ Stopping the shell had leaked its `niri msg event-stream`, a bug older than Acti
 
 Not tested: a Flatpak app as the owner, and the narrow-screen dot outside the layout code.
 
+### Moving along a row in Overview (2026-11-21)
+
+Niri has no binds that apply only in Overview, so plain arrow keys cannot move through a display's row of spaces there. What does:
+- **Super+Left/Right:** Flow's space navigation keeps Overview open. In the guest, with three apps in a row, it moved from the third to the second, then the first.
+- **Super+wheel, in every direction:** a step along the row. Down and right go to the next space, up and left to the previous; a display's spaces are one row, so vertical scrolling has nothing else to do.
+  - Each notch goes through the running shell's `navigate` IPC call, which drops a notch while a step is running or queued, so a fast spin never queues moves that keep going after the wheel stops.
+  - Niri's documentation says Overview takes Mod+wheel binds without the modifier held, and Flow's Mod is Super, as on a TTY. So a plain wheel should step there too. That is unverified, because the guest has no input injection. Niri 26.04 validated the binds.
+- **A touchpad:** it scrolls Overview with Niri's own gestures.
+- **The work indicator:** it stays visible in Overview, with its arrows and position (02 / 05), for a pointer or a finger. With a Layer focused, Overview shows the arrows instead of the Layer's actions.
+
+`test_overview_navigation.py` checks that every wheel direction is bound and enabled, goes through the shell with a short cooldown, and that a notch is dropped while a step is in progress. It also checks that the indicator and both arrows stay in Overview; seven mutations each fail it.
+
 ### Shell visual polish (2026-11-21)
 
 The shell's controls follow one system instead of one bordered rectangle:
