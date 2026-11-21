@@ -3,4 +3,4 @@ layout {
     focus-ring { active-color "#28584C"; inactive-color "#667F86"; }
     background-color "#DFE9E6"
 }
-overview { backdrop-color "#EAF0EC"; }
+overview { backdrop-color "#667F86"; }

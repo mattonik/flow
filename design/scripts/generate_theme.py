@@ -121,8 +121,8 @@ def render_niri(tokens, mode):
         f'    focus-ring {{ active-color "{c["focus"]}"; inactive-color "{c["border"]}"; }}',
         f'    background-color "{c["canvas"]}"',
         "}",
-        # A backdrop distinct from the workspaces it holds.
-        f'overview {{ backdrop-color "{c["surface"]}"; }}',
+        # The functional border: workspaces stand out from it at 3:1, as interactive targets must.
+        f'overview {{ backdrop-color "{c["border"]}"; }}',
         "",
     ])
 
@@ -150,6 +150,11 @@ def render_swaylock(tokens, mode):
         f"text-ver-color={c['text-primary']}",
         f"inside-wrong-color={c['surface']}", f"ring-wrong-color={c['danger']}", f"line-wrong-color={clear}",
         f"text-wrong-color={c['danger']}",
+        # Caps Lock is a warning; the keyboard layout label sits on the panel tone.
+        f"inside-caps-lock-color={c['surface']}", f"ring-caps-lock-color={c['warning']}",
+        f"line-caps-lock-color={clear}", f"text-caps-lock-color={c['warning']}",
+        f"caps-lock-key-hl-color={c['accent']}", f"caps-lock-bs-hl-color={c['text-muted']}",
+        f"layout-bg-color={c['surface']}", f"layout-border-color={c['border']}", f"layout-text-color={c['text-primary']}",
         "",
     ])
 

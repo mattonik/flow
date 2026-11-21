@@ -56,6 +56,11 @@ let
     { name = "niri-dark.kdl"; path = ../design/generated/niri-dark.kdl; }
     { name = "niri-light.kdl"; path = ../design/generated/niri-light.kdl; }
   ];
+  # Keeps ~/.config/flow/niri-appearance.kdl pointing at the current appearance's Niri colours.
+  niriAppearanceSync = pkgs.writeShellScriptBin "flow-niri-appearance" ''
+    export PATH="${lib.makeBinPath [ pkgs.coreutils pkgs.gnugrep pkgs.util-linux ]}:$PATH"
+    exec ${pkgs.bash}/bin/sh ${../session/flow-niri-appearance.sh} "$@"
+  '';
   # The lock screen in Floe's theme, following the appearance switch (session/flow-lock.sh).
   flowLock = pkgs.writeShellScriptBin "flow-lock" ''
     export FLOW_SWAYLOCK_BIN=${lib.getExe pkgs.swaylock} FLOW_SWAYLOCK_THEMES=${../design/generated}
@@ -159,7 +164,7 @@ in {
     };
     security.polkit.enable = true;
     environment.systemPackages = (with pkgs; [
-      foot fuzzel quickshell swaylock firefox nautilus gnome-control-center networkmanagerapplet spaces launcher appmenu keyboard wvkbd wifiSettings
+      foot fuzzel quickshell swaylock firefox nautilus gnome-control-center networkmanagerapplet spaces launcher appmenu keyboard wvkbd wifiSettings niriAppearanceSync
       xwayland-satellite mesa-demos wayland-utils recovery search wireplumber networkmanager flowCli
     ]) ++ lib.optionals config.services.desktopManager.plasma6.enable [ (lib.hiPrio kdeSettings) ];
     services.dbus.packages = [ flowApiActivation ];

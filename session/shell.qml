@@ -742,13 +742,10 @@ ShellRoot {
         root.syncCompositorAppearance()
     }
     // Niri includes ~/.config/flow/niri-appearance.kdl (session/niri.kdl) and reloads it when it changes:
-    // the installed shell keeps it a copy of its appearance's Niri colours. A development shell never
-    // touches the user's compositor.
+    // the installed shell keeps it pointing at its appearance's Niri colours (session/flow-niri-appearance.sh).
+    // A development shell never touches the user's compositor.
     function syncCompositorAppearance() {
-        if (Quickshell.shellDir !== "/etc/flow") return
-        const source = Quickshell.shellDir + "/niri-" + (appearancePreferences.lightMode ? "light" : "dark") + ".kdl"
-        Quickshell.execDetached(["sh", "-c", 'd="$HOME/.config/flow"; t="$d/niri-appearance.kdl"; '
-            + 'cmp -s "$0" "$t" || { mkdir -p "$d" && cp "$0" "$t.tmp" && mv "$t.tmp" "$t"; }', source])
+        if (Quickshell.shellDir === "/etc/flow") Quickshell.execDetached(["flow-niri-appearance"])
     }
     IpcHandler {
         target: "desk"
