@@ -233,6 +233,13 @@ The shell's controls follow one system instead of one bordered rectangle:
 - **Motion** uses the brand's quick (120 ms) and standard (220 ms) tokens and its standard curve. A *Reduce motion* setting in Desk makes every change instant, because Linux gives Quickshell no system signal for it. All "busy" indicators share one clock, so a card rebuilt by an activity update continues its sweep.
 
 Surface by surface:
+- **App launcher and search (fuzzel):** themed from the same tokens. The theme generator writes `design/generated/fuzzel-dark.ini` and `fuzzel-light.ini`:
+  - the panel in the surface tone, with a full-strength border and a 14 px radius
+  - Noto Sans at the 16 px body size, with rows as tall as the 44 px touch target
+  - the selected row as an accent fill with on-accent text, since fuzzel cannot draw a selection outline
+  - placeholder text in place of a prompt
+
+  `session/flow-fuzzel.sh` picks the file that matches the Desk's appearance switch. A user's own `~/.config/fuzzel/fuzzel.ini` takes precedence. `test_launcher_theme.py` checks every colour pair in both files against the audit's thresholds, runs the wrapper with a stand-in fuzzel, and checks that the launcher and search use it. In the guest, the installed launcher (dark) and search (with a light appearance file) were captured; flipping the Desk switch itself was not exercised, because the guest cannot click.
 - **Desk:** a larger search field, pins as cards, activities as cards with a progress track, and tools sized to their labels.
 - **Switcher:** a rounded bottom sheet. Each space is a card, and a Group's actions sit in a two-column grid with *Dissolve* as the danger action.
 - **Quick settings, notifications and the toast** are rounded panels.
