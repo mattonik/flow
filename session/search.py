@@ -40,29 +40,50 @@ def recent_files(history, home):
     return found
 
 
-def entries(snapshot, apps, files=()):
-    result = [("Flow Settings  ·  Settings", ("settings", "settings")),
-              ("Quick Settings  ·  Audio and network", ("settings", "quick_open"))]
+def results(snapshot, apps, files=()):
+    """Everything search offers, in order: (title, detail, kind, value, icon)."""
+    result = [("Flow Settings", "Settings", "settings", "settings", ""),
+              ("Quick Settings", "Audio and network", "settings", "quick_open", "")]
     for pin in snapshot.get("pins", []):
         status = "Pinned space" if pin.get("available") else "Pinned Group · Unavailable" if pin.get("kind") == "group" else "Pinned space · Open"
-        result.append((f"{pin['label']}  ·  {status}", ("pin", pin["id"])))
+        result.append((pin["label"], status, "pin", pin["id"], ""))
     for pin in snapshot.get("other_pins", []):
         # Pins of a disconnected display are listed only while their window is open somewhere.
         if pin.get("display_state") == "connected" or pin.get("available"):
             where = pin.get("display_label") or "another display"
-            result.append((f"{pin['label']}  ·  Pinned on {where}", ("pin", pin["id"])))
+            result.append((pin["label"], f"Pinned on {where}", "pin", pin["id"], ""))
     for window in snapshot.get("windows", []):
-        result.append((f"{window['label']}  ·  Open window  ·  {window['app_id']}", ("window", str(window["id"]))))
+        result.append((window["label"], f"Open window · {window['app_id']}", "window", str(window["id"]), ""))
     for path in files:
-        result.append((f"{path.name}  ·  Recent file  ·  {path.parent}", ("file", path.as_uri())))
+        result.append((path.name, f"Recent file · {path.parent}", "file", path.as_uri(), ""))
     shown = [app for app in sorted(apps, key=lambda a: a.get_display_name().casefold()) if app.should_show()]
+    def icon(app):
+        found = app.get_icon()
+        return found.to_string() if found is not None else ""
     for app in shown:
-        result.append((f"{app.get_display_name()}  ·  Application", ("app", app)))
+        result.append((app.get_display_name(), "Application", "app", app, icon(app)))
     # After every ordinary entry: the same apps opened as a Layer over the current space.
     for app in shown:
         if app.get_id():
-            result.append((f"{app.get_display_name()}  ·  Open as Layer", ("layer", app.get_id())))
-    return [(" ".join(label.split()), action) for label, action in result]
+            result.append((app.get_display_name(), "Open as Layer", "layer", app.get_id(), icon(app)))
+    return [(" ".join(title.split()), " ".join(detail.split()), kind, value, glyph) for title, detail, kind, value, glyph in result]
+
+
+def entries(snapshot, apps, files=()):
+    """Fuzzel's rows: one line per result, and the action it runs."""
+    return [(f"{title} · {detail}", (kind, value)) for title, detail, kind, value, _ in results(snapshot, apps, files)]
+
+
+def as_json(found):
+    """The rows Flow's search panel shows. An app is named by its desktop file, which the shell opens."""
+    rows = []
+    for title, detail, kind, value, glyph in found:
+        if kind == "app":
+            value = value.get_filename() or ""
+            if not value:
+                continue
+        rows.append({"title": title, "detail": detail, "kind": kind, "value": value, "icon": glyph})
+    return json.dumps(rows)
 
 
 def main():
@@ -73,6 +94,9 @@ def main():
         snapshot = {}
     home = Path.home()
     history = Path(os.environ.get("XDG_DATA_HOME") or home / ".local/share") / "recently-used.xbel"
+    if "--json" in sys.argv[1:]:
+        print(as_json(results(snapshot, Gio.AppInfo.get_all(), recent_files(history, home))))
+        return
     choices = entries(snapshot, Gio.AppInfo.get_all(), recent_files(history, home))
     # FLOW_FUZZEL is fuzzel in Floe's theme when installed (modules/flow.nix).
     result = subprocess.run([os.environ.get("FLOW_FUZZEL") or "fuzzel", "--keyboard-focus=on-demand",

@@ -12,6 +12,8 @@ layout {
 include "@niriAppearance@"
 include optional=true "~/.config/flow/niri-appearance.kdl"
 hotkey-overlay { skip-at-startup; }
+// Flow's Overview is the shell's; Niri's own stays in the Spaces switcher, not in a screen corner.
+gestures { hot-corners { off; }; }
 // The shell is the flow-shell user unit, started with niri.service (modules/flow.nix).
 spawn-at-startup "@idle@" "-C" "/dev/null" "-w" "lock" "@lock@ -f" "before-sleep" "@lock@ -f"
 
@@ -56,7 +58,8 @@ binds {
     Super+Shift+Left { move-column-left; }
     Super+Shift+Right { move-column-right; }
     Super+Q { close-window; }
-    Super+O { toggle-overview; }
+    // Flow's Overview; again for Desk. Niri's live Overview is in the Spaces switcher.
+    Super+O { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "overview"; }
     Super+Tab { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "switcher"; }
     Super+H { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "toggle"; }
     Super+Shift+Slash { show-hotkey-overlay; }

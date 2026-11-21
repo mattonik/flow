@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+sys.path.insert(0, str(Path(__file__).parents[1] / "session"))  # search.py imports launching
 spec = importlib.util.spec_from_file_location("flow_search", Path(__file__).parents[1] / "session/search.py")
 search = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(search)

@@ -36,7 +36,7 @@ A small session service, `flow-api`, owns the bus name `io.github.mattonik.Flow1
 
 | Member | Signature | Meaning |
 |---|---|---|
-| `ShowDesk()`, `ShowOverview()`, `ShowLauncher()` | `→ ()` | Open Desk, Niri's overview or the app launcher. A request never closes anything: while any other shell surface is open (Desk, overview, launcher, switcher, quick settings, notifications, app menu) it does nothing and returns `InvalidState`. An app may ask for Desk or the overview only while one of its windows has the keyboard, which is Niri's `is_focused` and is false while shell UI holds the keyboard. Apps may not open the launcher, which takes the keyboard. Unsandboxed callers may make all three requests. |
+| `ShowDesk()`, `ShowOverview()`, `ShowLauncher()` | `→ ()` | Open Desk, Flow's Overview or the app launcher (Flow's search panel, showing apps). Since 2026-11-21 Overview is Flow's own row of spaces; Niri's live overview stays in the Spaces switcher. A request never closes anything: while any other shell surface is open (Desk, overview, launcher, switcher, quick settings, notifications, app menu) it does nothing and returns `InvalidState`. An app may ask for Desk or the overview only while one of its windows has the keyboard, which is Niri's `is_focused` and is false while shell UI holds the keyboard. Apps may not open the launcher, which takes the keyboard. Unsandboxed callers may make all three requests. |
 
 Space dictionaries have these keys:
 - `id` (s)
