@@ -121,8 +121,19 @@ def render_niri(tokens, mode):
         f'    focus-ring {{ active-color "{c["focus"]}"; inactive-color "{c["border"]}"; }}',
         f'    background-color "{c["canvas"]}"',
         "}",
-        # The functional border: workspaces stand out from it at 3:1, as interactive targets must.
-        f'overview {{ backdrop-color "{c["border"]}"; }}',
+        # Calm and distinct: the selected-surface tone keeps Overview dark and quiet. Workspaces are told
+        # apart by their windows and the workspace shadow pinned here, not by 3:1 against the backdrop
+        # (a design decision of 2026-11-21; see docs/IMPLEMENTATION_STATUS.md). The shadow is the ink of
+        # the appearance: the canvas in Polar Night, primary text in Arctic Daylight.
+        "overview {",
+        f'    backdrop-color "{c["surface-selected"]}"',
+        "    workspace-shadow {",
+        "        softness 40",
+        "        spread 10",
+        "        offset x=0 y=10",
+        f'        color "{c["canvas"] if mode == "dark" else c["text-primary"]}{"99" if mode == "dark" else "40"}"',
+        "    }",
+        "}",
         "",
     ])
 
