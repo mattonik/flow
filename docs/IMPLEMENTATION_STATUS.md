@@ -243,18 +243,34 @@ Flow used Niri's own Overview (a vertical zoom of workspaces), fuzzel for search
   - **The row:** this display's spaces in one row, the selected one centred with a 2 px ring. Each card has a caption with its pin number or a dot, its name, and PINNED, GROUP or SPACE.
   - **Navigation:** half-pill rails at the screen's edges. A tool bar: *Open selected*, *Pin space* or *Unpin*, ← →, and *Your desk*. *Shortcuts* opens Niri's hotkey overlay.
   - **Keys:** Left/Right, Home/End and the wheel choose; Enter or a click returns; Up, or the home indicator again, goes on to Desk; Escape returns unchanged.
-  - **Card images:** Niri offers no capture of one window, but a space fills its display while focused. So each card shows the snapshot taken the last time its space was on screen, as a phone's app switcher does: `grim`, at about 640 px wide, into `$XDG_RUNTIME_DIR/flow-snapshots`, which is gone at logout. Until then, a card shows the space's apps and title.
-  - **When snapshots are taken:** only in the plain work view, after a space has settled for 0.7 s.
+  - **The selection** is a space, not a position, so it stays put when a refresh replaces the list, for example when a title changes or a window opens.
+  - **Card images:** Niri offers no capture of one window, but a space fills its display while focused. So each card shows the snapshot taken the last time its space was on screen, as a phone's app switcher does: `grim`, at about 640 px wide, cropped exactly to below the Island and above the home indicator.
+  - **When snapshots are taken:** only in the plain work view, and only when the focused space changes and has settled for 0.7 s; a title change is not a move. Opening Overview takes a fresh one unless a move is still settling.
+  - **Where snapshots are kept:** in `$XDG_RUNTIME_DIR/flow-snapshots` only, and never without a runtime directory. They are deleted when their space closes and when the shell starts or stops.
   - **Why not Qt's own capture:** Qt's `grabToImage` crashed Quickshell 0.3.2 on Niri, in every run that used it. Niri's screenshot action would fill the clipboard.
-- **The home indicator:** a 48 × 4 line (65 px and accent on hover) on a 160 × 44 target. It replaces the *Overview* and *Spaces* buttons. Tap it or drag it up: from work to Overview, from Overview to Desk, from Desk back to work. The Spaces switcher moved to Desk's tools and stays on Super+Tab.
+- **One surface at a time:**
+  - Desk, search, the switcher, quick settings and notifications each close Overview.
+  - Any of them opening while Overview is still taking its snapshot cancels it.
+  - An error or a pin from Overview is a toast, not a Desk opened underneath.
+  - The Desk gives search the keyboard, and the app menu and the auto-layout timer never act under these surfaces.
+  - Niri's top-left hot corner is off, because Overview is Flow's. Niri's live overview stays in the Spaces switcher, and the touchpad's four-finger swipe still opens it.
+- **The home indicator:** a 48 × 4 line on a dark halo, so it reads over light and dark apps (65 px and accent on hover). It replaces the *Overview* and *Spaces* buttons.
+  - It takes input in only the bottom 126 × 24, the prototype's size, because Flow's columns reach the screen's edge.
+  - Tap it or drag it up: from work to Overview, from Overview to Desk, from Desk back to work.
+  - The Spaces switcher moved to Desk's tools and stays on Super+Tab.
 - **Search** (Super+K, Desk's search, the Island's *Apps*, which shows apps only):
   - **The palette:** a shade and a 620 px palette with an 18 px radius. The field has a search icon and a close button.
   - **Results:** each has an icon tile (the app's icon, or a line icon for its kind), a title, a detail line and ↗. The chosen row has a 2 px focus edge.
-  - **Footer:** "Enter to open · ↑ ↓ to choose · Esc to close".
-  - **Behaviour:** `search.py --json` lists the same results fuzzel showed, and the shell filters as you type and runs the choice. Apps open in their own scope.
-- **Platform API:** `ShowOverview` now opens Flow's Overview; `ShowLauncher` opens the panel's app view.
+  - **Footer:** "Enter to open · ↑ ↓ to choose · Esc to close". Escape works from anywhere in the panel.
+  - **Behaviour:** `search.py --json` lists the results, the shell filters them as you type and runs the choice, and apps open in their own scope.
+  - **What is listed:** the same results fuzzel showed, except apps without a desktop file, which cannot be opened by name.
+  - **The old commands:** `flow-apps` and `flow-search` still exist as standalone fuzzel launchers. Nothing in the shell uses them.
+- **Platform API:** `ShowOverview` opens Flow's Overview, and `ShowLauncher` opens the panel's app view. Both count an Overview that is still opening as open.
 
-`test_prototype_surfaces.py` checks the JSON results and the shell's wiring in its source. That covers which keys and calls open what, that snapshots are only taken of the plain work view with `grim` and never with `grabToImage`, and that choices are marked by more than tint. The surfaces were checked in the guest with a development shell.
+Tests:
+- **`niri_prototype_surfaces_smoke.py`:** drives a development shell in the guest through its IPC calls. It checks that Overview opens on the focused space and keeps the chosen space when a window opens, that pinning from it keeps Overview without a Desk, that Overview again goes on to Desk, and that search opens over Desk. Desk during Overview's opening wins, ShowDesk then is busy, and Desk over an open Overview replaces it. With grim, a settled space gets a snapshot and Desk never does. Four mutations of the review's failure cases each fail it: the selection reset, the pending Overview, a pin opening Desk, and Desk over Overview.
+- **`test_prototype_surfaces.py`:** checks the JSON results and the configuration.
+- **Screenshots:** both appearances were captured in the guest with three apps.
 
 Not verified: a real wheel and touch drag on the home indicator, because the guest has no pointer injection, and the Overview with several displays. On a second display it shows that display's spaces, but snapshots come from the island's screen.
 
