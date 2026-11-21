@@ -9,7 +9,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "session"))
 import launching
@@ -58,16 +58,10 @@ class LaunchingTest(unittest.TestCase):
         self.assertEqual(args, ["gio", "launch", desktop])
 
     def test_search_opens_a_file_in_its_own_scope_from_the_installed_shell(self):
-        gio = SimpleNamespace(AppInfo=SimpleNamespace(get_all=lambda: [], launch_default_for_uri=Mock()))
-        repository = SimpleNamespace(Gio=gio, GLib=SimpleNamespace(Error=RuntimeError))
-        with patch.dict(sys.modules, {"gi": SimpleNamespace(repository=repository), "gi.repository": repository}), \
-             patch.dict(search.os.environ, {"FLOW_APP_SCOPES": "1"}), \
-             patch.object(search, "recent_files", return_value=[Path("/home/martin/notes.txt")]), \
-             patch.object(search.subprocess, "check_output", return_value="{}"), \
-             patch.object(search.subprocess, "run", side_effect=[SimpleNamespace(returncode=0, stdout="2"), None]) as run:
-            search.main()
+        with patch.dict(search.os.environ, {"FLOW_APP_SCOPES": "1"}), \
+             patch.object(search.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
+            self.assertEqual(search.main(["--open", "file", "file:///home/martin/notes.txt"]), 0)
         self.assertEqual(run.call_args.args[0], [*SCOPE, "gio", "open", "file:///home/martin/notes.txt"])
-        gio.AppInfo.launch_default_for_uri.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -14,6 +14,8 @@
     # Wrappers are found by name, flow*, so one named otherwise is left out: systemsettings, which is
     # installed only with Plasma, is not checked. Screen readers, and the opt-in app menu, need the
     # accessibility bus: the evaluated setting must be on, whichever module sets it.
+    # The installed flow-search runs for real: the shell's search panel needs `--json` to answer with
+    # results, and `--open` to find gio (opening a missing file fails in gio, never for want of it).
     checks.aarch64-linux.module = let
       inherit (self.nixosConfigurations.test) config pkgs;
       inherit (nixpkgs) lib;
@@ -21,8 +23,13 @@
       wrappers = builtins.filter (p: lib.hasPrefix "flow" (lib.getName p)) config.environment.systemPackages
         ++ [ config.systemd.user.services.flow-shell.serviceConfig.ExecStart
              config.systemd.user.services.flow-api.serviceConfig.ExecStart ];
+      search = lib.findFirst (p: lib.getName p == "flow-search") (throw "no flow-search") config.environment.systemPackages;
     in assert wrappers != [ ]; assert config.services.gnome.at-spi2-core.enable; pkgs.runCommand "flow-module-check" { } ''
       ${lib.getExe config.programs.niri.package} validate -c ${niriConfig}
+      HOME=$TMPDIR PATH=/no-such ${search}/bin/flow-search --json > rows.json
+      ${lib.getExe pkgs.python3} -c 'import json; rows = json.load(open("rows.json")); assert rows and rows[0]["kind"] == "settings", rows'
+      rc=0; HOME=$TMPDIR PATH=/no-such ${search}/bin/flow-search --open file file:///no-such || rc=$?
+      [ "$rc" -ne 0 ] && [ "$rc" -ne 127 ] || { echo "flow-search --open exited $rc: gio missing or a missing file opened"; exit 1; }
       mkdir $out
       ln -s ${niriConfig} $out/niri.kdl
       printf '%s\n' ${lib.escapeShellArgs wrappers} > $out/wrappers

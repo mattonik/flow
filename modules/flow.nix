@@ -45,8 +45,9 @@ let
     export XDG_DATA_DIRS="''${XDG_DATA_DIRS:+$XDG_DATA_DIRS:}$HOME/.nix-profile/share:$HOME/.local/state/nix/profile/share:/etc/profiles/per-user/$user_name/share:/nix/var/nix/profiles/default/share:/run/current-system/sw/share:/usr/local/share:/usr/share"
     export GI_TYPELIB_PATH="${pkgs.glib}/lib/girepository-1.0:${pkgs.gobject-introspection}/lib/girepository-1.0''${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
     export PYTHONPATH="${../session}"
-    export FLOW_FUZZEL=${themedFuzzel}/bin/flow-fuzzel
-    exec ${pkgs.python3.withPackages (p: [ p.pygobject3 ])}/bin/python3 ${../session/search.py}
+    # gio opens the chosen app or file (--open): the shell's own PATH, the session's, has no gio.
+    export PATH="${pkgs.glib}/bin:$PATH"
+    exec ${pkgs.python3.withPackages (p: [ p.pygobject3 ])}/bin/python3 ${../session/search.py} "$@"
   '';
   # The shell's files, as one store directory: /etc/flow, and the restart trigger of the shell's unit.
   # Niri's appearance files are here because the shell copies the active one for Niri to include.

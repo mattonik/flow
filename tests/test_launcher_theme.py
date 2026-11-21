@@ -1,24 +1,18 @@
-"""The launcher and search (fuzzel) in Floe's theme: legible in both appearances, and actually used.
+"""The launcher (fuzzel) in Floe's theme: legible in both appearances, and actually used.
 
 - Every colour pair in the generated fuzzel files meets the accessibility audit's thresholds, with
   alpha blended over the panel the way fuzzel draws it.
 - session/flow-fuzzel.sh runs for real under ``sh`` with a stand-in fuzzel that records its arguments.
-- search.py starts the themed fuzzel it is given.
 """
 import configparser
 import os
 from pathlib import Path
 import shutil
 import subprocess
-import sys
 import tempfile
-from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
 
 ROOT = Path(__file__).parents[1]
-sys.path.insert(0, str(ROOT / "session"))
-import search
 
 WRAPPER = ROOT / "session/flow-fuzzel.sh"
 
@@ -113,26 +107,9 @@ class WrapperTest(unittest.TestCase):
         self.appearance("[General]\nlightMode=true\n")
         self.assertEqual(self.run_wrapper("--dmenu", "--index"), ["--dmenu", "--index"])
 
-    def test_the_launcher_and_search_use_the_wrapper(self):
+    def test_the_launcher_uses_the_wrapper(self):
         module = (ROOT / "modules/flow.nix").read_text()
-        self.assertEqual(module.count("${themedFuzzel}/bin/flow-fuzzel"), 2)
-
-
-class SearchTest(unittest.TestCase):
-    def picked(self, env):
-        gio = SimpleNamespace(AppInfo=SimpleNamespace(get_all=lambda: []))
-        repository = SimpleNamespace(Gio=gio, GLib=SimpleNamespace(Error=RuntimeError))
-        with patch.dict(sys.modules, {"gi": SimpleNamespace(repository=repository), "gi.repository": repository}), \
-             patch.dict(search.os.environ, env), \
-             patch.object(search.subprocess, "check_output", return_value="{}"), \
-             patch.object(search.subprocess, "run", return_value=SimpleNamespace(returncode=1, stdout="")) as run:
-            search.main()
-        return run.call_args_list[0].args[0][0]
-
-    def test_search_starts_the_themed_fuzzel_it_is_given(self):
-        self.assertEqual(self.picked({"FLOW_FUZZEL": "/run/current-system/sw/bin/flow-fuzzel"}),
-                         "/run/current-system/sw/bin/flow-fuzzel")
-        self.assertEqual(self.picked({"FLOW_FUZZEL": ""}), "fuzzel")
+        self.assertEqual(module.count("${themedFuzzel}/bin/flow-fuzzel"), 1)
 
 
 if __name__ == "__main__":

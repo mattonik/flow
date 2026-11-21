@@ -591,6 +591,7 @@ ShellRoot {
     property bool searchOpen: false
     property bool searchAppsOnly: false
     property var searchResults: []
+    property bool searchFailed: false   // flow-search did not answer with results: say so, not "Nothing matches"
     property string searchQuery: ""
     property int searchIndex: 0
     readonly property var searchMatches: {
@@ -614,9 +615,26 @@ ShellRoot {
         command: ["flow-search", "--json"]
         stdout: StdioCollector {
             onStreamFinished: {
-                try { root.searchResults = JSON.parse(this.text) } catch (error) { root.searchResults = [] }
+                let rows = null
+                try { rows = JSON.parse(this.text) } catch (error) {}
+                root.searchFailed = !Array.isArray(rows)
+                root.searchResults = Array.isArray(rows) ? rows : []
             }
         }
+        onExited: exitCode => { if (exitCode !== 0) { root.searchFailed = true; root.searchResults = [] } }
+    }
+    // Apps and files open through flow-search, whose wrapper has gio; a failure is shown, never silent.
+    Process {
+        id: searchOpener
+        property string title: ""
+        onExited: exitCode => { if (exitCode !== 0) root.showToast("Couldn’t open " + title) }
+    }
+    function openSearchResult(result) {
+        const command = ["flow-search", "--open", result.kind, result.value]
+        if (searchOpener.running) { Quickshell.execDetached(command); return }
+        searchOpener.title = result.title
+        searchOpener.command = command
+        searchOpener.running = true
     }
     function openSearchPanel(appsOnly) {
         overviewPending = false
@@ -631,6 +649,7 @@ ShellRoot {
         searchQuery = ""
         searchIndex = 0
         searchResults = []   // never the last run's: its windows may have closed
+        searchFailed = false
         searchOpen = true
         if (!searchList.running) searchList.running = true
     }
@@ -639,8 +658,7 @@ ShellRoot {
         if (!result) return
         searchOpen = false
         if (result.kind !== "settings") deskOpen = false
-        if (result.kind === "app") root.launchApp(["gio", "launch", result.value])
-        else if (result.kind === "file") root.launchApp(["gio", "open", result.value])
+        if (result.kind === "app" || result.kind === "file") openSearchResult(result)
         else if (result.kind === "pin") spaceAction("focus", result.value)
         else if (result.kind === "window") spaceAction("focus-window", result.value)
         else if (result.kind === "layer") spaceAction("open-layer", result.value)
@@ -1260,6 +1278,11 @@ ShellRoot {
                                    notifications: root.notificationsOpen, niri_overview: root.overviewOpen})
         }
         function search_state(): string { return root.searchOpen ? (root.searchAppsOnly ? "apps" : "open") : "closed" }
+        // What the search panel shows, for scripted checks: its rows, or the message in their place.
+        function search_view(): string {
+            return JSON.stringify({ rows: root.searchMatches.map(r => ({ kind: r.kind, title: r.title, icon: r.icon })),
+                                    message: root.searchMatches.length ? "" : searchEmpty.text })
+        }
         function activity_list(): string { return JSON.stringify(root.activities.map(a => root.activityText(a))) }
         // Read-only, for tests/niri_focus_walk_smoke.py: the visible buttons and switches of every shell surface
         // but the opt-in app menu, with the words each shows, its state, its place in its window and where its
@@ -2264,7 +2287,9 @@ ShellRoot {
             id: palette
             x: (parent.width - width) / 2; y: Math.max(64, Math.min(190, parent.height * 0.17))
             width: Math.min(620, parent.width - 28)
-            height: searchHeader.height + 1 + Math.min(searchView.contentHeight + 20, 7 * 58 + 20) + 1 + searchFooter.height
+            // The results area; with no rows it keeps room for its message, which never meets the footer.
+            readonly property real resultsHeight: root.searchMatches.length ? Math.min(searchView.contentHeight + 20, 7 * 58 + 20) : 76
+            height: searchHeader.height + 1 + resultsHeight + 1 + searchFooter.height
             radius: 18; color: floeTheme.surface; border.width: 1; border.color: floeTheme.border
             clip: true
             MouseArea { anchors.fill: parent }   // clicks on the palette never reach the shade
@@ -2325,7 +2350,10 @@ ShellRoot {
                             id: appIcon
                             anchors.centerIn: parent; width: 22; height: 22; sourceSize: Qt.size(44, 44)
                             visible: status === Image.Ready
-                            source: resultRow.modelData.icon ? Quickshell.iconPath(resultRow.modelData.icon, true) : ""
+                            // A desktop file's Icon= is a theme name or an absolute file.
+                            source: !resultRow.modelData.icon ? ""
+                                : resultRow.modelData.icon.startsWith("/") ? "file://" + resultRow.modelData.icon
+                                : Quickshell.iconPath(resultRow.modelData.icon, true)
                         }
                         FlowIcon {
                             visible: !appIcon.visible; anchors.centerIn: parent; size: 16; color: floeTheme.accent
@@ -2362,10 +2390,18 @@ ShellRoot {
                 }
             }
             Text {
+                id: searchEmpty
                 visible: root.searchMatches.length === 0
-                anchors { top: searchHeader.bottom; topMargin: 24; horizontalCenter: parent.horizontalCenter }
-                text: searchList.running ? "Looking…" : "Nothing matches “" + root.searchQuery + "”"
+                anchors { top: searchHeader.bottom; topMargin: 1; left: parent.left; right: parent.right; margins: 20 }
+                height: palette.resultsHeight
+                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
+                text: searchList.running ? "Looking…"
+                    : root.searchFailed ? "Search couldn’t list anything. Close it and try again."
+                    : root.searchQuery.trim() ? "Nothing matches “" + root.searchQuery.trim() + "”"
+                    : "Nothing to show"
                 textFormat: Text.PlainText; color: floeTheme.textMuted; font.pixelSize: 14; font.family: floeTheme.interfaceFont
+                Accessible.role: Accessible.StaticText; Accessible.name: text
             }
             Rectangle { anchors.bottom: searchFooter.top; width: parent.width; height: 1; color: Qt.alpha(floeTheme.border, 0.5) }
             Item {

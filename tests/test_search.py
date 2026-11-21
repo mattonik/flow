@@ -1,4 +1,7 @@
+import contextlib
 import importlib.util
+import io
+import json
 from pathlib import Path
 import unittest
 import sys
@@ -24,44 +27,25 @@ class SearchTest(unittest.TestCase):
         hidden.should_show.return_value = False
         data = {"pins": [{"label": "Work", "id": "1", "available": True}, {"label": "Missing", "id": "2", "available": False}],
                 "windows": [{"label": "My\nDocument", "id": 4, "app_id": "editor"}]}
-        rows = search.entries(data, [app, hidden])
-        self.assertEqual([r[1][0] for r in rows], ["settings", "settings", "pin", "pin", "window", "app", "layer"])
+        app.get_icon.return_value = None
+        rows = search.results(data, [app, hidden])
+        self.assertEqual([r[2] for r in rows], ["settings", "settings", "pin", "pin", "window", "app", "layer"])
         # Each shown app can also open as a Layer over the current space; hidden apps cannot.
-        self.assertEqual(rows[6], ("Browser · Open as Layer", ("layer", "org.example.Browser.desktop")))
-        self.assertEqual(rows[4][0], "My Document · Open window · editor")
-        self.assertEqual(rows[4][1], ("window", "4"))
-        self.assertEqual(rows[3], ("Missing · Pinned space · Open", ("pin", "2")))
+        self.assertEqual(rows[6], ("Browser", "Open as Layer", "layer", "org.example.Browser.desktop", ""))
+        self.assertEqual(rows[4], ("My Document", "Open window · editor", "window", "4", ""))
+        self.assertEqual(rows[3], ("Missing", "Pinned space · Open", "pin", "2", ""))
 
     def test_unavailable_group_does_not_offer_to_reopen(self):
-        rows = search.entries({"pins": [{"label": "Work", "id": "g", "kind": "group", "available": False}]}, [])
-        self.assertEqual(rows[2], ("Work · Pinned Group · Unavailable", ("pin", "g")))
-
-
-
+        rows = search.results({"pins": [{"label": "Work", "id": "g", "kind": "group", "available": False}]}, [])
+        self.assertEqual(rows[2], ("Work", "Pinned Group · Unavailable", "pin", "g", ""))
 
     def test_other_display_pins_are_labeled_and_closed_disconnected_pins_hidden(self):
-        rows = search.entries({"other_pins": [
+        rows = search.results({"other_pins": [
             {"label": "Terminal", "id": "t", "display_state": "connected", "display_label": "Dell U2723QE", "available": True},
             {"label": "Notes", "id": "n", "display_state": "disconnected", "display_label": "Studio", "available": True},
             {"label": "Gone", "id": "g", "display_state": "disconnected", "display_label": "Studio", "available": False}]}, [])
-        self.assertEqual([row for row in rows if row[1][0] == "pin"],
-                         [("Terminal · Pinned on Dell U2723QE", ("pin", "t")), ("Notes · Pinned on Studio", ("pin", "n"))])
-
-    def test_search_routes_pin_and_window_focus_through_the_shell(self):
-        gio = SimpleNamespace(AppInfo=SimpleNamespace(get_all=lambda: []))
-        repository = SimpleNamespace(Gio=gio, GLib=SimpleNamespace(Error=RuntimeError))
-        snapshot = '{"pins":[{"label":"Work","id":"pin-id","available":false}],"windows":[{"label":"Notes","id":4,"app_id":"notes"}]}'
-        for index, action, target in ((2, "focus_pin", "pin-id"), (3, "focus_window", "4")):
-            with self.subTest(action=action), \
-                 patch.dict(sys.modules, {"gi": SimpleNamespace(repository=repository), "gi.repository": repository}), \
-                 patch.object(search, "recent_files", return_value=[]), \
-                 patch.object(search.subprocess, "check_output", return_value=snapshot), \
-                 patch.object(search.subprocess, "run", side_effect=[SimpleNamespace(returncode=0, stdout=str(index)), None]) as run:
-                search.main()
-                self.assertEqual(run.call_args_list[0].args[0][:3],
-                                 ["fuzzel", "--keyboard-focus=on-demand", "--override=main.exit-on-keyboard-focus-loss=yes"])
-                self.assertEqual(run.call_args.args[0], ["quickshell", "ipc", "-p", "/etc/flow/shell.qml", "call", "desk", action, target])
-                self.assertTrue(run.call_args.kwargs["check"])
+        self.assertEqual([row for row in rows if row[2] == "pin"],
+                         [("Terminal", "Pinned on Dell U2723QE", "pin", "t", ""), ("Notes", "Pinned on Studio", "pin", "n", "")])
 
     def test_recent_files_are_local_readable_and_within_the_users_home(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -84,31 +68,52 @@ class SearchTest(unittest.TestCase):
             history = base / "recent.xbel"
             ET.ElementTree(root).write(history)
             self.assertEqual(search.recent_files(history, home), [good.resolve()])
-            self.assertEqual(search.entries({}, [], [good])[2][1], ("file", good.as_uri()))
+            self.assertEqual(search.results({}, [], [good])[2][2:4], ("file", good.as_uri()))
             history.write_text("broken")
             self.assertEqual(search.recent_files(history, home), [])
 
-    def test_recent_file_result_opens_its_uri(self):
-        gio = SimpleNamespace(AppInfo=SimpleNamespace(get_all=lambda: [], launch_default_for_uri=Mock()))
-        repository = SimpleNamespace(Gio=gio, GLib=SimpleNamespace(Error=RuntimeError))
+    def test_json_lists_the_results_and_names_apps_by_their_desktop_file(self):
+        app = Mock()
+        app.get_display_name.return_value = "Browser"
+        app.get_id.return_value = "browser.desktop"
+        app.get_filename.return_value = "/usr/share/applications/browser.desktop"
+        app.should_show.return_value = True
+        app.get_icon.return_value.to_string.return_value = "browser"
+        gio = SimpleNamespace(AppInfo=SimpleNamespace(get_all=lambda: [app]))
+        repository = SimpleNamespace(Gio=gio)
+        out = io.StringIO()
         with patch.dict(sys.modules, {"gi": SimpleNamespace(repository=repository), "gi.repository": repository}), \
-             patch.object(search, "recent_files", return_value=[Path("/home/martin/notes.txt")]), \
-             patch.object(search.subprocess, "check_output", return_value="{}"), \
-             patch.object(search.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout="2")):
-            search.main()
-        gio.AppInfo.launch_default_for_uri.assert_called_once_with("file:///home/martin/notes.txt", None)
+             patch.object(search, "recent_files", return_value=[]), \
+             patch.object(search.subprocess, "check_output", return_value='{"pins":[{"label":"Work","id":"p","available":true}]}'), \
+             contextlib.redirect_stdout(out):
+            self.assertEqual(search.main(["--json"]), 0)
+        rows = json.loads(out.getvalue())
+        self.assertEqual([(r["kind"], r["value"]) for r in rows],
+                         [("settings", "settings"), ("settings", "quick_open"), ("pin", "p"),
+                          ("app", "/usr/share/applications/browser.desktop"), ("layer", "browser.desktop")])
+        self.assertEqual(rows[3]["icon"], "browser")
 
-    def test_settings_results_invoke_matching_shell_action(self):
-        gio = SimpleNamespace(AppInfo=SimpleNamespace(get_all=lambda: []))
-        repository = SimpleNamespace(Gio=gio, GLib=SimpleNamespace(Error=RuntimeError))
-        for index, action in enumerate(("settings", "quick_open")):
-            with self.subTest(action=action), \
-                 patch.dict(sys.modules, {"gi": SimpleNamespace(repository=repository), "gi.repository": repository}), \
-                 patch.object(search.subprocess, "check_output", return_value="{}"), \
-                 patch.object(search.subprocess, "run", side_effect=[SimpleNamespace(returncode=0, stdout=str(index)), None]) as run:
-                search.main()
-                self.assertEqual(run.call_args.args[0], ["quickshell", "ipc", "-p", "/etc/flow/shell.qml", "call", "desk", action])
-                self.assertTrue(run.call_args.kwargs["check"])
+    def test_open_launches_apps_and_files_through_gio_in_an_app_scope(self):
+        for kind, value, command in (("app", "/a/browser.desktop", ["gio", "launch", "/a/browser.desktop"]),
+                                     ("file", "file:///home/u/notes.txt", ["gio", "open", "file:///home/u/notes.txt"])):
+            with self.subTest(kind=kind), patch.dict(search.os.environ, {"FLOW_APP_SCOPES": "1"}), \
+                 patch.object(search.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
+                self.assertEqual(search.main(["--open", kind, value]), 0)
+                self.assertEqual(run.call_args.args[0], ["systemd-run", "--user", "--scope", "--collect", "--quiet", "--", *command])
+                # None of the app's streams may be the shell's pipe.
+                for stream in ("stdin", "stdout", "stderr"):
+                    self.assertIs(run.call_args.kwargs[stream], search.subprocess.DEVNULL)
+
+    def test_open_reports_failure_and_refuses_other_kinds(self):
+        with patch.object(search.subprocess, "run", return_value=SimpleNamespace(returncode=4)):
+            self.assertEqual(search.main(["--open", "app", "/a/gone.desktop"]), 4)
+        with patch.object(search.subprocess, "run", side_effect=FileNotFoundError("gio")), \
+             contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(search.main(["--open", "file", "file:///x"]), 127)
+        with patch.object(search.subprocess, "run") as run, contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(search.main(["--open", "pin", "1"]), 2)
+            self.assertEqual(search.main([]), 2)   # no fuzzel fallback: the shell is the only caller
+            run.assert_not_called()
 
 
 if __name__ == "__main__":
