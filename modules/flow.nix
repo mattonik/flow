@@ -41,7 +41,7 @@ let
   flowApi = pkgs.writeShellScriptBin "flow-api" ''
     export PYTHONPATH="${../session}"
     export GI_TYPELIB_PATH="${apiTypelibs}"
-    export PATH="${spaces}/bin:${config.programs.niri.package}/bin:${pkgs.quickshell}/bin:$PATH"
+    export PATH="${spaces}/bin:${config.programs.niri.package}/bin:${pkgs.quickshell}/bin:${pkgs.util-linux}/bin:$PATH"
     export FLOW_SHELL_CONFIG=/etc/flow/shell.qml
     exec ${apiPython}/bin/python3 ${../session/flow_api.py}
   '';
@@ -127,6 +127,8 @@ in {
         Type = "dbus";
         BusName = "io.github.mattonik.Flow1";
         ExecStart = "${flowApi}/bin/flow-api";
+        # Also after a crash: the shell must not keep showing activities nobody owns.
+        ExecStopPost = "${pkgs.coreutils}/bin/rm -f %t/flow-activities.json";
         Restart = "on-failure";
       };
     };
