@@ -68,7 +68,7 @@ class NotificationBannerTest(unittest.TestCase):
     def test_new_and_replaced_notifications_reach_show_banner(self):
         handler = SHELL[SHELL.index("onNotification: notification => {"):]
         handler = handler[:handler.index("\n        }\n")]
-        self.assertIn("root.showBanner(notification)", handler)
+        self.assertRegex(handler, r"\n {12}root\.showBanner\(notification\)\n")  # its own call, not only the lambda's
         self.assertIn("notification.summaryChanged.connect(changed)", handler)
         self.assertIn("notification.bodyChanged.connect(changed)", handler)
 

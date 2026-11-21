@@ -353,34 +353,46 @@ Not verified:
 
 Before this, a notification that arrived with its panel closed showed only as a dot on the Island's bell. Now a banner shows it, as a phone does:
 - **What shows:** the newest notification, 12 px below the Island where the panels hang, in the panels' style. It shows the app in small capitals, the summary and the body (two lines each, plain text) and a dismiss button.
-- **How long:**
-  - About 5 s, held while the pointer rests on it.
-  - A critical notification stays until it is dismissed or opened.
+- **Replacements:** a notification that replaces an earlier one (`replaces_id`: a chat's next message, a download's progress) shows again. Quickshell updates the object in place without a new signal, so the shell listens for its summary and body changing.
+- **How long:** 5 s of being seen.
+  - The count runs only while the banner can be seen and the pointer is not resting on it, and each time it starts it starts from 5 s.
+  - A critical notification stays until it is dismissed or opened, and only another critical one replaces it; anything else waits in the panel.
   - A low-urgency one never shows a banner and waits in the panel, with the bell's dot.
-- **What replaces or hides it:**
-  - A newer notification replaces it.
-  - One the app closes leaves at once.
-  - It hides while the notifications panel, quick settings or search is open.
-  - Opening the notifications panel takes it, so it doesn't come back when the panel closes.
-- **Clicking:** a click opens the notifications panel, where the actions are. × dismisses the notification.
-- **Keyboard:** the banner never takes the keyboard, so a notification cannot pull typing away from an app. The bell opens the panel from the keyboard, and the banner is announced as an alert.
-- **IPC:** `banner` returns the summary on screen, or "", for scripted checks.
+  - The notification's own expiry time is ignored; it governs the notification, not the banner.
+- **Where it shows:** only in the plain work view, as the work indicator. Desk, Overview and the switcher would cover it (the surface mapped later is on top), and the panels, search and the app menu sit where it does. While any of them is open the banner waits, without counting, and shows when it closes.
+- **Opening the panel:** this takes the banner, so it doesn't come back. A notification that arrives with the panel open shows no banner.
+- **Clicking:** a click runs the notification's default action, as freedesktop clients expect (a chat opens its conversation), or else opens the panel. × dismisses the notification.
+- **Keyboard:** the banner never takes the keyboard, so a notification cannot pull typing away from an app. The new Super+N opens the panel, which also takes the banner. The banner is announced as an alert, with the body as its description.
+- **Display:** the banner shows on the display niri chooses, normally the focused one; neither it nor the Island names a screen.
+- **IPC:** `banner` returns the summary (or app name) the banner is set to show, or "" when it is hidden. It reports the shell's state, not what the compositor draws.
 
 Tests:
-- **`niri_notification_banner_smoke.py`:** drives a development shell on a private bus (`dbus-run-session`), sending notifications with `busctl` and reading the banner through the IPC. It checks:
-  - a normal notification shows and goes after 5.3 s;
-  - a low-urgency one shows nothing;
-  - a newer one replaces the shown one;
+- **`niri_notification_banner_smoke.py`:** drives a development shell on a private bus (`dbus-run-session`), sending notifications with `busctl` and reading the banner's state through the IPC. It checks:
+  - a normal notification goes after 5.4 s, and a low-urgency one shows nothing;
+  - a newer one replaces the shown one, and one sent with `replaces_id` shows again;
   - one the app closes leaves at once;
-  - quick settings hides a banner, which shows again when quick settings closes;
-  - a critical one stays past 7 s, leaves when the panel opens and doesn't come back.
-- **Mutations:** seven mutations each fail the smoke, at the step that covers them: no banner, low urgency shown, no timeout, a critical one timing out, the panel not taking the banner, a banner over quick settings, and a newer notification not replacing it. An eighth, dropping a check that the notification was still tracked, did not fail it. The check was redundant: a notification the app closes is destroyed, which empties the banner's property. It was removed.
-- **`test_notification_banner.py`:** checks the source for what the smoke can't see. The banner never takes the keyboard, its dismiss button is 44 px, it is announced, it sits where the panels sit, and its text is plain and bounded.
+  - quick settings hides a banner, which shows when quick settings closes;
+  - Desk hides one for 6 s, and it then shows with its time unspent;
+  - one that arrives with the panel open shows nothing after;
+  - a critical one stays past 9 s, a normal one doesn't push it off, and the panel takes it for good.
+- **Mutations:** MUTATION_RESULT
+- **`test_notification_banner.py`:** checks the source for what the smoke can't see or reach:
+  - the banner never takes the keyboard, and Super+N is bound;
+  - the exact set of conditions that hide it, in any order;
+  - it sits where the panels sit;
+  - the dismiss button is 44 px and calls `dismiss()`;
+  - the card has the alert role;
+  - new and replaced notifications both reach `showBanner`, and a click runs the default action.
+  
+  Ten mutations of the shell and the Niri config were checked against it. Nine fail it (among them an extra `|| root.deskOpen`, a scaled or dead dismiss, a hidden card, a missing `showBanner` call, an ignored default action, and Super+N removed). The tenth, a harmless reordering of the conditions, passes, as it should.
+
+A NEMESIS review of the first version found that replaced notifications never showed, that a normal notification pushed a critical banner off, that the timer ran while the banner was hidden or held, that the banner ignored Desk, Overview, the switcher and the app menu, no keyboard path outside Desk, no default action on click, false claims about the IPC and the display, and weak tests. All are fixed as described above.
 
 Not verified:
-- **Pointer:** clicking the banner and the pointer holding it, because the guest has no pointer injection.
+- **Pointer:** clicking the banner, the default action and the pointer holding it, because the guest has no pointer injection.
 - **Screen reader:** the announcement was not heard with a running screen reader.
-- **Several displays:** banners show on the Island's screen.
+- **Super+N:** not pressed, because the guest has no key injection; the binding passes `niri validate`.
+- **Several displays:** not tried.
 
 ### Moving along a row in Overview (2026-11-21)
 
