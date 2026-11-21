@@ -22,8 +22,13 @@ def _text(value):
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-def identities(outputs):
-    """Map each active connector to its display record; ambiguous serials fall back to the port."""
+def identities(outputs, shared=frozenset()):
+    """Map each active connector to its display record; ambiguous serials fall back to the port.
+
+    ``shared`` holds serial keys once seen on two connected monitors at the same time. They stay keyed
+    by port even when only one of the monitors is connected, so unplugging a twin never turns the
+    remaining one into a different display.
+    """
     active = {name: out for name, out in (outputs or {}).items()
               if isinstance(out, dict) and out.get("logical") is not None}
     edid = {}
@@ -35,14 +40,17 @@ def identities(outputs):
     for name, out in active.items():
         make, model, serial = _text(out.get("make")), _text(out.get("model")), _text(out.get("serial"))
         key = f"edid:{make or ''}|{model or ''}|{serial}" if serial else None
-        if key and len(edid[key]) > 1:
-            ambiguous.add(key)
+        twin = key if key and (len(edid[key]) > 1 or key in shared) else None
+        if twin:
+            ambiguous.add(twin)
             key = None
         if not key:
             key = f"port:{name}|{make or ''}|{model or ''}"
         label = " ".join(part for part in (make, model) if part and part.lower() != "unknown") or name
         result[name] = {"key": key, "connector": name, "make": make, "model": model,
                         "serial": serial, "label": label}
+        if twin:
+            result[name]["shared_serial"] = twin
     return result, ambiguous
 
 
@@ -77,6 +85,11 @@ def write(path, pins, displays, version):
             tmp.flush()
             os.fsync(tmp.fileno())
             os.replace(tmp.name, path)
+            directory = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)  # make the rename itself durable
+            finally:
+                os.close(directory)
         finally:
             if os.path.exists(tmp.name):
                 os.unlink(tmp.name)
@@ -110,7 +123,8 @@ def migrate(pins, displays, version, connected, locate):
                 del displays[key]
     for key, record in by_key.items():
         stored = displays.setdefault(key, {})
-        stored.update({k: record[k] for k in ("connector", "make", "model", "serial", "label")})
+        stored.update({k: record[k] for k in ("connector", "make", "model", "serial", "label", "shared_serial")
+                       if k in record})
     for pin in pins:
         if pin.get("display") is None:
             where = locate(pin)
@@ -119,6 +133,11 @@ def migrate(pins, displays, version, connected, locate):
             elif len(connected) == 1:
                 pin["display"] = next(iter(connected.values()))["key"]
     return displays
+
+
+def shared_serials(displays):
+    """Serial keys that two connected monitors have reported at once."""
+    return frozenset(r["shared_serial"] for r in displays.values() if isinstance(r.get("shared_serial"), str))
 
 
 def status(key, connected, ambiguous):

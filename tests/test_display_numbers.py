@@ -107,6 +107,13 @@ class ShortcutTest(unittest.TestCase):
             self.invoke("focus-number", "1:1", outputs={"eDP-1": LAPTOP})
         self.assertFalse([a for a in self.niri.log if a[:2] in (("action", "focus-monitor"), ("action", "focus-window"))])
 
+    def test_super_number_uses_the_lowest_numbered_display_while_main_is_away(self):
+        self.invoke("refresh")
+        self.niri("action", "focus-monitor", "DP-1")
+        result = self.invoke("focus-number", "0:2", outputs={"DP-1": MONITOR})
+        self.assertEqual(self.niri.active["DP-1"], 3)
+        self.assertEqual(result["notice"], "The main display is not connected; using External 1")
+
     def test_main_can_be_moved_to_another_display_and_numbers_persist(self):
         self.invoke("make-main", MONITOR_KEY)
         displays = pin_store.read(self.state / "spaces.json")[1]

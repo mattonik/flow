@@ -61,12 +61,15 @@ def pins_unchanged_or_rebound(before, after, session, windows, workspace=None, g
 def groups_unchanged_or_focused(before, after, workspace, windows):
     if len(before) != len(after):
         return False
+    # Focus tracking and window bindings change with ordinary navigation; anything else is a real edit.
+    volatile = ("last_focused_app", "bound")
     for old, new in zip(before, after):
         if old == new:
             continue
-        if {k: v for k, v in old.items() if k != "last_focused_app"} != {
-                k: v for k, v in new.items() if k != "last_focused_app"}:
+        if {k: v for k, v in old.items() if k not in volatile} != {k: v for k, v in new.items() if k not in volatile}:
             return False
+        if old.get("last_focused_app") == new.get("last_focused_app"):
+            continue
         active = next((w for w in windows if w.get("id") == workspace.get("active_window_id")), None)
         if not active or new.get("last_focused_app") not in old.get("members", []) or active.get("app_id") != new.get("last_focused_app"):
             return False
@@ -74,7 +77,7 @@ def groups_unchanged_or_focused(before, after, workspace, windows):
 
 
 def saved_order_matches(entries, restored, workspace, windows):
-    current = [w for w in windows if w.get("workspace_id") == workspace["id"]]
+    current = [w for w in windows if w.get("workspace_id") == workspace["id"] and not w.get("is_floating")]
     if len(restored) != len(entries) or {w["id"] for _, w in restored} != {w["id"] for w in current}:
         return False
     rows = Counter()
@@ -197,7 +200,8 @@ def save(path, workspace, windows, session=None, pins=(), registered=None, displ
         if (not valid_side_pins(group, pins)
                 or not spaces.group_windows(candidate, workspace, windows, session, registered)):
             raise ValueError("Check side-by-side Groups and pins before saving; the snapshot was not replaced")
-    current = [w for w in windows if w.get("workspace_id") == workspace["id"]]
+    # Layers (floating windows) are temporary and never part of a saved session.
+    current = [w for w in windows if w.get("workspace_id") == workspace["id"] and not w.get("is_floating")]
     current.sort(key=lambda w: w.get("layout", {}).get("pos_in_scrolling_layout") or [99999, 0])
     entries = [{"app_id": w.get("app_id"), "window_id": w["id"], "label": w.get("title") or w.get("app_id") or "Unknown application",
                 "focused": w["id"] == workspace.get("active_window_id"),
@@ -628,7 +632,8 @@ def main():
                     display = focused_display(workspace)[0]
                     dirs = (os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share"), *os.environ.get("XDG_DATA_DIRS", "/run/current-system/sw/share:/usr/share").split(":"))
                     if op == "auto-save-checked":
-                        entries = [{"app_id": w.get("app_id"), "column": None if w.get("is_floating") else (w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0]} for w in windows if w.get("workspace_id") == workspace["id"]]
+                        entries = [{"app_id": w.get("app_id"), "column": (w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0]}
+                                   for w in windows if w.get("workspace_id") == workspace["id"] and not w.get("is_floating")]
                         warnings = recovery_warnings(entries, dirs)
                         if not entries or warnings:
                             raise ValueError("Automatic saving paused; the saved session was preserved. " + "; ".join(warnings))

@@ -109,6 +109,18 @@ def main():
                 raise RuntimeError(f"The Group did not form beside other windows of its apps: {created['spaces']}")
             steps.append("a Group formed from one window of each app while a second window of each stayed open")
 
+            niri("action", "focus-window", "--id", t2)
+            spaces("make-layer")
+            if not next(w for w in ours() if w["id"] == t2).get("is_floating") or columns()[0] != [t1, e1]:
+                raise RuntimeError("The other terminal was not treated as its own space")
+            spaces("layer-to-space", str(t2))
+            wait_for(lambda: columns()[0] == [t1, e1] and [t2] in columns(), f"the terminal back as its own space ({columns()})")
+            for index, ident in enumerate((t2, e2), 2):
+                niri("action", "focus-window", "--id", ident)
+                niri("action", "move-column-to-index", index)
+            niri("action", "focus-window", "--id", t1)
+            steps.append("the other terminal became a Layer and a space again while the Group stayed intact")
+
             spaces("group-layout", gid)
             wait_for(lambda: columns() == [[t1], [e1], [t2], [e2]], f"side by side ({columns()})")
             spaces("member-wider", str(t1))

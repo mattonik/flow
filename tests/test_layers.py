@@ -114,6 +114,13 @@ class LayerTest(unittest.TestCase):
         self.assertEqual((self.niri.layout(), self.niri.active), ([["mail"], ["other"], ["a"], ["b"]], 9))
         self.assertEqual(self.niri.widths[9], 100.0)
 
+    def test_navigating_from_a_layer_moves_from_the_space_beneath_it(self):
+        with self.launch("notes"):
+            self.run_op("open-layer", "org.example.Notes")
+        self.run_op("navigate", "left")
+        self.assertEqual(self.niri.active, 7)
+        self.assertEqual(self.niri.floating, [50])
+
     def test_only_a_standalone_unpinned_tiled_app_becomes_a_layer(self):
         for active, message in ((1, "Remove this app from its Group"), (7, "Unpin this app")):
             self.niri("action", "focus-window", "--id", active)

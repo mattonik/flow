@@ -130,21 +130,27 @@ SESSION = None  # this Niri session's identity, set by run_locked; Group binding
 def member_candidates(group, app, windows):
     """(bound window, other candidates) for one Group member.
 
-    In the Niri session that bound the Group, the member is its bound window while that window lives;
-    if it closed, only a window of that app opened after the binding may stand in, so an older window
-    of the same app is never adopted. Without a binding from this session, every window of the app is
-    a candidate; several are a repair case, never a guess.
+    In the Niri session that bound the Group, the member is its bound window while that window lives.
+    If it closed, a window of that app stands in only when it shares a column with another of the
+    Group's bound windows, i.e. the user stacked it back into the Group; otherwise the member is closed
+    and opening it from the Group binds the new window. Without a binding from this session, every
+    window of the app is a candidate, and several are a repair case, never a guess.
     """
     bound = group.get("bound")
     windows_of_app = [w for w in windows if w.get("app_id") == app]
     if not (SESSION and isinstance(bound, dict) and bound.get("session") == SESSION
-            and isinstance(bound.get("windows"), dict) and isinstance(bound.get("seen"), int)):
+            and isinstance(bound.get("windows"), dict)):
         return None, windows_of_app
     ident = bound["windows"].get(app)
     match = next((w for w in windows_of_app if w.get("id") == ident), None)
     if match:
         return match, []
-    return None, [w for w in windows_of_app if isinstance(w.get("id"), int) and w["id"] > bound["seen"]]
+    by_id = {w.get("id"): w for w in windows}
+    columns = {(w.get("workspace_id"), position(w)[0]) for other, i in bound["windows"].items()
+               if other != app and other in group["members"] and (w := by_id.get(i)) and w.get("app_id") == other
+               and not w.get("is_floating") and position(w)}
+    return None, [w for w in windows_of_app if not w.get("is_floating") and position(w)
+                  and (w.get("workspace_id"), position(w)[0]) in columns]
 
 
 def group_members(group, windows):
@@ -156,12 +162,25 @@ def group_members(group, windows):
     return found
 
 
+def group_of(window, groups, windows):
+    """The saved Group this window may belong to, or None.
+
+    Another window of a member app is outside the Group only when the member resolves to a different
+    window; while the member cannot be told apart, every window of that app is treated as possibly in it.
+    """
+    for group in groups if window else ():
+        if window.get("app_id") in group["members"]:
+            member = group_members(group, windows)[group["members"].index(window["app_id"])]
+            if member is None or member["id"] == window["id"]:
+                return group
+    return None
+
+
 def bind_group(group, found, windows):
     """Remember which windows are the Group in this session; False if nothing changed."""
     if not SESSION or not all(found):
         return False
-    seen = max((w["id"] for w in windows if isinstance(w.get("id"), int)), default=0)
-    bound = {"session": SESSION, "windows": {w["app_id"]: w["id"] for w in found}, "seen": seen}
+    bound = {"session": SESSION, "windows": {w["app_id"]: w["id"] for w in found}}
     if group.get("bound") == bound:
         return False
     group["bound"] = bound
@@ -217,9 +236,9 @@ def pin_window(pin, workspace, windows, socket, groups=()):
 
 
 def has_side_layout(workspace, windows, groups):
-    apps = {w.get("app_id") for w in windows if w.get("workspace_id") == workspace["id"]}
+    here = [w for w in windows if w.get("workspace_id") == workspace["id"]]
     return any((g.get("pending_layout") or g.get("layout") == "side-by-side") and
-               apps.intersection(g["members"]) for g in groups)
+               any(group_of(w, [g], windows) for w in here) for g in groups)
 
 
 def pinned_apps(pins):
@@ -335,11 +354,14 @@ def live_group(groups, group_id, workspace, windows, socket):
 
 def group_of_window(groups, window_id, workspace, windows, socket):
     window = next((w for w in windows if str(w.get("id")) == str(window_id)), None)
-    group = next((g for g in groups if window and window.get("app_id") in g["members"]), None)
+    group = group_of(window, groups, windows)
     if not group:
         raise ValueError("This window is not a Group member")
     group, found = live_group(groups, group["id"], workspace, windows, socket)
-    return group, found, next(i for i, w in enumerate(found) if w["id"] == window["id"])
+    index = next((i for i, w in enumerate(found) if w["id"] == window["id"]), None)
+    if index is None:
+        raise ValueError("This window is not a Group member")
+    return group, found, index
 
 
 def update_group_pins(pins, group, found, socket):
@@ -677,7 +699,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
             raise ValueError("Select an app window first")
         if window.get("is_floating"):
             raise ValueError("This app is already a Layer")
-        if any(window.get("app_id") in g["members"] for g in groups):
+        if group_of(window, groups, windows):
             raise ValueError("Remove this app from its Group before making it a Layer")
         if window.get("app_id") in pinned_apps(pins):
             raise ValueError("Unpin this app before making it a Layer")
@@ -830,7 +852,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
             raise ValueError(f"Select a column of up to {MAX_MEMBERS - 1} windows with one single window to its right")
         if op == "unstack" and len(stack) < 2:
             raise ValueError("Select a stack of windows")
-        if any({w.get("app_id") for w in current} == set(g["members"]) for g in groups):
+        if any(group_of(w, groups, windows) for w in stack):
             raise ValueError("Use Dissolve Group or the Group's member controls to change a saved Group")
         if any(w.get("app_id") in pinned_apps(pins) for w in stack):
             raise ValueError("Unpin these windows before stacking or separating")
@@ -838,6 +860,11 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
     elif op == "navigate":
         if arg not in ("left", "right"):
             raise ValueError("Choose left or right")
+        focused = next((w for w in windows if w["id"] == workspace.get("active_window_id")), None)
+        if focused and focused.get("is_floating"):
+            # From a Layer, move from the space beneath it: Niri remembers that column.
+            command("action", "focus-tiling")
+            workspace, windows = snapshot()
         destinations = display_spaces(workspace, windows, groups, pins)
         index = next((i for i, space in enumerate(destinations) if space["active"]), None)
         if index is not None:
@@ -946,13 +973,19 @@ def float_as_layer(window_id, size=None):
         command("action", "set-window-width", "--id", window_id, LAYER_SIZE[0])
         command("action", "set-window-height", "--id", window_id, LAYER_SIZE[1])
         # Niri centers by the window's current size, so wait for the client to commit the new one.
+        # Floating sizes are relative to the working area, so any change of height counts as committed.
+        def height():
+            return next((w.get("layout", {}).get("tile_size", [0, 0])[1] for w in snapshot()[1]
+                         if w.get("id") == window_id), None)
+
         expected = size[1] * float(LAYER_SIZE[1].rstrip("%")) / 100 if size else None
+        initial = height() if size else None
         for _ in range(10):
             time.sleep(0.1)
             if expected is None:
                 break
-            tile = next((w.get("layout", {}).get("tile_size") for w in snapshot()[1] if w.get("id") == window_id), None)
-            if tile and abs(tile[1] - expected) <= 16:
+            current = height()
+            if current is None or current != initial or abs(current - expected) <= 16:
                 break
         command("action", "center-window", "--id", window_id)
     command("action", "focus-window", "--id", window_id)
@@ -1271,10 +1304,10 @@ def move_plan(groups, workspace, destination, windows):
     active = next((w for w in windows if w["id"] == workspace.get("active_window_id")), None)
     if not active or active.get("workspace_id") != workspace["id"]:
         raise ValueError("Select the space to move first")
-    group = next((g for g in groups if active.get("app_id") in g["members"]), None)
+    group = group_of(active, groups, windows)
+    if active.get("is_floating") or not position(active):
+        raise ValueError("Make this Layer a space before moving it to another display")
     if not group:
-        if active.get("is_floating") or not position(active):
-            return None, [active], []
         return None, [column_windows(workspace, windows, position(active)[0])[0]], []
     if group.get("pending_layout"):
         raise ValueError("Finish the Group layout change first")
@@ -1319,8 +1352,7 @@ def move_to_display(pins, groups, target_key, connected, workspaces, workspace, 
     active = workspace.get("active_window_id")
     ids = {w["id"] for w in moved}
     for column in columns:
-        ids.update(w["id"] for w in (column_windows(workspace, windows, position(column)[0])
-                                      if position(column) and not column.get("is_floating") else [column]))
+        ids.update(w["id"] for w in column_windows(workspace, windows, position(column)[0]))
     if group:
         claims = [p for p in pins if p.get("group_id") == group["id"]]
     else:
@@ -1336,10 +1368,7 @@ def move_to_display(pins, groups, target_key, connected, workspaces, workspace, 
             if anchor:
                 command("action", "focus-window", "--id", anchor)
             command("action", "focus-window", "--id", column["id"])
-            if column.get("is_floating") or not position(column):
-                command("action", "move-window-to-monitor", "--id", column["id"], target)
-            else:
-                command("action", "move-column-to-monitor", target)
+            command("action", "move-column-to-monitor", target)
             anchor = column["id"]
         command("action", "focus-window", "--id", active)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -1352,13 +1381,14 @@ def move_to_display(pins, groups, target_key, connected, workspaces, workspace, 
             or any(w.get("workspace_id") != destination["id"] for w in windows if w["id"] in ids)
             or len([w for w in windows if w["id"] in ids]) != len(ids)):
         raise ValueError("The space did not arrive on that display; check its windows and move it again")
-    ordered = group_members(group, windows) if group else []
-    side = bool(group) and group.get("layout", "stack") == "side-by-side"
-    if group and split_of(ordered, workspace, windows) != (1 if side else len(ordered)):
-        raise ValueError("The Group arrived out of order; move it again or repair it on that display")
+    # Every window is there, so its pin is too, even if a later step needs the user's attention.
     for pin in claims:
         if pin.get("display") != target_key:
             pin_store.move_here(pins, pin["id"], target_key)
+    ordered = group_members(group, windows) if group else []
+    side = bool(group) and group.get("layout", "stack") == "side-by-side"
+    if group and split_of(ordered, workspace, windows) != (1 if side else len(ordered)):
+        raise ValueError("The Group arrived out of order; repair it on that display")
     notice = ""
     if side:
         saved = group_store.ratios(group)
@@ -1376,24 +1406,31 @@ def move_to_display(pins, groups, target_key, connected, workspaces, workspace, 
             label = connected[target]["label"]
             notice = (f"{group['label']} was stacked to fit {label}" if not fits
                       else f"{group['label']} was stacked for the portrait {label}")
-    if side:
-        if claims:
-            # Pin reconciliation is paused beside side-by-side Groups, so place this one explicitly.
-            def width_of(pin):
-                found = group_windows(pin, workspace, windows, socket, groups) if pin.get("group_id") else None
-                return len(found) if found and split_of(found, workspace, windows) == 1 else 1
-
-            width = sum(width_of(p) for p in local_pins(pins, target_key)
-                        if p["id"] != claims[0]["id"] and pin_window(p, workspace, windows, socket, groups))
-            start = position(ordered[0])[0]
-            if start != width + 1:
-                sequence = list(enumerate(ordered))
-                for index, member in (sequence if width + 1 < start else reversed(sequence)):
-                    command("action", "focus-window", "--id", member["id"])
-                    command("action", "move-column-to-index", width + 1 + index)
-                command("action", "focus-window", "--id", active)
-    if group:
+    if claims:
+        # Pin reconciliation is paused beside side-by-side Groups, so place the moved pin explicitly:
+        # it joins the end of this display's pinned spaces, its columns in order.
         workspace, windows = snapshot()
+        live = {w["id"]: w for w in windows}
+        if group:
+            placed = group_members(group, windows)
+            placed = placed if side else placed[:1]
+        else:
+            placed = [live[columns[-1]["id"]]]
+
+        def width_of(pin):
+            found = group_windows(pin, workspace, windows, socket, groups) if pin.get("group_id") else None
+            return len(found) if found and split_of(found, workspace, windows) == 1 else 1
+
+        width = sum(width_of(p) for p in local_pins(pins, target_key)
+                    if p["id"] != claims[0]["id"] and pin_window(p, workspace, windows, socket, groups))
+        start = position(placed[0])[0]
+        if start != width + 1:
+            sequence = list(enumerate(placed))
+            for index, member in (sequence if width + 1 < start else reversed(sequence)):
+                command("action", "focus-window", "--id", member["id"])
+                command("action", "move-column-to-index", width + 1 + index)
+            command("action", "focus-window", "--id", active)
+    workspace, windows = snapshot()
     return workspace, windows, notice
 
 
@@ -1439,7 +1476,7 @@ def _run_locked(state):
         before = json.dumps([pins, displays, version], sort_keys=True)
         workspace, windows = snapshot()
         outputs, workspaces = display_state()
-        connected, ambiguous = pin_store.identities(outputs)
+        connected, ambiguous = pin_store.identities(outputs, pin_store.shared_serials(displays))
         socket = session_id()
         global SESSION
         SESSION = socket
@@ -1472,6 +1509,12 @@ def _run_locked(state):
                 raise ValueError("Choose a display and pinned space number") from None
             key = pin_store.by_number(displays, number)
             name = "The main display" if number == 0 else f"External {number}"
+            live = {record["key"] for record in connected.values()}
+            if number == 0 and key not in live and live:
+                # With Main away (a closed laptop on a dock), Super+number uses the lowest-numbered display.
+                key = min(live, key=lambda k: displays.get(k, {}).get("number", 99))
+                name = pin_store.display_name(displays.get(key))
+                notice = f"The main display is not connected; using {name}"
             if key is None:
                 raise ValueError(f"{name} has not been connected" if number else "No main display is set")
             if pin_store.status(key, connected, ambiguous) != "connected":
@@ -1516,8 +1559,13 @@ def _run_locked(state):
             if window and (pin.get("session") != socket or pin.get("window_id") != window["id"]):
                 pin["session"], pin["window_id"] = socket, window["id"]
         if op == "move-to-display":
-            workspace, windows, notice = move_to_display(pins, groups, arg, connected, workspaces, workspace, windows,
-                                                         socket, outputs, state)
+            try:
+                workspace, windows, notice = move_to_display(pins, groups, arg, connected, workspaces, workspace,
+                                                             windows, socket, outputs, state)
+            except (ValueError, OSError, subprocess.SubprocessError):
+                if before != json.dumps([pins, displays, 2], sort_keys=True):
+                    pin_store.write(path, pins, displays, version)
+                raise
             before_groups = json.dumps(groups, sort_keys=True) if notice else before_groups
             outputs, workspaces = display_state()
             display = here(workspace)

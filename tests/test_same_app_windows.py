@@ -98,12 +98,43 @@ class SameAppTest(unittest.TestCase):
         self.assertEqual(self.group_space(result), [])
         self.assertIn("Multiple windows", result["incomplete_groups"][0]["status"])
         self.invoke("group-layout", self.groups()[0]["id"], expect_error="unavailable or ambiguous")
+        # Neither terminal can be told apart from the Group's, so neither is floated out as a Layer.
+        self.niri("action", "focus-window", "--id", 5)
+        self.invoke("make-layer", expect_error="Remove this app from its Group")
         # Once only one window of each app is left, the Group is recognized and bound again.
         self.niri("action", "close-window", "--id", 5)
         self.niri("action", "close-window", "--id", 6)
         result = self.invoke("refresh")
         self.assertEqual(len(self.group_space(result)), 1)
         self.assertEqual(self.groups()[0]["bound"]["session"], "session-2")
+
+    def test_a_closed_member_is_not_replaced_from_another_workspace(self):
+        self.invoke("create-group")
+        elsewhere = {"id": 40, "app_id": "editor", "title": "editor", "workspace_id": 2, "is_floating": False,
+                     "layout": {"pos_in_scrolling_layout": [1, 1], "tile_size": [500, 700]}}
+        snapshot = self.niri.snapshot
+        self.niri.snapshot = lambda: (snapshot()[0], snapshot()[1] + [elsewhere])
+        self.niri("action", "close-window", "--id", 2)
+        result = self.invoke("refresh")
+        (incomplete,) = result["incomplete_groups"]
+        self.assertEqual((incomplete["can_open"], incomplete["missing_app"]), (True, "editor"))
+        self.assertEqual(self.groups()[0]["bound"]["windows"], {"terminal": 1, "editor": 2})
+
+    def test_other_windows_opening_do_not_rewrite_the_registry(self):
+        self.invoke("create-group")
+        before = (self.state / "groups.json").read_bytes()
+        self.niri.open_window(50, "browser")
+        self.invoke("refresh")
+        self.assertEqual((self.state / "groups.json").read_bytes(), before)
+
+    def test_another_window_of_a_member_app_is_its_own_space_for_every_action(self):
+        self.invoke("create-group")
+        self.niri("action", "focus-window", "--id", 5)
+        self.invoke("make-layer")
+        self.assertEqual(self.niri.floating, [5])
+        self.invoke("member-left", "6", expect_error="not a Group member")
+        self.niri("action", "focus-window", "--id", 6)
+        self.invoke("pin")
 
     def test_the_added_window_is_bound_even_when_its_app_has_another_window(self):
         self.niri.columns = [[1], [2], [5], [6]]

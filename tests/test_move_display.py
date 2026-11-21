@@ -115,6 +115,45 @@ class MoveToDisplayTest(unittest.TestCase):
         self.assertEqual(self.saved_pins()[0]["display"], MONITOR_KEY)
         self.assertEqual([s["group_id"] for s in result["spaces"]], ["g", None])
 
+    def test_another_window_of_a_group_app_moves_alone(self):
+        pair = {"id": "g", "label": "Pair", "members": ["a", "b"], "layout": "stack",
+                "bound": {"session": "session", "windows": {"a": 1, "b": 2}}}
+        APPS[5] = "a"
+        self.addCleanup(APPS.pop, 5)
+        self.setup({"eDP-1": [[1, 2], [5], [7]], "DP-1": [[8]]}, focused=5, groups=[pair],
+                   pins=[{"id": "gp", "label": "Pair", "app_id": "a", "members": ["a", "b"], "group_id": "g",
+                          "display": LAPTOP_KEY}])
+        self.invoke("move-to-display", MONITOR_KEY)
+        self.assertEqual(self.niri.layout(), {"eDP-1": [["a", "b"], ["mail"]], "DP-1": [["terminal"], ["a"]]})
+        self.assertEqual(self.saved_pins()[0]["display"], LAPTOP_KEY)
+
+    def test_a_side_by_side_group_does_not_freeze_a_display_holding_another_window_of_its_app(self):
+        APPS[5] = "a"
+        self.addCleanup(APPS.pop, 5)
+        trio = {**self.side_trio(), "bound": {"session": "session", "windows": {"a": 1, "b": 2, "c": 3}}}
+        self.setup({"eDP-1": [[1], [2], [3]], "DP-1": [[5], [8]]}, focused=8, groups=[trio])
+        result = self.invoke("pin")
+        self.assertEqual([p["label"] for p in result["pins"]], ["terminal"])
+
+    def test_a_pin_follows_its_windows_even_when_a_later_step_fails(self):
+        self.setup({"eDP-1": [[1], [2], [3]], "DP-1": [[8]]}, focused=2, groups=[self.side_trio()],
+                   pins=[{"id": "gp", "label": "Trio", "app_id": "a", "members": ["a", "b", "c"], "group_id": "g",
+                          "display": LAPTOP_KEY}])
+        self.niri.fail_on = lambda args: args[1] == "set-window-width"
+        with self.assertRaises(OSError):
+            self.invoke("move-to-display", MONITOR_KEY)
+        self.assertEqual(self.niri.layout()["DP-1"], [["terminal"], ["a"], ["b"], ["c"]])
+        self.assertEqual(self.saved_pins()[0]["display"], MONITOR_KEY)
+
+    def test_a_pinned_app_takes_its_pinned_place_beside_a_side_by_side_group(self):
+        self.setup({"eDP-1": [[7]], "DP-1": [[8], [1], [2], [3]]}, focused=7, groups=[self.side_trio()],
+                   pins=[{"id": "t", "label": "Terminal", "app_id": "terminal", "display": MONITOR_KEY},
+                         {"id": "m", "label": "Mail", "app_id": "mail", "display": LAPTOP_KEY}])
+        self.niri.active["DP-1"] = 3
+        self.invoke("move-to-display", MONITOR_KEY)
+        self.assertEqual(self.niri.layout()["DP-1"], [["terminal"], ["mail"], ["a"], ["b"], ["c"]])
+        self.assertEqual(self.niri.active["DP-1"], 7)
+
     def test_refuses_unsafe_moves_without_moving_anything(self):
         self.setup({"eDP-1": [[1], [7], [2], [3]], "DP-1": [[8]]}, focused=1, groups=[self.side_trio()])
         for target, message in ((LAPTOP_KEY, "already on that display"), ("port:HDMI-A-1||", "not connected"),

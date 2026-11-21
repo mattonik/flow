@@ -57,6 +57,8 @@ class FakeNiri:
             if ident not in self.floating:
                 self.tiled_active = ident
                 self.opened_from.clear()
+        elif name == "focus-tiling":
+            self.active = self.tiled_active
         elif name == "move-window-to-floating" and ident not in self.floating:
             c = self.column_of(ident)
             self.columns[c].remove(ident)
@@ -132,7 +134,7 @@ class MultiNiri:
     """Niri with several outputs, each showing one workspace of columns (window IDs, top to bottom).
 
     Moving a column to another monitor inserts it after that monitor's active column and focuses it,
-    as Niri does; the source monitor activates the column that took its place.
+    as Niri does; the source monitor activates the column before the one that left.
     """
 
     def __init__(self, layout, apps, focused, outputs):
@@ -203,13 +205,6 @@ class MultiNiri:
             source = self.focused_output
             column = self.take_column(source, self.column_of(source, self.active[source]))
             self.insert_after_active(rest[0], column)
-        elif name == "move-window-to-monitor":
-            source = self.output_of(ident)
-            index = self.column_of(source, ident)
-            self.columns[source][index].remove(ident)
-            if not self.columns[source][index]:
-                self.columns[source].pop(index)
-            self.insert_after_active(rest[-1], [ident])
         elif name == "move-column-to-index":
             out = self.focused_output
             column = self.columns[out].pop(self.column_of(out, self.active[out]))

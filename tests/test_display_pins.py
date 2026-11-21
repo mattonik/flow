@@ -39,6 +39,17 @@ class IdentityTest(unittest.TestCase):
         self.assertEqual({r["key"] for r in found.values()}, {"port:DP-1|Dell|U2723QE", "port:DP-2|Dell|U2723QE"})
         self.assertEqual(pin_store.status(MONITOR_KEY, found, ambiguous), "ambiguous")
 
+    def test_a_twin_monitor_keeps_its_port_identity_when_the_other_is_unplugged(self):
+        displays = {}
+        both, _ = pin_store.identities({"DP-1": MONITOR, "DP-2": MONITOR})
+        pin_store.migrate([], displays, 2, both, lambda pin: None)
+        alone, ambiguous = pin_store.identities({"DP-1": MONITOR}, pin_store.shared_serials(displays))
+        self.assertEqual(alone["DP-1"]["key"], "port:DP-1|Dell|U2723QE")
+        self.assertEqual(ambiguous, {MONITOR_KEY})
+        # A different monitor of the same model with its own serial is still identified by it.
+        other, _ = pin_store.identities({"DP-3": {**MONITOR, "serial": "SN2"}}, pin_store.shared_serials(displays))
+        self.assertEqual(other["DP-3"]["key"], "edid:Dell|U2723QE|SN2")
+
 
 class MigrationTest(unittest.TestCase):
     def connected(self, outputs):
@@ -203,6 +214,16 @@ class RoutingTest(unittest.TestCase):
         result = self.invoke("move-pin-here", "t")
         self.assertEqual([p["id"] for p in result["pins"]], ["t"])
         self.assertEqual(pin_store.read(self.state / "spaces.json")[0][0]["display"], LAPTOP_KEY)
+
+    def test_the_remaining_twin_monitor_keeps_its_pins_after_the_other_is_unplugged(self):
+        twin = "port:DP-1|Dell|U2723QE"
+        (self.state / "spaces.json").write_text(json.dumps({"version": 2, "displays": {
+            twin: {"connector": "DP-1", "label": "Dell U2723QE"}}, "pins": [
+            {"id": "t", "label": "Terminal", "app_id": "terminal", "display": twin}]}))
+        self.invoke("refresh", outputs={"eDP-1": LAPTOP, "DP-1": MONITOR, "DP-2": MONITOR})
+        result = self.invoke("refresh", outputs={"eDP-1": LAPTOP, "DP-1": MONITOR})
+        self.assertEqual([(p["id"], p["display_state"]) for p in result["other_pins"]], [("t", "connected")])
+        self.assertNotIn(MONITOR_KEY, pin_store.read(self.state / "spaces.json")[1])
 
     def test_reordering_refuses_a_pin_from_another_display(self):
         self.pins([{"id": "t", "label": "Terminal", "app_id": "terminal", "display": MONITOR_KEY},
