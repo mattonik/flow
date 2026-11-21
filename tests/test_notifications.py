@@ -16,7 +16,9 @@ class NotificationShellTest(unittest.TestCase):
         self.assertIn("visible: root.notificationsOpen", qml)
         self.assertIn("text: modelData.body; textFormat: Text.PlainText", qml)
         self.assertIn("Keys.onEscapePressed: root.notificationsOpen = false", qml)
-        self.assertIn('else if (modelData === "Notifications") root.toggleNotifications()', qml)
+        # The Island's bell opens them, in work, Overview and Desk alike (Desk has no tool of its own for them).
+        self.assertIn('glyph: "bell"; open: root.notificationsOpen', qml)
+        self.assertIn("onClicked: root.toggleNotifications()", qml)
         self.assertIn("required property int index", qml)
 
     def test_actions_are_explicit_and_touch_sized(self):

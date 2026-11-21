@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keyboard focus and screen-reader semantics of a development shell's keyboard surfaces.
+r"""Keyboard focus and screen-reader semantics of a development shell's keyboard surfaces.
 
 Desk, Overview, search, the Spaces switcher, Quick settings and Notifications are opened in turn. On each, Tab and
 Shift+Tab walk every enabled control and the test checks that:
@@ -22,16 +22,13 @@ The guest's windows: the test's own Foot window (it types into it), and six more
 them stacked in one column, so the switcher has more cards than fit and one with several members.
 Eight notifications overflow the Notifications panel.
 
-Run inside a Niri session from the Flow checkout, with ``wtype``, ``grim`` and ``foot`` on PATH,
-``flow-spaces`` and ``flow-search`` running this checkout's ``session/spaces.py`` and ``session/search.py``
-(an older installed ``flow-search`` opens fuzzel instead of answering), and no other Flow shell running (stop
-``flow-shell`` first: its surfaces would cover these). The session bus must be able to start the AT-SPI
-bus (``org.a11y.Bus``), as the Flow module provides. The Python needs pyatspi and PyGObject; an
-installed Flow's ``flow-appmenu`` wrapper names one and its ``GI_TYPELIB_PATH``::
-
-    w=$(command -v flow-appmenu); eval "$(grep '^export GI_TYPELIB_PATH' "$w")"
-    py=$(sed -n 's/^exec \\([^ ]*python3\\) .*/\\1/p' "$w")
-    dbus-run-session -- env FLOW_SHELL="$PWD/session/shell.qml" "$py" tests/niri_focus_walk_smoke.py
+Run it with ``tests/run_focus_walk_smoke.sh`` inside a Niri session where Flow is installed, with
+``wtype``, ``grim`` and ``foot`` on PATH and the installed shell stopped (``systemctl --user stop
+flow-shell``: its surfaces would cover these). The runner takes a Python with pyatspi and PyGObject from
+the installed ``flow-appmenu`` wrapper, and puts ``flow-spaces`` and ``flow-search`` wrappers for this
+checkout's ``session/`` first on PATH (an older installed ``flow-search`` opens fuzzel instead of
+answering). The session bus must be able to start the AT-SPI bus (``org.a11y.Bus``), as the Flow module
+provides.
 
 It works on the focused output's empty workspace and focuses the original workspace again afterward.
 The shell runs with its own ``XDG_RUNTIME_DIR``, state and configuration, so real settings, activities
@@ -60,6 +57,9 @@ CONTROL_ROLES = ()  # AT-SPI roles of controls, set once pyatspi is imported
 # Where each kind of control draws its 2 px ring, from its edge (or a switch's indicator's): the design,
 # held here so a shell that moved its rings would fail rather than be sampled where it put them.
 RING_INSET = {"button": -3, "glyph": -3, "capsule": 1, "switch": -1, "field": 0}
+# Every enabled control Tab must reach, except these, by surface and text: Overview's half-off-screen rails,
+# which are for a pointer or a finger (the tools hold the same ← →). They must stay out of the Tab order.
+POINTER_ONLY = {("overview", "‹"), ("overview", "›")}
 # Foot windows besides the test's own; two share a column, so the switcher shows this many cards.
 SPACES = 6
 NOTIFICATIONS = 8
@@ -163,9 +163,9 @@ def normal(text):
 
 
 def contains(name, label):
-    """WCAG 2.5.3: the visible text is in the name (case, spacing and punctuation aside). A label the shell
-    cuts short ("Move to Built-in Displa") is still a plain substring of the full name."""
-    return bool(normal(label)) and normal(label) in normal(name)
+    """WCAG 2.5.3: the visible text is in the name (case, spacing and punctuation aside), starting at a word,
+    so "Pin" is not found in "Unpin". A label the shell cuts short ("Move to Built-in Displa") still matches."""
+    return bool(normal(label)) and re.search(r"(?:^| )" + re.escape(normal(label)), normal(name)) is not None
 
 
 def run(shell, bus, steps, problems):
@@ -272,6 +272,9 @@ def run(shell, bus, steps, problems):
             width, height = listed[0]["window"]
             for control in listed:
                 x, y, w, h = control["rect"]
+                if (surface, control["text"]) in POINTER_ONLY:
+                    control["node"] = None  # hidden from screen readers too, who have the tools' ← →
+                    continue
                 near = [o for o in objects if all(abs(a - b) <= 1 for a, b in zip(rect(o), control["rect"]))]
                 in_view = x >= 0 and y >= 0 and x + w <= width and y + h <= height
                 if len(near) > 1 or (in_view and not near):
@@ -303,12 +306,14 @@ def run(shell, bus, steps, problems):
                 raise RuntimeError(f"{surface}: focus is on {node.name!r} at {rect(node)}, not on one of its controls")
             return here[0], node, listed
 
-        def origin(surface, size):
-            """Where a surface sits on screen, from its anchors (Desk fills it, the switcher is a bottom sheet,
-            the panels hang 60 px from the top, centred; Overview and search fill it too)."""
-            w, h = size
-            full = {"desk": (0, 0), "overview": (0, 0), "search": (0, 0), "switcher": (0, screen["height"] - h)}
-            return full.get(surface, ((screen["width"] - w) // 2, 60))
+        def origin(control):
+            """Where a control's surface sits on screen, from the layer's anchors and margins as the shell reports
+            them: anchored to an edge it keeps its margin there, anchored to neither side it is centred."""
+            (top, bottom, left, right), (mt, mb, ml, mr) = control["place"]["anchors"], control["place"]["margins"]
+            w, h = control["window"]
+            x = ml if left else screen["width"] - w - mr if right else (screen["width"] - w) // 2
+            y = mt if top else screen["height"] - h - mb if bottom else (screen["height"] - h) // 2
+            return x, y
 
         def screenshot():
             path = shots / f"{next(shot_number):03}.png"
@@ -324,27 +329,36 @@ def run(shell, bus, steps, problems):
             inset = RING_INSET[control["kind"]]
             x, y = x + at[0], y + at[1]
 
-            def hit(px, py):
-                px, py = int(round(px * scale)), int(round(py * scale))
+            def matches(px, py):
                 if not (0 <= px < width and 0 <= py < height):
                     return False
                 pixel = rows[py][px * bpp:px * bpp + 3]
                 return max(abs(a - b) for a, b in zip(pixel, focus)) <= 28
 
-            sides = []
-            for offset in (inset, inset + 1):
-                along = range(-3, 4)
-                sides.append([hit(x + w / 2 + d, y + offset) for d in along])          # top
-                sides.append([hit(x + w / 2 + d, y + h - 1 - offset) for d in along])  # bottom
-                sides.append([hit(x + offset, y + h / 2 + d) for d in along])          # left
-                sides.append([hit(x + w - 1 - offset, y + h / 2 + d) for d in along])  # right
-            per_side = [sides[i] + sides[i + 4] for i in range(4)]
+            def across(lo, hi):
+                """Whole pixels from lo to hi (logical px): a ring at a half-pixel position spans three
+                antialiased rows, and only the middle one has the focus colour itself."""
+                return range(int(lo * scale) - 1, int(hi * scale) + 2)
+
+            def hit_row(px, lo, hi):
+                return any(matches(int(px * scale), py) for py in across(lo, hi))
+
+            def hit_column(py, lo, hi):
+                return any(matches(px, int(py * scale)) for px in across(lo, hi))
+
+            along = range(-3, 4)
+            per_side = [
+                [hit_row(x + w / 2 + d, y + inset, y + inset + 1) for d in along],                    # top
+                [hit_row(x + w / 2 + d, y + h - inset - 2, y + h - inset - 1) for d in along],        # bottom
+                [hit_column(y + h / 2 + d, x + inset, x + inset + 1) for d in along],                 # left
+                [hit_column(y + h / 2 + d, x + w - inset - 2, x + w - inset - 1) for d in along],     # right
+            ]
             found = [sum(side) >= len(side) / 2 for side in per_side]
             return all(found) or (any(found) and dict(zip(("top", "bottom", "left", "right"), found)))
 
         def check_rings(surface, index, listed, shot):
             """The focused control, and only it, has its ring drawn (where the shell has it now, scrolled or not)."""
-            at = origin(surface, listed[0]["window"])
+            at = origin(listed[0])
             for i in range(len(listed)):
                 if listed[i]["ring"][4] != RING_INSET[listed[i]["kind"]]:
                     raise RuntimeError(f"{surface}: {listed[i]['text']!r} draws its ring at {listed[i]['ring'][4]} px, "
@@ -389,8 +403,14 @@ def run(shell, bus, steps, problems):
             order that is enabled at that moment: a scrolled row of cards enables its "‹" button on the way."""
             frame, listed = matched(surface)
             cycle = [c["at"] for c in reading_order([dict(c, start=c["rect"], at=i) for i, c in enumerate(listed)])]
-            reachable = lambda c: c["enabled"] and c["tabbable"]
+            # The test's own rule, not the shell's focus policy: every enabled control is reached but the
+            # pointer-only ones, which must not be.
+            reachable = lambda c: c["enabled"] and (surface, c["text"]) not in POINTER_ONLY
+            for c in listed:
+                if (surface, c["text"]) in POINTER_ONLY and c["tabbable"]:
+                    raise RuntimeError(f"{surface}: the pointer-only {c['text']!r} is in the Tab order")
             enabled_at_start = {i for i, c in enumerate(listed) if reachable(c)}
+            shape = [(c["text"], c["kind"], c["card"] is not None) for c in listed]
             if len(enabled_at_start) < 2:
                 raise RuntimeError(f"{surface}: only {len(enabled_at_start)} enabled controls")
             label = lambda i: "nothing" if i is None else listed[i]["text"] or (listed[i]["node"].name if listed[i]["node"] else f"#{i}")
@@ -408,6 +428,8 @@ def run(shell, bus, steps, problems):
                 key(*keys)
                 wait_for(lambda: focused_index(surface, frame)[0] not in (None, current), f"{name} to move focus on {surface}", timeout=3)
                 index, node, now = focused_index(surface, frame)
+                if [(c["text"], c["kind"], c["card"] is not None) for c in now] != shape:
+                    raise RuntimeError(f"{surface}: its controls changed during the walk, so the expected order no longer holds")
                 if index != expect:
                     raise RuntimeError(f"{surface}: {name} from {label(current) if current is not None else 'nothing'} "
                                        f"went to {label(index)}, not {label(expect)}, in reading order {[label(i) for i in cycle]}")
