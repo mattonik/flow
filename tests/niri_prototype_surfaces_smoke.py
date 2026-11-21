@@ -135,10 +135,11 @@ def main():
             if ipc("overview_selected") != str(second["id"]):
                 raise RuntimeError(f"Overview did not open on the focused space: {ipc('overview_selected')}")
             never_two("Overview")
-            ipc("overview_move", -1)
+            # Not the first card: a list that resets to its start would land there by accident.
+            ipc("overview_move", 1)
             chosen = ipc("overview_selected")
-            if chosen != str(first["id"]):
-                raise RuntimeError(f"Moving left did not select the first space: {chosen}")
+            if chosen != str(third["id"]):
+                raise RuntimeError(f"Moving right did not select the third space: {chosen}")
             open_app("d")  # the list of spaces changes underneath the open Overview
             time.sleep(2)
             if ipc("overview_selected") != chosen:
@@ -164,7 +165,7 @@ def main():
                     raise RuntimeError("A snapshot was taken while Desk was open")
             ipc("search")
             wait_for(lambda: ipc("search_state") == "open", "search over Desk")
-            steps.append("search opened over Desk" + (", and Desk was never snapshotted" if grim else ""))
+            steps.append("search opened over Desk" + (", and no snapshot was taken while Desk was open" if grim else ""))
             ipc("search")
             ipc("leave")
             wait_for(lambda: open_surfaces() == [], "everything closed")
@@ -181,9 +182,15 @@ def main():
             time.sleep(2)
             if busy != "busy" or open_surfaces() != ["overview"]:
                 raise RuntimeError(f"ShowDesk while Overview opened answered {busy!r} and left {open_surfaces()}")
-            ipc("overview_close")
-            wait_for(lambda: open_surfaces() == [], "Overview closed")
-            steps.append("Desk while Overview was opening won, and ShowDesk then was busy, never stacking the two")
+            # Super+H over an open Overview: Desk replaces it.
+            ipc("toggle")
+            time.sleep(1)
+            if open_surfaces() != ["desk"]:
+                raise RuntimeError(f"Desk over an open Overview left: {open_surfaces()}")
+            ipc("leave")
+            wait_for(lambda: open_surfaces() == [], "Desk closed")
+            steps.append("Desk while Overview was opening won, ShowDesk then was busy, and Desk over an open "
+                         "Overview replaced it: never two at once")
             result = {"result": "pass", "steps": steps}
         finally:
             for pid in mine():
