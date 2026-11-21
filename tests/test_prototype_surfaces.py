@@ -55,7 +55,7 @@ class SearchJsonTest(unittest.TestCase):
 class ConfigurationTest(unittest.TestCase):
     def test_super_o_opens_flows_overview_and_the_hot_corner_is_off(self):
         self.assertIn('Super+O { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "overview"; }', NIRI)
-        self.assertIn("gestures { hot-corners { off; } }", NIRI)
+        self.assertIn("gestures { hot-corners { off; }; }", NIRI)
         self.assertNotIn("toggle-overview", NIRI)
 
     def test_snapshots_come_from_grim_never_from_qt(self):

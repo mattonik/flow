@@ -13,7 +13,7 @@ include "@niriAppearance@"
 include optional=true "~/.config/flow/niri-appearance.kdl"
 hotkey-overlay { skip-at-startup; }
 // Flow's Overview is the shell's; Niri's own stays in the Spaces switcher, not in a screen corner.
-gestures { hot-corners { off; } }
+gestures { hot-corners { off; }; }
 // The shell is the flow-shell user unit, started with niri.service (modules/flow.nix).
 spawn-at-startup "@idle@" "-C" "/dev/null" "-w" "lock" "@lock@ -f" "before-sleep" "@lock@ -f"
 
