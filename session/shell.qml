@@ -16,16 +16,23 @@ ShellRoot {
     property bool editPins: false
     property bool quickSettingsOpen: false
     property bool notificationsOpen: false
-    // The notification the banner shows: the newest that arrived while the panel was closed.
+    // The notification the banner shows: the newest that arrived, or changed, while the panel was closed.
     property var bannerNotification: null
     function showBanner(notification) {
         // A low-urgency notification waits quietly in the panel, with the bell's dot.
         if (notification.urgency === NotificationUrgency.Low || notificationsOpen) return
+        // A critical banner gives way only to another critical one; anything else waits in the panel.
+        if (bannerNotification && bannerNotification !== notification
+            && bannerNotification.urgency === NotificationUrgency.Critical
+            && notification.urgency !== NotificationUrgency.Critical) return
         bannerNotification = notification
-        // A critical one stays until it is dismissed or opened.
-        if (notification.urgency === NotificationUrgency.Critical) bannerTimer.stop()
-        else bannerTimer.restart()
+        if (bannerCounting) bannerTimer.restart()
     }
+    // The banner's 5 s count only while it can be seen and the pointer is not resting on it, and never
+    // for a critical one. Each time it starts, it starts from the full 5 s.
+    readonly property bool bannerCounting: notificationBanner.visible && !notificationBanner.held
+        && !!bannerNotification && bannerNotification.urgency !== NotificationUrgency.Critical
+    onBannerCountingChanged: bannerCounting ? bannerTimer.restart() : bannerTimer.stop()
     Timer { id: bannerTimer; interval: 5000; onTriggered: root.bannerNotification = null }
     readonly property var audioSink: Pipewire.ready ? Pipewire.defaultAudioSink : null
     readonly property bool audioAvailable: !!(audioSink && audioSink.audio)
@@ -51,6 +58,12 @@ ShellRoot {
         onNotification: notification => {
             notification.tracked = true
             root.showBanner(notification)
+            // A notification that replaces this one (replaces_id: a chat's next message, a download's
+            // progress) updates this object in place, with no new signal: show it again when its text
+            // changes. The connections end with the object.
+            const changed = () => root.showBanner(notification)
+            notification.summaryChanged.connect(changed)
+            notification.bodyChanged.connect(changed)
             // Quickshell adds the notification to its model after this handler returns.
             Qt.callLater(root.trimTrackedNotifications)
         }
@@ -1210,8 +1223,11 @@ ShellRoot {
         }
         function quick(): void { root.toggleQuickSettings() }
         function notifications(): void { root.toggleNotifications() }
-        // The summary of the notification the banner shows, or "" when none is on screen.
-        function banner(): string { return notificationBanner.visible ? root.bannerNotification.summary : "" }
+        // The summary (or app name) the banner is set to show, or "" when it is hidden. This is the shell's
+        // state; whether the compositor draws it on top is checked by screenshots.
+        function banner(): string {
+            return notificationBanner.visible ? root.bannerNotification.summary || root.bannerNotification.appName : ""
+        }
         function quick_open(): void { if (!root.quickSettingsOpen) root.toggleQuickSettings() }
         function settings(): void {
             if (!root.deskOpen) root.toggleDesk()
@@ -2981,14 +2997,19 @@ ShellRoot {
         }
     }
     // A banner for a notification that arrives while the panel is closed, as a phone shows one: the
-    // newest, 12 px below the Island, for 5 s (longer while the pointer rests on it), and a critical one
-    // until it is dismissed or opened. A click opens the panel, where its actions are. It never takes the
-    // keyboard, so it cannot pull typing away from an app; the bell opens the panel from the keyboard.
+    // newest, 12 px below the Island, for 5 s of being seen (held while the pointer rests on it), and a
+    // critical one until it is dismissed or opened. A click runs the notification's default action, as
+    // freedesktop clients expect, or else opens the panel. It never takes the keyboard, so it cannot pull
+    // typing away from an app; Super+N opens the panel from the keyboard.
     PanelWindow {
         id: notificationBanner
         readonly property var notification: root.bannerNotification
+        readonly property bool held: bannerArea.containsMouse || bannerDismiss.hovered
+        // Only in the plain work view, as the work indicator: Desk, Overview and the switcher would cover it
+        // (the surface mapped later is on top), and the panels and the app menu sit where it does.
         // A notification the app closes is destroyed, which empties the property, so the banner leaves.
-        visible: !!notification && !root.notificationsOpen && !root.quickSettingsOpen && !root.searchOpen
+        visible: !!notification && root.workViewOnly && !root.notificationsOpen && !root.quickSettingsOpen
+            && !root.searchOpen && !root.appMenuOpen
         anchors.top: true
         implicitWidth: Math.max(0, Math.min(370, screen.width - 24))
         implicitHeight: Math.max(bannerText.implicitHeight, 44) + 24
@@ -3011,13 +3032,17 @@ ShellRoot {
             Accessible.role: Accessible.AlertMessage
             Accessible.name: notificationBanner.notification ? notificationBanner.notification.appName + ": "
                 + notificationBanner.notification.summary : ""
+            Accessible.description: notificationBanner.notification ? notificationBanner.notification.body : ""
             MouseArea {
                 id: bannerArea
                 anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                // The pointer resting on it holds it; leaving gives it the full time again.
-                onContainsMouseChanged: if (containsMouse) bannerTimer.stop()
-                    else if (notificationBanner.notification && notificationBanner.notification.urgency !== NotificationUrgency.Critical) bannerTimer.restart()
-                onClicked: { root.bannerNotification = null; if (!root.notificationsOpen) root.toggleNotifications() }
+                onClicked: {
+                    const notification = root.bannerNotification
+                    root.bannerNotification = null
+                    const action = notification ? notification.actions.find(a => a.identifier === "default") : null
+                    if (action) action.invoke()
+                    else if (!root.notificationsOpen) root.toggleNotifications()
+                }
             }
             Column {
                 id: bannerText

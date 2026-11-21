@@ -9,9 +9,13 @@ banner shows through the shell's IPC (``banner``: the summary on screen, or "").
 real Flow state files.
 
 Checked: a normal notification shows for about 5 s and then goes; a low-urgency one never shows; a
-critical one stays past that until the panel opens, and does not come back when it closes; a newer
-notification replaces the shown one; one the app closes leaves at once; quick settings hides a banner
-while open and it shows when quick settings closes.
+newer notification replaces the shown one; one that replaces an earlier notification (replaces_id) shows
+again; one the app closes leaves at once; quick settings and Desk hide a banner, which shows when they
+close; one that arrives with the panel open shows no banner after; a critical one stays past 9 s, a
+normal one does not push it off, and the panel takes it for good.
+
+``banner`` reports the shell's state (what the banner is set to show), not what the compositor draws;
+stacking and rendering are checked by screenshots.
 """
 
 import ctypes
@@ -73,9 +77,9 @@ def main():
             except subprocess.SubprocessError:
                 return None
 
-        def notify(summary, urgency="normal"):
+        def notify(summary, urgency="normal", replaces=0):
             out = subprocess.run(["busctl", f"--address={bus}", "--", "call", NAME, "/org/freedesktop/Notifications", NAME,
-                                  "Notify", "susssasa{sv}i", "Smoke", "0", "", summary, "A body line", "0",
+                                  "Notify", "susssasa{sv}i", "Smoke", str(replaces), "", summary, "A body line", "0",
                                   "1", "urgency", "y", str(URGENCY[urgency]), "-1"],
                                  text=True, stdout=subprocess.PIPE, check=True).stdout
             return int(out.split()[1])
@@ -106,10 +110,10 @@ def main():
             started = time.monotonic()
             notify("Normal one")
             wait_for(lambda: ipc("banner") == "Normal one", lambda: f"the banner ({ipc('banner')!r})", timeout=3)
-            stays("Normal one", 3.5)
+            stays("Normal one", started + 4 - time.monotonic())
             wait_for(lambda: ipc("banner") == "", "the banner to go", timeout=4)
             gone = time.monotonic() - started
-            if not 4 <= gone <= 7.5:
+            if not 4.5 <= gone <= 6.5:
                 raise RuntimeError(f"The banner showed for {gone:.1f} s, not about 5 s")
             steps.append(f"a normal notification's banner showed and went after {gone:.1f} s")
 
@@ -122,6 +126,16 @@ def main():
             notify("Second")
             wait_for(lambda: ipc("banner") == "Second", lambda: f"the second to replace it ({ipc('banner')!r})", timeout=3)
             steps.append("a newer notification replaced the shown banner")
+
+            first = notify("Chat: 1 new message")
+            wait_for(lambda: ipc("banner") == "Chat: 1 new message", "the chat banner", timeout=3)
+            ipc("notifications")
+            wait_for(lambda: ipc("banner") == "", "the panel to take the chat banner", timeout=3)
+            ipc("notifications")
+            notify("Chat: 2 new messages", replaces=first)
+            wait_for(lambda: ipc("banner") == "Chat: 2 new messages",
+                     lambda: f"a replacing notification to show again ({ipc('banner')!r})", timeout=3)
+            steps.append("a notification that replaced an earlier one (replaces_id) showed its banner again")
 
             ident = notify("Closed by app")
             wait_for(lambda: ipc("banner") == "Closed by app", "the banner of the one to be closed", timeout=3)
@@ -136,14 +150,31 @@ def main():
             wait_for(lambda: ipc("banner") == "Under quick settings", "the banner once quick settings closed", timeout=3)
             steps.append("quick settings hid a banner while open, and it showed when quick settings closed")
 
+            ipc("toggle")
+            wait_for(lambda: ipc("desk_state") == "open", "Desk to open", timeout=3)
+            notify("Under Desk")
+            stays("", 1.5)
+            ipc("leave")
+            wait_for(lambda: ipc("banner") == "Under Desk", "the banner once Desk closed", timeout=3)
+            steps.append("Desk hid a banner while open, and it showed when Desk closed")
+
+            ipc("notifications")
+            notify("While the panel is open")
+            stays("", 1)
+            ipc("notifications")
+            stays("", 1.5)
+            steps.append("a notification that arrived with the panel open showed no banner after it closed")
+
             notify("Critical one", "critical")
             wait_for(lambda: ipc("banner") == "Critical one", "the critical banner", timeout=3)
-            stays("Critical one", 7)
+            notify("Normal after critical")
+            stays("Critical one", 9)
             ipc("notifications")
             wait_for(lambda: ipc("banner") == "", "the panel to take the critical banner", timeout=3)
             ipc("notifications")
             stays("", 1.5)
-            steps.append("a critical banner stayed past 7 s, left when the panel opened and did not come back")
+            steps.append("a critical banner stayed past 9 s, a normal notification did not push it off, "
+                         "and it left when the panel opened and did not come back")
             result = {"result": "pass", "steps": steps}
         finally:
             if shell_process and shell_process.poll() is None:
