@@ -1,13 +1,15 @@
 """The Island's system panels (quick settings and notifications), read from the shell's source.
 
-This harness cannot render QML, so these are source checks, scoped to the component or panel each
-claim is about:
-- Both panels are SystemPanels, which hang below the Island instead of over it, and both close on
-  Escape and on their close button, each clearing its own flag (not the other panel's).
-- Quick settings' rows open what they name, and the volume slider sets the volume without losing
-  changes made elsewhere.
+This harness cannot render QML or send input, so these are checks of the source text, scoped to
+the component or panel each claim is about. They pin the wiring a refactor could silently drop:
+- Both panels are SystemPanels: 12 px below the Island, capped to the screen and scrolling beyond
+  it, holding the keyboard while shown, and closing on Escape and on their close button, each
+  clearing its own flag (not the other panel's).
+- Quick settings' rows open what they name and take focus; the Sound row is not a button; the
+  volume slider steps 5%, sets the volume, and follows changes made elsewhere without restoring a
+  stale value when pressed (Qt 6's default restore mode would).
 - Every control in the panels is at least 44 px, the brand's touch minimum.
-How the panels look is checked by screenshots in the guest (docs/IMPLEMENTATION_STATUS.md).
+How the panels look and respond is checked by screenshots in the guest (docs/IMPLEMENTATION_STATUS.md).
 """
 from pathlib import Path
 import re
@@ -26,12 +28,25 @@ def block_at(start):
     raise AssertionError("unbalanced braces")
 
 
+def own(block):
+    """The object's own text: its lines without any child object's (or JS block's) body."""
+    out, depth = [], 0
+    for ch in block[block.index("{") + 1:-1]:
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        elif depth == 0:
+            out.append(ch)
+    return "".join(out)
+
+
 def component(name):
     return block_at(SHELL.index(f"    component {name}: "))
 
 
 def panel(flag):
-    return block_at(SHELL.index(f"    SystemPanel {{\n        shown: root.{flag};"))
+    return block_at(SHELL.rindex("    SystemPanel {", 0, SHELL.index(f"        shown: root.{flag};")))
 
 
 def objects(block, type_name):
@@ -40,60 +55,85 @@ def objects(block, type_name):
     return [block_at(base + m.start()) for m in re.finditer(rf"\b{type_name} \{{", block)]
 
 
-class SystemPanelTest(unittest.TestCase):
-    def test_a_panel_hangs_below_the_island(self):
-        island = component("SystemIsland")
-        island_height = int(re.search(r"implicitHeight: (\d+)", island).group(1))
-        top = int(re.search(r"margins\.top: (\d+)", component("SystemPanel")).group(1))
-        self.assertGreaterEqual(top, island_height + 8)
+def function_body(name):
+    return block_at(SHELL.index(f"    function {name}("))
 
-    def test_escape_and_the_close_button_ask_to_close(self):
+
+class SystemPanelTest(unittest.TestCase):
+    def test_a_panel_hangs_12_px_below_the_island_and_fits_the_screen(self):
+        island_height = int(re.search(r"implicitHeight: (\d+)", own(component("SystemIsland"))).group(1))
+        system_panel = own(component("SystemPanel"))
+        self.assertEqual(int(re.search(r"margins\.top: (\d+)", system_panel).group(1)), island_height + 12)
+        self.assertIn("implicitHeight: Math.min(screen.height - 80, panelBody.implicitHeight", system_panel)
+        scroller = block_at(SHELL.rindex("ScrollView {", 0, SHELL.index("id: panelScroller")))
+        self.assertIn("contentHeight: panelBody.implicitHeight", own(scroller))
+
+    def test_a_shown_panel_holds_the_keyboard_and_escape_or_close_ask_to_close(self):
         system_panel = component("SystemPanel")
-        self.assertIn("Keys.onEscapePressed: systemPanel.closeRequested()", system_panel)
-        at = SHELL.index(system_panel) + system_panel.index("id: panelClose")
-        close = block_at(SHELL.rfind("FlowButton {", 0, at))
-        self.assertIn("onClicked: systemPanel.closeRequested()", close)
-        self.assertIn("visible: shown", system_panel)
+        self.assertIn("visible: shown", own(system_panel))
+        self.assertIn("WlrLayershell.keyboardFocus: shown ? WlrKeyboardFocus.Exclusive", own(system_panel))
+        scope = own(block_at(SHELL.index("FocusScope {", SHELL.index(system_panel))))
+        self.assertIn("focus: systemPanel.shown", scope)
+        self.assertIn("Keys.onEscapePressed: systemPanel.closeRequested()", scope)
+        close = block_at(SHELL.rindex("FlowButton {", 0, SHELL.index("id: panelClose")))
+        self.assertIn("onClicked: systemPanel.closeRequested()", own(close))
+        # Desk, under a panel, lets it have the keys.
+        self.assertIn("root.notificationsOpen || root.quickSettingsOpen || root.searchOpen ? WlrKeyboardFocus.None", SHELL)
 
     def test_each_panel_closes_itself(self):
         for flag in ("quickSettingsOpen", "notificationsOpen"):
-            self.assertIn(f"onCloseRequested: root.{flag} = false", panel(flag))
+            self.assertIn(f"onCloseRequested: root.{flag} = false", own(panel(flag)))
 
 
 class QuickSettingsTest(unittest.TestCase):
-    def test_rows_open_what_they_name(self):
-        rows = {re.search(r'text: "([^"]+)"', row).group(1): row for row in objects(panel("quickSettingsOpen"), "PanelRow")}
-        self.assertEqual(list(rows), ["Network", "Edit connections", "On-screen keyboard", "Sound"])
-        self.assertIn('root.launchApp(["flow-wifi-settings"])', rows["Network"])
-        self.assertIn('root.launchApp(["nm-connection-editor"])', rows["Edit connections"])
-        self.assertIn('root.launchApp(["flow-keyboard"])', rows["On-screen keyboard"])
-        self.assertIn("interactive: false", rows["Sound"])
-        self.assertNotIn("onClicked", rows["Sound"])
+    def test_rows_open_what_they_name_and_take_focus(self):
+        quick = panel("quickSettingsOpen")
+        rows = {re.search(r'text: "([^"]+)"', row).group(1): row for row in objects(quick, "PanelRow")}
+        self.assertEqual(list(rows), ["Network", "Edit connections", "On-screen keyboard"])
+        self.assertIn('root.quickSettingsOpen = false; root.launchApp(["flow-wifi-settings"])', rows["Network"])
+        self.assertIn('root.quickSettingsOpen = false; root.launchApp(["nm-connection-editor"])', rows["Edit connections"])
+        self.assertIn('root.launchApp(["flow-keyboard"]); root.quickSettingsOpen = false', rows["On-screen keyboard"])
+        row = own(component("PanelRow"))
+        self.assertIn("focusPolicy: Qt.StrongFocus", row)
+        self.assertIn("Keys.onReturnPressed: panelRow.clicked()", row)
+        self.assertIn('PanelValue { width: parent.width; text: "Sound"', quick)
+        self.assertTrue(component("PanelValue").startswith("    component PanelValue: Item {"))
 
-    def test_the_volume_slider_sets_the_volume_and_follows_changes_made_elsewhere(self):
-        slider = component("VolumeSlider")
+    def test_the_volume_slider_steps_sets_and_follows_the_volume(self):
+        slider = own(component("VolumeSlider"))
+        self.assertIn("from: 0; to: 1; stepSize: 0.05", slider)
+        self.assertIn("focusPolicy: Qt.StrongFocus", slider)
         self.assertIn("onMoved: root.setVolume(value)", slider)
-        # A plain `value:` binding would end on the first move; the Binding element survives it.
-        self.assertIn("Binding on value { value: root.audioAvailable ? root.audioSink.audio.volume : 0; when: !volumeSlider.pressed }", slider)
-        self.assertNotRegex(slider, r"\n {8}value:")
-        self.assertIn("VolumeSlider {", panel("quickSettingsOpen"))
-        self.assertIn("onClicked: root.toggleMute()", panel("quickSettingsOpen"))
+        binding = re.search(r"Binding on value \{([^}]*)\}", component("VolumeSlider")).group(1)
+        self.assertIn("value: root.audioAvailable ? root.audioSink.audio.volume : 0", binding)
+        self.assertIn("when: !volumeSlider.pressed", binding)
+        self.assertIn("restoreMode: Binding.RestoreNone", binding)
+        self.assertIn("audioSink.audio.volume = Math.max(0, Math.min(1, level))", function_body("setVolume"))
+        self.assertIn("audioSink.audio.muted = !audioSink.audio.muted", function_body("toggleMute"))
+        quick = panel("quickSettingsOpen")
+        self.assertIn("VolumeSlider {", quick)
+        self.assertIn("onClicked: root.toggleMute()", quick)
 
 
 class TouchTargetTest(unittest.TestCase):
+    def assert_size(self, block, name):
+        props = own(block)
+        heights = re.findall(r"\bimplicitHeight: ([^;\n]+)", props)
+        self.assertTrue(heights, f"{name} has no height")
+        for value in heights:
+            self.assertTrue(value.isdigit() and int(value) >= 44, f"{name}: implicitHeight {value}")
+        for value in re.findall(r"(?<![\w.])width: ([^;\n]+)", props):
+            plain = value.isdigit() and int(value) >= 44
+            self.assertTrue(plain or value.startswith(("Math.max(44,", "parent.width")), f"{name}: width {value}")
+
     def test_every_panel_control_is_a_full_touch_target(self):
-        self.assertGreaterEqual(int(re.search(r"implicitHeight: (\d+)", component("PanelRow")).group(1)), 44)
-        self.assertGreaterEqual(int(re.search(r"implicitHeight: (\d+)", component("VolumeSlider")).group(1)), 44)
+        for name in ("PanelRow", "PanelValue", "VolumeSlider"):
+            self.assert_size(component(name), name)
         blocks = [component("SystemPanel"), panel("quickSettingsOpen"), panel("notificationsOpen")]
         buttons = [b for block in blocks for b in objects(block, "FlowButton")]
-        self.assertGreaterEqual(len(buttons), 5)  # close, mute, play, clear all, dismiss, actions
+        self.assertGreaterEqual(len(buttons), 6)  # close, mute, play, clear all, dismiss, actions
         for button in buttons:
-            own = button.split("\n", 4)[:4]
-            heights = [int(h) for h in re.findall(r"implicitHeight: (\d+)", "\n".join(own))]
-            self.assertTrue(heights, own[0] + own[1])
-            self.assertTrue(all(h >= 44 for h in heights), own[1])
-            for width in re.findall(r"\bwidth: (\d+);", "\n".join(own)):
-                self.assertGreaterEqual(int(width), 44, own[1])
+            self.assert_size(button, button.split("\n", 2)[1].strip())
 
 
 if __name__ == "__main__":

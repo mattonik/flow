@@ -814,20 +814,18 @@ ShellRoot {
         }
     }
     // A row of a system panel, after the prototype's: a label, a value at the right and a chevron when it
-    // opens something, over a hairline. Rows that only show a value (interactive: false) take no focus.
+    // opens something, over a hairline. A row that only shows a value is a PanelValue.
     component PanelRow: Button {
         id: panelRow
         property string value: ""
         property color valueColor: floeTheme.textMuted
-        property bool chevron: interactive
-        property bool interactive: true
+        property bool chevron: true
         property bool last: false
-        focusPolicy: interactive ? Qt.StrongFocus : Qt.NoFocus
-        hoverEnabled: interactive
-        Keys.onReturnPressed: if (interactive) panelRow.clicked()
-        Keys.onEnterPressed: if (interactive) panelRow.clicked()
+        focusPolicy: Qt.StrongFocus
+        hoverEnabled: true
+        Keys.onReturnPressed: panelRow.clicked()
+        Keys.onEnterPressed: panelRow.clicked()
         implicitHeight: 48; padding: 0
-        Accessible.role: interactive ? Accessible.Button : Accessible.StaticText
         Accessible.name: value ? text + ", " + value : text
         contentItem: Item {
             Text {
@@ -855,7 +853,7 @@ ShellRoot {
                 // The tint reaches 10 px past the text, as a list row's does.
                 anchors { fill: parent; leftMargin: -10; rightMargin: -10; topMargin: 2; bottomMargin: 2 }
                 radius: 10
-                color: panelRow.interactive && (panelRow.down || panelRow.hovered) ? Qt.alpha(floeTheme.textPrimary, 0.06) : "transparent"
+                color: panelRow.down || panelRow.hovered ? Qt.alpha(floeTheme.textPrimary, 0.06) : "transparent"
                 Behavior on color { ColorAnimation { duration: root.motionQuick } }
             }
             Rectangle {
@@ -870,6 +868,27 @@ ShellRoot {
             }
         }
     }
+    // A row that only shows a value: the same layout as PanelRow, without a button.
+    component PanelValue: Item {
+        id: panelValue
+        property string text
+        property string value
+        implicitHeight: 48
+        Accessible.role: Accessible.StaticText
+        Accessible.name: text + ", " + value
+        Text {
+            id: valueLabel
+            anchors.verticalCenter: parent.verticalCenter
+            width: Math.min(implicitWidth, parent.width * 0.6)
+            text: panelValue.text; textFormat: Text.PlainText; elide: Text.ElideRight
+            color: floeTheme.textPrimary; font.pixelSize: 14; font.weight: Font.Medium; font.family: floeTheme.interfaceFont
+        }
+        Text {
+            anchors { left: valueLabel.right; leftMargin: 12; right: parent.right; verticalCenter: parent.verticalCenter }
+            text: panelValue.value; textFormat: Text.PlainText; elide: Text.ElideRight; horizontalAlignment: Text.AlignRight
+            color: floeTheme.textMuted; font.pixelSize: 14; font.family: floeTheme.interfaceFont; font.features: { "tnum": 1 }
+        }
+    }
     // A system panel, after the prototype's: it hangs 12 px below the Island, 370 px wide (less on a
     // narrow screen), radius 19 with 23 px inside, a title, any tools, a close button, then its rows. It
     // drops in over 220 ms, or at once when motion is reduced. Escape and the close button ask to close.
@@ -880,6 +899,18 @@ ShellRoot {
         property alias tools: panelTools.data
         default property alias content: panelBody.data
         signal closeRequested()
+        // Tab can reach a control below the fold (a long list of notifications): scroll it into view.
+        readonly property Item focusedItem: panelCard.Window.activeFocusItem
+        onFocusedItemChanged: {
+            let item = focusedItem
+            while (item && item !== panelBody) item = item.parent
+            if (!item) return
+            const flick = panelScroller.contentItem
+            const top = focusedItem.mapToItem(panelBody, 0, 0).y - 8
+            const bottom = top + focusedItem.height + 16
+            if (top < flick.contentY) flick.contentY = Math.max(0, top)
+            else if (bottom > flick.contentY + flick.height) flick.contentY = Math.min(bottom - flick.height, Math.max(0, flick.contentHeight - flick.height))
+        }
         visible: shown
         anchors.top: true
         implicitWidth: Math.max(0, Math.min(370, screen.width - 24))
@@ -923,11 +954,12 @@ ShellRoot {
                     }
                 }
                 ScrollView {
-                    // 12 px between the clip and the rows, so their tints and focus rings stay whole.
-                    anchors { fill: parent; topMargin: 63; leftMargin: 11; rightMargin: 11; bottomMargin: 19 }
+                    // 13 px between the clip and the rows, so their tints and focus rings stay whole.
+                    id: panelScroller
+                    anchors { fill: parent; topMargin: 63; leftMargin: 10; rightMargin: 10; bottomMargin: 19 }
                     clip: true
                     contentWidth: availableWidth; contentHeight: panelBody.implicitHeight
-                    Column { id: panelBody; x: 12; width: parent.width - 24; topPadding: 4; bottomPadding: 4 }
+                    Column { id: panelBody; x: 13; width: parent.width - 26; topPadding: 4; bottomPadding: 4 }
                 }
             }
         }
@@ -942,9 +974,10 @@ ShellRoot {
         opacity: enabled ? 1 : 0.45
         Accessible.name: "Volume"
         onMoved: root.setVolume(value)
-        // A Binding element, not a property binding: moving the slider assigns its value, which would end a
-        // binding, and then a change made elsewhere would no longer show.
-        Binding on value { value: root.audioAvailable ? root.audioSink.audio.volume : 0; when: !volumeSlider.pressed }
+        // The volume follows changes made elsewhere, except while the slider is pressed, so a drag never
+        // jumps back to a PipeWire update that is a step behind. RestoreNone: Qt 6's default would put back
+        // the value from when the Binding last took over, and a key press counts as a press.
+        Binding on value { value: root.audioAvailable ? root.audioSink.audio.volume : 0; when: !volumeSlider.pressed; restoreMode: Binding.RestoreNone }
         background: Rectangle {
             x: volumeSlider.leftPadding; y: volumeSlider.topPadding + volumeSlider.availableHeight / 2 - height / 2
             width: volumeSlider.availableWidth; height: 6; radius: 3
@@ -1223,7 +1256,7 @@ ShellRoot {
         color: floeTheme.canvas
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: root.notificationsOpen || root.searchOpen ? WlrKeyboardFocus.None : WlrKeyboardFocus.Exclusive
+        WlrLayershell.keyboardFocus: root.notificationsOpen || root.quickSettingsOpen || root.searchOpen ? WlrKeyboardFocus.None : WlrKeyboardFocus.Exclusive
         onVisibleChanged: if (visible && root.motionQuick) deskEnter.restart()
         ParallelAnimation {
             id: deskEnter
@@ -2806,7 +2839,7 @@ ShellRoot {
             width: parent.width; text: "On-screen keyboard"; value: "Show or hide"; valueColor: floeTheme.accent; chevron: false
             onClicked: { root.launchApp(["flow-keyboard"]); root.quickSettingsOpen = false }
         }
-        PanelRow { width: parent.width; interactive: false; last: true; text: "Sound"; value: root.volumeStatus }
+        PanelValue { width: parent.width; text: "Sound"; value: root.volumeStatus }
         Row {
             width: parent.width; spacing: 12
             VolumeSlider { width: parent.width - muteButton.width - parent.spacing }
@@ -2848,11 +2881,13 @@ ShellRoot {
         }
     }
     SystemPanel {
+        id: notificationPanel
         shown: root.notificationsOpen; title: "Notifications"
         onCloseRequested: root.notificationsOpen = false
         tools: FlowButton {
             visible: notificationServer.trackedNotifications.values.length > 0
-            implicitHeight: 44; leftPadding: 12; rightPadding: 12; variant: "plain"; text: "Clear all"
+            // On a narrow screen the short label leaves the title room.
+            implicitHeight: 44; leftPadding: 12; rightPadding: 12; variant: "plain"; text: notificationPanel.implicitWidth < 360 ? "Clear" : "Clear all"
             Accessible.name: "Clear all notifications"
             onClicked: [...notificationServer.trackedNotifications.values].forEach(n => n.dismiss())
         }
@@ -2871,7 +2906,9 @@ ShellRoot {
         }
         Repeater {
             id: notificationList
-            // Newest first.
+            // Newest first, so reading and Tab order match what is on screen. The reversed copy rebuilds the
+            // list on each change (at most 20 items, by the trim above), so focus inside it does not survive
+            // a notification arriving or going.
             model: [...notificationServer.trackedNotifications.values].reverse()
             delegate: Item {
                 required property var modelData
@@ -2890,6 +2927,7 @@ ShellRoot {
                             }
                             Text {
                                 width: parent.width; text: modelData.summary; textFormat: Text.PlainText; wrapMode: Text.Wrap
+                                maximumLineCount: 3; elide: Text.ElideRight
                                 color: floeTheme.textPrimary; font.weight: Font.DemiBold; font.pixelSize: 14; font.family: floeTheme.interfaceFont
                             }
                         }
@@ -2904,13 +2942,15 @@ ShellRoot {
                         color: floeTheme.textSecondary; font.pixelSize: 13; font.family: floeTheme.interfaceFont
                     }
                     Flow {
-                        visible: modelData.actions.length > 0
+                        visible: modelData.actions.some(action => action.text !== "")
                         width: parent.width; spacing: 6; topPadding: 6
                         Repeater {
                             model: modelData.actions
                             delegate: FlowButton {
                                 required property var modelData
-                                width: Math.min(200, implicitWidth); implicitHeight: 44
+                                // An action without a label (often "default") would be a blank, nameless button.
+                                visible: modelData.text !== ""
+                                width: Math.max(44, Math.min(200, implicitWidth)); implicitHeight: 44
                                 text: modelData.text; Accessible.name: modelData.text
                                 onClicked: modelData.invoke()
                             }

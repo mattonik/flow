@@ -5,8 +5,8 @@ QML = (Path(__file__).parents[1] / "session/shell.qml").read_text()
 
 
 def notification_panel():
-    start = QML.index('    SystemPanel {\n        shown: root.notificationsOpen; title: "Notifications"\n')
-    return QML[start:QML.index("\n    }\n", start)]
+    from test_system_panels import panel
+    return panel("notificationsOpen")
 
 
 class NotificationShellTest(unittest.TestCase):
@@ -33,7 +33,8 @@ class NotificationShellTest(unittest.TestCase):
         self.assertIn('Accessible.name: "Dismiss notification"; onClicked: modelData.dismiss()', panel)
         self.assertIn("onClicked: [...notificationServer.trackedNotifications.values].forEach(n => n.dismiss())", panel)
         actions = panel[panel.index("model: modelData.actions"):]
-        self.assertIn("implicitHeight: 44", actions)
+        self.assertIn("width: Math.max(44, Math.min(200, implicitWidth)); implicitHeight: 44", actions)
+        self.assertIn('visible: modelData.text !== ""', actions)
         self.assertIn("onClicked: modelData.invoke()", actions)
 
     def test_empty_state(self):
