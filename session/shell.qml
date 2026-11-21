@@ -54,6 +54,8 @@ ShellRoot {
     }
     Timer { interval: 4000; running: root.quickSettingsOpen; repeat: true; triggeredOnStart: true; onTriggered: if (!networkStatusProcess.running) networkStatusProcess.running = true }
     function toggleNotifications() {
+        overviewPending = false
+        spacesOverviewOpen = false   // one surface at a time
         if (!notificationsOpen) {
             quickSettingsOpen = false; appMenuOpen = false; openMenuWhenReady = false
             switcherOpen = false
@@ -62,6 +64,8 @@ ShellRoot {
         notificationsOpen = !notificationsOpen
     }
     function toggleQuickSettings() {
+        overviewPending = false
+        spacesOverviewOpen = false   // one surface at a time
         notificationsOpen = false
         if (!quickSettingsOpen) {
             appMenuOpen = false
@@ -90,7 +94,7 @@ ShellRoot {
     property string appMenuError: ""
     property bool openMenuWhenReady: false
     function requestAppMenu() {
-        if (!menuPreferences.appMenuEnabled || root.deskOpen || root.overviewOpen || appMenuProcess.running) return
+        if (!menuPreferences.appMenuEnabled || root.deskOpen || root.overviewOpen || root.spacesOverviewOpen || root.searchOpen || appMenuProcess.running) return
         root.switcherOpen = false
         root.quickSettingsOpen = false
         root.openMenuWhenReady = true
@@ -174,7 +178,7 @@ ShellRoot {
                     }
                     if (event.OverviewOpenedOrClosed) {
                         root.overviewOpen = event.OverviewOpenedOrClosed.is_open
-                        if (root.overviewOpen) { root.deskOpen = false; root.notificationsOpen = false; root.appMenuOpen = false; root.openMenuWhenReady = false; root.switcherOpen = false; root.quickSettingsOpen = false }
+                        if (root.overviewOpen) { root.deskOpen = false; root.spacesOverviewOpen = false; root.overviewPending = false; root.searchOpen = false; root.notificationsOpen = false; root.appMenuOpen = false; root.openMenuWhenReady = false; root.switcherOpen = false; root.quickSettingsOpen = false }
                     }
                 } catch (e) {}
             }
@@ -257,8 +261,9 @@ ShellRoot {
             showToast((member.app_name || member.label).slice(0, 40) + " is now focused" + (menuPreferences.appMenuEnabled ? " · menus updated" : ""))
         lastFocusedGroup = member ? space.group_id : ""
         lastFocusedMember = member ? member.id : null
-        // Overview's snapshot of this space, once it has settled (snapshotActiveSpace).
-        if (space) snapshotSettle.restart()
+        // Overview's snapshot of this space once it has settled; a refresh hands over a new object
+        // for the same space (a title changes), which is not a move.
+        if (space && String(space.id) !== settledSpaceId) { settledSpaceId = String(space.id); snapshotSettle.restart() }
     }
     property string spacesError: ""
     property var pendingSpaceActions: []
@@ -295,7 +300,11 @@ ShellRoot {
                     const result = JSON.parse(this.text)
                     if (result.error) {
                         root.spacesError = result.error
-                        if (spacesProcess.command[1] !== "refresh" && spacesProcess.command[1] !== "auto-layout" && !root.switcherOpen) root.deskOpen = true
+                        if (spacesProcess.command[1] !== "refresh" && spacesProcess.command[1] !== "auto-layout" && !root.switcherOpen) {
+                            // Over Overview or search the error is a toast; elsewhere Desk shows it.
+                            if (root.spacesOverviewOpen || root.searchOpen) root.showToast(result.error)
+                            else root.deskOpen = true
+                        }
                     } else {
                         if (JSON.stringify(root.windows) !== JSON.stringify(result.windows)) root.windows = result.windows
                         if (JSON.stringify(root.displaySpaces) !== JSON.stringify(result.spaces)) root.displaySpaces = result.spaces
@@ -310,7 +319,7 @@ ShellRoot {
                         if (result.action !== "refresh") root.spacesError = ""
                         if (result.notice) root.showToast(result.notice)
                         if (["focus", "focus-number", "focus-window", "move-to-display"].includes(result.action)) { root.deskOpen = false; root.switcherOpen = false }
-                        else if (result.action === "pin") root.deskOpen = true
+                        else if (result.action === "pin" && !root.spacesOverviewOpen) root.deskOpen = true
                     }
                 } catch (e) { root.spacesError = "Could not read pinned spaces" }
             }
@@ -373,9 +382,11 @@ ShellRoot {
     Timer {
         interval: 2000; repeat: true
         running: root.displaySpaces.some(space => space.auto_layout) || root.layers.some(layer => layer.shaped)
-        onTriggered: if (!root.deskOpen && !root.switcherOpen && !root.overviewOpen && !root.launcherActive && !root.appMenuOpen && !root.quickSettingsOpen && !root.notificationsOpen && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length) root.spaceAction("auto-layout")
+        onTriggered: if (!root.deskOpen && !root.switcherOpen && !root.overviewOpen && !root.spacesOverviewOpen && !root.searchOpen && !root.appMenuOpen && !root.quickSettingsOpen && !root.notificationsOpen && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length) root.spaceAction("auto-layout")
     }
     function toggleDesk() {
+        overviewPending = false
+        spacesOverviewOpen = false   // one surface at a time
         notificationsOpen = false
         quickSettingsOpen = false
         switcherOpen = false
@@ -386,32 +397,23 @@ ShellRoot {
         if (deskOpen) spaceAction("refresh")
     }
 
-    property bool launcherActive: false
-    Process { id: appsLauncher; command: ["flow-apps"]; onExited: launcherDismissDelay.restart() }
-    Process { id: searchLauncher; command: ["flow-search"]; onExited: launcherDismissDelay.restart() }
-    // shortcut: retain the open state for 500ms after exit to handle Island clicks; replace with lifecycle IPC if needed.
-    Timer { id: launcherDismissDelay; interval: 500; onTriggered: if (!appsLauncher.running && !searchLauncher.running) root.launcherActive = false }
-    function closeLauncher() {
-        launcherDismissDelay.stop()
-        launcherActive = false
-        if (appsLauncher.running) appsLauncher.running = false
-        if (searchLauncher.running) searchLauncher.running = false
-    }
+    // The search panel is the launcher; closeLauncher remains the name its callers know.
+    function closeLauncher() { closeSearch() }
     function openSearch() {
         if (searchOpen) { closeSearch(); return }
-        if (launcherActive || appsLauncher.running || searchLauncher.running) { closeLauncher(); return }
         openSearchPanel(false)
     }
 
-    function launcherBusy() { return searchOpen || launcherActive || appsLauncher.running || searchLauncher.running || launcherDismissDelay.running }
+    function launcherBusy() { return searchOpen }
     function otherSurfaceOpen() { return switcherOpen || quickSettingsOpen || notificationsOpen || appMenuOpen }
     function openApps() {
         if (searchOpen) { closeSearch(); return }
-        if (launcherActive || appsLauncher.running || searchLauncher.running) { closeLauncher(); return }
         openSearchPanel(true)
     }
 
     function toggleSwitcher() {
+        overviewPending = false
+        spacesOverviewOpen = false   // one surface at a time
         notificationsOpen = false
         quickSettingsOpen = false
         if (switcherOpen) { switcherOpen = false; return }
@@ -425,6 +427,7 @@ ShellRoot {
 
     // Niri's live Overview: real windows, zoomed out. It stays a button in the Spaces switcher.
     function showOverview(action = "open-overview") {
+        overviewPending = false
         closeLauncher()
         deskOpen = false
         switcherOpen = false
@@ -438,9 +441,18 @@ ShellRoot {
     // Snapshots are taken by grim (wlr-screencopy) into the session's runtime directory: Qt's own
     // grabToImage crashed Quickshell 0.3.2 on Niri, and Niri's screenshot action fills the clipboard.
     property bool spacesOverviewOpen: false
-    property int overviewIndex: 0
+    // Opening waits for a fresh snapshot; any other surface opening meanwhile cancels it.
+    property bool overviewPending: false
+    // The selection is a space, not a position: refreshes replace the list (a title changes, a window
+    // opens) and the selection must stay on the same space.
+    property string overviewSpaceId: ""
+    readonly property int overviewIndex: {
+        const found = displaySpaces.findIndex(space => String(space.id) === overviewSpaceId)
+        return found >= 0 ? found : Math.max(0, Math.min(displaySpaces.length - 1, activeSpaceIndex))
+    }
     property var spaceSnapshots: ({})   // space id -> version of its snapshot file
-    readonly property string snapshotDir: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/flow-snapshots"
+    // Snapshots are screen contents: only in the session's private runtime directory, never /tmp.
+    readonly property string snapshotDir: Quickshell.env("XDG_RUNTIME_DIR") ? Quickshell.env("XDG_RUNTIME_DIR") + "/flow-snapshots" : ""
     function snapshotUrl(space) {
         const version = space ? spaceSnapshots[String(space.id)] : 0
         return version ? "file://" + snapshotDir + "/" + space.id + ".jpg?v=" + version : ""
@@ -461,48 +473,57 @@ ShellRoot {
         closeSearch()
         if (overviewOpen) Quickshell.execDetached(["niri", "msg", "action", "close-overview"])
         deskOpen = false
+        overviewPending = true
         const show = () => {
-            overviewIndex = Math.max(0, activeSpaceIndex)
+            // Desk, search or another panel opened meanwhile: they win, Overview does not stack on them.
+            if (!overviewPending || deskOpen || searchOpen || switcherOpen || quickSettingsOpen
+                || notificationsOpen || appMenuOpen || overviewOpen) { overviewPending = false; return }
+            overviewPending = false
+            overviewSpaceId = activeSpace ? String(activeSpace.id) : ""
             spacesOverviewOpen = true
         }
-        // The space on screen now is the freshest: snapshot it, then show the row.
-        if (plain) snapshotActiveSpace(show)
+        // The space on screen now is the freshest: snapshot it, then show the row. Not while a move is
+        // still settling, which would catch the scroll halfway under the old space's name.
+        if (plain && !snapshotSettle.running) snapshotActiveSpace(show)
         else show()
     }
-    function closeSpacesOverview() { spacesOverviewOpen = false }
-    function moveOverview(step) {
-        if (displaySpaces.length) overviewIndex = Math.max(0, Math.min(displaySpaces.length - 1, overviewIndex + step))
+    function closeSpacesOverview() { overviewPending = false; spacesOverviewOpen = false }
+    function selectOverview(index) {
+        const space = displaySpaces[Math.max(0, Math.min(displaySpaces.length - 1, index))]
+        if (space) overviewSpaceId = String(space.id)
     }
+    function moveOverview(step) { selectOverview(overviewIndex + step) }
     function chooseOverviewSpace(index) {
         const space = displaySpaces[index]
-        spacesOverviewOpen = false
+        closeSpacesOverview()
         if (space && !space.active) spaceAction("focus-window", String(space.id))
     }
     // "Again to reveal your desk": the same gesture or key that opened Overview goes one level further.
     function revealDeskFromOverview() {
-        spacesOverviewOpen = false
+        closeSpacesOverview()
         if (!deskOpen) toggleDesk()
     }
     function toggleSpacesOverview() {
+        if (overviewPending) return
         if (spacesOverviewOpen) revealDeskFromOverview()
         else if (deskOpen) toggleDesk()
         else openSpacesOverview()
     }
 
     // Snapshots: only in the plain work view, after a space has settled, never of the shell's own surfaces.
+    property string settledSpaceId: ""
     readonly property bool workViewOnly: !deskOpen && !switcherOpen && !spacesOverviewOpen && !overviewOpen
-        && !launcherActive && !searchOpen && !appMenuOpen && !quickSettingsOpen && !notificationsOpen
+        && !searchOpen && !appMenuOpen && !quickSettingsOpen && !notificationsOpen
     Timer { id: snapshotSettle; interval: 700; onTriggered: if (root.workViewOnly) root.snapshotActiveSpace(null) }
+    Component.onDestruction: if (snapshotDir) Quickshell.execDetached(["rm", "-rf", "--", snapshotDir])
     function snapshotActiveSpace(done) {
         const space = activeSpace
         const screen = workIsland.screen
-        if (!space || !workViewOnly || !screen || snapshotProcess.running) { if (done) done(); return }
+        if (!space || !workViewOnly || !screen || !snapshotDir || snapshotProcess.running) { if (done) done(); return }
         snapshotProcess.key = String(space.id)
         snapshotProcess.done = done
         // About 640 px wide whatever the display; written whole, then renamed, so a card never shows half.
-        // Snapshots older than half a day (closed spaces) are removed as new ones are taken.
-        snapshotProcess.command = ["sh", "-c", 'mkdir -p -m 700 "$1" && find "$1" -name "*.jpg" -mmin +720 -delete; '
-            + 'grim -o "$2" -s "$3" -t jpeg -q 72 "$1/$4.tmp" && mv -f "$1/$4.tmp" "$1/$4.jpg"',
+        snapshotProcess.command = ["sh", "-c", 'mkdir -p -m 700 "$1" && grim -o "$2" -s "$3" -t jpeg -q 72 "$1/$4.tmp" && mv -f "$1/$4.tmp" "$1/$4.jpg"',
             "sh", root.snapshotDir, screen.name, String(Math.min(1, 640 / Math.max(1, screen.width))), snapshotProcess.key]
         snapshotProcess.running = true
     }
@@ -514,14 +535,14 @@ ShellRoot {
             const done = snapshotProcess.done
             snapshotProcess.done = null
             if (code === 0) {
-                const next = {}
-                // Keep only spaces that still exist.
-                for (const space of root.displaySpaces) {
-                    const id = String(space.id)
-                    if (root.spaceSnapshots[id]) next[id] = root.spaceSnapshots[id]
-                }
+                const next = {}, gone = []
+                // Keep only spaces that still exist; the others' pictures are deleted.
+                for (const id in root.spaceSnapshots)
+                    if (root.displaySpaces.some(space => String(space.id) === id)) next[id] = root.spaceSnapshots[id]
+                    else gone.push(root.snapshotDir + "/" + id + ".jpg")
                 next[snapshotProcess.key] = (root.spaceSnapshots[snapshotProcess.key] || 0) + 1
                 root.spaceSnapshots = next
+                if (gone.length) Quickshell.execDetached(["rm", "-f", "--"].concat(gone))
             }
             if (done) done()
         }
@@ -560,6 +581,7 @@ ShellRoot {
         }
     }
     function openSearchPanel(appsOnly) {
+        overviewPending = false
         notificationsOpen = false
         quickSettingsOpen = false
         openMenuWhenReady = false
@@ -570,6 +592,7 @@ ShellRoot {
         searchAppsOnly = appsOnly
         searchQuery = ""
         searchIndex = 0
+        searchResults = []   // never the last run's: its windows may have closed
         searchOpen = true
         if (!searchList.running) searchList.running = true
     }
@@ -577,7 +600,7 @@ ShellRoot {
     function runSearchResult(result) {
         if (!result) return
         searchOpen = false
-        deskOpen = false
+        if (result.kind !== "settings") deskOpen = false
         if (result.kind === "app") root.launchApp(["gio", "launch", result.value])
         else if (result.kind === "file") root.launchApp(["gio", "open", result.value])
         else if (result.kind === "pin") spaceAction("focus", result.value)
@@ -585,7 +608,11 @@ ShellRoot {
         else if (result.kind === "layer") spaceAction("open-layer", result.value)
         else if (result.kind === "settings") {
             if (result.value === "quick_open") { if (!quickSettingsOpen) toggleQuickSettings() }
-            else { deskOpen = true; settingsOpen = true }
+            else {
+                if (!deskOpen) toggleDesk()
+                settingsOpen = true
+                Qt.callLater(function() { deskScroller.ensureVisible(menuSwitch) })
+            }
         }
     }
 
@@ -755,9 +782,16 @@ ShellRoot {
         Accessible.role: Accessible.Button
         Accessible.name: root.spacesOverviewOpen ? "Reveal your Desk" : root.deskOpen ? "Return to work" : "Show Overview"
         Rectangle {
-            anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 9 }
+            // The halo: the line stands out on light and dark apps alike.
+            anchors.centerIn: line
+            width: line.width + 6; height: line.height + 6; radius: height / 2
+            color: Qt.alpha(floeTheme.canvas, 0.55)
+        }
+        Rectangle {
+            id: line
+            anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 8 }
             width: homeArea.containsMouse || homeArea.pressed ? 65 : 48; height: 4; radius: 2
-            color: homeArea.containsMouse || homeArea.pressed ? floeTheme.accent : Qt.alpha(floeTheme.textSecondary, 0.7)
+            color: homeArea.containsMouse || homeArea.pressed ? floeTheme.accent : floeTheme.textSecondary
             Behavior on width { NumberAnimation { duration: root.motionQuick; easing.type: Easing.BezierSpline; easing.bezierCurve: root.standardCurve } }
             Behavior on color { ColorAnimation { duration: root.motionQuick } }
         }
@@ -790,10 +824,10 @@ ShellRoot {
             IslandButton {
                 property bool closeOnRelease: false
                 implicitHeight: 44
-                text: root.launcherActive || root.searchOpen ? "Close" : "Apps"
-                open: root.launcherActive || root.searchOpen
-                Accessible.name: root.launcherActive || root.searchOpen ? "Close search and apps" : "Open apps"
-                onPressed: closeOnRelease = root.launcherActive || root.searchOpen
+                text: root.searchOpen ? "Close" : "Apps"
+                open: root.searchOpen
+                Accessible.name: root.searchOpen ? "Close search and apps" : "Open apps"
+                onPressed: closeOnRelease = root.searchOpen
                 onClicked: { if (closeOnRelease) { root.closeLauncher(); root.closeSearch() } else root.openApps(); closeOnRelease = false }
                 onCanceled: closeOnRelease = false
             }
@@ -913,6 +947,8 @@ ShellRoot {
     // Quickshell cannot reload a configuration that adds an inline component, and its file watching
     // does not reliably notice a switch. A development shell keeps live reload.
     Component.onCompleted: {
+        // A new shell starts with no pictures: an earlier session's window ids must never show its screens.
+        if (root.snapshotDir) Quickshell.execDetached(["rm", "-rf", "--", root.snapshotDir])
         if (Quickshell.shellDir !== "/etc/flow") return
         Quickshell.watchFiles = false
         root.syncCompositorAppearance()
@@ -932,11 +968,19 @@ ShellRoot {
         function overview_state(): string { return root.spacesOverviewOpen ? "open" : "closed" }
         // Back to work without choosing, as Escape does.
         function overview_close(): void { root.closeSpacesOverview() }
+        function overview_selected(): string { return root.spacesOverviewOpen && root.overviewSpace ? String(root.overviewSpace.id) : "" }
+        function overview_move(step: int): void { if (root.spacesOverviewOpen) root.moveOverview(step) }
+        // Which shell surfaces are open, for checks that two never are at once.
+        function surfaces(): string {
+            return JSON.stringify({desk: root.deskOpen, overview: root.spacesOverviewOpen, pending: root.overviewPending,
+                                   search: root.searchOpen, switcher: root.switcherOpen, quick: root.quickSettingsOpen,
+                                   notifications: root.notificationsOpen, niri_overview: root.overviewOpen})
+        }
         function search_state(): string { return root.searchOpen ? (root.searchAppsOnly ? "apps" : "open") : "closed" }
         function activity_list(): string { return JSON.stringify(root.activities.map(a => root.activityText(a))) }
         function launcher_state(): string { return root.launcherBusy() ? "open" : "closed" }
         function menu(): void {
-            if (menuPreferences.appMenuEnabled && root.appMenu && !root.deskOpen && !root.overviewOpen) {
+            if (menuPreferences.appMenuEnabled && root.appMenu && !root.deskOpen && !root.overviewOpen && !root.spacesOverviewOpen && !root.searchOpen) {
                 if (root.appMenuOpen) root.appMenuOpen = false
                 else root.requestAppMenu()
             }
@@ -973,17 +1017,17 @@ ShellRoot {
         // Show-only requests (the Platform API's System interface). They never close anything: while
         // any other shell surface is open they do nothing and answer "busy"; otherwise "open" or "opened".
         function desk_open(): string {
-            if (root.overviewOpen || root.spacesOverviewOpen || root.launcherBusy() || root.otherSurfaceOpen()) return "busy"
+            if (root.overviewOpen || root.spacesOverviewOpen || root.overviewPending || root.launcherBusy() || root.otherSurfaceOpen()) return "busy"
             if (root.deskOpen) return "open"
             root.toggleDesk(); return "opened"
         }
         function overview_open(): string {
             if (root.deskOpen || root.overviewOpen || root.launcherBusy() || root.otherSurfaceOpen()) return "busy"
-            if (root.spacesOverviewOpen) return "open"
+            if (root.spacesOverviewOpen || root.overviewPending) return "open"
             root.openSpacesOverview(); return "opened"
         }
         function apps_open(): string {
-            if (root.deskOpen || root.overviewOpen || root.spacesOverviewOpen || root.otherSurfaceOpen()) return "busy"
+            if (root.deskOpen || root.overviewOpen || root.spacesOverviewOpen || root.overviewPending || root.otherSurfaceOpen()) return "busy"
             if (root.launcherBusy()) return "open"
             root.openApps(); return "opened"
         }
@@ -1001,7 +1045,7 @@ ShellRoot {
         color: floeTheme.canvas
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: root.notificationsOpen ? WlrKeyboardFocus.None : root.launcherActive ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive
+        WlrLayershell.keyboardFocus: root.notificationsOpen || root.searchOpen ? WlrKeyboardFocus.None : WlrKeyboardFocus.Exclusive
         onVisibleChanged: if (visible && root.motionQuick) deskEnter.restart()
         ParallelAnimation {
             id: deskEnter
@@ -1358,12 +1402,13 @@ ShellRoot {
     }
     PanelWindow {
         // The home indicator (the prototype's, after iOS): a short line. Tap it, or drag it up, for
-        // Overview; again for Desk. Its target is 160 × 44 for a finger, though the line is 48 × 4.
+        // Overview; again for Desk. Only the bottom 126 × 24 takes input, so it covers little of the app
+        // beneath (Flow's columns reach the screen's edge).
         id: homeIndicator
         // Desk and Overview carry their own (a surface opened later stacks above this one).
-        visible: !root.deskOpen && !root.spacesOverviewOpen && !root.switcherOpen && !root.appMenuOpen && !root.launcherActive && !root.searchOpen
+        visible: !root.deskOpen && !root.spacesOverviewOpen && !root.switcherOpen && !root.appMenuOpen && !root.searchOpen
         anchors.bottom: true
-        implicitWidth: 160; implicitHeight: 44
+        implicitWidth: 126; implicitHeight: 24
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         HomeIndicator { anchors.fill: parent }
@@ -1373,7 +1418,7 @@ ShellRoot {
         // It stays in Overview, where its arrows and position are the way along the row for a pointer
         // or a finger, next to Super+Left/Right and the wheel.
         id: workIndicatorWindow
-        visible: !root.deskOpen && !root.switcherOpen && !root.spacesOverviewOpen && !root.appMenuOpen && !root.launcherActive && !root.searchOpen && (!!root.activeSpace || !!root.activeLayer)
+        visible: !root.deskOpen && !root.switcherOpen && !root.spacesOverviewOpen && !root.appMenuOpen && !root.searchOpen && (!!root.activeSpace || !!root.activeLayer)
         anchors { bottom: true; right: true }
         // Where the bottom controls and this indicator cannot share a row, it rises above them: below 560 px,
         // or below 900 px for an active Layer's wider controls.
@@ -1469,8 +1514,10 @@ ShellRoot {
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
         readonly property real edge: Math.max(20, Math.min(52, width * 0.03))
         readonly property real cardWidth: Math.max(220, Math.min(480, width * 0.3))
-        // A snapshot without the shell's bands (the Island above, the home indicator below).
-        readonly property real cardHeight: cardWidth * 0.53
+        // A snapshot without the shell's bands: the Island above (8 + 44) and the home indicator below (44).
+        readonly property real bandTop: 52
+        readonly property real bandBottom: 44
+        readonly property real cardHeight: cardWidth * Math.max(0.3, (height - bandTop - bandBottom) / Math.max(1, width))
         onVisibleChanged: if (visible) { overviewRow.positionViewAtIndex(root.overviewIndex, ListView.Center); overviewFocus.forceActiveFocus() }
         FocusScope {
             id: overviewFocus
@@ -1517,8 +1564,13 @@ ShellRoot {
                 orientation: ListView.Horizontal
                 spacing: 32
                 model: root.displaySpaces
-                currentIndex: root.overviewIndex
-                onCurrentIndexChanged: if (currentIndex >= 0 && currentIndex !== root.overviewIndex) root.overviewIndex = currentIndex
+                // Assigning a new model resets currentIndex to 0, so it is set from the selection, which is
+                // a space id (root.overviewIndex), whenever either changes; only a drag writes it back.
+                function follow() { if (currentIndex !== root.overviewIndex) currentIndex = root.overviewIndex }
+                Connections { target: root; function onOverviewIndexChanged() { overviewRow.follow() } }
+                onCountChanged: Qt.callLater(follow)
+                onModelChanged: Qt.callLater(follow)
+                onCurrentIndexChanged: if (moving && currentIndex >= 0) root.selectOverview(currentIndex)
                 highlightRangeMode: ListView.StrictlyEnforceRange
                 preferredHighlightBegin: width / 2 - spacesOverview.cardWidth / 2
                 preferredHighlightEnd: width / 2 + spacesOverview.cardWidth / 2
@@ -1556,9 +1608,12 @@ ShellRoot {
                             anchors.fill: parent; anchors.margins: 1
                             visible: !!spaceCard.snapshot
                             source: spaceCard.snapshot
-                            // The card is wider than the display, so the crop takes equal bands off the top
-                            // and bottom: where the Island and the home indicator were.
-                            fillMode: Image.PreserveAspectCrop; smooth: true; asynchronous: true; cache: false
+                            // The snapshot is about 640 px wide (snapshotActiveSpace); cut exactly the bands.
+                            readonly property real scale: 640 / Math.max(1, spacesOverview.width)
+                            sourceClipRect: Qt.rect(0, spacesOverview.bandTop * scale, 640,
+                                                    (spacesOverview.height - spacesOverview.bandTop - spacesOverview.bandBottom) * scale)
+                            // Each new snapshot is a new URL (its version), so caching never shows a stale one.
+                            fillMode: Image.PreserveAspectCrop; smooth: true; asynchronous: true
                         }
                         Column {
                             // Before its first snapshot a space shows its app and title.
@@ -1618,16 +1673,18 @@ ShellRoot {
             FlowButton {
                 // The rails: half pills at the screen's edges, as in the prototype.
                 id: railPrevious
-                anchors { left: parent.left; verticalCenter: overviewRow.verticalCenter; verticalCenterOffset: -26 }
-                width: 44; implicitHeight: 64; radius: 14; glyph: "left"; text: "‹"
+                anchors { left: parent.left; leftMargin: -14; verticalCenter: overviewRow.verticalCenter; verticalCenterOffset: -26 }
+                width: 58; implicitHeight: 64; radius: 14; glyph: "left"; text: "‹"; leftPadding: 18
+                focusPolicy: Qt.TabFocus
                 enabled: root.overviewIndex > 0
                 Accessible.name: "Previous space"
                 onClicked: root.moveOverview(-1)
             }
             FlowButton {
                 id: railNext
-                anchors { right: parent.right; verticalCenter: overviewRow.verticalCenter; verticalCenterOffset: -26 }
-                width: 44; implicitHeight: 64; radius: 14; glyph: "right"; text: "›"
+                anchors { right: parent.right; rightMargin: -14; verticalCenter: overviewRow.verticalCenter; verticalCenterOffset: -26 }
+                width: 58; implicitHeight: 64; radius: 14; glyph: "right"; text: "›"; rightPadding: 18
+                focusPolicy: Qt.TabFocus
                 enabled: root.overviewIndex < root.displaySpaces.length - 1
                 Accessible.name: "Next space"
                 onClicked: root.moveOverview(1)
@@ -1641,7 +1698,7 @@ ShellRoot {
                     id: overviewTools
                     anchors.centerIn: parent; spacing: 4
                     FlowButton {
-                        variant: "quiet"; implicitHeight: 44; radius: 8; text: "↗  Open selected"
+                        variant: "quiet"; focusPolicy: Qt.TabFocus; implicitHeight: 44; radius: 8; text: "↗  Open selected"
                         enabled: !!root.overviewSpace
                         Accessible.name: root.overviewSpace ? "Open " + root.overviewSpace.label : "Open selected"
                         onClicked: root.chooseOverviewSpace(root.overviewIndex)
@@ -1649,22 +1706,22 @@ ShellRoot {
                     Rectangle { width: 1; height: 24; anchors.verticalCenter: parent.verticalCenter; color: Qt.alpha(floeTheme.border, 0.5) }
                     FlowButton {
                         readonly property var pin: root.pinOfSpace(root.overviewSpace)
-                        variant: "quiet"; implicitHeight: 44; radius: 8
+                        variant: "quiet"; focusPolicy: Qt.TabFocus; implicitHeight: 44; radius: 8
                         // Pinning acts on the focused space, so it is offered for that one; any pin can be removed.
                         text: pin ? "Unpin" : "Pin space"
                         visible: !!root.overviewSpace && (!!pin || root.overviewSpace.active)
                         Accessible.name: (pin ? "Unpin " : "Pin ") + (root.overviewSpace ? root.overviewSpace.label : "")
                         onClicked: pin ? root.spaceAction("unpin", pin.id) : root.spaceAction(root.overviewSpace.group_id ? "pin-group" : "pin", root.overviewSpace.group_id || undefined)
                     }
-                    FlowButton { variant: "quiet"; implicitHeight: 44; width: 44; radius: 8; glyph: "left"; text: "←"; Accessible.name: "Previous space"; enabled: root.overviewIndex > 0; onClicked: root.moveOverview(-1) }
-                    FlowButton { variant: "quiet"; implicitHeight: 44; width: 44; radius: 8; glyph: "right"; text: "→"; Accessible.name: "Next space"; enabled: root.overviewIndex < root.displaySpaces.length - 1; onClicked: root.moveOverview(1) }
+                    FlowButton { variant: "quiet"; focusPolicy: Qt.TabFocus; implicitHeight: 44; width: 44; radius: 8; glyph: "left"; text: "←"; Accessible.name: "Previous space"; enabled: root.overviewIndex > 0; onClicked: root.moveOverview(-1) }
+                    FlowButton { variant: "quiet"; focusPolicy: Qt.TabFocus; implicitHeight: 44; width: 44; radius: 8; glyph: "right"; text: "→"; Accessible.name: "Next space"; enabled: root.overviewIndex < root.displaySpaces.length - 1; onClicked: root.moveOverview(1) }
                     Rectangle { width: 1; height: 24; anchors.verticalCenter: parent.verticalCenter; color: Qt.alpha(floeTheme.border, 0.5) }
-                    FlowButton { variant: "primary"; implicitHeight: 44; radius: 8; text: "↓  Your desk"; onClicked: root.revealDeskFromOverview() }
+                    FlowButton { variant: "primary"; focusPolicy: Qt.TabFocus; implicitHeight: 44; radius: 8; text: "↓  Your desk"; onClicked: root.revealDeskFromOverview() }
                 }
             }
             FlowButton {
                 anchors { right: parent.right; bottom: parent.bottom; rightMargin: spacesOverview.edge; bottomMargin: 62 }
-                variant: "quiet"; implicitHeight: 44; radius: 22; text: "?  Shortcuts"
+                variant: "quiet"; focusPolicy: Qt.TabFocus; implicitHeight: 44; radius: 22; text: "?  Shortcuts"
                 Accessible.name: "Show keyboard shortcuts"
                 onClicked: { root.closeSpacesOverview(); Quickshell.execDetached(["niri", "msg", "action", "show-hotkey-overlay"]) }
             }
@@ -1691,6 +1748,9 @@ ShellRoot {
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
         onVisibleChanged: if (visible) searchField.forceActiveFocus()
+        FocusScope {
+        anchors.fill: parent; focus: true
+        Keys.onEscapePressed: root.closeSearch()
         Rectangle {
             anchors.fill: parent; color: Qt.alpha(floeTheme.canvas, 0.72)
             MouseArea { anchors.fill: parent; onClicked: root.closeSearch() }
@@ -1717,8 +1777,7 @@ ShellRoot {
                     font.pixelSize: 18; font.family: floeTheme.interfaceFont
                     background: Item {}
                     Accessible.name: root.searchAppsOnly ? "Search apps" : "Search apps, spaces, windows and files"
-                    Keys.onEscapePressed: root.closeSearch()
-                    Keys.onDownPressed: root.searchIndex = Math.min(root.searchMatches.length - 1, root.searchIndex + 1)
+                    Keys.onDownPressed: root.searchIndex = Math.max(0, Math.min(root.searchMatches.length - 1, root.searchIndex + 1))
                     Keys.onUpPressed: root.searchIndex = Math.max(0, root.searchIndex - 1)
                     Keys.onReturnPressed: root.runSearchResult(root.searchMatches[root.searchIndex])
                     Keys.onEnterPressed: root.runSearchResult(root.searchMatches[root.searchIndex])
@@ -1808,6 +1867,7 @@ ShellRoot {
                     textFormat: Text.PlainText; color: floeTheme.textMuted; font.pixelSize: 12; font.family: floeTheme.interfaceFont
                 }
             }
+        }
         }
     }
     // shortcut: window titles stand in for live previews until compositor capture is available.
