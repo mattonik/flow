@@ -41,11 +41,11 @@ class NotificationBannerTest(unittest.TestCase):
         self.assertIn('Super+N { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "notifications"; }', NIRI)
 
     def test_exactly_the_plain_work_view_without_a_panel_shows_it(self):
-        self.assertEqual(visible_terms(), sorted([
-            "!!notification", "root.workViewOnly", "!root.notificationsOpen", "!root.quickSettingsOpen",
-            "!root.searchOpen", "!root.appMenuOpen"]))
-        self.assertIn("readonly property bool workViewOnly: !deskOpen && !switcherOpen && !spacesOverviewOpen && !overviewOpen",
-                      SHELL)
+        self.assertEqual(visible_terms(), ["!!notification", "root.workViewOnly"])
+        definition = re.search(r"readonly property bool workViewOnly: (.+?)\n {4}Timer", SHELL, re.S).group(1)
+        self.assertEqual(sorted(term.strip() for term in definition.replace("\n", " ").split("&&")), sorted([
+            "!deskOpen", "!switcherOpen", "!spacesOverviewOpen", "!overviewOpen", "!searchOpen", "!appMenuOpen",
+            "!quickSettingsOpen", "!notificationsOpen"]))
 
     def test_it_sits_where_the_panels_sit(self):
         top = lambda block: int(re.search(r"margins\.top: (\d+)", own(block)).group(1))

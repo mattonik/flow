@@ -3005,11 +3005,10 @@ ShellRoot {
         id: notificationBanner
         readonly property var notification: root.bannerNotification
         readonly property bool held: bannerArea.containsMouse || bannerDismiss.hovered
-        // Only in the plain work view, as the work indicator: Desk, Overview and the switcher would cover it
-        // (the surface mapped later is on top), and the panels and the app menu sit where it does.
+        // Only in the plain work view (workViewOnly): Desk, Overview and the switcher would cover it (the
+        // surface mapped later is on top), and the panels, search and the app menu sit where it does.
         // A notification the app closes is destroyed, which empties the property, so the banner leaves.
-        visible: !!notification && root.workViewOnly && !root.notificationsOpen && !root.quickSettingsOpen
-            && !root.searchOpen && !root.appMenuOpen
+        visible: !!notification && root.workViewOnly
         anchors.top: true
         implicitWidth: Math.max(0, Math.min(370, screen.width - 24))
         implicitHeight: Math.max(bannerText.implicitHeight, 44) + 24
