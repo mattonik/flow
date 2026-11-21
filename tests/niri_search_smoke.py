@@ -8,12 +8,12 @@ stand-in ``flow-search`` first on PATH that lists fixed results and records what
 no app starts. Keys are typed with wtype into the panel, which has the keyboard while open.
 
 Checked, through the shell's ``search_view`` and ``toast`` IPC calls and the stand-in's log:
-- the panel lists what ``flow-search --json`` answers, and no old picker is started;
+- the panel lists what ``flow-search --json`` answers;
 - typing ranks an exact title first and keeps ties in flow-search's order, so Return on "Notes" opens
   the Notes app, not "Notes Server" or Notes as a Layer, through ``flow-search --open app <desktop file>``;
 - a query that matches nothing says so, in its own space above the footer;
-- a result that fails to open shows a toast naming it;
-- a flow-search that does not answer with results says search failed, not "Nothing matches".
+- a result that fails to open shows a toast naming it, also when ``flow-search`` cannot even start;
+- a flow-search that does not answer with results, or cannot start, says search failed, not "Nothing matches".
 
 That ``flow-search`` itself answers ``--json`` and finds gio is checked by ``checks.module`` (flake.nix),
 which runs the installed wrapper.
@@ -42,7 +42,7 @@ DIR={dir}
 case "$1" in
   --json) [ -e "$DIR/fail-list" ] && {{ echo "usage: flow-search" >&2; exit 2; }}; cat "$DIR/rows" ;;
   --open) echo "$2 $3" >> "$DIR/opened"; exit "$(cat "$DIR/open-exit" 2>/dev/null || echo 0)" ;;
-  *) echo "picker started" >> "$DIR/opened"; exit 2 ;;
+  *) exit 2 ;;
 esac
 """
 
@@ -171,10 +171,26 @@ def main():
             wait_for(lambda: (v := view()) and v["message"].startswith("Search couldn’t list anything"),
                      lambda: f"the failure message ({view()})")
             type_keys("-k", "Escape")
+            wait_for(lambda: ipc("search_state") == "closed", "Escape to close search")
             steps.append("a flow-search that did not answer with results showed that search failed")
 
-            if "picker started" in opened_lines():
-                raise RuntimeError("The shell started flow-search without --json or --open")
+            # flow-search that cannot start, as gio could not: a process that never starts must not be silent either.
+            # Its interpreter is missing, so the exec fails; deleting the stand-in would only reach another
+            # flow-search further down PATH.
+            (tmp / "fail-list").unlink()
+            (tmp / "open-exit").write_text("0")
+            open_search()
+            wait_for(lambda: (v := view()) and v["rows"], "the results again")
+            type_keys("Notes Viewer")
+            wait_for(lambda: (v := view()) and v["rows"] and v["rows"][0]["title"] == "Notes Viewer", "Notes Viewer first")
+            (stand_in / "flow-search").write_text("#!/nonexistent/sh\n")
+            type_keys("-k", "Return")
+            wait_for(lambda: ipc("toast") == "Couldn’t open Notes Viewer", lambda: f"the toast for a missing flow-search ({ipc('toast')!r})")
+            open_search()
+            wait_for(lambda: (v := view()) and v["message"].startswith("Search couldn’t list anything"),
+                     lambda: f"the failure message for a missing flow-search ({view()})")
+            type_keys("-k", "Escape")
+            steps.append("with a flow-search that cannot start, opening a result showed a toast and listing said search failed")
             result = {"result": "pass", "steps": steps}
         finally:
             if shell_process and shell_process.poll() is None:

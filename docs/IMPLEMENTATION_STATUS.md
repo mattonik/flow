@@ -263,7 +263,7 @@ Flow used Niri's own Overview (a vertical zoom of workspaces), fuzzel for search
   - **Results:** each has an icon tile (the app's icon, or a line icon for its kind), a title, a detail line and ↗. The chosen row has a 2 px focus edge.
   - **Footer:** "Enter to open · ↑ ↓ to choose · Esc to close". Escape works from anywhere in the panel.
   - **Behaviour:** `flow-search --json` lists the results, the shell filters them as you type and runs the choice. Apps and files open through `flow-search --open`, in their own scope. See *Search on the installed system*.
-  - **What is listed:** the same results fuzzel showed, except apps without a desktop file, which cannot be opened by name.
+  - **What is listed:** Flow settings, quick settings, pins (also other displays'), open windows, recent files and installed apps, each app also as a Layer. Apps without a desktop file are left out, since they cannot be opened by name.
   - **The old command:** `flow-apps` still exists as a standalone fuzzel launcher. Nothing in the shell uses it. `flow-search`'s fuzzel mode was removed (2026-11-21).
 - **Platform API:** `ShowOverview` opens Flow's Overview, and `ShowLauncher` opens the panel's app view. Both count an Overview that is still opening as open.
 
@@ -410,18 +410,20 @@ Causes, and fixes:
 - **The fuzzel mode is gone.** Nothing but the shell called `flow-search`, and the fallback is what put a second picker on screen. Called otherwise, it prints its usage.
 - **The guest tests could not see either.** They ran the shell with their own `flow-search` wrapper and glib on PATH. `checks.module` now runs the installed wrapper itself: `--json` must print results, and `--open` must find gio. Without `"$@"`, or without glib, the check fails.
 - **Ranking:** an exact title now ranks first, and ties keep `search.py`'s order. Qt's JavaScript sort is not stable, so typing "Foot" put "Foot Client · Open as Layer" first, and Return opened nothing.
-- **Messages:** with no results the message has its own space above the footer. A `flow-search` that does not print a list says that search failed, not "Nothing matches", and an app or file that fails to open shows a toast naming it.
-- **Icons:** an icon with fallbacks reaches the shell by its name, and an absolute icon path loads as a file.
+- **Messages:** with no results the message has its own space above the footer. A `flow-search` that does not print a list, or never starts, says that search failed, not "Nothing matches". An app or file that fails to open shows a toast naming it, also when `flow-search` cannot start: each open is a process of its own, so two quick opens cannot hide one's failure.
+- **Icons:** the missing icons were the fuzzel picker's, which shows text only. With results reaching the panel, apps show their theme icons (14 of 17 results in the guest).
 
 Tests:
-- **`niri_search_smoke.py` (guest):** drives a development shell with a stand-in `flow-search` and types with wtype. It checks the listed results, the ranking and Return opening the Notes app through `--open`, the no-match message staying clear of the footer, the failure toast and the failed-search message. Seven mutations each fail it: the unstable sort, no exact rank, `gio launch` from the shell again, no toast, no failed flag, and the old empty-state layout.
+- **`niri_search_smoke.py` (guest):** drives a development shell with a stand-in `flow-search` and types with wtype. It checks the listed results, the ranking and Return opening the Notes app through `--open`, the no-match message staying clear of the footer, the failure toast and the failed-search message, and both again with a `flow-search` that cannot start. Mutations each fail it: the unstable sort, no exact rank, `gio launch` from the shell again, no toast, no failed flag, the old empty-state layout, and the two start-failure paths.
 - **`checks.module` (CI):** fails with the wrapper's `"$@"` or its glib PATH removed, both shown in the guest.
 - **Installed configuration:** this branch, activated in the guest without a new generation, listed 17 results with 14 app icons and no fuzzel. Typing "Foot" and pressing Return opened a Foot window in its own scope. The system was then switched back to generation 26.
-- **Unit tests:** `test_search.py` covers `--json`, `--open` and its failures, and icon names.
+- **Unit tests:** `test_search.py` covers `--json`, `--open` and its failures.
 
 The wtype-driven tests had a latent flaw, fixed in both `niri_search_smoke.py` and `niri_focus_walk_smoke.py`. Niri does not resend a virtual keymap equal to the last one, so a run that stopped right after its first typed call left the next run's shell reading keys with the physical keymap. Each run now starts with a keymap no other call sends.
 
-Not verified: clicking a result with a pointer, and opening a recent file from the installed shell.
+A NEMESIS review found that a `flow-search` that could not start was still silent, both listing and opening; that a second open during a slow first lost its failure; and that the icon handling was guesswork no app in the guest needed. All are fixed as above; the speculative icon code was removed.
+
+Not verified: clicking a result with a pointer, opening a recent file from the installed shell, and icons given as absolute paths (no app in the guest uses one). Reopening search while a slow listing is still running can show that listing's results; it predates this change.
 
 ### Moving along a row in Overview (2026-11-21)
 

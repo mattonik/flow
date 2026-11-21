@@ -2,7 +2,7 @@
 
 Screenshots taken while building Flow, committed with the change they show, so the history shows how the shell
 looked before and after. Each folder is one piece of work, named by date and topic. All were taken in the UTM test
-guest at 1280×800 unless a name says otherwise (`narrow`, `65` for a 0.65 scale). They show the guest's own test
+guest at 1280×800 unless a name says otherwise (`narrow`, `65` for a 0.65 scale); the search `before-*` shots are the user's own crops of the guest's window on their Mac. They show the guest's own test
 data only.
 
 | Folder | What it shows |

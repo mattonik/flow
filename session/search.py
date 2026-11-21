@@ -57,10 +57,8 @@ def results(snapshot, apps, files=()):
         result.append((path.name, f"Recent file · {path.parent}", "file", path.as_uri(), ""))
     shown = [app for app in sorted(apps, key=lambda a: a.get_display_name().casefold()) if app.should_show()]
     def icon(app):
-        # A themed icon with fallbacks serialises as ". GThemedIcon name fallback…": the shell wants the name.
         found = app.get_icon()
-        text = found.to_string() if found is not None else ""
-        return text.split()[2] if text.startswith(". GThemedIcon ") and len(text.split()) > 2 else text
+        return found.to_string() if found is not None else ""
     for app in shown:
         result.append((app.get_display_name(), "Application", "app", app, icon(app)))
     # After every ordinary entry: the same apps opened as a Layer over the current space.

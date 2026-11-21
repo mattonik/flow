@@ -591,7 +591,7 @@ ShellRoot {
     property bool searchOpen: false
     property bool searchAppsOnly: false
     property var searchResults: []
-    property bool searchFailed: false   // flow-search did not print a list of results: say so, not "Nothing matches"
+    property bool searchFailed: false   // flow-search has not printed a list of results: say so, not "Nothing matches"
     property string searchQuery: ""
     property int searchIndex: 0
     readonly property var searchMatches: {
@@ -623,18 +623,28 @@ ShellRoot {
             }
         }
     }
-    // Apps and files open through flow-search, whose wrapper has gio; a failure is shown, never silent.
-    Process {
+    // Apps and files open through flow-search, whose wrapper has gio. One process per open, so each failure
+    // is shown: one that ran and failed, and one that never started (a Process that cannot start never exits).
+    Component {
         id: searchOpener
-        property string title: ""
-        onExited: exitCode => { if (exitCode !== 0) root.showToast("Couldn’t open " + title) }
+        Process {
+            property string title: ""
+            property bool began: false
+            property bool done: false
+            function finish(failed) {
+                if (done) return
+                done = true
+                if (failed) root.showToast("Couldn’t open " + title)
+                destroy()
+            }
+            onStarted: began = true
+            onExited: exitCode => finish(exitCode !== 0)
+            onRunningChanged: if (!running && !began) finish(true)
+        }
     }
     function openSearchResult(result) {
-        const command = ["flow-search", "--open", result.kind, result.value]
-        if (searchOpener.running) { Quickshell.execDetached(command); return }
-        searchOpener.title = result.title
-        searchOpener.command = command
-        searchOpener.running = true
+        const opener = searchOpener.createObject(root, { title: result.title, command: ["flow-search", "--open", result.kind, result.value] })
+        opener.running = true
     }
     function openSearchPanel(appsOnly) {
         overviewPending = false
@@ -649,7 +659,7 @@ ShellRoot {
         searchQuery = ""
         searchIndex = 0
         searchResults = []   // never the last run's: its windows may have closed
-        searchFailed = false
+        searchFailed = true    // until flow-search prints its list: one that never starts never answers
         searchOpen = true
         if (!searchList.running) searchList.running = true
     }
@@ -2352,10 +2362,7 @@ ShellRoot {
                             id: appIcon
                             anchors.centerIn: parent; width: 22; height: 22; sourceSize: Qt.size(44, 44)
                             visible: status === Image.Ready
-                            // A desktop file's Icon= is a theme name or an absolute file.
-                            source: !resultRow.modelData.icon ? ""
-                                : resultRow.modelData.icon.startsWith("/") ? "file://" + resultRow.modelData.icon
-                                : Quickshell.iconPath(resultRow.modelData.icon, true)
+                            source: resultRow.modelData.icon ? Quickshell.iconPath(resultRow.modelData.icon, true) : ""
                         }
                         FlowIcon {
                             visible: !appIcon.visible; anchors.centerIn: parent; size: 16; color: floeTheme.accent

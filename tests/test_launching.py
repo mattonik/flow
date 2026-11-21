@@ -1,19 +1,17 @@
 """Apps Flow opens get their own systemd scope when the installed shell asks for it (FLOW_APP_SCOPES=1).
 
 Without it (a development shell, tests) the commands are unchanged; the other test files rely on that.
-These tests go through the real call sites: opening a missing Group member, and a recent file from search.
+These tests go through the real call sites: opening a missing Group member. Search's --open is covered in test_search.py.
 """
 import importlib.util
 from pathlib import Path
 import sys
 import tempfile
-from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "session"))
 import launching
-import search
 
 spec = importlib.util.spec_from_file_location("spaces_for_launching", Path(__file__).parents[1] / "session/spaces.py")
 spaces = importlib.util.module_from_spec(spec)
@@ -56,12 +54,6 @@ class LaunchingTest(unittest.TestCase):
         self.assertEqual(args, [*SCOPE, "gio", "launch", desktop])
         args, desktop = self.open_missing_member({"FLOW_APP_SCOPES": ""})
         self.assertEqual(args, ["gio", "launch", desktop])
-
-    def test_search_opens_a_file_in_its_own_scope_from_the_installed_shell(self):
-        with patch.dict(search.os.environ, {"FLOW_APP_SCOPES": "1"}), \
-             patch.object(search.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
-            self.assertEqual(search.main(["--open", "file", "file:///home/martin/notes.txt"]), 0)
-        self.assertEqual(run.call_args.args[0], [*SCOPE, "gio", "open", "file:///home/martin/notes.txt"])
 
 
 if __name__ == "__main__":
