@@ -156,6 +156,7 @@ def main():
                 wait_for(lambda: ipc("search_state") == "closed", "search to close")
 
             close_search()
+            (tmp / "listed").unlink(missing_ok=True)
             (tmp / "rows").write_text(json.dumps(STALE_ROWS))
             (tmp / "slow").write_text("4")
             open_search()
@@ -178,8 +179,8 @@ def main():
             if not seen[-1]["rows"]:
                 raise RuntimeError(f"The new listing never showed: {seen[-1]}")
             listed = (tmp / "listed").read_text().split()
-            if len(listed) != 2:  # the first opening's and the new one's: the slow one was stopped, not waited out
-                raise RuntimeError(f"{len(listed)} listings finished, expected 2: the slow one was not stopped")
+            if len(listed) != 1:  # the new one's: the slow one was stopped, not waited out
+                raise RuntimeError(f"{len(listed)} listings finished, expected 1: the slow one was not stopped")
             steps.append("search opened again during a slow listing said it was looking, then showed the new listing, "
                          "not the old one's answer, and the old listing was stopped")
 

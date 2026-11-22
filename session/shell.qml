@@ -612,35 +612,26 @@ ShellRoot {
     }
     onSearchMatchesChanged: searchIndex = 0
     // One listing per opening of search. A listing still running when search opens again lists what was there
-    // before (windows since closed), so it is stopped and its answer dropped: only the newest one is shown.
+    // before (windows since closed): it is sent SIGTERM and its answer dropped, so only the newest one is shown.
+    // That stops search.py, not the `flow-spaces refresh` it started, which finishes under spaces.lock.
     property var searchListing: null   // the listing this opening waits for; null once it has answered
     Component {
         id: searchLister
         Process {
             id: lister
             command: ["flow-search", "--json"]
-            property bool began: false
-            property bool answered: false
-            property bool ended: false
-            function settle() { if (answered && ended) destroy() }
+            // Quickshell finishes the stream before running turns false (a stopped listing's ends at once,
+            // empty); one that never starts only turns running false, and search says it failed.
             stdout: StdioCollector {
                 onStreamFinished: {
-                    if (root.searchListing === lister) {
-                        let rows = null
-                        try { rows = JSON.parse(this.text) } catch (error) {}
-                        root.searchFailed = !Array.isArray(rows)
-                        root.searchResults = Array.isArray(rows) ? rows : []
-                        root.searchListing = null
-                    }
-                    lister.answered = true
-                    lister.settle()
+                    if (root.searchListing !== lister) return
+                    let rows = null
+                    try { rows = JSON.parse(this.text) } catch (error) {}
+                    root.searchFailed = !Array.isArray(rows)
+                    root.searchResults = Array.isArray(rows) ? rows : []
                 }
             }
-            onStarted: began = true
-            // A stopped one may never finish its stream: nobody waits for its answer, so it goes when it exits.
-            onExited: { ended = true; if (root.searchListing !== lister) answered = true; settle() }
-            // One that never starts never answers: search says it failed (searchFailed is already set).
-            onRunningChanged: if (!running && !began) {
+            onRunningChanged: if (!running) {
                 if (root.searchListing === lister) root.searchListing = null
                 destroy()
             }
