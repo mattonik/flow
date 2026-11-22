@@ -161,14 +161,21 @@ def main():
             wait_for(lambda: (v := view()) and v["message"] == "Looking…", lambda: f"the slow listing ({view()})")
             close_search()
             (tmp / "rows").write_text(json.dumps(ROWS))
-            (tmp / "slow").unlink()
+            (tmp / "slow").write_text("2")  # the new listing is slow too: until it answers, search is looking
             open_search()
-            fresh = wait_for(lambda: (v := view()) and v["rows"] and v, lambda: f"the new listing ({view()})")
-            time.sleep(5)  # past the end of the slow listing
-            last = view()
-            for shown in (fresh, last):
-                if [r["title"] for r in shown["rows"]] != [r["title"] for r in ROWS]:
-                    raise RuntimeError(f"Search opened again showed an older listing: {shown}")
+            (tmp / "slow").unlink()
+            seen, end = [], time.monotonic() + 6  # past the end of the first listing
+            while time.monotonic() < end:
+                seen.append(view())
+                time.sleep(0.2)
+            if not seen[0] or seen[0]["message"] != "Looking…":
+                raise RuntimeError(f"Search opened again during a slow listing did not say it was looking: {seen[0]}")
+            for shown in seen:
+                if not shown or shown["message"] not in ("Looking…", "") or (
+                        shown["rows"] and [r["title"] for r in shown["rows"]] != [r["title"] for r in ROWS]):
+                    raise RuntimeError(f"Search opened again showed something other than looking or the new listing: {shown}")
+            if not seen[-1]["rows"]:
+                raise RuntimeError(f"The new listing never showed: {seen[-1]}")
             steps.append("search opened again during a slow listing showed the new listing, not the old one's answer")
 
             type_keys("Notes")
