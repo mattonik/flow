@@ -475,9 +475,13 @@ The user asked for *Dissolve Group* to shift other columns too, as *Rejoin Group
 
 Since this display's pinned spaces lead the strip, a pinned window after an unpinned Group is mostly another display's pin, such as one whose monitor was unplugged; that is the case the old rule refused.
 
+Each step is checked first, as *Rejoin Group* checks its steps. Niri's action splits a window out of a shared column, but joins a window that is alone to the next column, which may now be a pinned space. So right before each step the app must still share the Group's column, or dissolving stops and the Group stays saved. At the end the apps must sit side by side in stack order. Niri has no expel-only action by ID, so a change in the milliseconds between that check and the step can still join a window to the next column, as it always could for unpinned columns.
+
 Tests:
-- **`test_groups.py`:** a Group with another display's pinned window after it dissolves, and the pinned window moves right in order. The old rule, put back, fails it.
+- **`test_groups.py`:** a Group with a pinned window after it dissolves with one expel and is no longer saved; the old rule, put back, fails it. An app that is alone before its step is not acted on, and apps that end up apart are not confirmed; each check, removed, fails its test.
 - **`niri_group_recovery_smoke.py` (guest):** the pinned app's pin is moved to another display, so it stays after the unpinned Group; *Dissolve Group* gives each app a column of its own with the pinned window after them, and once the pin is this display's again, the next refresh puts it first. With the old rule put back, the dissolve is refused with its message.
+
+A NEMESIS review found the step's race could now reach a pinned column, a test assertion that checked only its own mock, and the order the final check left unconfirmed. All are fixed or stated as above.
 
 ### Recovery beside windows opened at login (2026-11-22)
 

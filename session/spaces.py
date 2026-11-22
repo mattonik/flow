@@ -383,7 +383,7 @@ def rejoin_plan(group, workspace, windows, pins):
     # The user asks for a rejoin, so the columns after the Group may close up as its apps join one column: they
     # keep their order, and pinned ones go back in pin order at the next refresh, once no side-by-side Group or
     # unfinished layout change pauses that (and only this display's pins). Session recovery rebuilds a pinned
-    # Group the same way, and dissolving one moves the columns after it right, in the same order.
+    # Group the same way.
     return found, direction
 
 
@@ -667,13 +667,23 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
             stacked.sort(key=lambda w: position(w)[1])
             # Expel from the bottom so the separated windows keep the stack's top-to-bottom order.
             for member in reversed(stacked[1:]):
+                # Only a window that shares a column is expelled: alone, the same action would join it to the next
+                # column, which may be a pinned space. Checked right before each step, as Rejoin Group checks.
                 # shortcut: Niri's targeted action can consume a neighbor after a race; use expel-only by ID when available.
+                ws, live = snapshot()
+                first = next((w for w in live if w.get("id") == stacked[0]["id"]), None)
+                me = next((w for w in live if w.get("id") == member["id"]), None)
+                if (ws["id"] != workspace["id"] or not first or not me or not position(first) or not position(me)
+                        or position(me)[0] != position(first)[0]):
+                    raise ValueError("Could not confirm separation; Group remains saved. Check its apps and retry")
                 command("action", "consume-or-expel-window-right", "--id", member["id"])
             changed_workspace, changed_windows = snapshot()
             separated = [next((w for w in changed_windows if w.get("id") == member["id"]), None) for member in stacked]
             if (changed_workspace["id"] != workspace["id"]
                     or not all(eligible(w, changed_workspace, changed_windows) for w in separated)
-                    or {w.get("app_id") for w in separated} != set(apps)):
+                    or {w.get("app_id") for w in separated} != set(apps)
+                    or [position(w)[0] for w in separated]
+                    != list(range(position(separated[0])[0], position(separated[0])[0] + len(separated)))):
                 raise ValueError("Could not confirm separation; Group remains saved. Stack its apps and retry")
             groups.remove(next(g for g in groups if g["id"] == arg))
     elif op == "add-to-group":

@@ -198,9 +198,9 @@ class GroupRegistryTest(unittest.TestCase):
             spaces.run([], "unstack", None, ws, pair, "session", registered)
         command.assert_not_called()
 
-    def test_dissolve_shifts_a_pin_after_it_in_the_same_order(self):
+    def test_dissolve_is_not_refused_for_a_pin_after_it(self):
         # As Rejoin Group may close columns up, dissolving may move the columns after the Group right, a pinned
-        # one included (another display's pin, say, which this display's pin ordering leaves where it is).
+        # one included: no refusal, one expel, and the Group is gone.
         ws = {"id": 1, "active_window_id": 1}
         windows = [window(1, "a", 1), window(2, "b", 1, 2), window(3, "pinned", 2)]
         registered = [{"id": "g", "label": "Work", "members": ["a", "b"]}]
@@ -214,8 +214,31 @@ class GroupRegistryTest(unittest.TestCase):
              patch.object(spaces, "command", side_effect=separate) as command:
             spaces.run(pins, "dissolve-group", "g", ws, windows, "session", registered)
         command.assert_called_once_with("action", "consume-or-expel-window-right", "--id", 2)
-        self.assertEqual([w["layout"]["pos_in_scrolling_layout"][0] for w in windows], [1, 2, 3])
         self.assertEqual(registered, [])
+
+    def test_dissolve_expels_only_a_window_that_still_shares_the_column(self):
+        # Before its step the app is alone (the stack changed meanwhile): the same action would join it to the
+        # next column, a pinned one here, so nothing is done and the Group stays saved.
+        ws = {"id": 1, "active_window_id": 1}
+        windows = [window(1, "a", 1), window(2, "b", 1, 2), window(3, "pinned", 2)]
+        alone = [window(1, "a", 1), window(2, "b", 2), window(3, "pinned", 3)]
+        registered = [{"id": "g", "label": "Work", "members": ["a", "b"]}]
+        pins = [{"id": "p", "label": "Pinned", "app_id": "pinned", "window_id": 3, "display": "elsewhere"}]
+        with patch.object(spaces, "snapshot", side_effect=[(ws, windows), (ws, alone)]), \
+             patch.object(spaces, "command") as command, self.assertRaisesRegex(ValueError, "Could not confirm separation"):
+            spaces.run(pins, "dissolve-group", "g", ws, windows, "session", registered)
+        command.assert_not_called()
+        self.assertEqual(registered[0]["id"], "g")
+
+    def test_dissolve_confirms_the_apps_side_by_side_in_stack_order(self):
+        ws = {"id": 1, "active_window_id": 1}
+        windows = [window(1, "a", 1), window(2, "b", 1, 2), window(3, "other", 2)]
+        apart = [window(1, "a", 1), window(3, "other", 2), window(2, "b", 3)]  # b landed past another column
+        registered = [{"id": "g", "label": "Work", "members": ["a", "b"]}]
+        with patch.object(spaces, "snapshot", side_effect=[(ws, windows), (ws, windows), (ws, apart)]), \
+             patch.object(spaces, "command"), self.assertRaisesRegex(ValueError, "Could not confirm separation"):
+            spaces.run([], "dissolve-group", "g", ws, windows, "session", registered)
+        self.assertEqual(registered[0]["id"], "g")
 
     def test_dissolve_allows_a_pin_to_the_left(self):
         ws = {"id": 1, "active_window_id": 1}
