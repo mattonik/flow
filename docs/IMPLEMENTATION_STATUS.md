@@ -685,3 +685,46 @@ Fifteen mutations of the shell were checked against these steps in the guest, af
 The fifteenth passes: `onClicked` also acting on the release after a swipe. The indicator's window hides once Overview opens, so the release never reaches it. In the first run, the click and × mutants failed for the wrong reason: the run before left the pointer on the banner, which held their first banner. Parking fixed that; rerun after it, they fail at their own steps. A first version of the resuming-count mutation shortened the count whenever the banner hid, and so failed an earlier step; the one counted above resumes only after the pointer held the banner.
 
 Not covered: a physical mouse or touchpad (a touchpad's smooth scrolling, and libinput's acceleration, never reach a virtual pointer), touch, the pointer on a second display, hover and pressed states of other controls, and the cursor's shape. Running these tests needs `flow-pointer` on PATH; the guest's machine configuration installs it once Flow's `main` has it.
+
+## What needs bare metal (2026-11-22)
+
+The UTM guest can test what reaches it as software or as a USB device: a simulated Wi-Fi network, and USB
+Wi-Fi and Bluetooth dongles, headsets and DisplayLink docks passed through from the Mac (see
+[hardware testing](hardware-testing.md)). These stay untestable there:
+- **Touch.** The guest has no touchscreen; UTM gives it a USB keyboard and pointing devices. A uinput
+  touchscreen could feed Niri synthetic touches, but not a real digitizer's noise and palm contacts, its
+  mapping onto a rotated or second display, or gestures at a real panel's rate.
+- **Rotation sensors.** There is no accelerometer for iio-sensor-proxy to read. The rotation tests above
+  set the output's transform through Niri, which skips the sensor, its debounce, and the order in which a
+  real device reports a turn.
+- **Alt-mode docks and real monitor identity.** USB-C alt-mode and Thunderbolt docks never reach the VM:
+  their picture is not USB traffic. The guest's displays are virtio-gpu's `Virtual-1` and `Virtual-2`, with
+  no real make, model or serial number, so per-display pins have never seen a real monitor's identity, two
+  monitors of the same model, a monitor that reports itself differently on another port, or a KVM switch.
+  The guest's hotplug is a virtual output disconnected through its DRM connector. A DisplayLink dock is the one real monitor the guest
+  can get, through USB redirection.
+- **GPU performance.** The guest renders with virgl over HVF, so its frame times say nothing about an
+  Intel, AMD or Arm GPU. [Performance](performance.md) records the guest's numbers only.
+- **Suspend and resume.** QEMU's guest suspend is not a laptop's firmware path: the lid switch, s2idle or
+  S3, Wi-Fi and displays coming back, and the lock screen on resume are untested.
+- **Battery and power.** There is no battery or backlight: low-battery behaviour, power profiles and
+  brightness are untested.
+- **The warm-reboot hang** (F-001): a warm reboot hung in UTM. Whether UTM, the guest's firmware or the
+  session causes it needs a real machine to tell.
+- **Physical input devices:** a touchpad's smooth scrolling and libinput's acceleration (see *Pointer in
+  the guest tests*), and keyboard layouts and media keys from a real keyboard. A USB keyboard or mouse
+  could be passed through, but the Mac's own touchpad cannot.
+
+**An x86-64 test machine.** Flow's module has nothing architecture-specific, but the flake only builds for
+aarch64-linux: the evaluation fixture `nixosConfigurations.test`, `checks.aarch64-linux.*` and
+`packages.aarch64-linux.flow-pointer`, and CI's module job runs on an Arm runner. A spare x86-64 laptop as
+a second test machine would need:
+- the flake's checks and `flow-pointer` for x86_64-linux too, and a CI job on an x86-64 runner that builds
+  them;
+- a machine flake like the guest's `/etc/floe-test`: its own `hardware-configuration.nix` and boot loader,
+  its GPU's Mesa driver and firmware, NetworkManager, automatic login into the Niri session, a test user
+  with passwordless `sudo` and SSH by key, Flow as a path input, and the test tools (`wtype`, `grim`,
+  `flow-pointer`, `iw`, `hostapd`, `usbutils`);
+- a way back in when a test breaks the session: a text console, or the Plasma fallback;
+- the hardware the gaps above need: a 2-in-1 with a touchscreen and an accelerometer, a battery and a lid
+  that Linux suspends with; two monitors of the same model and a USB-C alt-mode dock.

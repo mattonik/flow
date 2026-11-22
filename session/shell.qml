@@ -1382,9 +1382,9 @@ ShellRoot {
         // Read-only, for tests that point at the shell with tests/pointer.py: where a named item is (its window's
         // size, place and screen, and its rectangle in that window), or "" while it is hidden. "hovered" is what
         // the item shows of the pointer: a home indicator lit, a search row tinted, a banner held (its time
-        // stopped), the banner's × in its hover state. Names: home, overview_home and desk_home (the home
-        // indicators), overview_row, search_shade, search_row:N (only while the row is wholly in view),
-        // banner and banner_dismiss.
+        // stopped), the banner's × in its hover state, a panel row its hover tint. Names: home, overview_home
+        // and desk_home (the home indicators), overview_row, search_shade, search_row:N (only while the row is
+        // wholly in view), banner, banner_dismiss and quick_network (Quick settings' Network row).
         function pointer_target(name: string): string {
             let row = name.startsWith("search_row:") ? searchView.itemAtIndex(Number(name.slice(11))) : null
             if (row) {
@@ -1398,7 +1398,8 @@ ShellRoot {
                 overview_row: () => [spacesOverview, overviewRow, false],
                 search_shade: () => [searchPanel, searchShade, false],
                 banner: () => [notificationBanner, bannerCard, notificationBanner.held],
-                banner_dismiss: () => [notificationBanner, bannerDismiss, bannerDismiss.hovered]
+                banner_dismiss: () => [notificationBanner, bannerDismiss, bannerDismiss.hovered],
+                quick_network: () => [quickSettingsWindow, networkRow, networkRow.hovered]
             })[name]
             const [window, item, hovered] = found ? found() : row ? [searchPanel, row, row.tinted] : [null, null, false]
             if (!window || !window.visible || !item.visible || !window.screen) return ""
@@ -3031,6 +3032,7 @@ ShellRoot {
         shown: root.quickSettingsOpen; title: "Quick settings"
         onCloseRequested: root.quickSettingsOpen = false
         PanelRow {
+            id: networkRow
             width: parent.width; text: "Network"; value: root.networkStatus
             valueColor: root.networkStatus === "Connected" ? floeTheme.success : floeTheme.textMuted
             Accessible.description: "Choose a Wi-Fi network"
