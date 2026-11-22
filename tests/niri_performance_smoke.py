@@ -467,6 +467,13 @@ def main():
             started = runs(logs["flow-appmenu"], shell_started, time.time())
             check("app menu: flow-appmenu processes started", len(started), "1 (serve)",
                   [args for _, _, args in started] == ["serve"])
+            # Closed again, so the phases after this one measure what they did before it was added (Overview's
+            # cost grows with its cards).
+            niri("action", "close-window", "--id", browser)
+            wait_for(lambda: all(w["id"] != browser for w in read("windows")), "Nautilus to close")
+            files.terminate()
+            time.sleep(1)
+            quiet()
 
             # An activity without a known amount (ADR-0010): the shell reads what the Platform API publishes.
             def publish(activities):
