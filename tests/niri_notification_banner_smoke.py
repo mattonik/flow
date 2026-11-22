@@ -69,7 +69,8 @@ def main():
     def orphans():
         out = subprocess.run(["ps", "-eo", "pid,ppid,cmd"], text=True, stdout=subprocess.PIPE).stdout
         return {line.split()[0] for line in out.splitlines()[1:]
-                if line.split()[1] == str(os.getpid()) and "event-stream" in line}
+                if line.split()[1] == str(os.getpid())
+                and ("event-stream" in line or "flow_controller" in line)}
 
     with tempfile.TemporaryDirectory(prefix="flow-banner-") as tmp:
         runtime = Path(tmp) / "runtime"

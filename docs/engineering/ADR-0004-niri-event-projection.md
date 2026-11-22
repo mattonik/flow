@@ -1,6 +1,6 @@
 # ADR-0004: Prototype a pure Niri event projection
 
-**Status:** Prototype only, 13 November 2026
+**Status:** Prototype only, 13 November 2026; used by the resident controller since 22 November 2026 ([ADR-0011](ADR-0011-resident-controller.md))
 
 ## Context
 

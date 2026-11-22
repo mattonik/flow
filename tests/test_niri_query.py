@@ -106,23 +106,19 @@ class OrientationTest(unittest.TestCase):
             spaces.run_locked(Path(state))
         return json.loads(out.getvalue())["orientation"]
 
-    def test_labels_say_what_they_are_without_a_title(self):
-        """The shell relabels windows from Niri's events with ``untitled`` and ``label_join``, and nothing else."""
-        tiled = [{"id": 7, "app_id": "foot", "title": "", "workspace_id": 1, "is_floating": False,
-                  "layout": {"pos_in_scrolling_layout": [1, 1]}},
-                 {"id": 8, "app_id": "", "title": "notes", "workspace_id": 1, "is_floating": False,
-                  "layout": {"pos_in_scrolling_layout": [1, 2]}}]
-        with tempfile.TemporaryDirectory() as state, \
-             patch.object(sys, "argv", ["flow-spaces", "observe"]), \
-             patch.object(spaces, "full_state", return_value=(WORKSPACES[0], tiled, OUTPUTS, WORKSPACES)), \
-             patch.object(spaces, "session_id", return_value="s"), \
-             contextlib.redirect_stdout(io.StringIO()) as out:
-            spaces.run_locked(Path(state))
-        result = json.loads(out.getvalue())
-        self.assertEqual([(w["label"], w["untitled"]) for w in result["windows"]], [("foot", "foot"), ("notes", "Application")])
-        [space] = result["spaces"]
-        self.assertEqual([(m["label"], m["untitled"]) for m in space["members"]], [("foot", "foot"), ("notes", "Application")])
-        self.assertEqual((space["label"], space["label_join"]), ("foot + notes", " + "))
+    def test_a_refresh_without_reshaping_says_a_layer_is_due_and_acts_on_nothing(self):
+        layer = {"id": 9, "app_id": "foot", "title": "layer", "workspace_id": 1, "is_floating": True,
+                 "layout": {"pos_in_scrolling_layout": None, "tile_size": [500, 400]}}
+        portrait = {"Virtual-1": {"logical": {"width": 800, "height": 1280}}}
+        with tempfile.TemporaryDirectory() as state:
+            (Path(state) / "layer-shapes.json").write_text(json.dumps({"session": "s", "layers": {"9": "landscape"}}))
+            with patch.object(spaces, "full_state", return_value=(WORKSPACES[0], WINDOWS + [layer], portrait, WORKSPACES)), \
+                 patch.object(spaces, "session_id", return_value="s"), \
+                 patch.object(spaces, "command", side_effect=AssertionError("no Niri action without reshaping")):
+                result = spaces.run_locked(Path(state), "refresh", emit=False, reshape=False)
+                self.assertTrue(result.get("reshape_due"))
+                (Path(state) / "layer-shapes.json").write_text(json.dumps({"session": "s", "layers": {"9": "portrait"}}))
+                self.assertNotIn("reshape_due", spaces.run_locked(Path(state), "refresh", emit=False, reshape=False))
 
     def test_orientation_of_the_focused_output(self):
         self.assertEqual(self.observe({"width": 1280, "height": 800}), "landscape")

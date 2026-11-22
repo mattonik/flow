@@ -120,12 +120,6 @@ def resolve(pin, windows, socket):
     return matches[0] if len(matches) == 1 else None
 
 
-def titled(window, untitled):
-    """A window's label: its title, else ``untitled``. ``untitled`` goes with it, so the shell can relabel the
-    window from Niri's events when only its title changes (session/shell.qml, applyTitles)."""
-    return {"label": window.get("title") or untitled, "untitled": untitled}
-
-
 def position(window):
     return (window or {}).get("layout", {}).get("pos_in_scrolling_layout")
 
@@ -1131,7 +1125,7 @@ def layers(workspace, windows, shaped=()):
 
     ``shaped`` marks the ones Flow shaped, which follow rotation; other floating windows keep their size.
     """
-    return [{"id": w["id"], **titled(w, w.get("app_id") or "Application"),
+    return [{"id": w["id"], "label": w.get("title") or w.get("app_id") or "Application",
              "app_id": w.get("app_id") or "", "app_name": app_name(w.get("app_id")),
              "active": w["id"] == workspace.get("active_window_id"), "shaped": str(w["id"]) in shaped}
             for w in windows if w.get("workspace_id") == workspace["id"] and w.get("is_floating")]
@@ -1196,19 +1190,30 @@ def follow_rotation(outputs, workspaces, windows):
     if not data["layers"]:
         save_layer_memory(path, data, before)
         return False
-    where = {ws["id"]: ws.get("output") for ws in workspaces}
     changed = False
-    for key, shaped in list(data["layers"].items()):
-        logical = ((outputs or {}).get(where.get(floating[key].get("workspace_id"))) or {}).get("logical") or {}
-        if not logical.get("width") or not logical.get("height"):
-            continue
-        size = (logical["width"], logical["height"])
-        if orientation_of(size) != shaped:
-            shape_layer(int(key), size)
-            data["layers"][key] = orientation_of(size)
-            changed = True
+    for key, size in layers_to_reshape(data["layers"], outputs, workspaces, windows):
+        shape_layer(int(key), size)
+        data["layers"][key] = orientation_of(size)
+        changed = True
     save_layer_memory(path, data, before)
     return changed
+
+
+def layers_to_reshape(shaped, outputs, workspaces, windows):
+    """The Layers Flow shaped (``shaped``: window ID → orientation) whose output now has another orientation,
+    with that output's logical size. Only reads."""
+    floating = {str(w["id"]): w for w in windows if w.get("is_floating")}
+    where = {ws["id"]: ws.get("output") for ws in workspaces}
+    found = []
+    for key, orientation in shaped.items():
+        if key not in floating:
+            continue
+        logical = ((outputs or {}).get(where.get(floating[key].get("workspace_id"))) or {}).get("logical") or {}
+        if logical.get("width") and logical.get("height"):
+            size = (logical["width"], logical["height"])
+            if orientation_of(size) != orientation:
+                found.append((key, size))
+    return found
 
 
 def float_as_layer(window_id, size=None):
@@ -1267,7 +1272,7 @@ def display_spaces(workspace, windows, groups=(), pins=()):
         key = ("column", pos[0])
         if not columns or columns[-1][0] != key:
             columns.append((key, []))
-        columns[-1][1].append({"id": w["id"], **titled(w, w.get("app_id") or "Application"),
+        columns[-1][1].append({"id": w["id"], "label": w.get("title") or w.get("app_id") or "Application",
                               "app_id": w.get("app_id") or "", "app_name": app_name(w.get("app_id")),
                               "active": w["id"] == workspace.get("active_window_id")})
     result = []
@@ -1313,8 +1318,6 @@ def display_spaces(workspace, windows, groups=(), pins=()):
             last = pin.get("last_focused_app") or group.get("last_focused_app")
             selected = next((w for w in members if w["app_id"] == last), selected)
         space = {"id": selected["id"], "label": group["label"] if group else " + ".join(w["label"] for w in members),
-                 # A space of its own windows is named by them: the shell joins their labels again.
-                 **({} if group else {"label_join": " + "}),
                  "group_id": group["id"] if group else None, "group_layout": "stack" if group else None,
                  "auto_layout": group.get("auto_layout", False) if group else False,
                  "active": any(w["active"] for w in members), "members": members}
@@ -1328,8 +1331,6 @@ def display_spaces(workspace, windows, groups=(), pins=()):
             neighbor, _ = neighbor_to_add(group, found, workspace, windows, groups, pins)
             space["can_add"] = bool(neighbor)
             space["add_label"] = (neighbor.get("title") or neighbor.get("app_id")) if neighbor else ""
-            space["add_id"] = neighbor["id"] if neighbor else None
-            space["add_untitled"] = neighbor.get("app_id") if neighbor else ""
             space["can_remove"] = len(space["members"]) > 2 and not (
                 space["group_layout"] == "side-by-side" and any(p.get("group_id") == group["id"] for p in pins))
     return result
@@ -1389,7 +1390,7 @@ def incomplete_groups(workspace, windows, groups, pins):
                        (found and found[0].get("workspace_id") != workspace["id"]) for found in candidates)
         # Several windows of a member app: the user says which one, never Flow.
         choices = [{"app": app, "app_name": app_name(app) or app,
-                    "windows": [{"id": w["id"], **titled(w, app)} for w in found
+                    "windows": [{"id": w["id"], "label": w.get("title") or app} for w in found
                                 if w.get("workspace_id") == workspace["id"] and not w.get("is_floating")
                                 and position(w)]}
                    for app, found in zip(group["members"], candidates) if len(found) > 1]
@@ -1734,16 +1735,28 @@ def other_pins(pins, display, displays, connected, ambiguous, workspaces, window
     return result
 
 
-def run_locked(state):
-    """Run one action; Group bindings apply only while it runs, in this Niri session."""
+def run_locked(state, op=None, arg=None, emit=True, reshape=True):
+    """Run one action and return Flow's state after it; Group bindings apply only while it runs, in this Niri
+    session. The action and its argument default to the command line's, and the state is printed unless
+    ``emit`` is false. Without ``reshape``, Layers whose display turned are not reshaped (that runs Niri
+    actions and waits for them); the state then says ``"reshape_due": true`` when one is
+    (session/flow_controller.py leaves it to a ``flow-spaces refresh`` of its own)."""
     global SESSION, STATE
+    if op is None:
+        op = sys.argv[1] if len(sys.argv) > 1 else "refresh"
+        arg = sys.argv[2] if len(sys.argv) > 2 else None
     try:
-        return _run_locked(state)
+        result = _run_locked(state, op, arg, reshape)
     finally:
         SESSION = STATE = None
+    if emit:
+        print(json.dumps(result))
+    return result
 
 
-def _run_locked(state):
+def _run_locked(state, op, arg, reshape=True):
+    requested = op
+    reshape_due = False
     path = state / "spaces.json"
     with (state / "spaces.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -1772,9 +1785,9 @@ def _run_locked(state):
             return record["key"] if record else None
 
         display = here(workspace)
-        op = sys.argv[1] if len(sys.argv) > 1 else "refresh"
-        arg = sys.argv[2] if len(sys.argv) > 2 else None
-        if op != "observe" and follow_rotation(outputs, workspaces, windows):
+        if op != "observe" and not reshape:
+            reshape_due = bool(layers_to_reshape(layer_memory()[1]["layers"], outputs, workspaces, windows))
+        elif op != "observe" and follow_rotation(outputs, workspaces, windows):
             # A Layer took its rotated output's shape; focus stays where it was.
             if workspace.get("active_window_id"):
                 command("action", "focus-window", "--id", workspace["active_window_id"])
@@ -1910,34 +1923,34 @@ def _run_locked(state):
             pin_store.write(path, pins, displays, version)
         ordered = sorted((w for w in windows if w.get("workspace_id") == workspace["id"]),
                          key=lambda w: (position(w) or [99999, 0]))
-        visible = [{"id": w["id"], **titled(w, w.get("app_id") or "Application"),
+        visible = [{"id": w["id"], "label": w.get("title") or w.get("app_id") or "Application",
                     "app_id": w.get("app_id") or "", "active": w["id"] == workspace.get("active_window_id")}
                    for w in ordered]
         record = connected.get(workspace.get("output"))
         logical = (outputs.get(workspace.get("output")) or {}).get("logical") or {}
-        print(json.dumps({"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows, groups, pins),
-                          "layers": layers(workspace, windows, layer_memory()[1]["layers"]),
-                          "incomplete_groups": incomplete_groups(workspace, windows, groups, pins),
-                          "other_pins": other_pins(pins, display, displays, connected, ambiguous, workspaces, windows, socket, groups),
-                          "display": {"key": display, "label": record["label"] if record else workspace.get("output") or "",
-                                      "name": pin_store.display_name(displays.get(display)),
-                                      "number": (displays.get(display) or {}).get("number")},
-                          "display_count": len(connected),
-                          # The shell runs automatic Group layout when a Group does not suit this.
-                          "orientation": orientation_of((logical["width"], logical["height"]))
-                                         if logical.get("width") and logical.get("height") else "",
-                          "displays": [{"key": key, "label": displays[key].get("label", ""),
-                                        "name": pin_store.display_name(displays[key]),
-                                        "number": displays[key].get("number"), "current": key == display}
-                                       for key in screen_order],
-                          "notice": notice,
-                          "all_windows": [{"id": w["id"], "app_id": w.get("app_id") or "", "pid": w.get("pid"),
-                                           "title": w.get("title") or "", "workspace_id": w.get("workspace_id"),
-                                           # Niri's keyboard focus: false while Desk, a launcher or the overview
-                                           # holds the keyboard, though the window stays the workspace's active one.
-                                           "focused": w.get("is_focused") is True}
-                                          for w in windows],
-                          "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
+        return {"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows, groups, pins),
+               "layers": layers(workspace, windows, layer_memory()[1]["layers"]),
+               "incomplete_groups": incomplete_groups(workspace, windows, groups, pins),
+               "other_pins": other_pins(pins, display, displays, connected, ambiguous, workspaces, windows, socket, groups),
+               "display": {"key": display, "label": record["label"] if record else workspace.get("output") or "",
+                           "name": pin_store.display_name(displays.get(display)),
+                           "number": (displays.get(display) or {}).get("number")},
+               "display_count": len(connected),
+               # The shell runs automatic Group layout when a Group does not suit this.
+               "orientation": orientation_of((logical["width"], logical["height"]))
+                              if logical.get("width") and logical.get("height") else "",
+               "displays": [{"key": key, "label": displays[key].get("label", ""),
+                             "name": pin_store.display_name(displays[key]),
+                             "number": displays[key].get("number"), "current": key == display}
+                            for key in screen_order],
+               "notice": notice,
+               "all_windows": [{"id": w["id"], "app_id": w.get("app_id") or "", "pid": w.get("pid"),
+                                "title": w.get("title") or "", "workspace_id": w.get("workspace_id"),
+                                # Niri's keyboard focus: false while Desk, a launcher or the overview
+                                # holds the keyboard, though the window stays the workspace's active one.
+                                "focused": w.get("is_focused") is True}
+                               for w in windows],
+               "action": requested, **({"reshape_due": True} if reshape_due else {})}
 
 
 def main():

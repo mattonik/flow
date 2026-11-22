@@ -11,27 +11,32 @@ display's empty workspace, which must be free: three terminals open there, one o
 Every ``flow-spaces``, ``flow-search`` and ``flow-appmenu`` the shell starts goes through a recorder first on its
 PATH, which logs the time and arguments and runs the real one. ``flow-appmenu`` is a stand-in that answers
 ``null``, as the real one does while the focused workspace has no window: the shell, holding no menu, must not
-keep asking. Helper timings are medians of 11 runs after 3 that warm the guest up. CPU time comes from /proc:
-the shell's own, and its children's once it has reaped them. Surface timings are the shell's own (its
-``open_took`` IPC call): from the request to the surface's content, so IPC does not count.
+keep asking. A refresh is one the shell's resident controller ran (ADR-0011; it reports them on its socket) or
+a ``flow-spaces`` the shell started (before the controller, every refresh was one). Helper timings are medians of
+11 runs after 3 that warm the guest up. CPU time comes from /proc: the shell's own, and its helpers': those it
+has reaped, and its running controller. Surface timings are the shell's own (its ``open_took`` IPC call): from
+the request to the surface's content, so IPC does not count.
 
-Checked (the limits are the PR's: docs/performance.md):
-- idle 60 s: the shell under 1% of a core, at most 3 flow-spaces and at most 3 flow-appmenu runs;
-- a title changing every 0.3 s for 10 s: at most 12 flow-spaces runs, the children under 10% of a core and the
-  shell under 5%;
+Checked (the limits are the PRs': docs/performance.md):
+- idle 60 s: the shell and its helpers each under 1% of a core, at most 3 refreshes and at most 3 flow-appmenu
+  runs;
+- a title changing every 0.3 s for 10 s: at most 12 refreshes, the helpers under 10% of a core and the shell
+  under 5%;
 - a title changing every 0.05 s for 7.5 s: the shell's label for that window never unchanged for 1.5 s, and the
   shell under 10% of a core;
 - focus moving every 0.05 s for 6 s: never 1.5 s without a refresh (a maximum wait);
-- focus moving every 0.25 s for 6 s: at most 16 refreshes (a minimum interval);
-- ``flow-spaces refresh`` and ``observe`` medians under 30 ms; ``flow-search --json`` under 200 ms, and it
-  asks flow-spaces only to observe;
+- focus moving every 0.25 s for 6 s: at most 16 refreshes (a minimum interval), the helpers under 2.5% of a core;
+- ``flow-spaces refresh`` and ``observe`` medians under 30 ms (actions, and the Platform API without a shell,
+  still run it); the controller's own refreshes under 10 ms on average; ``flow-search --json`` under 200 ms,
+  and it asks flow-spaces only to observe;
 - Overview shown (after the snapshot of the active space it takes first) under 200 ms, Desk showing a fresh
-  flow-spaces answer under 150 ms and search showing its rows under 300 ms (medians of 5).
+  refresh under 150 ms and search showing its rows under 300 ms (medians of 5).
 
 ``FLOW_PERF_IDLE`` shortens the idle phase (seconds) while developing; the limits stay those of 60 s.
 Prints one JSON line per check and a final ``{"result": ...}``; exits 1 if any check failed.
 """
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -86,6 +91,25 @@ class NiriSocket:
     def close(self):
         self.stream.close()
         self.connection.close()
+
+
+def controller_stats(runtime, state_home):
+    """The development shell's controller's counters (ADR-0011), or None: main's shell has none. Its socket is
+    named as session/flow_controller.py's socket_path() names it."""
+    name = f"flow-controller-{hashlib.md5(str(state_home).encode()).hexdigest()[:12]}.sock"
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(5)
+            connection.connect(str(runtime / name))
+            connection.sendall(b'{"get": "stats"}\n')
+            with connection.makefile("rb") as answers:
+                for line in answers:
+                    message = json.loads(line)
+                    if "reply" in message:
+                        return message["reply"]
+    except (OSError, ValueError):
+        return None
+    return None
 
 
 def cpu(pid):
@@ -182,11 +206,26 @@ def main():
                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10).stdout.strip()
             return answer, (time.perf_counter() - start) * 1000
 
+        def refreshes(start, end):
+            """When Flow's state was refreshed: by the shell's controller (ADR-0011) if it has one, and by the
+            flow-spaces the shell started itself (main's refreshes; actions and automatic layout passes)."""
+            stats = controller_stats(runtime, tmp) or {"recent": []}
+            started = [stamp for stamp, _, _ in runs(logs["flow-spaces"], start, end, {pid})]
+            return sorted(started + [stamp for stamp in stats["recent"] if start <= stamp <= end])
+
+        def helpers_cpu():
+            """CPU seconds of the shell's helpers: those it reaped, and its running controller."""
+            total = cpu(pid)[1]
+            stats = controller_stats(runtime, tmp)
+            if stats:
+                total += sum(cpu(stats["pid"]))
+            return total
+
         def quiet(seconds=1.5, timeout=20):
-            """Wait until the shell has started no flow-spaces for this long."""
+            """Wait until nothing has refreshed Flow's state for this long."""
             end = time.monotonic() + timeout
             while time.monotonic() < end:
-                if not runs(logs["flow-spaces"], time.time() - seconds, time.time() + 1):
+                if not refreshes(time.time() - seconds, time.time() + 1):
                     return
                 time.sleep(0.2)
             raise RuntimeError("The shell did not settle")
@@ -216,14 +255,16 @@ def main():
             quiet()
 
             # Idle.
-            own, _ = cpu(pid)
+            own, helpers = cpu(pid)[0], helpers_cpu()
             start = time.time()
             time.sleep(idle_seconds)
             end = time.time()
-            own_after, _ = cpu(pid)
+            own_after, helpers_after = cpu(pid)[0], helpers_cpu()
             check("idle: shell CPU", 100 * (own_after - own) / (end - start), "< 1", 100 * (own_after - own) / (end - start) < 1, "% of a core")
-            spaces_runs = runs(logs["flow-spaces"], start, end)
-            check("idle: flow-spaces runs", len(spaces_runs), "<= 3", len(spaces_runs) <= 3)
+            share = 100 * (helpers_after - helpers) / (end - start)
+            check("idle: helpers CPU", share, "< 1", share < 1, "% of a core")
+            spaces_runs = refreshes(start, end)
+            check("idle: refreshes", len(spaces_runs), "<= 3", len(spaces_runs) <= 3)
             menu_runs = runs(logs["flow-appmenu"], start, end)
             check("idle: flow-appmenu runs", len(menu_runs), "<= 3", len(menu_runs) <= 3)
 
@@ -281,16 +322,16 @@ def main():
                 wait_for(lambda: not (storm_dir / "go").exists(), "the storm to start", timeout=3)
                 return time.time()
 
-            own, children = cpu(pid)
+            own, children = cpu(pid)[0], helpers_cpu()
             start = retitle(0.3, 33)
             wait_for(lambda: (storm_dir / "done").exists(), "the 0.3 s storm", timeout=30)
             end = time.time()
             time.sleep(0.5)
-            own_after, children_after = cpu(pid)
-            storm_runs = runs(logs["flow-spaces"], start, end + 0.5)
-            check("title every 0.3 s: flow-spaces runs", len(storm_runs), "<= 12", len(storm_runs) <= 12)
+            own_after, children_after = cpu(pid)[0], helpers_cpu()
+            storm_runs = refreshes(start, end + 0.5)
+            check("title every 0.3 s: refreshes", len(storm_runs), "<= 12", len(storm_runs) <= 12)
             share = 100 * (children_after - children) / (time.time() - start)
-            check("title every 0.3 s: children CPU", share, "< 10", share < 10, "% of a core")
+            check("title every 0.3 s: helpers CPU", share, "< 10", share < 10, "% of a core")
             share = 100 * (own_after - own) / (time.time() - start)
             check("title every 0.3 s: shell CPU", share, "< 5", share < 5, "% of a core")
             quiet()
@@ -337,14 +378,22 @@ def main():
                 return begin, time.time()
 
             start, end = flip(0.05, 6)
-            starts = [start] + [stamp for stamp, _, _ in runs(logs["flow-spaces"], start, end)] + [end]
+            starts = [start] + refreshes(start, end) + [end]
             gap = max(b - a for a, b in zip(starts, starts[1:]))
             check("focus every 0.05 s: longest gap between refreshes", gap, "< 1.5", gap < 1.5, "s")
             time.sleep(1)
             quiet()
+            helpers = helpers_cpu()
             start, end = flip(0.25, 6)
-            count = len(runs(logs["flow-spaces"], start, end))
-            check("focus every 0.25 s: flow-spaces runs", count, "<= 16", count <= 16)
+            time.sleep(0.5)
+            share = 100 * (helpers_cpu() - helpers) / (time.time() - start)
+            count = len(refreshes(start, end))
+            check("focus every 0.25 s: refreshes", count, "<= 16", count <= 16)
+            check("focus every 0.25 s: helpers CPU", share, "< 2.5", share < 2.5, "% of a core")
+            stats = controller_stats(runtime, tmp)
+            if stats and stats["refreshes"]:
+                mean = stats["refresh_ms"] / stats["refreshes"]
+                check("controller refresh mean", mean, "< 10", mean < 10, "ms")
         finally:
             if sock:
                 sock.close()

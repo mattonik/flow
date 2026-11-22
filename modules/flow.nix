@@ -18,6 +18,15 @@ let
     export PATH="${pkgs.glib}/bin:$PATH"
     exec ${pkgs.python3}/bin/python3 -S -P -m spaces "$@"
   '';
+  # The resident controller (session/flow_controller.py, ADR-0011): the shell starts it. It runs Flow's refresh
+  # in-process, so it needs what flow-spaces needs.
+  controller = pkgs.writeShellScriptBin "flow-controller" ''
+    export PYTHONPATH="${sessionPython}"
+    user_name="''${USER:-$(${pkgs.coreutils}/bin/id -un)}"
+    export XDG_DATA_DIRS="''${XDG_DATA_DIRS:+$XDG_DATA_DIRS:}$HOME/.nix-profile/share:$HOME/.local/state/nix/profile/share:/etc/profiles/per-user/$user_name/share:/nix/var/nix/profiles/default/share:/run/current-system/sw/share:/usr/local/share:/usr/share"
+    export PATH="${pkgs.glib}/bin:$PATH"
+    exec ${pkgs.python3}/bin/python3 -S -P -m flow_controller "$@"
+  '';
   recovery = pkgs.writeShellScriptBin "flow-recovery" ''
     export PYTHONPATH="${sessionPython}"
     export PATH="${pkgs.glib}/bin:$PATH"
@@ -161,7 +170,7 @@ in {
       foot quickshell swaylock firefox nautilus gnome-control-center networkmanagerapplet spaces appmenu keyboard wvkbd wifiSettings niriAppearanceSync grim
       # Search's Lock screen runs it as Super+L does.
       flowLock
-      xwayland-satellite mesa-demos wayland-utils recovery search wireplumber networkmanager flowCli
+      xwayland-satellite mesa-demos wayland-utils recovery search wireplumber networkmanager flowCli controller
     ]) ++ lib.optionals config.services.desktopManager.plasma6.enable [ (lib.hiPrio kdeSettings) ];
     services.dbus.packages = [ flowApiActivation ];
     # Started on first use by D-Bus activation; it reads Flow state through flow-spaces.
@@ -198,7 +207,9 @@ in {
       wantedBy = [ "niri.service" ];
       partOf = [ "niri.service" ];
       after = [ "niri.service" ];
-      restartTriggers = [ shellFiles pkgs.quickshell ];
+      # The controller the shell starts runs Flow's Python: a switch that changes it restarts the shell, so a
+      # controller never keeps running code older than the flow-spaces actions beside it.
+      restartTriggers = [ shellFiles pkgs.quickshell controller ];
       # A shell that keeps failing stops trying after five starts in a minute, two seconds apart.
       unitConfig = { StartLimitIntervalSec = 60; StartLimitBurst = 5; };
       serviceConfig = {
