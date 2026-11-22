@@ -21,7 +21,7 @@ then for a side-by-side Group with a saved split:
   and so does recovery; Rejoin Group does too with a pinned app still after them, another display's, or this
   display's while a side-by-side Group pauses pin ordering, and once that Group is stacked or dissolved, the
   pins go back in pin order (at once, or at the next refresh); an unfinished layout change (simulated) pauses
-  pin ordering too, until it is finished.
+  pin ordering too, until it is finished, and one to a stack puts the pins back when finished.
 Real state files are checksummed.
 """
 
@@ -293,11 +293,10 @@ def main():
 
             # The pause ending by the unpinned side-by-side Group's own change (the pinned Group's ending is checked
             # above, where the next refresh puts the app pin first). The pinned Group goes to the end, behind it.
-            def pinned_last(label, move=True):
-                if move:
-                    niri("action", "focus-window", "--id", window("a")["id"])
-                    niri("action", "move-column-to-index", 4)
-                    expect(["n", "u", "v", "ab"], f"the pinned Group moved to the end, {label}")
+            def pinned_last(label):
+                niri("action", "focus-window", "--id", window("a")["id"])
+                niri("action", "move-column-to-index", 4)
+                expect(["n", "u", "v", "ab"], f"the pinned Group moved to the end, {label}")
                 paused = spaces("refresh")  # synchronous: any reordering is done when it returns
                 if columns() != ["n", "u", "v", "ab"]:
                     raise RuntimeError(f"Pin ordering ran while paused, {label}: {columns()}")
@@ -343,8 +342,39 @@ def main():
                          "unfinished, its apps split (simulated), a refresh left the pins out of order and offered "
                          "Finish layout change, which put the Group side by side with the pins still paused")
 
+            # And an unfinished change back to a stack: paused until finished, and the finishing puts the pins back,
+            # since the Group is then neither side by side nor mid-change. Simulated as an interruption right after its
+            # first Niri action leaves it: the measured split and the pending stack saved first, then the apps joined.
+            sizes = [window(s)["layout"]["tile_size"][0] for s in "uv"]
+            saved = json.loads((state / "groups.json").read_text())
+            entry = next(g for g in saved["groups"] if g["id"] == other_id)
+            entry.pop("side_ratios", None)
+            entry.update(side_ratio=round(sizes[0] / sum(sizes), 4), pending_layout="stack")
+            (state / "groups.json").write_text(json.dumps(saved))
+            niri("action", "consume-or-expel-window-left", "--id", window("v")["id"])
+            expect(["n", "uv", "ab"], "the second Group's apps joined, its change to a stack unfinished")
+            paused = spaces("refresh")  # synchronous: any reordering is done when it returns
+            if columns() != ["n", "uv", "ab"]:
+                raise RuntimeError(f"Pin ordering ran during an unfinished change to a stack: {columns()}")
+            entry = next((e for e in paused["incomplete_groups"] if e["id"] == other_id), None)
+            if not entry or not entry.get("can_resume_layout"):
+                raise RuntimeError(f"Finish layout change was not offered: {paused['incomplete_groups']}")
+            niri("action", "focus-window", "--id", window("u")["id"])
+            spaces("resume-group-layout", other_id)  # ends with a refresh, like a layout change
+            expect(["ab", "n", "uv"], "the pins back in pin order once the change to a stack was finished")
+            if group(other_id).get("pending_layout") or group(other_id).get("layout", "stack") != "stack":
+                raise RuntimeError(f"The finished change to a stack left a pending layout: {group(other_id)}")
+            pins_reached(spaces("refresh"))
+            expect(["ab", "n", "uv"], "the pins still in pin order at the next refresh")
+            steps.append("with the second Group's change back to a stack unfinished, its apps joined (simulated), a "
+                         "refresh left the pins out of order and offered Finish layout change; finishing it put the "
+                         "pinned Group and the pinned app back first, in pin order")
+
             # Dissolved while side by side: dissolving does not order pins, so they go back at the next refresh.
-            pinned_last("before dissolving the second Group", move=False)  # already at the end
+            niri("action", "focus-window", "--id", window("u")["id"])
+            spaces("group-layout", other_id)
+            expect(["ab", "n", "u", "v"], "the second Group side by side again")
+            pinned_last("before dissolving the second Group")
             spaces("dissolve-group", other_id)
             if columns() != ["n", "u", "v", "ab"]:
                 raise RuntimeError(f"Dissolving the side-by-side Group moved columns: {columns()}")
