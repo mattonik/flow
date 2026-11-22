@@ -244,7 +244,7 @@ Flow used Niri's own Overview (a vertical zoom of workspaces), fuzzel for search
   - **Navigation:** half-pill rails at the screen's edges. A tool bar: *Open selected*, *Pin space* or *Unpin*, ← →, and *Your desk*. *Shortcuts* opens Niri's hotkey overlay.
   - **Keys:** Left/Right, Home/End and the wheel choose; Enter or a click returns; Up, or the home indicator again, goes on to Desk; Escape returns unchanged.
   - **The selection** is a space, not a position, so it stays put when a refresh replaces the list, for example when a title changes or a window opens.
-  - **Card images:** Niri offers no capture of one window, but a space fills its display while focused. So each card shows the snapshot taken the last time its space was on screen, as a phone's app switcher does: `grim`, at about 640 px wide, cropped exactly to below the Island and above the home indicator.
+  - **Card images:** Niri offers no capture of one window, but a space fills its display while focused. So each card shows the snapshot taken the last time its space was on screen, as a phone's app switcher does: `grim`, at the display's own resolution (scaling in `grim` cost more than the capture), decoded at 640 px wide, cropped exactly to below the Island and above the home indicator.
   - **When snapshots are taken:** only in the plain work view, and only when the focused space changes and has settled for 0.7 s; a title change is not a move. Opening Overview takes a fresh one unless a move is still settling.
   - **Where snapshots are kept:** in `$XDG_RUNTIME_DIR/flow-snapshots` only, and never without a runtime directory. They are deleted when their space closes and when the shell starts or stops.
   - **Why not Qt's own capture:** Qt's `grabToImage` crashed Quickshell 0.3.2 on Niri, in every run that used it. Niri's screenshot action would fill the clipboard.
@@ -581,6 +581,10 @@ The shell coalesces the refreshes Niri's events ask for: 150 ms after the last e
 - Under faster titles, and under fast focus changes, the shell's state was fresh only every 2 s. That was the automatic-layout poll, and only because a shaped Layer was open.
 
 The 2026-11-22 change passes all 17. With each fix neutralised in turn, the smoke fails. The numbers, the method and the review that shaped it are in [Performance](performance.md#under-a-stream-of-compositor-events-2026-11-22).
+
+### Startup, many spaces, frames and HiDPI (2026-11-22)
+
+`tests/niri_scale_probe.py` measures what phase 3 of the performance plan asked of real hardware, on whatever runs it: startup, idle frames and wakeups, the shell with 5 and 24 spaces, the frames each surface draws as it opens and closes (from Qt's own render-loop log), and Overview's snapshot. Only the UTM guest has run it. There, idle draws nothing and the shell wakes less than once a second; 24 spaces cost no memory and stay within every budget. On a 3840 × 2160 display at scale 2, Overview took 347–414 ms against its 200 ms budget, because `grim` scaling the snapshot down cost twice the capture. Snapshots are now taken at the display's resolution and decoded small: 179–218 ms. The shell also connects to its controller when the controller says it listens, not on a 250 ms timer, so startup shows every space 110–150 ms sooner. Quickshell builds a layer-shell window afresh each time it shows; that costs the render threads 10–23 ms per opening in the guest and was left alone. Details: [Performance](performance.md#startup-many-spaces-frames-and-hidpi-2026-11-22).
 
 ### Hidden surfaces and the busy indicator (2026-11-22)
 
@@ -925,7 +929,8 @@ Wi-Fi and Bluetooth dongles, headsets and DisplayLink docks passed through from 
   The guest's hotplug is a virtual output disconnected through its DRM connector. A DisplayLink dock is the one real monitor the guest
   can get, through USB redirection.
 - **GPU performance.** The guest renders with virgl over HVF, so its frame times say nothing about an
-  Intel, AMD or Arm GPU. [Performance](performance.md) records the guest's numbers only.
+  Intel, AMD or Arm GPU. [Performance](performance.md) records the guest's numbers only;
+  `tests/niri_scale_probe.py` is meant to be run on the first real machine.
 - **Suspend and resume.** QEMU's guest suspend is not a laptop's firmware path: the lid switch, s2idle or
   S3, Wi-Fi and displays coming back, and the lock screen on resume are untested.
 - **Battery and power.** There is no battery or backlight: low-battery behaviour, power profiles and
