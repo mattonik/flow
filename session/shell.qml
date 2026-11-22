@@ -3350,10 +3350,14 @@ ShellRoot {
         id: appMenuTrigger
         visible: root.appMenuAvailable && !root.deskOpen && !root.overviewOpen && !root.appMenuOpen
         anchors { top: true; left: true }
-        implicitWidth: 220; implicitHeight: 44; margins.left: 8
-        // On the Island's row, flush with the top edge as the tab is, leaving 8px before the centred tab;
-        // below it on a narrow screen, where panels hang too.
-        margins.top: screen && screen.width < workIslandContent.implicitWidth + 472 ? 56 : 0
+        implicitWidth: 220; implicitHeight: 44
+        // On the Island's row, flush with the top edge as the tab is, 8px right of the centred tab: the button
+        // shows only for apps with a menu bar, and Qt's and GTK's menu bars start at the left, so the left of
+        // the row would cover the app's own File and Edit menus. Below the tab on a narrow screen, where panels
+        // hang too.
+        readonly property bool narrow: !screen || screen.width < workIslandContent.implicitWidth + 472
+        margins.left: narrow ? 8 : Math.round((screen.width + workIslandContent.implicitWidth) / 2) + 8
+        margins.top: narrow ? 56 : 0
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         FlowButton {
@@ -3375,7 +3379,8 @@ ShellRoot {
             anchors.fill: parent; focus: true
             Keys.onEscapePressed: root.appMenuOpen = false
             Rectangle {
-                x: 8; y: appMenuTrigger.margins.top + appMenuTrigger.implicitHeight + 8
+                x: Math.max(8, Math.min(appMenuTrigger.margins.left, parent.width - width - 8))
+                y: appMenuTrigger.margins.top + appMenuTrigger.implicitHeight + 8
                 width: Math.min(390, parent.width - 16); height: Math.min(menuColumn.implicitHeight + 32, parent.height - y - 8)
                 radius: 16; color: floeTheme.surface; border.color: floeTheme.border
                 Flickable {

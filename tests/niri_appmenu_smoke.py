@@ -12,7 +12,8 @@ workspace; the run's windows are closed and its processes stopped, also when it 
 
 Checked:
 - the reader switches the run's accessibility on and records that Flow did;
-- Kate focused: the App button shows; foot focused: it is hidden;
+- Kate focused: the App button shows, and covers none of Kate's own menu bar (its left edge is right of every
+  top-level item's right edge, read over AT-SPI; Kate's window spans the output); foot focused: it is hidden;
 - Help > About Kate, chosen from the button's menu, opens Kate's About dialog;
 - two Kate windows of one process with one title: File > New chosen for the focused one changes only that one,
   each way round (the frame is chosen when focus settles, before the menu's surface takes the keyboard);
@@ -85,6 +86,28 @@ def a11y():
 
 def set_a11y(on):
     subprocess.run(["busctl", "--user", "set-property", *A11Y, "b", "true" if on else "false"], check=True, timeout=10)
+
+
+def kate_menu_ends(pid):
+    """The right edges of the top-level items in Kate's own menu bar, in its window (x 0 is the window's left)."""
+    import pyatspi
+    desktop = pyatspi.Registry.getDesktop(0)
+    for app in (desktop.getChildAtIndex(i) for i in range(desktop.childCount)):
+        if app is None or app.get_process_id() != pid:
+            continue
+        queue = [app]
+        while queue:
+            node = queue.pop(0)
+            for child in (node.getChildAtIndex(i) for i in range(node.childCount)):
+                if child is None:
+                    continue
+                if child.getRole() == pyatspi.ROLE_MENU_BAR and child.getState().contains(pyatspi.STATE_SHOWING):
+                    boxes = [item.queryComponent().getExtents(pyatspi.WINDOW_COORDS)
+                             for item in (child.getChildAtIndex(i) for i in range(child.childCount)) if item is not None]
+                    return [box.x + box.width for box in boxes if box.width > 0]
+                if len(queue) < 200:
+                    queue.append(child)
+    return []
 
 
 def main():
@@ -205,6 +228,10 @@ def main():
             shown = wait_for(lambda: (s := state()).get("button") and s, "the App button for Kate", timeout=15)
             check("Kate focused: the App button shows", shown["button"], probe=shown["probe"])
             shot("1-button-shown-kate.png")
+            button, ends, width = target("app_button"), kate_menu_ends(kate.pid), windows()[kate_a]["layout"]["window_size"][0]
+            left = button["screen"][0] + button["place"]["margins"][2] if button else None
+            check("the App button covers none of Kate's own menus", button and ends and width == button["screen"][2]
+                  and left > max(ends), button_left=left, menu_item_right_edges=ends, window_width=width)
             foot, foot_window = launch(["foot", "-T", "app menu smoke"])
             focus(foot_window)
             time.sleep(1)
