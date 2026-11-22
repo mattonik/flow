@@ -8,8 +8,9 @@ each with a desktop entry in an isolated data folder so recovery can open them a
 
 A reboot closes every app and starts a new Niri session. Both are simulated without ending the guest's
 session: the windows are closed, the saved session, the Groups' window bindings and the pins are marked as
-coming from an earlier Niri session, and recovery runs as the shell runs it at the start of a session
-(``flow-recovery auto-start``, which reports success only when every window was restored). Checked, for a pinned, renamed stacked Group beside a pinned app and
+coming from an earlier Niri session, an app is opened as at login (once), and recovery runs as the shell runs
+it at the start of a session (``flow-recovery auto-start``, which reports success only when every saved window
+was restored in its saved order). Checked, for a pinned, renamed stacked Group beside a pinned app and
 then for a side-by-side Group with a saved split:
 - recovery opens every app again and rebuilds the Group: one column in saved member order, or its
   columns at the saved proportions;
@@ -67,7 +68,7 @@ def main():
     if any(w.get("workspace_id") == workspace["id"] for w in read("windows")):
         raise RuntimeError("The focused output's active workspace must be empty")
     token = uuid.uuid4().hex[:8]
-    apps = {s: f"flow-recovery-{token}-{s}" for s in "abnu"}
+    apps = {s: f"flow-recovery-{token}-{s}" for s in "abnul"}
     steps, result = [], None
     with IsolatedState("flow-group-recovery-") as tmp:
         data = Path(tmp) / "data"
@@ -180,9 +181,13 @@ def main():
             expect(["ab", "n"], "the stacked Group and its neighbour")
             tool("flow-recovery", "save")
             reboot()
-            recover()
-            expect(["ab", "n"], "the recovered stacked Group")
+            open_app("l")  # an app opened at login, before recovery runs: not in the saved session
+            recover()  # succeeds only when every saved window is back in its saved order
+            expect(["l", "ab", "n"], "the recovered stacked Group after the app opened at login")
             _, current, bound = bound_here(group_id, "ab")
+            expect(["ab", "n", "l"], "the pins first again")
+            niri("action", "close-window", "--id", window("l")["id"])
+            expect(["ab", "n"], "the app opened at login closed")
             pins = {p["id"]: p for p in current["pins"]}
             if group(group_id)["label"] != "Recovery Desk" or group(group_id)["members"] != [apps["a"], apps["b"]]:
                 raise RuntimeError(f"The recovered Group lost its name or member order: {group(group_id)}")
@@ -193,9 +198,9 @@ def main():
                 raise RuntimeError(f"A pin reached the wrong windows: {current['pins']}")
             if not bound:
                 raise RuntimeError(f"The recovered Group is not bound to its new windows: {group(group_id)}")
-            steps.append("with every app closed and state from an earlier Niri session, automatic recovery opened all "
-                         "three again and rebuilt the pinned, renamed stacked Group in saved order, bound to the new "
-                         "windows; both pins reached them")
+            steps.append("with every app closed, state from an earlier Niri session and an app opened at login, "
+                         "automatic recovery opened all three again, rebuilt the pinned, renamed stacked Group in saved "
+                         "order, bound to the new windows, and succeeded; both pins reached them")
 
             niri("action", "focus-window", "--id", window("a")["id"])
             spaces("group-layout", group_id)
