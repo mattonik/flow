@@ -63,6 +63,8 @@ Main was measured with its own `shell.qml` plus only the read-only instrumentati
 
 Helpers ran 11 times after 3 that were not counted; surfaces opened 5 times. Every sample is in the smoke's output. Main's 2 s gaps come from its automatic-layout poll, which ran only because a shaped Layer was open. Without one, the labels and refreshes stayed stale for as long as the stream lasted. On the title storms the shell's own CPU is unchanged (3.8–3.9% and 1.6–1.9%), while its children's dropped from 32% to nothing.
 
+Desk skips its own refresh when one is already running, as it did before. That run's answer is nearly as fresh, but the check waits for a refresh begun after Desk opened. Once, on the code merged with main, that meant the next event-driven refresh, and Desk read 151–167 ms. The same shell measured 44–45 ms in a separate probe and 51 ms when the smoke was run again.
+
 Helpers are timed with a plain blocking wait. A first version of the smoke passed `timeout=` to `subprocess.run`, and Python then waits for the child by polling at doubling intervals, about 0.5, 1.5, 3.5, 7.5, 15.5, 31.5, 63.5 and 127.5 ms. A 20 ms `flow-spaces` read as 33–35 ms, and main read as 65 or 116–127 ms. `strace` had shown no wait inside the process. Each helper is timed 11 times, after 3 runs that are not counted, because the first run after the guest has been idle takes several times as long.
 
 Each fix was neutralised in turn, keeping its symbols, and the smoke was run again with a 20 s idle phase. Each one fails its own check:
