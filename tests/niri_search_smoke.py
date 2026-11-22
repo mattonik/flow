@@ -17,6 +17,8 @@ Checked, through the shell's ``search_view`` and ``toast`` IPC calls and the sta
 - with the pointer (tests/pointer.py), the row under it is tinted, a click opens that row rather than
   the chosen one, and a click on the shade closes search;
 - a query that matches nothing says so, in its own space above the footer;
+- commands: Restart runs only when chosen twice within 5 s (its row says so), Lock screen at once through
+  ``flow-search --open command``, and Open Desk opens Desk;
 - typing three letters or more walks the user folders for files by name (``flow-search --files``); a found file
   is listed and opens; a slow walk for an older query is dropped; the row chosen with the arrow keys stays
   chosen when a walk's answer arrives;
@@ -314,6 +316,50 @@ def main():
                      lambda: f"the chosen row to open ({opened_lines()[-1:]})")
             steps.append("the row chosen with the arrow keys stayed chosen when a file found later ranked above it, "
                          "and Return opened it")
+
+            # Commands: a system one that ends the session runs only when chosen twice within 5 s; others at once.
+            commands = [{"title": "Open Desk", "detail": "Flow", "kind": "action", "value": "desk", "icon": ""},
+                        {"title": "Lock screen", "detail": "System", "kind": "command", "value": "lock", "icon": ""},
+                        {"title": "Restart", "detail": "System · asks first", "kind": "command", "value": "restart",
+                         "icon": "", "confirm": True}]
+            (tmp / "rows").write_text(json.dumps(ROWS + commands))
+            open_search()
+            wait_for(lambda: (v := view()) and v["rows"], "the results again")
+            type_keys("restart")
+            wait_for(lambda: (v := view()) and [r["title"] for r in v["rows"]] == ["Restart"], lambda: f"Restart ({view()})")
+            before = len(opened_lines())
+            type_keys("-k", "Return")
+            wait_for(lambda: (v := view()) and v["rows"][0]["armed"], lambda: f"Restart to ask first ({view()})")
+            time.sleep(1)
+            if len(opened_lines()) != before or ipc("search_state") != "open":
+                raise RuntimeError(f"Restart ran on the first Return: {opened_lines()[before:]}")
+            time.sleep(5)  # past the 5 s it stays armed
+            if view()["rows"][0]["armed"]:
+                raise RuntimeError("Restart stayed armed past 5 s")
+            type_keys("-k", "Return")  # arms it again, does not run it
+            wait_for(lambda: (v := view()) and v["rows"][0]["armed"], "Restart armed again")
+            if len(opened_lines()) != before:
+                raise RuntimeError("Restart ran when chosen after its arming had lapsed")
+            type_keys("-k", "Return")
+            wait_for(lambda: opened_lines()[before:] == ["command restart"], lambda: f"Restart to run ({opened_lines()[before:]})")
+            steps.append("Restart asked first: the first Return armed its row, the arming lapsed after 5 s, and only "
+                         "a second Return within them ran flow-search --open command restart")
+            open_search()
+            wait_for(lambda: (v := view()) and v["rows"], "the results again")
+            type_keys("lock screen")
+            wait_for(lambda: (v := view()) and v["rows"] and v["rows"][0]["title"] == "Lock screen", "Lock screen")
+            type_keys("-k", "Return")
+            wait_for(lambda: opened_lines()[-1:] == ["command lock"], lambda: f"Lock to run ({opened_lines()[-1:]})")
+            open_search()
+            wait_for(lambda: (v := view()) and v["rows"], "the results again")
+            type_keys("open desk")
+            wait_for(lambda: (v := view()) and v["rows"] and v["rows"][0]["title"] == "Open Desk", "Open Desk")
+            type_keys("-k", "Return")
+            wait_for(lambda: ipc("desk_state") == "open", "Desk to open")
+            ipc("toggle")
+            wait_for(lambda: ipc("desk_state") == "closed", "Desk to close")
+            (tmp / "rows").write_text(json.dumps(ROWS))
+            steps.append("Lock screen ran on one Return, and Open Desk opened Desk")
 
             (tmp / "open-exit").write_text("3")
             open_search()

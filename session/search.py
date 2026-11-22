@@ -132,6 +132,22 @@ def file_rows(paths):
                         "kind": "file", "value": path.as_uri(), "icon": ""} for path in paths])
 
 
+# Commands: Flow's own actions, run by the shell, and the system's, run by ``--open command ID``. Those that end
+# the session or stop the computer ask first, in the shell.
+COMMANDS = [("Open Desk", "Flow", "action", "desk"), ("Overview", "Flow", "action", "overview"),
+            ("Notifications", "Flow", "action", "notifications"), ("Pin current space", "Flow", "action", "pin"),
+            ("Save session", "Flow · for recovery after a restart", "action", "save-session"),
+            ("Lock screen", "System", "command", "lock"), ("Suspend", "System", "command", "suspend"),
+            ("Log out", "System · asks first", "command", "logout"),
+            ("Restart", "System · asks first", "command", "restart"),
+            ("Power off", "System · asks first", "command", "poweroff")]
+ASKS_FIRST = {"logout", "restart", "poweroff"}
+# Locking goes through logind, so the session's idle daemon starts Flow's lock screen as it does for Super+L.
+SYSTEM_COMMANDS = {"lock": ["loginctl", "lock-session"], "suspend": ["systemctl", "suspend"],
+                   "logout": ["niri", "msg", "action", "quit", "--skip-confirmation"],
+                   "restart": ["systemctl", "reboot"], "poweroff": ["systemctl", "poweroff"]}
+
+
 def results(snapshot, apps, files=()):
     """Everything search offers, in order: (title, detail, kind, value, icon)."""
     result = [("Flow Settings", "Settings", "settings", "settings", ""),
@@ -154,6 +170,7 @@ def results(snapshot, apps, files=()):
         return found.to_string() if found is not None else ""
     for app in shown:
         result.append((app.get_display_name(), "Application", "app", app, icon(app)))
+    result.extend((title, detail, kind, value, "") for title, detail, kind, value in COMMANDS)
     # After every ordinary entry: the same apps opened as a Layer over the current space.
     for app in shown:
         if app.get_id():
@@ -169,13 +186,24 @@ def as_json(found):
             value = value.get_filename() or ""
             if not value:
                 continue
-        rows.append({"title": title, "detail": detail, "kind": kind, "value": value, "icon": glyph})
+        rows.append({"title": title, "detail": detail, "kind": kind, "value": value, "icon": glyph,
+                     **({"confirm": True} if kind == "command" and value in ASKS_FIRST else {})})
     return json.dumps(rows)
 
 
 def open_result(kind, value):
     """Opens an app (by its desktop file) or a file (by its URI) for the shell, in an app scope of its own when
     the installed shell asks for one. The installed wrapper puts gio on PATH; the shell's own PATH lacks it."""
+    if kind == "command":
+        if value not in SYSTEM_COMMANDS:
+            print(f"Flow search: no command {value!r}", file=sys.stderr)
+            return 2
+        try:
+            return subprocess.run(SYSTEM_COMMANDS[value], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL).returncode
+        except OSError as exc:
+            print(f"Flow search: {exc}", file=sys.stderr)
+            return 127
     command = {"app": ["gio", "launch"], "file": ["gio", "open"]}.get(kind)
     if command is None:
         print(f"Flow search: cannot open a {kind!r} result", file=sys.stderr)
@@ -200,7 +228,7 @@ def main(args):
         print(file_rows(find_files(args[1], user_folders(home, config))))
         return 0
     if args != ["--json"]:
-        print("usage: flow-search --json | --files QUERY | --open app|file VALUE", file=sys.stderr)
+        print("usage: flow-search --json | --files QUERY | --open app|file|command VALUE", file=sys.stderr)
         return 2
     from gi.repository import Gio
     try:

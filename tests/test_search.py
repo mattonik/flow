@@ -29,9 +29,10 @@ class SearchTest(unittest.TestCase):
                 "windows": [{"label": "My\nDocument", "id": 4, "app_id": "editor"}]}
         app.get_icon.return_value = None
         rows = search.results(data, [app, hidden])
-        self.assertEqual([r[2] for r in rows], ["settings", "settings", "pin", "pin", "window", "app", "layer"])
+        self.assertEqual([r[2] for r in rows], ["settings", "settings", "pin", "pin", "window", "app",
+                                                *["action"] * 5, *["command"] * 5, "layer"])
         # Each shown app can also open as a Layer over the current space; hidden apps cannot.
-        self.assertEqual(rows[6], ("Browser", "Open as Layer", "layer", "org.example.Browser.desktop", ""))
+        self.assertEqual(rows[-1], ("Browser", "Open as Layer", "layer", "org.example.Browser.desktop", ""))
         self.assertEqual(rows[4], ("My Document", "Open window · editor", "window", "4", ""))
         self.assertEqual(rows[3], ("Missing", "Pinned space · Open", "pin", "2", ""))
 
@@ -161,8 +162,11 @@ class SearchTest(unittest.TestCase):
         rows = json.loads(out.getvalue())
         self.assertEqual([(r["kind"], r["value"]) for r in rows],
                          [("settings", "settings"), ("settings", "quick_open"), ("pin", "p"),
-                          ("app", "/usr/share/applications/browser.desktop"), ("layer", "browser.desktop")])
+                          ("app", "/usr/share/applications/browser.desktop"),
+                          *[(kind, value) for _, _, kind, value in search.COMMANDS], ("layer", "browser.desktop")])
         self.assertEqual(rows[3]["icon"], "browser")
+        # Ending the session or stopping the computer asks first; nothing else does.
+        self.assertEqual({r["value"] for r in rows if r.get("confirm")}, {"logout", "restart", "poweroff"})
 
     def test_open_launches_apps_and_files_through_gio_in_an_app_scope(self):
         for kind, value, command in (("app", "/a/browser.desktop", ["gio", "launch", "/a/browser.desktop"]),
@@ -174,6 +178,22 @@ class SearchTest(unittest.TestCase):
                 # None of the app's streams may be the shell's pipe.
                 for stream in ("stdin", "stdout", "stderr"):
                     self.assertIs(run.call_args.kwargs[stream], search.subprocess.DEVNULL)
+
+    def test_open_runs_system_commands_outside_any_app_scope(self):
+        expected = {"lock": ["loginctl", "lock-session"], "suspend": ["systemctl", "suspend"],
+                    "logout": ["niri", "msg", "action", "quit", "--skip-confirmation"],
+                    "restart": ["systemctl", "reboot"], "poweroff": ["systemctl", "poweroff"]}
+        self.assertEqual({value for _, _, kind, value in search.COMMANDS if kind == "command"}, set(expected))
+        for value, command in expected.items():
+            with self.subTest(command=value), patch.dict(search.os.environ, {"FLOW_APP_SCOPES": "1"}), \
+                 patch.object(search.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
+                self.assertEqual(search.main(["--open", "command", value]), 0)
+                self.assertEqual(run.call_args.args[0], command)
+                for stream in ("stdin", "stdout", "stderr"):
+                    self.assertIs(run.call_args.kwargs[stream], search.subprocess.DEVNULL)
+        with patch.object(search.subprocess, "run") as run, contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(search.main(["--open", "command", "rm -rf"]), 2)
+            run.assert_not_called()
 
     def test_open_reports_failure_and_refuses_other_kinds(self):
         with patch.object(search.subprocess, "run", return_value=SimpleNamespace(returncode=4)):

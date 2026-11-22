@@ -619,6 +619,7 @@ ShellRoot {
     property string searchChosenKey: ""
     property string searchChosenFor: ""
     onSearchIndexChanged: {
+        searchArmed = ""   // a command armed for asking first is disarmed by choosing another row
         const chosen = searchMatches[searchIndex]
         searchChosenKey = chosen ? chosen.kind + "\n" + chosen.value : ""
         searchChosenFor = searchQuery
@@ -681,10 +682,11 @@ ShellRoot {
     }
     Timer { id: searchWalkTimer; interval: 150; onTriggered: root.walkSearchFiles() }
     onSearchQueryChanged: {
+        searchArmed = ""
         if (searchQuery.trim().length < 3) searchFileResults = []
         searchWalkTimer.restart()
     }
-    onSearchOpenChanged: if (!searchOpen) walkSearchFiles()
+    onSearchOpenChanged: if (!searchOpen) { searchArmed = ""; walkSearchFiles() }
     function walkSearchFiles() {
         const query = searchQuery.trim()
         searchWalk = null
@@ -740,14 +742,34 @@ ShellRoot {
         listSearchResults()
     }
     function closeSearch() { searchOpen = false }
+    // A command that ends the session or stops the computer runs only when chosen twice within 5 s: the first
+    // choice arms it and its row says so. Typing, choosing another row or closing search disarms it.
+    property string searchArmed: ""
+    Timer { id: searchArmTimer; interval: 5000; onTriggered: root.searchArmed = "" }
     function runSearchResult(result) {
         if (!result) return
+        if (result.confirm && searchArmed !== result.value) {
+            searchArmed = result.value
+            searchArmTimer.restart()
+            return
+        }
+        searchArmed = ""
         searchOpen = false
-        if (result.kind !== "settings") deskOpen = false
-        if (result.kind === "app" || result.kind === "file") openSearchResult(result)
+        if (result.kind !== "settings" && !(result.kind === "action" && result.value === "desk")) deskOpen = false
+        if (result.kind === "app" || result.kind === "file" || result.kind === "command") openSearchResult(result)
         else if (result.kind === "pin") spaceAction("focus", result.value)
         else if (result.kind === "window") spaceAction("focus-window", result.value)
         else if (result.kind === "layer") spaceAction("open-layer", result.value)
+        else if (result.kind === "action") {
+            if (result.value === "desk") { if (!deskOpen) toggleDesk() }
+            else if (result.value === "overview") openSpacesOverview()
+            else if (result.value === "notifications") { if (!notificationsOpen) toggleNotifications() }
+            else if (result.value === "pin") spaceAction("pin")
+            else if (result.value === "save-session") {
+                if (recoveryProcess.running) showToast("Wait for automatic recovery to finish")
+                else { recoveryProcess.command = ["flow-recovery", "save"]; recoveryProcess.running = true }
+            }
+        }
         else if (result.kind === "settings") {
             if (result.value === "quick_open") { if (!quickSettingsOpen) toggleQuickSettings() }
             else {
@@ -794,6 +816,7 @@ ShellRoot {
         "file": "M7.5 3.5h6l5 5v10.5a1.5 1.5 0 0 1 -1.5 1.5h-9.5a1.5 1.5 0 0 1 -1.5 -1.5v-14a1.5 1.5 0 0 1 1.5 -1.5z M13.5 3.5v5h5",
         "pin": "M9 4h6 M10 4l-1 6l-3 3h12l-3 -3l-1 -6 M12 13v7",
         "layer": "M12 4.5l7.5 4l-7.5 4l-7.5 -4z M4.5 12.5l7.5 4l7.5 -4 M4.5 16.5l7.5 4l7.5 -4",
+        "power": "M12 4v7.5 M7.8 6.8a7 7 0 1 0 8.4 0",
         // Desk's tools.
         "grid": "M5 5h5v5h-5z M14 5h5v5h-5z M5 14h5v5h-5z M14 14h5v5h-5z",
         "folder": "M4 7.5a2 2 0 0 1 2 -2h3.5l2 2h6.5a2 2 0 0 1 2 2v7a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z"
@@ -1374,7 +1397,9 @@ ShellRoot {
         function search_state(): string { return root.searchOpen ? (root.searchAppsOnly ? "apps" : "open") : "closed" }
         // What the search panel shows, for scripted checks: its rows, or the message in their place.
         function search_view(): string {
-            return JSON.stringify({ rows: root.searchMatches.map(r => ({ kind: r.kind, title: r.title, icon: r.icon })),
+            // armed: the row as drawn asks to be chosen again (a command that asks first).
+            return JSON.stringify({ rows: root.searchMatches.map((r, i) => ({ kind: r.kind, title: r.title, icon: r.icon,
+                                                                              armed: !!searchView.itemAtIndex(i)?.armed })),
                                     message: root.searchMatches.length ? "" : searchEmpty.text,
                                     // The message, as laid out, ends above the footer's rule.
                                     message_clear: searchEmpty.y + Math.max(searchEmpty.height, searchEmpty.contentHeight) <= searchFooter.y - 1 })
@@ -2470,6 +2495,7 @@ ShellRoot {
                     required property var modelData
                     required property int index
                     readonly property bool chosen: index === root.searchIndex
+                    readonly property bool armed: !!modelData.confirm && root.searchArmed === modelData.value
                     // Drawn as under the pointer: tinted without being the chosen row (pointer_target).
                     readonly property bool tinted: !chosen && Qt.colorEqual(color, floeTheme.surfaceSelected)
                     width: searchView.width; height: 58; radius: 10
@@ -2488,7 +2514,8 @@ ShellRoot {
                         }
                         FlowIcon {
                             visible: !appIcon.visible; anchors.centerIn: parent; size: 16; color: floeTheme.accent
-                            name: ({ "pin": "pin", "window": "window", "file": "file", "settings": "sliders", "layer": "layer", "app": "app" })[resultRow.modelData.kind] || "search"
+                            name: ({ "pin": "pin", "window": "window", "file": "file", "settings": "sliders", "layer": "layer", "app": "app",
+                                     "action": "grid", "command": "power" })[resultRow.modelData.kind] || "search"
                         }
                     }
                     Column {
@@ -2501,7 +2528,9 @@ ShellRoot {
                         }
                         Text {
                             width: parent.width; elide: Text.ElideRight; textFormat: Text.PlainText
-                            text: resultRow.modelData.detail; color: floeTheme.textMuted
+                            text: resultRow.armed ? "Press Enter or click again to " + resultRow.modelData.title.toLowerCase()
+                                : resultRow.modelData.detail
+                            color: resultRow.armed ? floeTheme.textPrimary : floeTheme.textMuted
                             font.pixelSize: 12; font.family: floeTheme.interfaceFont
                         }
                     }
@@ -2516,7 +2545,8 @@ ShellRoot {
                         onClicked: root.runSearchResult(resultRow.modelData)
                     }
                     Accessible.role: Accessible.Button
-                    Accessible.name: resultRow.modelData.title + ", " + resultRow.modelData.detail
+                    Accessible.name: resultRow.modelData.title + ", " + (resultRow.armed
+                        ? "press Enter or click again to " + resultRow.modelData.title.toLowerCase() : resultRow.modelData.detail)
                     Accessible.description: chosen ? "Current" : ""
                 }
             }
