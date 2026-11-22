@@ -703,6 +703,30 @@ class RecoveryTest(unittest.TestCase):
         actions.assert_any_call("action", "consume-or-expel-window-left", "--id", 2)
         self.assertEqual([w["layout"]["pos_in_scrolling_layout"] for w in windows], [[1, 1], [1, 2], [2, 1]])
 
+    def test_pinned_group_recovery_still_keeps_a_window_that_was_open_after_it(self):
+        # Recovery opens the Group's apps and the pinned app after them, but a window the user had open
+        # already follows too: its column would shift, so the Group is left for manual recovery.
+        saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two"]}],
+                 "windows": [{"app_id": "one", "column": 1}, {"app_id": "two", "column": 1},
+                             {"app_id": "other", "column": 2}]}
+        pins = [{"app_id": "one", "members": ["one", "two"], "group_id": "group-id"}, {"app_id": "other"}]
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "applications").mkdir()
+            for app in ("one", "two", "other"):
+                (Path(directory) / "applications" / f"{app}.desktop").touch()
+            ws, windows = {"id": 1}, []
+
+            def launch(desktop):
+                windows.append(window(len(windows) + 1, desktop.stem, len(windows) + 1))
+                if desktop.stem == "two":  # the user's own window maps as recovery works
+                    windows.append(window(9, "notes", len(windows) + 1))
+
+            actions = Mock(side_effect=NiriActions(ws, windows))
+            report, _ = restore.restore(saved, ws, [], [directory], launch, lambda: (ws, windows), actions,
+                                        lambda _: None, pinned={"one", "two", "other"}, pinned_groups=pins)
+        self.assertIn("Pinned Group cannot be restored without shifting other spaces", report)
+        self.assertNotIn("consume-or-expel-window-left", [call.args[1] for call in actions.call_args_list])
+
     def test_pinned_group_recovery_skips_nonadjacent_or_unmatched_identity(self):
         saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two"]}],
                  "windows": [{"app_id": "one", "column": 1}, {"app_id": "two", "column": 1}]}

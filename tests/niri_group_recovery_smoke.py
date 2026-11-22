@@ -7,8 +7,9 @@ Run inside a Niri session from the Flow checkout, with the focused output's acti
 each with a desktop entry in an isolated data folder so recovery can open them again.
 
 A reboot closes every app and starts a new Niri session. Both are simulated without ending the guest's
-session: the windows are closed, and the saved session and the Groups' window bindings are marked as
-coming from an earlier Niri session. Checked, for a pinned, renamed stacked Group beside a pinned app and
+session: the windows are closed, the saved session, the Groups' window bindings and the pins are marked as
+coming from an earlier Niri session, and recovery runs as the shell runs it at the start of a session
+(``flow-recovery auto-start``, which reports success only when every window was restored). Checked, for a pinned, renamed stacked Group beside a pinned app and
 then for a side-by-side Group with a saved split:
 - recovery opens every app again and rebuilds the Group: one column in saved member order, or its
   columns at the saved proportions;
@@ -72,7 +73,12 @@ def main():
         for suffix, app in apps.items():
             (data / "applications" / f"{app}.desktop").write_text(
                 f"[Desktop Entry]\nType=Application\nName=Recovery {suffix.upper()}\nExec=foot --app-id {app}\n")
-        env = dict(os.environ, XDG_STATE_HOME=tmp, XDG_DATA_HOME=str(data))
+        # A runtime folder of its own: automatic recovery keeps its once-per-Niri-session marker there.
+        runtime = Path(tmp) / "runtime"
+        runtime.mkdir(mode=0o700)
+        wayland = os.environ.get("WAYLAND_DISPLAY", "wayland-1")
+        env = dict(os.environ, XDG_STATE_HOME=tmp, XDG_DATA_HOME=str(data), XDG_RUNTIME_DIR=str(runtime),
+                   WAYLAND_DISPLAY=wayland if wayland.startswith("/") else str(Path(os.environ["XDG_RUNTIME_DIR"]) / wayland))
         state = Path(tmp) / "flow"
 
         def tool(name, *args):
@@ -123,7 +129,8 @@ def main():
             wait_for(lambda: not ours(), "the apps to close")
 
         def reboot():
-            """What a reboot leaves: no app open, and every saved window and binding from another Niri session."""
+            """What a reboot leaves: no app open, the saved session, Group bindings and pins from another Niri
+            session, and automatic recovery not yet run in this one."""
             close_all()
             session = json.loads((state / "session.json").read_text())
             session["session"] = "an-earlier-niri-session"
@@ -133,6 +140,19 @@ def main():
                 if isinstance(g.get("bound"), dict):
                     g["bound"]["session"] = "an-earlier-niri-session"
             (state / "groups.json").write_text(json.dumps(saved))
+            pins = json.loads((state / "spaces.json").read_text())
+            for pin in pins["pins"]:
+                if "session" in pin:
+                    pin["session"] = "an-earlier-niri-session"
+            (state / "spaces.json").write_text(json.dumps(pins))
+            for marker in runtime.glob("flow-recovery-*"):
+                marker.unlink()
+
+        def recover():
+            """What the shell runs when it starts in a new Niri session with automatic recovery on."""
+            answer = tool("flow-recovery", "auto-start")
+            if answer.get("message") != "Automatic session recovery is ready.":
+                raise RuntimeError(f"Automatic recovery after the apps closed failed: {answer}")
 
         def bound_here(group_id, suffixes):
             g = group(group_id)
@@ -158,9 +178,7 @@ def main():
             expect(["ab", "n"], "the stacked Group and its neighbour")
             tool("flow-recovery", "save")
             reboot()
-            recovered = tool("flow-recovery", "restore")
-            if recovered.get("message") != "Restored 3 windows.":
-                raise RuntimeError(f"Recovery after the apps closed was incomplete: {recovered}")
+            recover()
             expect(["ab", "n"], "the recovered stacked Group")
             _, current, bound = bound_here(group_id, "ab")
             pins = {p["id"]: p for p in current["pins"]}
@@ -173,7 +191,7 @@ def main():
                 raise RuntimeError(f"A pin reached the wrong windows: {current['pins']}")
             if not bound:
                 raise RuntimeError(f"The recovered Group is not bound to its new windows: {group(group_id)}")
-            steps.append("with every app closed and the bindings from an earlier Niri session, recovery opened all "
+            steps.append("with every app closed and state from an earlier Niri session, automatic recovery opened all "
                          "three again and rebuilt the pinned, renamed stacked Group in saved order, bound to the new "
                          "windows; both pins reached them")
 
@@ -206,9 +224,7 @@ def main():
                 raise RuntimeError(f"The wider first member was not saved: {group(side_id)}")
             tool("flow-recovery", "save")
             reboot()
-            recovered = tool("flow-recovery", "restore")
-            if recovered.get("message") != "Restored 3 windows.":
-                raise RuntimeError(f"Side-by-side recovery after the apps closed was incomplete: {recovered}")
+            recover()
             expect(["n", "a", "b"], "the recovered side-by-side Group")
             widths = [window(s)["layout"]["tile_size"][0] for s in "ab"]
             if any(abs(w / sum(widths) - r) > 0.05 for w, r in zip(widths, saved_ratios)):

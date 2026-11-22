@@ -374,6 +374,7 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
             if not desktop:
                 report.append(f"{app_id}: no matching installed application")
                 continue
+            before = {w.get("id") for w in get_snapshot()[1]}
             try:
                 launch(desktop)
             except (OSError, subprocess.SubprocessError):
@@ -385,7 +386,7 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 matches = [w for w in windows if w.get("app_id") == app_id]
                 if matches:
                     break
-            if len(matches) == 1:
+            if len(matches) == 1 and matches[0]["id"] not in before:
                 launched.add(matches[0]["id"])
         valid_group_window = (id(entry) in group_ids and len(matches) == 1
                               and matches[0].get("workspace_id") == workspace["id"]
