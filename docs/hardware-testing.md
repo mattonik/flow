@@ -170,8 +170,10 @@ from the file you download yourself, because its licence does not allow redistri
    *REMOTE HOST IDENTIFICATION HAS CHANGED*. The port is UTM's forward to the VM on this Mac, not a remote
    host.
 
+   Then, from the Mac, add it to the guest's store (`nix-prefetch-url` runs in the guest; the Mac has no Nix):
+
    ```bash
-   nix-prefetch-url --type sha256 file:///tmp/displaylink-630.zip
+   ssh -i /Users/mpuskac/Experiments/.floe-test/ssh-key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 41222 floe@127.0.0.1 nix-prefetch-url --type sha256 file:///tmp/displaylink-630.zip
    ```
 
    The hash it prints must be `1670rhm39pqkmfy8kawwx3c79w7y6rd1pkhm698hq1i7fmn8asbj`, which is the
