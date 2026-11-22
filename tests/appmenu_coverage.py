@@ -3,16 +3,18 @@ r"""How far Flow's AT-SPI app-menu reader reaches, app by app: the table in
 docs/engineering/APPMENU_COVERAGE_2026-11.md.
 
 For each app in APPS it opens one window on the focused output's empty workspace and records:
-- whether the app is on the accessibility bus (an AT-SPI application with the window's PID; for an X11 app also
-  the PID the run started) and has a menu bar, with each bar's frame, showing state and item count;
+- whether the app is on the accessibility bus (an AT-SPI application with the window's PID; for a window whose
+  PID is another process's, such as an X11 window's, also the PID the run started) and has a menu bar, with each
+  bar's frame, showing state, children and item count;
 - what this checkout's reader (session/appmenu.py, run as ``flow-appmenu`` runs it: a fresh process, as the
   shell starts it) returns for the window: menu items, or its error, and its wall time (median of three runs).
   The reader's app_name() raises for an app_id with no matching desktop file (LibreOffice), and the reader then
   returns only that error; so the reader is also run with only that exception caught ("fixed"), to show what the
   walk itself reaches. The commands and the late column use the fixed reader;
-- the walk itself (``menu_walk``, the reader's walk with counters; a unit test runs both on one tree), in a fresh
-  process: AT-SPI nodes visited, menu items, empty menus (unpopulated submenus are dropped by the walk), time, and
-  the same walk without the reader's caps (2000 nodes, depth 12), so a cap that cuts the menu shows;
+- the walk itself (``menu_walk``: the reader's walk, state reads included, with counters; a unit test runs both
+  on one tree), in a fresh process: AT-SPI nodes visited, menu items, menu nodes dropped for having no items
+  (unpopulated submenus look like that), time, and the same walk without the reader's caps (2000 nodes, depth
+  12), so a cap that cuts the menu shows;
 - how many of the items carry a shortcut label (``Action.getKeyBinding``);
 - whether a harmless command (an About dialog) runs through the reader's ``activate`` path, AT-SPI
   ``doAction``, and whether its effect shows (a new window of the app's process, closed again);
@@ -22,37 +24,39 @@ For each app in APPS it opens one window on the focused output's empty workspace
 Then, for the apps in MULTI, it opens more windows in the same process and checks, with each focused in turn,
 whether the accessible frames' names and ``active`` state single out the focused window: by title alone, by
 ``active`` alone, and by both. It does that once with the window focused, and once more with an exclusive-
-keyboard layer surface over it, as Flow's own menu surface is. For Kate it then invokes File > New through the
-chosen frame's menu and checks which Niri window changed title: the ground truth.
+keyboard layer surface over it, as Flow's own menu surface is. For Kate (GROUND_TRUTH) it then opens fresh pairs
+of same-titled windows and, in each, invokes File > New through the frame chosen for one of them, focused or with
+the frame chosen before the layer maps, and checks which Niri window changed title.
 
 Run it with ``tests/run_appmenu_coverage.sh`` (it takes the Python with pyatspi from the installed
 ``flow-appmenu`` wrapper, imports the session's display variables, clears ``NO_AT_BRIDGE`` and ``GTK_A11Y``, and
-holds the screen lock) inside a Niri session where the session bus can start the accessibility bus. Apps not on
-PATH are built with ``nix build --no-link`` from ``FLOW_NIXPKGS`` (default ``nixpkgs``); ``FLOW_NIX`` and
-``FLOW_NIX_ARGS`` change the command (the test guest needs ``sudo -n nix``,
-``--option ssl-cert-file /etc/floe-test/host-trust.pem`` and ``--option flake-registry ''`` for its pinned
-nixpkgs). The system's configuration is not changed.
+holds the screen lock) inside a Niri session. Apps not on PATH are built with ``nix build --no-link`` from
+``FLOW_NIXPKGS`` (default ``nixpkgs``); ``FLOW_NIX`` and ``FLOW_NIX_ARGS`` change the command (the test guest
+needs ``sudo -n nix``, ``--option ssl-cert-file /etc/floe-test/host-trust.pem`` and ``--option flake-registry ''``
+for its pinned nixpkgs). The system's configuration is not changed.
 
-Safety on a shared session:
-- Only windows of processes the run started (their session, or the app process their window joined) are
-  measured and closed; an X11 window, whose PID is xwayland-satellite's, is taken only by its app_id.
-- ``org.a11y.Status.IsEnabled`` is set only for the run. It is put back as it was at the end, also on SIGINT,
-  SIGTERM and SIGHUP, unless someone else changed it meanwhile, which is reported and left alone; a late phase
-  whose switch someone else changed is skipped. ``--cleanup`` undoes a run that was killed, from the state file
+Isolation from the session it runs in (it may be shared):
+- Every launch runs on a session bus of its own, with its own runtime directory, home, configuration, data and
+  cache directories, and GSettings in memory. Its accessibility bus is that bus's, so the session's
+  ``org.a11y.Status.IsEnabled``, which at-spi persists in dconf (``toolkit-accessibility``), is never set, and
+  apps that write to $HOME (VSCodium's ``~/.vscode-oss``) write to the temporary one. The run records the
+  session's switch, the dconf database's modification time and the home directory's entries before and after.
+- Only the run's own processes and their windows are measured, closed and stopped: those that carry the run's
+  marker in their environment, name one of its temporary directories in their command line (VSCodium's main
+  process detaches and rewrites its environment's memory), or descend from such a process, and are this user's.
+  An X11 window, whose PID is xwayland-satellite's, is taken by its app_id.
+- On SIGINT, SIGTERM and SIGHUP it cleans up; ``--cleanup`` undoes a run that was killed, from the state file
   ``$XDG_RUNTIME_DIR/flow-appmenu-coverage.json``.
-- Each app gets its own temporary configuration, data and cache directories and browser profiles, and GSettings
-  in memory, so real settings are not touched.
-- Nautilus is single-instance, and a session's Nautilus usually runs already: it runs on a private session bus,
-  with its own accessibility bus and runtime directory, and every process on that bus is stopped afterward.
-  A private bus that does not start stops the run.
 
     tests/run_appmenu_coverage.sh [--only kate,writer] [--skip-multi] [--skip-late] [--json out.json]
-    tests/run_appmenu_coverage.sh --dump kate     # print the app's menu tree, to pick a command
-    tests/run_appmenu_coverage.sh --cleanup       # after a run that was killed
+    tests/run_appmenu_coverage.sh --dump kate         # print the app's menu tree, to pick a command
+    tests/run_appmenu_coverage.sh --table run.json    # the report's tables, from a run's JSON
+    tests/run_appmenu_coverage.sh --cleanup           # after a run that was killed
 """
 
 import argparse
 from contextlib import contextmanager
+import datetime
 import importlib.util
 import json
 import os
@@ -71,9 +75,6 @@ import uuid
 READER = Path(__file__).resolve().parents[1] / "session" / "appmenu.py"
 CAP_NODES, CAP_DEPTH = 2000, 12  # session/appmenu.py's walk limits
 PROC = Path("/proc")
-# Every process the run starts carries this in its environment. A process that detaches into a session of its
-# own and rewrites its environment's memory for its title (VSCodium's main process, as Chromium does) is known by
-# a temporary directory of the run in its command line instead; and every descendant of an own process is own.
 MARKER = "FLOW_APPMENU_COVERAGE_RUN"
 
 FIREFOX_PREFS = """user_pref("browser.shell.checkDefaultBrowser", false);
@@ -172,7 +173,7 @@ APPS = [
          attr="mousepad", argv=lambda root, tmp: [f"{root}/bin/mousepad"], command=("^Help$", "^About"),
          env=LOGIN_ENV),
     dict(key="nautilus", name="Nautilus", toolkit="GTK 4 / libadwaita", attr=None,
-         argv=lambda root, tmp: ["nautilus", "--new-window"], command=None, private_bus=True),
+         argv=lambda root, tmp: ["nautilus", "--new-window"], command=None),
     dict(key="text-editor", name="GNOME Text Editor", toolkit="GTK 4 / libadwaita", attr="gnome-text-editor",
          argv=lambda root, tmp: [f"{root}/bin/gnome-text-editor", "--standalone", "--new-window"], command=None),
     dict(key="firefox", name="Firefox", toolkit="Gecko, GTK 3", attr=None,
@@ -204,11 +205,11 @@ MULTI = {
 # A window-scoped command invoked through the chosen frame's own menu bar: its window's title changes.
 GROUND_TRUTH = {"kate": ("^File$", "^New$")}
 
-STATE = {"run": uuid.uuid4().hex, "tmps": set(), "a11y": None, "a11y_set": None, "procs": [], "sids": set(), "app_pids": set(), "windows": set(),
-         "workspace": None, "run_workspace": None, "roots": [], "bus": None, "bus_proc": None, "notes": []}
+STATE = {"run": uuid.uuid4().hex, "tmps": set(), "procs": [], "windows": set(), "workspace": None,
+         "run_workspace": None, "roots": [], "bus": None, "bus_proc": None, "notes": [], "restored": False}
 
 
-# --- Niri, the session bus and the accessibility switch ------------------------------------------------------
+# --- Niri ------------------------------------------------------------------------------------------------------
 
 def niri(what):
     return json.loads(subprocess.check_output(["niri", "msg", "-j", what], text=True))
@@ -227,8 +228,10 @@ def note(text):
     print(f"note: {text}", file=sys.stderr, flush=True)
 
 
+# --- The run's private session bus and its accessibility switch -------------------------------------------------
+
 def bus_env(env=None):
-    """``env`` (default: this process's), on the private session bus while one is up."""
+    """``env`` (default: this process's) on the run's private session bus."""
     env = dict(os.environ if env is None else env)
     if STATE["bus"]:
         env["DBUS_SESSION_BUS_ADDRESS"] = STATE["bus"]
@@ -238,35 +241,24 @@ def bus_env(env=None):
 A11Y = ("org.a11y.Bus", "/org/a11y/bus", "org.a11y.Status", "IsEnabled")
 
 
-def a11y_enabled():
-    out = subprocess.check_output(["busctl", "--user", "get-property", *A11Y], text=True, env=bus_env())
-    return out.strip() == "b true"
-
-
 def set_a11y(on):
-    """Sets the switch, on the shared bus only while it still holds what this run last set (False: someone else
-    changed it, and it is left alone)."""
-    shared = not STATE["bus"]
-    if shared and STATE["a11y_set"] is not None and a11y_enabled() != STATE["a11y_set"]:
-        note(f"IsEnabled changed by someone else (expected {STATE['a11y_set']}); left alone")
-        STATE["a11y_set"] = None
-        return False
+    """The private bus's accessibility switch. Never the session's: it persists in the user's dconf."""
+    if not STATE["bus"]:
+        raise RuntimeError("no private session bus: refusing to set the session's accessibility switch")
     subprocess.run(["busctl", "--user", "set-property", *A11Y, "b", "true" if on else "false"], check=True,
-                   env=bus_env())
-    if shared:
-        STATE["a11y_set"] = on
-        save_state()
-    return True
+                   env=bus_env(), stdout=subprocess.DEVNULL)
+
+
+def session_a11y():
+    """The session's own switch, read only (for the record)."""
+    out = subprocess.run(["busctl", "--user", "get-property", *A11Y], capture_output=True, text=True)
+    return out.stdout.strip() or out.stderr.strip()
 
 
 def start_private_bus(tmp):
-    """A session bus of the run's own. The accessibility bus it starts would bind $XDG_RUNTIME_DIR/at-spi/bus,
-    which every private session bus's accessibility bus shares, so the bus gets a runtime directory of its own.
-    Fails closed: without the bus the app would join the session's own instance."""
-    runtime = Path(tmp) / "bus-runtime"
-    runtime.mkdir(mode=0o700)
+    """A session bus of the launch's own, in its runtime directory, so its accessibility bus binds
+    <tmp>/runtime/at-spi/bus, not the session's. Fails closed: without it an app could join the session's."""
     env = {k: v for k, v in app_env(tmp).items() if k != "DBUS_SESSION_BUS_ADDRESS"}
-    env["XDG_RUNTIME_DIR"] = str(runtime)
     proc = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1"], env=env,
                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True, start_new_session=True)
     STATE["bus_proc"] = proc
@@ -276,7 +268,52 @@ def start_private_bus(tmp):
         STATE["bus_proc"] = None
         raise RuntimeError("the private session bus did not start")
     STATE["bus"] = address
-    save_state()
+
+
+def end(proc):
+    proc.terminate()
+    try:
+        proc.wait(5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(5)
+
+
+def stop_private_bus():
+    """Stops every process on the private bus (the apps and what the bus started for them), then the bus."""
+    address, proc = STATE["bus"], STATE["bus_proc"]
+    STATE["bus"] = STATE["bus_proc"] = None
+    if proc is None:
+        return
+    for _ in range(2):
+        pids = bus_clients(address) if address else []
+        for pid in pids:
+            kill(pid, signal.SIGTERM)
+        if pids:
+            time.sleep(1)
+    end(proc)
+
+
+# --- The run's own processes -----------------------------------------------------------------------------------
+
+def kill(pid, sig):
+    try:
+        os.kill(pid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def user_pids(proc_root=None):
+    """This user's processes."""
+    pids = []
+    for entry in (proc_root or PROC).iterdir():
+        if entry.name.isdigit():
+            try:
+                if entry.stat().st_uid == os.getuid():
+                    pids.append(int(entry.name))
+            except OSError:
+                pass
+    return pids
 
 
 def environ_of(pid, proc_root=None):
@@ -284,18 +321,6 @@ def environ_of(pid, proc_root=None):
         return set(((proc_root or PROC) / str(pid) / "environ").read_bytes().split(b"\0"))
     except OSError:  # gone, or another user's
         return set()
-
-
-def processes_with(entries, proc_root=None):
-    """PIDs of this user's processes whose environment holds one of ``entries`` ("NAME=value")."""
-    wanted = {e.encode() for e in entries}
-    return [int(e.name) for e in (proc_root or PROC).iterdir()
-            if e.name.isdigit() and environ_of(e.name, proc_root) & wanted]
-
-
-def bus_clients(address, proc_root=None):
-    """PIDs of this user's processes whose environment names ``address`` as their session or starter bus."""
-    return processes_with([f"DBUS_SESSION_BUS_ADDRESS={address}", f"DBUS_STARTER_ADDRESS={address}"], proc_root)
 
 
 def cmdline_of(pid, proc_root=None):
@@ -321,9 +346,19 @@ def marked(pid, proc_root=None):
     return any(tmp in cmdline for tmp in STATE["tmps"])
 
 
+def processes_with(entries, proc_root=None):
+    """This user's processes whose environment holds one of ``entries`` ("NAME=value")."""
+    wanted = {e.encode() for e in entries}
+    return [pid for pid in user_pids(proc_root) if environ_of(pid, proc_root) & wanted]
+
+
+def bus_clients(address, proc_root=None):
+    return processes_with([f"DBUS_SESSION_BUS_ADDRESS={address}", f"DBUS_STARTER_ADDRESS={address}"], proc_root)
+
+
 def own_processes(proc_root=None):
-    """The run's processes: marked ones and all their descendants."""
-    pids = [int(e.name) for e in (proc_root or PROC).iterdir() if e.name.isdigit()]
+    """This user's processes that are the run's: marked ones and all their descendants."""
+    pids = user_pids(proc_root)
     parents = {pid: parent_of(pid, proc_root) for pid in pids}
     own = {pid for pid in pids if marked(pid, proc_root)}
     grown = True
@@ -331,101 +366,76 @@ def own_processes(proc_root=None):
         more = {pid for pid in pids if pid not in own and parents.get(pid) in own}
         own |= more
         grown = bool(more)
+    own.discard(os.getpid())
     return sorted(own)
 
 
+def owned(pid, proc_root=None):
+    return bool(pid) and pid in own_processes(proc_root)
+
+
 def stop_own_processes():
-    """Every process the run started that is still alive, detached ones too: SIGTERM, then SIGKILL."""
+    """Every process of the run that is still alive, detached ones too: SIGTERM, then SIGKILL."""
     for sig in (signal.SIGTERM, signal.SIGKILL):
-        pids = [p for p in own_processes() if p != os.getpid()]
+        pids = own_processes()
         for pid in pids:
-            try:
-                os.kill(pid, sig)
-            except ProcessLookupError:
-                pass
+            kill(pid, sig)
         if pids and sig == signal.SIGTERM:
             time.sleep(3)
 
 
-def end(proc):
-    proc.terminate()
-    try:
-        proc.wait(5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(5)
+def is_own_window(window, x11_app_id=None):
+    if x11_app_id:  # an X11 window carries xwayland-satellite's PID
+        return window.get("app_id") == x11_app_id
+    return owned(window.get("pid"))
 
 
-def stop_private_bus():
-    """Stops every process on the private bus (the app and what the bus started for it), then the bus."""
-    address, proc = STATE["bus"], STATE["bus_proc"]
-    STATE["bus"] = STATE["bus_proc"] = None
-    if proc is None:
-        return
-    for _ in range(2):
-        if address:
-            for pid in bus_clients(address):
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-            time.sleep(1)
-    end(proc)
-    save_state()
-
+# --- State for --cleanup, and cleaning up ---------------------------------------------------------------------
 
 def state_file():
     return Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "flow-appmenu-coverage.json"
 
 
 def save_state():
-    proc = STATE["bus_proc"]
-    state_file().write_text(json.dumps({
-        "run": STATE["run"], "tmps": sorted(STATE["tmps"]), "a11y": STATE["a11y"], "a11y_set": STATE["a11y_set"], "sids": sorted(STATE["sids"]),
-        "windows": sorted(STATE["windows"]), "bus_pid": proc.pid if proc else None, "bus": STATE["bus"]}))
+    state_file().write_text(json.dumps({"run": STATE["run"], "tmps": sorted(STATE["tmps"]),
+                                        "windows": sorted(STATE["windows"])}))
+
+
+def close_owned_windows(x11_app_id=None):
+    """The run's windows: those it took, and any of its processes' it missed."""
+    own = set(own_processes())
+    for wid, w in windows().items():
+        if wid in STATE["windows"] or (not x11_app_id and w.get("pid") in own):
+            close_window(wid, wait=5)
+    STATE["windows"].clear()
 
 
 def cleanup():
-    """Undoes a run that was killed: closes its windows, stops its processes and private bus, puts IsEnabled
-    back if it still holds what the run set."""
+    """Undoes a run that was killed: closes its windows and stops its processes (its private buses among them)."""
     try:
         saved = json.loads(state_file().read_text())
     except FileNotFoundError:
         print("no state file: nothing to clean up")
         return
-    STATE["sids"], STATE["run"], STATE["tmps"] = set(saved["sids"]), saved["run"], set(saved["tmps"])
-    current = windows()
-    for wid, w in current.items():  # Niri never reuses a window id, so saved ones are still the run's own
-        if wid in saved["windows"] or owned(w.get("pid")):
-            close_window(wid, wait=3)
+    STATE["run"], STATE["tmps"], STATE["windows"] = saved["run"], set(saved["tmps"]), set(saved["windows"])
+    close_owned_windows()  # Niri never reuses a window id, so saved ones are still the run's own
     stop_own_processes()
-    if saved["bus"]:
-        for pid in bus_clients(saved["bus"]):
-            os.kill(pid, signal.SIGTERM)
-    if saved["bus_pid"]:
-        try:
-            os.kill(saved["bus_pid"], signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-    if saved["a11y"] is not None and saved["a11y_set"] is not None and a11y_enabled() == saved["a11y_set"]:
-        subprocess.run(["busctl", "--user", "set-property", *A11Y, "b", "true" if saved["a11y"] else "false"], check=True)
+    for tmp in STATE["tmps"]:
+        shutil.rmtree(tmp, ignore_errors=True)
     state_file().unlink()
     print("cleaned up")
 
 
 def restore():
+    if STATE["restored"]:
+        return
+    STATE["restored"] = True
     for wid in list(STATE["windows"]):
         close_window(wid, wait=0)
     for proc in STATE["procs"]:
         stop(proc)
     stop_private_bus()
     stop_own_processes()
-    if STATE["a11y"] is not None and STATE["a11y_set"] is not None:
-        if a11y_enabled() == STATE["a11y_set"]:
-            subprocess.run(["busctl", "--user", "set-property", *A11Y, "b", "true" if STATE["a11y"] else "false"],
-                           check=True)
-        else:
-            note("IsEnabled changed by someone else during the run; left alone")
     if STATE["workspace"] is not None:
         try:  # only if focus is still where the run put it
             focused = next((w for w in niri("workspaces") if w["is_focused"]), {})
@@ -454,14 +464,17 @@ def store_path(attr):
 
 
 def app_env(tmp, extra=None):
+    """A launch's environment: the private bus, and a runtime directory, home and XDG directories of its own."""
     env = bus_env()
-    for name in ("CONFIG", "DATA", "CACHE", "STATE"):
-        path = Path(tmp) / name.lower()
-        path.mkdir(exist_ok=True)
-        env[f"XDG_{name}_HOME"] = str(path)
-    env["GSETTINGS_BACKEND"] = "memory"  # GTK apps save window state on close
-    if not env.get("WAYLAND_DISPLAY", "wayland-0").startswith("/"):  # still found beside a private runtime dir
-        env["WAYLAND_DISPLAY"] = str(Path(os.environ["XDG_RUNTIME_DIR"]) / env.get("WAYLAND_DISPLAY", "wayland-0"))
+    real_runtime = os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
+    display = env.get("WAYLAND_DISPLAY", "wayland-0")
+    env["WAYLAND_DISPLAY"] = display if display.startswith("/") else str(Path(real_runtime) / display)
+    for name, sub in (("XDG_RUNTIME_DIR", "runtime"), ("HOME", "home"), ("XDG_CONFIG_HOME", "config"),
+                      ("XDG_DATA_HOME", "data"), ("XDG_CACHE_HOME", "cache"), ("XDG_STATE_HOME", "state")):
+        path = Path(tmp) / sub
+        path.mkdir(mode=0o700, exist_ok=True)
+        env[name] = str(path)
+    env["GSETTINGS_BACKEND"] = "memory"  # GTK apps save window state on close; at-spi keeps its switch here
     env.pop("GI_TYPELIB_PATH", None)  # the runner's, for pyatspi; an app's own wrapper sets its own
     env[MARKER] = STATE["run"]
     env.update(extra or {})
@@ -472,8 +485,6 @@ def spawn(argv, tmp, extra_env=None):
     proc = subprocess.Popen(argv, env=app_env(tmp, extra_env), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL, start_new_session=True)
     STATE["procs"].append(proc)
-    STATE["sids"].add(proc.pid)
-    save_state()
     return proc
 
 
@@ -483,31 +494,11 @@ def stop(proc):
     try:
         os.killpg(proc.pid, signal.SIGTERM)
         proc.wait(5)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
+    except (ProcessLookupError, PermissionError, subprocess.TimeoutExpired):
         try:
             os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
-
-
-def session_of(pid, proc_root=None):
-    try:
-        stat = ((proc_root or PROC) / str(pid) / "stat").read_text()
-    except OSError:
-        return None
-    return int(stat.rsplit(")", 1)[1].split()[3])  # fields after "(comm)": state ppid pgrp session
-
-
-def owned(pid):
-    """Whether ``pid`` is a process the run started (it carries the run's marker, or is in one of its sessions),
-    or an app process its windows joined."""
-    return bool(pid) and (pid in STATE["app_pids"] or session_of(pid) in STATE["sids"] or marked(pid))
-
-
-def is_own_window(window, x11_app_id=None):
-    if x11_app_id:  # an X11 window carries xwayland-satellite's PID
-        return window.get("app_id") == x11_app_id
-    return owned(window.get("pid"))
 
 
 def wait_new_window(known, x11_app_id=None, timeout=90, settle=3.0):
@@ -523,8 +514,6 @@ def wait_new_window(known, x11_app_id=None, timeout=90, settle=3.0):
             break
         time.sleep(0.25)
     STATE["windows"].update(w["id"] for w in seen)
-    if not x11_app_id:
-        STATE["app_pids"].update(w["pid"] for w in seen if w.get("pid"))
     save_state()
     return sorted(seen, key=lambda w: w["id"])
 
@@ -547,24 +536,19 @@ def focus(wid):
 
 @contextmanager
 def phase(app):
-    """A temporary directory for one launch of ``app``, and its private session bus if it needs one."""
+    """A temporary directory and private session bus for one launch of ``app``; everything it started is
+    stopped afterward."""
     with tempfile.TemporaryDirectory(prefix=f"flow-appmenu-{app['key']}-", ignore_cleanup_errors=True) as tmp:
         STATE["tmps"].add(tmp)
         save_state()
         try:
-            if app.get("private_bus"):
-                start_private_bus(tmp)
+            start_private_bus(tmp)
             yield tmp
         finally:
-            for wid, w in windows().items():  # also any the waiting missed
-                if wid in STATE["windows"] or (not app.get("x11") and owned(w.get("pid"))):
-                    close_window(wid, wait=5)
-            for wid in list(STATE["windows"]):
-                close_window(wid, wait=5)
+            close_owned_windows(app.get("x11"))
             for proc in STATE["procs"]:
                 stop(proc)
             STATE["procs"].clear()
-            STATE["app_pids"].clear()
             stop_private_bus()
             stop_own_processes()
             time.sleep(1)  # before the directory goes: processes that were writing to it have exited
@@ -572,20 +556,21 @@ def phase(app):
 
 @contextmanager
 def exclusive_layer(tmp):
-    """An exclusive-keyboard overlay surface, up for the block's duration."""
+    """An exclusive-keyboard overlay surface, up for the block's duration; yields whether Niri shows it up."""
     qml = Path(tmp) / "layer.qml"
     qml.write_text(LAYER_QML)
-    before = {l.get("namespace") for l in niri("layers")}
+
+    def up():
+        return any(l.get("namespace") == "flow-appmenu-coverage" and l.get("keyboard_interactivity") == "Exclusive"
+                   for l in niri("layers"))
+    was_up = up()
     proc = spawn(["quickshell", "-p", str(qml)], tmp)
     deadline = time.monotonic() + 10
-    while time.monotonic() < deadline and not any(l.get("namespace") == "flow-appmenu-coverage" for l in niri("layers")):
+    while time.monotonic() < deadline and not up():
         time.sleep(0.25)
-    up = "flow-appmenu-coverage" not in before and any(
-        l.get("namespace") == "flow-appmenu-coverage" and l.get("keyboard_interactivity") == "Exclusive"
-        for l in niri("layers"))
     time.sleep(1)
     try:
-        yield up
+        yield not was_up and up()
     finally:
         stop(proc)
         STATE["procs"].remove(proc)
@@ -596,7 +581,10 @@ def exclusive_layer(tmp):
 
 def run(argv, env, timeout=120):
     start = time.monotonic()
-    proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired:
+        return {"error": f"timed out after {timeout} s"}, timeout, -1
     took = time.monotonic() - start
     try:
         data = json.loads(proc.stdout.strip().splitlines()[-1])
@@ -606,9 +594,9 @@ def run(argv, env, timeout=120):
 
 
 def reader(*args, fixed=False):
-    """session/appmenu.py with ``args``, the test apps' desktop files and programs findable as an installed
-    app's are (GIO finds no desktop file whose Exec program is not on PATH). ``fixed``: with app_name()'s
-    TypeError caught."""
+    """session/appmenu.py with ``args``, on the private bus, the test apps' desktop files and programs findable
+    as an installed app's are (GIO finds no desktop file whose Exec program is not on PATH). ``fixed``: with
+    app_name()'s TypeError caught."""
     env = bus_env()
     for var, sub in (("XDG_DATA_DIRS", "share"), ("PATH", "bin")):
         env[var] = ":".join(filter(None, [*(f"{r}/{sub}" for r in STATE["roots"]), env.get(var, "")]))
@@ -689,9 +677,7 @@ def narrowing(frames, title):
 def measure(app, root, tmp, late):
     row = {"key": app["key"], "late": late}
     known = set(windows())
-    if not set_a11y(not late):
-        row["error"] = "skipped: IsEnabled changed by someone else"
-        return row
+    set_a11y(not late)
     time.sleep(0.5)
     proc = spawn(app["argv"](root, tmp), tmp, app.get("env"))
     new = wait_new_window(known, app.get("x11"))
@@ -704,19 +690,24 @@ def measure(app, root, tmp, late):
     focus(win["id"])
     if late:
         first, took, _ = reader(fixed=True)
-        row["late_first"] = {"items": count(first), "s": round(took, 2), "error": first.get("error")}
+        row["late_first"] = {"items": count(first), "s": round(took, 2), "error": first.get("error"), "id": first.get("id")}
         time.sleep(3)
         second, took, _ = reader(fixed=True)
-        row["late_second"] = {"items": count(second), "s": round(took, 2), "error": second.get("error")}
-        if not STATE["bus"] and STATE["a11y_set"] is not None:
-            STATE["a11y_set"] = True  # the reader switched it on, as flow-appmenu does
+        row["late_second"] = {"items": count(second), "s": round(took, 2), "error": second.get("error"),
+                              "id": second.get("id")}
+        if app.get("x11"):  # the reader cannot reach it: is it on the bus under its own PID now?
+            row["late_spawned"] = probe(proc.pid)
         return row
     row["pid_windows"] = sum(w.get("pid") == win.get("pid") for w in windows().values())
     for name, fixed in (("reader", False), ("fixed", True)):
         runs = [reader(fixed=fixed) for _ in range(3)]
         result = runs[-1][0]
         row[name] = {"items": count(result), "top": [m["label"] for m in result.get("menus", [])],
-                     "median_s": round(statistics.median(took for _, took, _ in runs), 2), "error": result.get("error")}
+                     "median_s": round(statistics.median(took for _, took, _ in runs), 2), "error": result.get("error"),
+                     "ids": sorted({r.get("id") for r, _, _ in runs if "id" in r})}
+        if row[name]["ids"] not in ([], [win["id"]]):
+            row["error"] = f"the reader read window {row[name]['ids']}, not {win['id']}: focus moved"
+            return row
     row["probe"] = probe(win.get("pid"))
     if app.get("x11") or not row["probe"].get("on_bus"):
         row["probe_spawned"] = probe(proc.pid)  # the process the run started, if the window's PID is another's
@@ -758,7 +749,7 @@ def narrow_case(pid, win):
     title = current[win["id"]]["title"]
     frames = probe(pid, "--frames").get("frames", [])
     rules = narrowing(frames, title)
-    case = {"title": title, "pid_windows": sum(w.get("pid") == pid for w in current.values()),
+    case = {"window": win["id"], "title": title, "pid_windows": sum(w.get("pid") == pid for w in current.values()),
             "same_title_windows": sum(w.get("pid") == pid and w["title"] == title for w in current.values()),
             "frames": frames, **rules}
     if rules["resolved"]:
@@ -767,34 +758,14 @@ def narrow_case(pid, win):
     return case
 
 
-def ground_truth(app, pid, win, case, mine):
-    """Invokes GROUND_TRUTH through the frame ``case`` chose; correct when only the focused window's title changed."""
-    if not case["resolved"]:
-        return {"invoked": False, "error": "no frame chosen", "changed": [], "correct": False}
-    before = {w["id"]: windows()[w["id"]]["title"] for w in mine}
-    result = probe(pid, "--invoke", case["both"][0], *GROUND_TRUTH[app["key"]])
-    time.sleep(1.5)
-    after = {w["id"]: windows()[w["id"]]["title"] for w in mine}
-    changed = [wid for wid in before if before[wid] != after[wid]]
-    return {"invoked": result.get("invoked"), "error": result.get("error"), "changed": changed,
-            "correct": changed == [win["id"]]}
-
-
-def multi(app, root, tmp):
-    """Several windows of one process; with each focused, which accessible frame the title and active rules pick,
-    without and with an exclusive-keyboard layer over it."""
-    row = {"key": app["key"], "cases": [], "layer_cases": []}
-    if not set_a11y(True):
-        row["error"] = "skipped: IsEnabled changed by someone else"
-        return row
+def open_windows(app, root, tmp):
+    """The app's first window and the MULTI windows in its process: (pid, windows of that process)."""
     known = set(windows())
     spawn(app["argv"](root, tmp), tmp)
     first = wait_new_window(known)
     if not first:
-        row["error"] = "no first window"
-        return row
-    pid = first[0].get("pid")
-    mine = [first[0]]
+        return None, []
+    pid, mine = first[0].get("pid"), [first[0]]
     for opener in MULTI[app["key"]]:
         focus(mine[0]["id"])
         known = set(windows())
@@ -805,6 +776,20 @@ def multi(app, root, tmp):
         else:
             spawn(opener(root, tmp), tmp)
         mine += [w for w in wait_new_window(known) if w.get("pid") == pid][:1]
+    return pid, mine
+
+
+def close_all(wins):
+    for w in wins:
+        close_window(w["id"])
+
+
+def multi(app, root, tmp):
+    """Several windows of one process; with each focused, which accessible frame the title and active rules pick,
+    without and with an exclusive-keyboard layer over it."""
+    row = {"key": app["key"], "cases": [], "layer_cases": []}
+    set_a11y(True)
+    pid, mine = open_windows(app, root, tmp)
     if len(mine) < 2:
         row["error"] = "no second window in the same process"
     for win in mine:
@@ -818,27 +803,55 @@ def multi(app, root, tmp):
             case = narrow_case(pid, win)
             case["layer_up"] = up
         row["layer_cases"].append(case)
-    if app["key"] in GROUND_TRUTH:  # last: the command changes the windows' titles
-        row["truth"] = []
-        for win in mine:
-            focus(win["id"])
-            chosen = narrow_case(pid, win)
-            row["truth"].append({"window": win["id"], "title": chosen["title"], "mode": "focused",
-                                 **ground_truth(app, pid, win, chosen, mine)})
-        for win in mine:
-            focus(win["id"])
-            chosen = narrow_case(pid, win)  # chosen before the layer maps, as a reader could when the menu opens
-            with exclusive_layer(tmp) as up:
-                row["truth"].append({"window": win["id"], "title": chosen["title"], "mode": "frame chosen, then layer",
-                                     "layer_up": up, **ground_truth(app, pid, win, chosen, mine)})
+    close_all(mine)
     return row
+
+
+def truth_case(app, root, tmp, which, mode):
+    """In a fresh pair of same-titled windows (the phase's own), GROUND_TRUTH through the frame chosen for window
+    ``which``: correct when only that window's title changes."""
+    set_a11y(True)
+    pid, pair = open_windows(app, root, tmp)
+    result = {"mode": mode, "valid": False}
+    if len(pair) < 2:
+        result["error"] = "no pair"
+        close_all(pair)
+        return result
+    win = pair[which]
+    focus(win["id"])
+    chosen = narrow_case(pid, win)  # with the window focused; in "layer" mode, before the layer maps
+    result.update(window=win["id"], title=chosen["title"], same_title_windows=chosen["same_title_windows"],
+                  resolved=chosen["resolved"], valid=chosen["same_title_windows"] >= 2)
+    before = {w["id"]: windows()[w["id"]]["title"] for w in pair}
+
+    def invoke_through_frame():
+        if not chosen["resolved"]:
+            return {"invoked": False, "error": "no frame chosen"}
+        return probe(pid, "--invoke", chosen["both"][0], *GROUND_TRUTH[app["key"]])
+    if mode == "focused":
+        done = invoke_through_frame()
+    else:
+        with exclusive_layer(tmp) as up:
+            result["layer_up"] = up
+            done = invoke_through_frame()
+    time.sleep(1.5)
+    after = {w["id"]: windows()[w["id"]]["title"] for w in pair}
+    result["changed"] = [wid for wid in before if before[wid] != after[wid]]
+    result.update(invoked=done.get("invoked", False), invoke_error=done.get("error"),
+                  correct=result["changed"] == [win["id"]])
+    close_all(pair)
+    return result
 
 
 # --- The walk, and the probe: runs in its own process, with pyatspi ------------------------------------------
 
+MENU_ROLES = ("ROLE_MENU", "ROLE_MENU_ITEM", "ROLE_CHECK_MENU_ITEM", "ROLE_RADIO_MENU_ITEM")
+
+
 def menu_walk(node, depth, menu, st, capped, found_leaves, at):
-    """session/appmenu.py's walk (active_window's ``walk``), with counters in ``st``: nodes visited, deepest
-    level, menu bars, and menus dropped for having no items. ``capped`` applies its limits; ``at`` is pyatspi."""
+    """session/appmenu.py's walk (active_window's ``walk``), state reads included, with counters in ``st``: nodes
+    visited, deepest level, menu bars, and menu nodes dropped for yielding no items. ``capped`` applies its
+    limits; ``at`` is pyatspi."""
     st["nodes"] += 1
     if node is None or (capped and (st["nodes"] > CAP_NODES or depth > CAP_DEPTH)):
         return []
@@ -846,16 +859,18 @@ def menu_walk(node, depth, menu, st, capped, found_leaves, at):
     role = node.getRole()
     bar = role == at.ROLE_MENU_BAR
     st["bars"] += bar
-    if menu and role in (at.ROLE_MENU, at.ROLE_MENU_ITEM, at.ROLE_CHECK_MENU_ITEM, at.ROLE_RADIO_MENU_ITEM):
+    if menu and role in tuple(getattr(at, r) for r in MENU_ROLES):
         children = []
         for i in range(node.childCount):
             children.extend(menu_walk(node.getChildAtIndex(i), depth + 1, True, st, capped, found_leaves, at))
         if children:
+            node.getState().contains(at.STATE_ENABLED)
             return [{"label": node.name or "", "children": children}]
         if role != at.ROLE_MENU and not node.childCount:
+            node.getState().contains(at.STATE_ENABLED)
             found_leaves.append(node)
             return [{"label": node.name or ""}]
-        st["empty_menus"] += role == at.ROLE_MENU
+        st["dropped"] += 1
         return []
     found = []
     for i in range(node.childCount):
@@ -864,7 +879,7 @@ def menu_walk(node, depth, menu, st, capped, found_leaves, at):
 
 
 def timed_walk(root, capped, at, depth=0):
-    st, found_leaves = {"nodes": 0, "depth": 0, "bars": 0, "empty_menus": 0}, []
+    st, found_leaves = {"nodes": 0, "depth": 0, "bars": 0, "dropped": 0}, []
     start = time.monotonic()
     menus = menu_walk(root, depth, False, st, capped, found_leaves, at)
     st["ms"] = round((time.monotonic() - start) * 1000)
@@ -873,25 +888,30 @@ def timed_walk(root, capped, at, depth=0):
     return st, found_leaves, menus
 
 
+def frames_of(app, at):
+    return [(i, c) for i, c in ((i, app.getChildAtIndex(i)) for i in range(app.childCount))
+            if c is not None and c.getRole() in (at.ROLE_FRAME, at.ROLE_WINDOW, at.ROLE_DIALOG)]
+
+
 def menu_bars(app, at):
-    """Every menu bar in ``app``: its frame, whether it is showing and visible, and its items."""
+    """Every menu bar in ``app``: which frame (its index among the app's children) holds it, whether it is
+    showing and visible, its children and its items."""
     bars = []
 
     def visit(node, frame, depth):
         if node is None or depth > 40:
             return
-        role = node.getRole()
-        if role in (at.ROLE_FRAME, at.ROLE_WINDOW, at.ROLE_DIALOG):
-            frame = node.name or ""
-        if role == at.ROLE_MENU_BAR:
+        if node.getRole() == at.ROLE_MENU_BAR:
             st, _, menus = timed_walk(node, False, at)
             state = node.getState()
             bars.append({"frame": frame, "showing": state.contains(at.STATE_SHOWING),
-                         "visible": state.contains(at.STATE_VISIBLE), "items": st["items"], "top": len(menus)})
+                         "visible": state.contains(at.STATE_VISIBLE), "children": node.childCount,
+                         "items": st["items"], "top": len(menus), "dropped": st["dropped"]})
             return
         for i in range(node.childCount):
             visit(node.getChildAtIndex(i), frame, depth + 1)
-    visit(app, "", 0)
+    for index, frame in frames_of(app, at):
+        visit(frame, {"index": index, "name": frame.name or ""}, 1)
     return bars
 
 
@@ -906,9 +926,14 @@ def find_app(at, pid):
     return None
 
 
-def frames_of(app, at):
-    return [c for c in (app.getChildAtIndex(i) for i in range(app.childCount))
-            if c is not None and c.getRole() in (at.ROLE_FRAME, at.ROLE_WINDOW, at.ROLE_DIALOG)]
+def _top_label(node, at):
+    """The label of the top-level menu ``node`` sits in: the menu whose parent is a menu bar."""
+    while node is not None:
+        parent = node.parent
+        if parent is not None and parent.getRole() == at.ROLE_MENU_BAR:
+            return (node.name or "").strip()
+        node = parent
+    return ""
 
 
 def probe_main(pid, args):
@@ -918,7 +943,7 @@ def probe_main(pid, args):
         return {"on_bus": False}
     if "--frames" in args:
         frames = []
-        for frame in frames_of(app, at):
+        for _, frame in frames_of(app, at):
             st, _, _ = timed_walk(frame, True, at, depth=1)  # a frame is at depth 1 in the reader's walk
             frames.append({"name": frame.name or "", "role": frame.getRoleName(),
                            "active": frame.getState().contains(at.STATE_ACTIVE),
@@ -926,11 +951,11 @@ def probe_main(pid, args):
         return {"on_bus": True, "frames": frames}
     if "--invoke" in args:
         index, top, item = args[args.index("--invoke") + 1:][:3]
-        frame = frames_of(app, at)[int(index)]
-        _, found_leaves, menus = timed_walk(frame, True, at, depth=1)
+        frame = [f for _, f in frames_of(app, at)][int(index)]
+        _, found_leaves, _ = timed_walk(frame, True, at, depth=1)
         top_re, item_re = re.compile(top), re.compile(item)
-        target = next((node for node in found_leaves if item_re.search((node.name or "").strip())
-                       and _top_label(node, at) and top_re.search(_top_label(node, at))), None)
+        target = next((n for n in found_leaves if item_re.search((n.name or "").strip())
+                       and top_re.search(_top_label(n, at))), None)
         if target is None:
             return {"invoked": False, "error": "item not found in the frame"}
         return {"invoked": bool(target.queryAction().doAction(0))}
@@ -946,16 +971,6 @@ def probe_main(pid, args):
             shortcuts.append(f"{(node.name or '').strip()}={key}")
     return {"on_bus": True, "app_name": app.name, "capped": capped, "full": full, "bars": menu_bars(app, at),
             "shortcuts": len(shortcuts), "shortcut_examples": shortcuts[:4]}
-
-
-def _top_label(node, at):
-    """The label of the top-level menu ``node`` sits in: the menu whose parent is a menu bar."""
-    while node is not None:
-        parent = node.parent
-        if parent is not None and parent.getRole() == at.ROLE_MENU_BAR:
-            return (node.name or "").strip()
-        node = parent
-    return ""
 
 
 def dump(app, root, tmp):
@@ -990,7 +1005,7 @@ def command_text(cmd):
 
 def table(data):
     lines = ["| App | Toolkit | On a11y bus | Menu bars (showing) | Reader items, as is | Items, app_name fixed | "
-             "Nodes visited, capped (uncapped) | Empty menus | Walk ms | Reader s | Shortcut labels | "
+             "Nodes visited, capped (uncapped) | Dropped menu nodes | Walk ms | Reader s | Shortcut labels | "
              "Command via doAction | Windows of PID | Late enable, 1st / 2nd call |",
              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     late = {r["key"]: r for r in data["late"]}
@@ -1015,7 +1030,7 @@ def table(data):
         lines.append(" | ".join([
             f"| {app['name']}", app["toolkit"], on_bus, bar_text, "error" if rd["error"] else str(rd["items"]),
             f"{fx['items']}{cut}", f"{capped['nodes']} ({full['nodes']})" if p.get("on_bus") else "—",
-            str(capped.get("empty_menus", "—")) if p.get("on_bus") else "—",
+            str(capped.get("dropped", "—")) if p.get("on_bus") else "—",
             str(capped.get("ms", "—")) if p.get("on_bus") else "—",
             f"{timed['median_s']}{'*' if rd['error'] else ''}",
             f"{p['shortcuts']} of {full['items']}" if has_items else "—",
@@ -1034,19 +1049,36 @@ def table(data):
                         f"{len(c['frames'])} | {len(c['by_title'])} | {len(c['by_active'])} | {len(c['both'])} | "
                         f"{yes(c['resolved'])} | {c.get('frame_items', '—')} | {c.get('frame_ms', '—')} |\n")
             if m.get("error"):
-                out += f"| {m['key']} | {m['error']} |" + " |" * 10 + "\n"
+                out += f"| {m['key']} | {m['error']} |" + " |" * 9 + "\n"
     truths = [(m["key"], t) for m in data["multi"] for t in m.get("truth", [])]
     if truths:
-        out += ("\n\nGround truth (File > New through the chosen frame's menu):\n\n"
-                "| App | Window | How the frame was chosen | Invoked | Windows whose title changed | Correct |\n"
-                "|---|---|---|---|---|---|\n")
+        out += ("\n\nGround truth (in a fresh pair of windows, File > New through the frame chosen for one):\n\n"
+                "| App | Window | Windows with its title | How the frame was chosen | Invoked | "
+                "Windows whose title changed | Correct |\n|---|---|---|---|---|---|---|\n")
         for key, t in truths:
+            if "window" not in t:
+                out += f"| {key} | {t.get('error')} | | {t['mode']} | | | |\n"
+                continue
             mode = t["mode"] + ("" if t.get("layer_up", True) else " (layer not up)")
-            out += (f"| {key} | {t['window']} ({t['title']}) | {mode} | {yes(t['invoked'])}{' ' + t['error'] if t.get('error') else ''} | "
-                    f"{t['changed']} | {yes(t['correct'])} |\n")
+            invoked = yes(t["invoked"]) + (f" ({t['invoke_error']})" if t.get("invoke_error") else "")
+            out += (f"| {key} | {t['window']} ({t['title']}) | {t['same_title_windows']} | {mode} | {invoked} | "
+                    f"{t['changed']} | {yes(t['correct'])}{'' if t['valid'] else ' (title unique: not a test)'} |\n")
+    env = data.get("env", {})
+    if env:
+        out += ("\n\nThe session around the run: accessibility switch (`org.a11y.Status.IsEnabled`) "
+                f"{env['session_a11y']['before']} before, {env['session_a11y']['after']} after; "
+                f"dconf database {'unchanged' if env['dconf']['before'] == env['dconf']['after'] else 'modified'}; "
+                f"home directory entries added {env['home']['added'] or 'none'}, removed {env['home']['removed'] or 'none'}. "
+                f"Run from {env['started']} to {env['finished']}.")
     if data.get("notes"):
         out += "\n\nNotes:\n" + "\n".join(f"- {n}" for n in data["notes"])
     return out
+
+
+def session_snapshot():
+    dconf = Path.home() / ".config" / "dconf" / "user"
+    return {"a11y": session_a11y(), "dconf": dconf.stat().st_mtime_ns if dconf.exists() else None,
+            "home": sorted(p.name for p in Path.home().iterdir())}
 
 
 def main():
@@ -1056,7 +1088,7 @@ def main():
     parser.add_argument("--skip-late", action="store_true")
     parser.add_argument("--dump")
     parser.add_argument("--json")
-    parser.add_argument("--table", help="print the table of an earlier run's JSON")
+    parser.add_argument("--table", help="print the tables of an earlier run's JSON")
     parser.add_argument("--cleanup", action="store_true")
     args = parser.parse_args()
     if args.table:
@@ -1073,19 +1105,26 @@ def main():
         signal.signal(sig, on_signal)
     roots = {a["attr"]: store_path(a["attr"]) for a in apps if a["attr"]}
     STATE["roots"] = list(roots.values())
+    system = {}
     for a in apps:
-        if not a["attr"] and not shutil.which(a["argv"]("", "")[0]):
-            sys.exit(f"{a['argv']('', '')[0]} not on PATH")
+        if not a["attr"]:
+            found = shutil.which(a["argv"]("", "")[0])
+            if not found:
+                sys.exit(f"{a['argv']('', '')[0]} not on PATH")
+            system[a["argv"]("", "")[0]] = os.path.realpath(found)
     workspaces = niri("workspaces")
     current = next(w for w in workspaces if w["is_focused"])
     occupied = {w["workspace_id"] for w in windows().values()}
     empty = next((w for w in workspaces if w["output"] == current["output"] and w["id"] not in occupied), None)
     if empty is None:
         sys.exit("no empty workspace on the focused output")
-    STATE["workspace"], STATE["run_workspace"], STATE["a11y"] = current["idx"], empty["id"], a11y_enabled()
+    STATE["workspace"], STATE["run_workspace"] = current["idx"], empty["id"]
+    before = session_snapshot()
+    data = {"rows": [], "late": [], "multi": [], "notes": STATE["notes"],
+            "env": {"started": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+                    "roots": roots, "system": system}}
     save_state()
     niri_action("focus-workspace", str(empty["idx"]))
-    data = {"rows": [], "late": [], "multi": [], "notes": STATE["notes"]}
     try:
         for app in apps:
             root = roots.get(app["attr"], "")
@@ -1103,11 +1142,25 @@ def main():
             if app["key"] in MULTI and not args.skip_multi:
                 print(f"{app['key']}: multi", file=sys.stderr, flush=True)
                 with phase(app) as tmp:
-                    data["multi"].append(multi(app, root, tmp))
+                    row = multi(app, root, tmp)
+                if app["key"] in GROUND_TRUTH:
+                    row["truth"] = []
+                    for mode in ("focused", "frame chosen, then layer"):
+                        for which in (0, 1):
+                            print(f"{app['key']}: ground truth, {mode}, window {which + 1}", file=sys.stderr, flush=True)
+                            with phase(app) as tmp:
+                                row["truth"].append(truth_case(app, root, tmp, which, mode))
+                data["multi"].append(row)
             if args.json:  # after every app, so a run that stops part-way keeps what it measured
                 Path(args.json).write_text(json.dumps(data, indent=1))
     finally:
         restore()
+    after = session_snapshot()
+    data["env"].update(finished=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+                       session_a11y={"before": before["a11y"], "after": after["a11y"]},
+                       dconf={"before": before["dconf"], "after": after["dconf"]},
+                       home={"added": sorted(set(after["home"]) - set(before["home"])),
+                             "removed": sorted(set(before["home"]) - set(after["home"]))})
     if args.json:
         Path(args.json).write_text(json.dumps(data, indent=1))
     if not args.dump:
