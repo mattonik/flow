@@ -6,9 +6,15 @@ Run inside a Niri session from the Flow checkout, with the focused output's acti
 ``session/spaces.py``. A pinned app, a pinned side-by-side Group and an unpinned app are set up with
 isolated Flow state. Across each restart the pins, Groups, window IDs, columns, widths and focus must
 be unchanged, and Super+number must still reach the same pin. Real state files are checksummed.
+
+Then the shell restarts during Flow actions it started: a Group layout change (twice), a pin and a Layer
+opening. Each action waits on Flow's session lock, held here, while its shell is stopped (SIGTERM or
+SIGKILL) and a new one starts; the lock is then released. The action must still finish, its state must be
+whole (no Group left mid-change), and the new shell must show the result.
 The isolated state folder must be gone afterwards: a stopped shell's helpers can outlive it and write there.
 """
 
+import fcntl
 import hashlib
 import json
 import os
@@ -60,9 +66,14 @@ def main():
         raise RuntimeError("The focused output's active workspace must be empty")
     token = uuid.uuid4().hex[:8]
     apps = {s: f"flow-restart-{token}-{s}" for s in "pabu"}
+    layer_app = f"flow-restart-{token}-layer"
     processes, steps, result, shell_process = [], [], None, None
     with IsolatedState("flow-shell-restart-") as tmp:
-        env = dict(os.environ, XDG_STATE_HOME=tmp)
+        data = Path(tmp) / "data"
+        (data / "applications").mkdir(parents=True)
+        (data / "applications" / f"{layer_app}.desktop").write_text(
+            f"[Desktop Entry]\nType=Application\nName=Scratch Notes\nExec=foot --app-id {layer_app}\n")
+        env = dict(os.environ, XDG_STATE_HOME=tmp, XDG_DATA_HOME=str(data))
         state = Path(tmp) / "flow"
 
         def window(suffix):
@@ -151,6 +162,71 @@ def main():
             wait_for(lambda: focus()["active_window_id"] in (window("a")["id"], window("b")["id"]),
                      "Super+2 reaching the pinned Group")
             steps.append("Super+1 and Super+2 still reached the pinned app and the pinned Group")
+
+            def actions(pattern):
+                """The shell's flow-spaces processes whose arguments match ``pattern``."""
+                found = subprocess.run(["pgrep", "-P", str(shell_process.pid), "-f", f"spaces\\.py {pattern}"],
+                                       text=True, stdout=subprocess.PIPE).stdout.split()
+                return [int(pid) for pid in found]
+
+            def alive(pid):
+                try:
+                    os.kill(pid, 0)
+                    return True
+                except ProcessLookupError:
+                    return False
+
+            def view():
+                return json.loads(ipc("call", "desk", "spaces_view"))
+
+            def group_record():
+                return next(g for g in json.loads((state / "groups.json").read_text())["groups"] if g["id"] == group)
+
+            def group_shown(layout):
+                record = group_record()
+                columns = {window(s)["layout"]["pos_in_scrolling_layout"][0] for s in "ab"}
+                return (record.get("layout", "stack") == layout and "pending_layout" not in record
+                        and len(columns) == (1 if layout == "stack" else 2)
+                        and any(s["group_id"] == group and s["group_layout"] == layout for s in view()["spaces"]))
+
+            def pin_shown():
+                pins = json.loads((state / "spaces.json").read_text())["pins"]
+                ident = window("u")["id"]
+                return (any(p.get("app_id") == apps["u"] for p in pins)
+                        and any(ident in p["window_ids"] for p in view()["pins"]))
+
+            def layer_shown():
+                found = [w for w in read("windows") if w.get("app_id") == layer_app]
+                return (len(found) == 1 and found[0]["is_floating"]
+                        and found[0]["id"] in view()["layers"])
+
+            # Pins and Groups change only while every Group is a stack, so the layout goes first and last.
+            cases = [("group-layout", ("group_layout", group), "a", signal.SIGTERM, lambda: group_shown("stack")),
+                     ("pin", ("pin",), "u", signal.SIGKILL, pin_shown),
+                     ("open-layer", ("open_layer", layer_app), "u", signal.SIGTERM, layer_shown),
+                     ("group-layout", ("group_layout", group), "a", signal.SIGKILL, lambda: group_shown("side-by-side"))]
+            for action, call, focused, sig, finished in cases:
+                niri("action", "focus-window", "--id", window(focused)["id"])
+                with (state / "session.lock").open("a") as lock:
+                    # The lock, with none of the shell's refreshes waiting on it: the action is then the next.
+                    for _ in range(40):
+                        time.sleep(0.5)
+                        fcntl.flock(lock, fcntl.LOCK_EX)
+                        if not actions(""):
+                            break
+                        fcntl.flock(lock, fcntl.LOCK_UN)
+                    else:
+                        raise RuntimeError("The shell's refreshes kept running")
+                    ipc("call", "desk", *call)
+                    pid = wait_for(lambda: actions(f"{action}( |$)"), f"the shell's flow-spaces {action}", timeout=10)[0]
+                    shell_process.send_signal(sig)
+                    shell_process.wait(timeout=10)
+                    if not alive(pid):
+                        raise RuntimeError(f"Stopping the shell ended its flow-spaces {action}")
+                    shell_process = start()
+                wait_for(lambda: not alive(pid), f"flow-spaces {action} to finish", timeout=60)
+                wait_for(finished, f"{action} to be whole and shown by the new shell", timeout=20)
+                steps.append(f"{action}, its shell stopped by {sig.name}: the action finished, whole, and the new shell showed it")
             result = {"result": "pass", "niri": niri("version").strip(), "steps": steps}
         finally:
             if shell_process and shell_process.poll() is None:
@@ -169,7 +245,7 @@ def main():
                     process.kill()
             try:
                 for w in read("windows"):
-                    if w.get("app_id") in apps.values():
+                    if w.get("app_id") in (*apps.values(), layer_app):
                         niri("action", "close-window", "--id", w["id"])
             except (OSError, subprocess.SubprocessError):
                 pass
