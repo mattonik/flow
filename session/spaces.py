@@ -11,6 +11,7 @@ import time
 import uuid
 import groups as group_store
 import pin_store
+import orphan_io
 from launching import app_command
 
 MAX_MEMBERS = group_store.MAX_MEMBERS
@@ -1853,8 +1854,14 @@ def main():
 
 
 if __name__ == "__main__":
+    # A shell restart does not end this action, but it closes the pipes it prints to (session/orphan_io.py).
+    kept = orphan_io.guard()
+    code = 0
     try:
         main()
     except (ValueError, KeyError, OSError, json.JSONDecodeError, subprocess.CalledProcessError) as exc:
         print(json.dumps({"error": str(exc)}))
-        sys.exit(1)
+        code = 1
+    finally:
+        orphan_io.finish(kept)
+    sys.exit(code)
