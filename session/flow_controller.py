@@ -466,6 +466,7 @@ def main():
         return 2
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     server, lock = listen(Path(runtime))  # waits while another controller serves this session
+    print("listening", flush=True)  # the shell connects on this line rather than waiting for its next try
     try:
         Controller(Path(state_home()) / "flow", niri_path, server).serve()
     except KeyboardInterrupt:

@@ -204,6 +204,8 @@ ShellRoot {
             controllerRestart.restart()
         }
         stderr: SplitParser { onRead: line => console.warn("flow-controller: " + line) }
+        // It serves: connect now, not at the next try (startup waited up to a quarter of a second for it).
+        stdout: SplitParser { onRead: line => { if (line === "listening" && !controller.connected) controller.connected = true } }
     }
     property int controllerExits: 0   // since one last served for 30 s
     Timer { id: controllerRestart; onTriggered: if (!controllerProcess.running) controllerProcess.running = true }
@@ -229,7 +231,8 @@ ShellRoot {
             }
         }
     }
-    // Until the controller listens (it starts with the shell) and after it stops, the shell tries again.
+    // Until the controller listens (it starts with the shell, and says when it serves) and after it stops, the
+    // shell tries again.
     Timer { id: controllerConnect; interval: 250; running: true; repeat: true; onTriggered: if (controller.connected) stop(); else controller.connected = true }
     property int refreshAsked: 0
     property int deskRefresh: 0
@@ -658,9 +661,11 @@ ShellRoot {
         if (!space || !workViewOnly || !screen || !snapshotDir || snapshotProcess.running) { if (done) done(); return }
         snapshotProcess.key = String(space.id)
         snapshotProcess.done = done
-        // About 640 px wide whatever the display; written whole, then renamed, so a card never shows half.
-        snapshotProcess.command = ["sh", "-c", 'mkdir -p -m 700 "$1" && grim -o "$2" -s "$3" -t jpeg -q 72 "$1/$4.tmp" && mv -f "$1/$4.tmp" "$1/$4.jpg"',
-            "sh", root.snapshotDir, screen.name, String(Math.min(1, 640 / Math.max(1, screen.width))), snapshotProcess.key]
+        // At the display's own resolution: asking grim for a smaller picture costs more than the whole capture
+        // (178 against 55 ms on a 3840 × 2160 display at scale 2), and Overview waits for it. Its card decodes
+        // it at 640 px wide. Written whole, then renamed, so a card never shows half.
+        snapshotProcess.command = ["sh", "-c", 'mkdir -p -m 700 "$1" && grim -o "$2" -t jpeg -q 72 "$1/$3.tmp" && mv -f "$1/$3.tmp" "$1/$3.jpg"',
+            "sh", root.snapshotDir, screen.name, snapshotProcess.key]
         snapshotProcess.running = true
     }
     Process {
@@ -2341,12 +2346,16 @@ ShellRoot {
         FocusScope {
             id: overviewFocus
             anchors.fill: parent; focus: true
-            // For open_took: the first frame shown with every card.
+            // For open_took: the first frame shown with every card, each card on screen with its snapshot.
             Connections {
                 target: overviewFocus.Window.window
                 function onFrameSwapped() {
-                    if (root.openStarted.overview && spacesOverview.visible && overviewRow.count === root.displaySpaces.length)
-                        root.openEnds("overview")
+                    if (!root.openStarted.overview || !spacesOverview.visible || overviewRow.count !== root.displaySpaces.length) return
+                    for (let i = 0; i < overviewRow.count; i++) {
+                        const card = overviewRow.itemAtIndex(i)
+                        if (card && !card.pictured) return
+                    }
+                    root.openEnds("overview")
                 }
             }
             Keys.onEscapePressed: root.closeSpacesOverview()
@@ -2420,6 +2429,8 @@ ShellRoot {
                     required property int index
                     readonly property bool selected: index === root.overviewIndex
                     readonly property string snapshot: root.snapshotUrl(modelData)
+                    // Its snapshot is drawn (or it has none, or it could not be read).
+                    readonly property bool pictured: !snapshot || snapshotImage.status === Image.Ready || snapshotImage.status === Image.Error
                     readonly property var pin: root.pinOfSpace(modelData)
                     width: spacesOverview.cardWidth; height: overviewRow.height
                     Rectangle {
@@ -2433,16 +2444,21 @@ ShellRoot {
                         width: parent.width; height: spacesOverview.cardHeight; radius: 14
                         color: floeTheme.surfaceRaised; clip: true
                         border.width: 1; border.color: spaceCard.selected ? floeTheme.borderStrong : Qt.alpha(floeTheme.border, 0.6)
-                        Image {
-                            anchors.fill: parent; anchors.margins: 1
+                        Item {
+                            // The whole display, scaled to the card, with the bands above and below cut off.
+                            anchors.fill: parent; anchors.margins: 1; clip: true
                             visible: !!spaceCard.snapshot
-                            source: spaceCard.snapshot
-                            // The snapshot is about 640 px wide (snapshotActiveSpace); cut exactly the bands.
-                            readonly property real scale: 640 / Math.max(1, spacesOverview.width)
-                            sourceClipRect: Qt.rect(0, spacesOverview.bandTop * scale, 640,
-                                                    (spacesOverview.height - spacesOverview.bandTop - spacesOverview.bandBottom) * scale)
-                            // Each new snapshot is a new URL (its version), so caching never shows a stale one.
-                            fillMode: Image.PreserveAspectCrop; smooth: true; asynchronous: true
+                            Image {
+                                id: snapshotImage
+                                readonly property real ratio: width / Math.max(1, spacesOverview.width)
+                                width: parent.width; height: spacesOverview.height * ratio; y: -spacesOverview.bandTop * ratio
+                                source: spaceCard.snapshot
+                                // The snapshot has the display's resolution (snapshotActiveSpace); decoded about
+                                // 640 px wide, which JPEG does while decoding, so a card holds no more than before.
+                                sourceSize.width: 640
+                                // Each new snapshot is a new URL (its version), so caching never shows a stale one.
+                                fillMode: Image.Stretch; smooth: true; asynchronous: true
+                            }
                         }
                         Column {
                             // Before its first snapshot a space shows its app and title.
