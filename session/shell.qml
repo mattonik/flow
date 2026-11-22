@@ -611,17 +611,37 @@ ShellRoot {
         return scored.slice(0, 60).map(entry => entry.result)
     }
     onSearchMatchesChanged: searchIndex = 0
-    Process {
-        id: searchList
-        command: ["flow-search", "--json"]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                let rows = null
-                try { rows = JSON.parse(this.text) } catch (error) {}
-                root.searchFailed = !Array.isArray(rows)
-                root.searchResults = Array.isArray(rows) ? rows : []
+    // One listing per opening of search. A listing still running when search opens again lists what was there
+    // before (windows since closed): it is sent SIGTERM and its answer dropped, so only the newest one is shown.
+    // That stops search.py, not the `flow-spaces refresh` it started, which finishes under spaces.lock.
+    property var searchListing: null   // the listing this opening waits for; null once it has answered
+    Component {
+        id: searchLister
+        Process {
+            id: lister
+            command: ["flow-search", "--json"]
+            // Quickshell finishes the stream before running turns false (a stopped listing's ends at once,
+            // empty); one that never starts only turns running false, and search says it failed.
+            stdout: StdioCollector {
+                onStreamFinished: {
+                    if (root.searchListing !== lister) return
+                    let rows = null
+                    try { rows = JSON.parse(this.text) } catch (error) {}
+                    root.searchFailed = !Array.isArray(rows)
+                    root.searchResults = Array.isArray(rows) ? rows : []
+                }
+            }
+            onRunningChanged: if (!running) {
+                if (root.searchListing === lister) root.searchListing = null
+                destroy()
             }
         }
+    }
+    function listSearchResults() {
+        const stale = searchListing
+        searchListing = searchLister.createObject(root)
+        if (stale) stale.running = false
+        searchListing.running = true
     }
     // Apps and files open through flow-search, whose wrapper has gio. One process per open, so each failure
     // is shown: one that ran and failed, and one that never started (a Process that cannot start never exits).
@@ -661,7 +681,7 @@ ShellRoot {
         searchResults = []   // never the last run's: its windows may have closed
         searchFailed = true    // until flow-search prints its list: one that never starts never answers
         searchOpen = true
-        if (!searchList.running) searchList.running = true
+        listSearchResults()
     }
     function closeSearch() { searchOpen = false }
     function runSearchResult(result) {
@@ -2442,7 +2462,7 @@ ShellRoot {
                 height: palette.resultsHeight
                 horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                 wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
-                text: searchList.running ? "Looking…"
+                text: root.searchListing ? "Looking…"
                     : root.searchFailed ? "Search couldn’t list anything. Close it and try again."
                     : root.searchQuery.trim() ? "Nothing matches “" + root.searchQuery.trim() + "”"
                     : "Nothing to show"

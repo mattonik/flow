@@ -423,7 +423,17 @@ The wtype-driven tests had a latent flaw, fixed in both `niri_search_smoke.py` a
 
 A NEMESIS review found that a `flow-search` that could not start was still silent, both listing and opening; that a second open during a slow first lost its failure; and that the icon handling was guesswork no app in the guest needed. All are fixed as above; the speculative icon code was removed.
 
-Not verified: opening a recent file from the installed shell, and icons given as absolute paths (no app in the guest uses one). Reopening search while a slow listing is still running can show that listing's results; it predates this change.
+Not verified: opening a recent file from the installed shell, and icons given as absolute paths (no app in the guest uses one).
+
+Reopening search while a slow listing was still running showed that listing's results; fixed on 2026-11-22 (*Search opened again during a slow listing*).
+
+### Search opened again during a slow listing (2026-11-22)
+
+Each opening of search lists the results again, since windows may have closed. There was one listing process, and an opening while it still ran started none, so the panel showed that listing's answer: what was there before. The shell now starts a listing per opening. A listing still running gets SIGTERM, and its answer is dropped: only the newest is shown. A stopped listing's output ends at once, empty, which without the check would have said that search failed while the new one was still looking. SIGTERM stops `search.py`, not the `flow-spaces refresh` it started: that refresh finishes under `spaces.lock`, and the new listing's refresh waits for it. Killing a refresh part-way could leave its Niri actions half-done, so it is left to finish.
+
+`niri_search_smoke.py` has a step for it. Its stand-in `flow-search` answers with the rows as they were when it started, after a delay. Search opens during a 4 s listing of a window since closed, closes, and opens again while the new rows take 2 s. Every view in the next 6 s must say *Looking…* or show the new rows, and only the new listing may finish. The step runs again with an old listing that ignores SIGTERM and answers after the new one: its answer must be dropped too. In the guest both pass, and three mutations of the shell each fail: the old single listing (the closed window came back), taking every listing's answer (the late answer replaced the new one), and not stopping the old listing (two finished).
+
+A NEMESIS review found the first version's lifecycle bookkeeping built for an event order Quickshell 0.3.2 does not have (its `onFinished` always ends the stream before `running` turns false), and its docs claiming the whole listing stops. The lifecycle is now one handler and the docs say what SIGTERM stops. Not covered: that a finished listing's Process is destroyed; nothing counts them, so a leak would not fail the test.
 
 ### Moving along a row in Overview (2026-11-21)
 

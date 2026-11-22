@@ -9,6 +9,9 @@ no app starts. Keys are typed with wtype into the panel, which has the keyboard 
 
 Checked, through the shell's ``search_view`` and ``toast`` IPC calls and the stand-in's log:
 - the panel lists what ``flow-search --json`` answers;
+- search opened again while a slow listing still runs says it is looking, then shows the new listing,
+  never the old one's answer (what was there before: windows since closed), and the old listing is stopped;
+  one that ignores being stopped and answers after the new one is dropped too;
 - typing ranks an exact title first and keeps ties in flow-search's order, so Return on "Notes" opens
   the Notes app, not "Notes Server" or Notes as a Layer, through ``flow-search --open app <desktop file>``;
 - with the pointer (tests/pointer.py), the row under it is tinted, a click opens that row rather than
@@ -39,12 +42,19 @@ APPS = ["Notes Client", "Notes Server", "Notes", "Notes Viewer"]
 ROWS = ([{"title": "Flow Settings", "detail": "Settings", "kind": "settings", "value": "settings", "icon": ""}]
         + [{"title": a, "detail": "Application", "kind": "app", "value": f"/apps/{a}.desktop", "icon": ""} for a in APPS]
         + [{"title": a, "detail": "Open as Layer", "kind": "layer", "value": f"{a}.desktop", "icon": ""} for a in APPS])
+# What a slow listing saw before search was opened again: a window since closed.
+STALE_ROWS = [{"title": "Closed Window", "detail": "Open window · foot", "kind": "window", "value": "7", "icon": ""}]
 STAND_IN = """#!/bin/sh
-# Flow search, standing in: --json answers with the rows in $DIR/rows (or fails when $DIR/fail-list
-# exists); --open records its arguments and exits with the code in $DIR/open-exit.
+# Flow search, standing in: --json answers with the rows in $DIR/rows as they were when it started, after
+# the seconds in $DIR/slow if that exists, and counts the listings it finished in $DIR/listed. It ignores
+# SIGTERM when $DIR/ignore-term exists, and fails when $DIR/fail-list does. --open records its arguments
+# and exits with the code in $DIR/open-exit.
 DIR={dir}
 case "$1" in
-  --json) [ -e "$DIR/fail-list" ] && {{ echo "usage: flow-search" >&2; exit 2; }}; cat "$DIR/rows" ;;
+  --json) [ -e "$DIR/fail-list" ] && {{ echo "usage: flow-search" >&2; exit 2; }}
+          [ -e "$DIR/ignore-term" ] && trap '' TERM
+          rows=$(cat "$DIR/rows"); [ -e "$DIR/slow" ] && sleep "$(cat "$DIR/slow")"; printf '%s\n' "$rows"
+          echo listed >> "$DIR/listed" ;;
   --open) echo "$2 $3" >> "$DIR/opened"; exit "$(cat "$DIR/open-exit" 2>/dev/null || echo 0)" ;;
   *) exit 2 ;;
 esac
@@ -142,6 +152,50 @@ def main():
             if [r["title"] for r in shown["rows"]] != [r["title"] for r in ROWS] or shown["message"]:
                 raise RuntimeError(f"The panel did not list flow-search's results in order: {shown}")
             steps.append("the panel listed flow-search's results in their order")
+
+            # A listing still running when search opens again answers with what was there when it began.
+            def close_search():
+                ipc("search")
+                wait_for(lambda: ipc("search_state") == "closed", "search to close")
+
+            def reopen_during_slow_listing(outlives_stop):
+                close_search()
+                (tmp / "listed").unlink(missing_ok=True)
+                (tmp / "rows").write_text(json.dumps(STALE_ROWS))
+                (tmp / "slow").write_text("4")
+                if outlives_stop:
+                    (tmp / "ignore-term").touch()
+                open_search()
+                wait_for(lambda: (v := view()) and v["message"] == "Looking…", lambda: f"the slow listing ({view()})")
+                close_search()
+                (tmp / "ignore-term").unlink(missing_ok=True)
+                (tmp / "rows").write_text(json.dumps(ROWS))
+                (tmp / "slow").write_text("2")  # the new listing is slow too: until it answers, search is looking
+                open_search()
+                (tmp / "slow").unlink()
+                seen, end = [], time.monotonic() + 6  # past the end of the first listing
+                while time.monotonic() < end:
+                    seen.append(view())
+                    time.sleep(0.2)
+                if not seen[0] or seen[0]["message"] != "Looking…":
+                    raise RuntimeError(f"Search opened again during a slow listing did not say it was looking: {seen[0]}")
+                for shown in seen:
+                    if not shown or shown["message"] not in ("Looking…", "") or (
+                            shown["rows"] and [r["title"] for r in shown["rows"]] != [r["title"] for r in ROWS]):
+                        raise RuntimeError(f"Search opened again showed something other than looking or the new listing: {shown}")
+                if not seen[-1]["rows"]:
+                    raise RuntimeError(f"The new listing never showed: {seen[-1]}")
+                # The new one's, and the old one's only when it ignored being stopped.
+                listed = (tmp / "listed").read_text().split()
+                if len(listed) != (2 if outlives_stop else 1):
+                    raise RuntimeError(f"{len(listed)} listings finished: the slow one was {'not ' * (not outlives_stop)}stopped")
+
+            reopen_during_slow_listing(False)
+            steps.append("search opened again during a slow listing said it was looking, then showed the new listing, "
+                         "not the old one's answer, and the old listing was stopped")
+            # A listing that ignores SIGTERM answers after the new one: its answer is dropped too.
+            reopen_during_slow_listing(True)
+            steps.append("a slow listing that ignored being stopped answered after the new one, and its answer was dropped")
 
             type_keys("Notes")
             ranked = wait_for(lambda: (v := view()) and len(v["rows"]) == 8 and v, lambda: f"Notes results ({view()})")
