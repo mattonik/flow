@@ -697,31 +697,39 @@ agent) and NetworkManager. `niri_wifi_hwsim_smoke.py` (run by `run_wifi_hwsim_sm
 and NetworkManager uses the other. With a development shell on a private bus:
 - NetworkManager found the test network as WPA2 on the simulated radio.
 - The Network row showed *Connected* for NetworkManager's `full` connectivity. The guest's wired
-  connection decides that, and the test leaves it alone, so the row is checked against NetworkManager but
-  never changes during the test.
+  connection decides that, and the test leaves it alone, so the shell's `nmcli` is then a stub that answers
+  each other state, an answer the shell does not know, and a failure; the row showed the right words for
+  each (*Limited*, *Sign-in required*, *Offline*, *Unknown*, *Network unavailable*).
 - A click on the row (the pointer) closed Quick settings and opened GNOME's Settings at its Wi-Fi panel,
   which listed the network under the simulated radio as a WPA2 network (read over AT-SPI).
 - A profile with the right passphrase connected: the access point reported the station, a ping reached the
   access point over the radio, the default route stayed the wired one, and GNOME's panel showed the network
   as connected. Disconnecting ended it on both sides.
 - A profile with a wrong passphrase was refused: the access point reported a passphrase mismatch, and the
-  radio stopped at *need authentication*. No prompt opened in the session.
+  radio stopped waiting for a new passphrase (NetworkManager's *need authentication*). No window opened in
+  the session.
 
 The test runs this checkout's shell and this checkout's `flow-wifi-settings`, built from the module check.
-Three mutations of Flow's part fail it, each at its own step: the row opening the connection editor
+Four mutations of Flow's part fail it, each at its own step: the row opening the connection editor
 instead (GNOME's Settings never opens), the wrapper opening GNOME's Network panel instead of Wi-Fi (the
-Wi-Fi panel never lists the network), and the row showing *Online* for full connectivity. The radios,
-namespace, hostapd and profiles are removed after every run, passed or failed, and the real profiles,
-devices and default route are compared before and after. A new wireless interface makes NixOS restart
-`wpa_supplicant`, so the test refuses to run beside another Wi-Fi device.
+Wi-Fi panel never lists the network), the row showing *Online* for full connectivity, and the row's status
+fixed at *Connected*. That last one passed the first version of the test, which looked only at the real
+`full` state; a NEMESIS review found it, and the stub `nmcli` was added for it. The radios, namespace,
+hostapd and profiles are removed after every run that ends by itself or by SIGTERM, SIGHUP or SIGINT;
+after a SIGKILL, `niri_wifi_hwsim_smoke.py --cleanup` removes them and the development shell. The real profiles, devices, default
+route and the session's windows are compared before and after. cfg80211, which hwsim loads, stays loaded.
+A new wireless interface makes NixOS restart `wpa_supplicant`, so the test refuses to run beside another
+Wi-Fi device.
 
 Seen in its screenshots (`docs/screenshots/2026-11-22-wifi-hwsim`), not fixed here: GNOME's panel shows a
 broken-image placeholder where its signal-strength icons belong, and the island covers the top of the
 panel's title.
 
 Not covered: real Wi-Fi hardware and drivers, roaming, enterprise (802.1X) networks, captive portals, and
-connecting from GNOME's panel itself (the panel's password dialog and nm-applet's re-prompt after a wrong
-password). The test connects through `nmcli`. A USB dongle passed through from the Mac covers the first;
+connecting from GNOME's panel itself (the password prompt, which outside GNOME Shell comes from the secret
+agent, nm-applet, and its re-prompt after a wrong password). The test connects through `nmcli`. The
+development shell launches GNOME's panel directly, while the installed shell launches it in a systemd scope
+(`FLOW_APP_SCOPES`); the scoped launch is not covered here. A USB dongle passed through from the Mac covers the first;
 see [hardware testing](hardware-testing.md).
 
 ## What needs bare metal (2026-11-22)
@@ -752,6 +760,9 @@ Wi-Fi and Bluetooth dongles, headsets and DisplayLink docks passed through from 
 - **Physical input devices:** a touchpad's smooth scrolling and libinput's acceleration (see *Pointer in
   the guest tests*), and keyboard layouts and media keys from a real keyboard. A USB keyboard or mouse
   could be passed through, but the Mac's own touchpad cannot.
+- **Built-in hardware a laptop has and a VM does not:** hybrid or discrete GPUs (PRIME, NVIDIA), a real
+  panel's fractional scale, audio jack detection and HDMI or DisplayPort audio, internal PCIe Wi-Fi and
+  Bluetooth (such as Intel's iwlwifi) as opposed to USB dongles, and built-in cameras.
 
 **An x86-64 test machine.** Flow's module has nothing architecture-specific, but the flake only builds for
 aarch64-linux: the evaluation fixture `nixosConfigurations.test`, `checks.aarch64-linux.*` and

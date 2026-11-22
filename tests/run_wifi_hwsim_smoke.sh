@@ -24,5 +24,7 @@ if [ -z "${FLOW_WIFI_SETTINGS:-}" ]; then
 fi
 [ -x "$FLOW_WIFI_SETTINGS/bin/flow-wifi-settings" ] || { echo "$FLOW_WIFI_SETTINGS has no bin/flow-wifi-settings" >&2; exit 1; }
 export PATH="$FLOW_WIFI_SETTINGS/bin:$PATH" GI_TYPELIB_PATH
-dbus-run-session -- env FLOW_SHELL="${FLOW_SHELL:-$checkout/session/shell.qml}" \
+# The installed shell launches apps in systemd scopes (FLOW_APP_SCOPES); the development shell, on its own runtime
+# directory, cannot reach the user manager that way, so it launches them directly.
+dbus-run-session -- env -u FLOW_APP_SCOPES FLOW_SHELL="${FLOW_SHELL:-$checkout/session/shell.qml}" \
     "$python" "$checkout/tests/niri_wifi_hwsim_smoke.py"

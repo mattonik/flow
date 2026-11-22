@@ -23,7 +23,15 @@ export XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-1 NIRI_SOCKET=$(ls
 ```
 
 ```bash
-(flock -w 1800 9 && systemctl --user stop flow-shell && { tests/run_wifi_hwsim_smoke.sh; rc=$?; systemctl --user start flow-shell; exit $rc; }) 9>/tmp/floe-screen.lock
+(flock -w 1800 9 || exit 9; was=$(systemctl --user is-active flow-shell); [ "$was" = active ] && systemctl --user stop flow-shell; tests/run_wifi_hwsim_smoke.sh; rc=$?; [ "$was" = active ] && systemctl --user start flow-shell; exit $rc) 9>/tmp/floe-screen.lock
+```
+
+It starts the shell again only if it was running. A run stopped with Ctrl-C or `kill` removes its
+radios, access point and profiles; one killed with `kill -9` leaves them and its development shell, and
+the next run refuses until they are removed:
+
+```bash
+python3 tests/niri_wifi_hwsim_smoke.py --cleanup
 ```
 
 The runner builds this checkout's `flow-wifi-settings` from the module check
@@ -57,7 +65,7 @@ controllers; `lsusb -t` shows two root hubs at 480M and two at 5000M.
 3. In the guest, check that it arrived, then run the Flow checks below. To give the device back, untick it
    in the same menu.
 
-Flow's Wi-Fi panel, Network row and volume slider act on whatever NetworkManager and PipeWire offer, so
+GNOME's Wi-Fi panel, Flow's Network row and Flow's volume slider act on whatever NetworkManager and PipeWire offer, so
 each device below is a test of the hand-off to those, not of a Flow driver.
 
 ### USB Wi-Fi dongle
@@ -171,7 +179,9 @@ from the file you download yourself, because its licence does not allow redistri
    ```
 
 That turns on nixpkgs' DisplayLink module, which installs its udev rules and the `dlm` service that runs
-`DisplayLinkManager`. The `evdi` module is installed already and loads at boot; until the guest's next
+`DisplayLinkManager`. Nothing starts `dlm` but the udev rule, when a DisplayLink device arrives: if the
+dock was already in the guest during the rebuild, give it back to the Mac and pass it through again (untick
+and tick it in UTM's USB menu). The `evdi` module is installed already and loads at boot; until the guest's next
 reboot, `modprobe` looks only in the booted generation's modules, so load it with
 `sudo modprobe -d /run/current-system/kernel-modules evdi`.
 

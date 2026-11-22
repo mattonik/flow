@@ -7,7 +7,9 @@ Choosing a network, passwords and connecting are GNOME's panel, nm-applet (the s
 NetworkManager. So the test checks the shell where the shell does something, and NetworkManager where
 Flow hands off:
 
-- the Network row of a development shell shows the label for the connectivity NetworkManager reports;
+- the Network row of a development shell shows the label for the connectivity NetworkManager reports,
+  for every state: the guest's wired connection is always ``full``, so the shell's ``nmcli`` is a stub
+  that answers the real NetworkManager first and then each other state, a malformed answer and a failure;
 - a click on it (the pointer, tests/pointer.py) closes Quick settings and opens GNOME's Settings at its
   Wi-Fi panel, which lists the test network under the simulated radio as a WPA2 network (read over AT-SPI);
 - through NetworkManager: the network is found by a scan; a profile with the right passphrase connects,
@@ -21,7 +23,10 @@ wireless interface makes NixOS restart wpa_supplicant), moves one radio into a n
 own and runs hostapd there, so NetworkManager never sees the access point. Its profiles do not connect
 on their own, are bound to the simulated radio, use a /24 the guest does not use and never take the
 default route. Everything is removed afterwards, also when the test fails: the profiles, hostapd, the
-namespace and the module; the real profiles, devices and default route are compared before and after.
+namespace and the module; the real profiles, devices and default route, and the session's windows, are
+compared before and after. A run killed with SIGTERM, SIGHUP or SIGINT cleans up too; one killed with
+SIGKILL leaves its radios, profiles and development shell, which ``niri_wifi_hwsim_smoke.py --cleanup``
+removes (it needs no session). cfg80211, which hwsim pulls in, stays loaded, and each run restarts wpa_supplicant twice.
 
 Run it with ``tests/run_wifi_hwsim_smoke.sh`` inside a Niri session where Flow is installed, with ``iw``,
 ``hostapd``, ``flow-pointer`` and passwordless ``sudo``, and the installed shell stopped (``systemctl
@@ -30,7 +35,6 @@ the AT-SPI bus run on a private session bus; the shell has its own runtime, stat
 ``FLOW_WIFI_SHOTS`` may name a directory for screenshots of GNOME's panel.
 """
 
-import ctypes
 import hashlib
 import json
 import os
@@ -38,6 +42,7 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -52,6 +57,23 @@ AP_ADDRESS, CLIENT_ADDRESS = f"{SUBNET}.1", f"{SUBNET}.2"
 # The Network row's words for each of NetworkManager's connectivity states (session/shell.qml).
 CONNECTIVITY = {"full": "Connected", "limited": "Limited", "portal": "Sign-in required", "none": "Offline",
                 "unknown": "Unknown"}
+# What the stub nmcli answers after the real state, and the row's words for each: every state, an answer the
+# shell does not know, and nmcli failing. Each label differs from the one before (and the first from the real
+# state's, Connected), so each is a change the row must show.
+STUB_STATES = [("limited", "Limited"), ("portal", "Sign-in required"), ("@fail", "Network unavailable"),
+               ("none", "Offline"), ("bogus", "Network unavailable"), ("unknown", "Unknown"), ("full", "Connected")]
+NAMESPACE_PREFIX, PROFILE_PREFIX = "flow-wifi-", "flow-wifi-test-"
+# The shell's nmcli: answers the connectivity query from a file (a state, "@real" for the real one, "@fail" to
+# exit 1) and passes every other call to the real nmcli.
+NMCLI_STUB = """#!/bin/sh
+state=$(cat "$FLOW_NMCLI_STATE")
+if [ "$*" = "-t -f CONNECTIVITY general" ] && [ "$state" != "@real" ]; then
+    [ "$state" = "@fail" ] && exit 1
+    printf '%s\\n' "$state"
+    exit 0
+fi
+exec "$FLOW_NMCLI_REAL" "$@"
+"""
 
 
 def nm_fields(line):
@@ -119,19 +141,6 @@ def read(kind):
     return json.loads(niri("-j", kind))
 
 
-def descends_from(pid, ancestor):
-    """Whether process pid is ancestor or runs under it. The test is a subreaper, so what the shell starts
-    and leaves (execDetached) runs under the test."""
-    while pid > 1:
-        if pid == ancestor:
-            return True
-        try:
-            pid = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
-        except (OSError, ValueError, IndexError):
-            return False
-    return False
-
-
 def real_network():
     """What the test must not change: every profile, every device's state and connection, and the default
     routes. Taken before the radios exist and after they are gone."""
@@ -147,7 +156,7 @@ class Lab:
 
     def __init__(self, tmp, token, iw, hostapd):
         self.tmp, self.token, self.iw, self.hostapd_bin = tmp, token, iw, hostapd
-        self.namespace = f"flow-wifi-{token}"
+        self.namespace = f"{NAMESPACE_PREFIX}{token}"
         self.ssid = f"flow-test-{token}"
         self.passphrase = secrets.token_urlsafe(12)
         self.log = tmp / "hostapd.log"
@@ -192,7 +201,7 @@ class Lab:
 
     def profile(self, label, passphrase):
         ident = str(uuid.uuid4())
-        nmcli("connection", "add", "type", "wifi", "ifname", self.client, "con-name", f"flow-wifi-test-{self.token}-{label}",
+        nmcli("connection", "add", "type", "wifi", "ifname", self.client, "con-name", f"{PROFILE_PREFIX}{self.token}-{label}",
               "connection.uuid", ident, "ssid", self.ssid, "autoconnect", "no",
               "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", passphrase,
               "ipv4.method", "manual", "ipv4.addresses", f"{CLIENT_ADDRESS}/24", "ipv4.never-default", "yes",
@@ -238,7 +247,39 @@ class Lab:
         return problems
 
 
-def check(shell, bus, lab, steps, shots):
+def sweep():
+    """Removes what a killed run left: its development shell and the apps that shell started (they carry
+    the stub's FLOW_NMCLI_STATE in their environment), test profiles, namespaces with whatever runs in them,
+    and the module."""
+    removed = []
+    for proc in Path("/proc").glob("[0-9]*"):
+        try:
+            if proc.stat().st_uid == os.getuid() and b"\0FLOW_NMCLI_STATE=" in b"\0" + (proc / "environ").read_bytes():
+                name = (proc / "comm").read_text().strip()
+                os.kill(int(proc.name), signal.SIGTERM)
+                removed.append(f"process {proc.name} ({name})")
+        except (OSError, ValueError):
+            pass
+    for line in nmcli("-t", "-f", "UUID,NAME", "connection", "show").stdout.splitlines():
+        ident, name = nm_fields(line)[:2]
+        if name.startswith(PROFILE_PREFIX):
+            nmcli("connection", "delete", "uuid", ident, check=False)
+            removed.append(f"profile {name}")
+    for name in run("ip", "netns", "list").stdout.split():
+        if name.startswith(NAMESPACE_PREFIX):
+            pids = sudo("ip", "netns", "pids", name, check=False).stdout.split()
+            if pids:
+                sudo("kill", *pids, check=False)
+            sudo("ip", "netns", "delete", name, check=False)
+            removed.append(f"namespace {name}")
+    if Path("/sys/module/mac80211_hwsim").exists():
+        wait_for(lambda: sudo("modprobe", "-r", "mac80211_hwsim", check=False).returncode == 0,
+                 "mac80211_hwsim to unload", timeout=20, pause=0.5)
+        removed.append("mac80211_hwsim")
+    return removed
+
+
+def check(shell, bus, lab, steps, shots, problems):
     import gi
     gi.require_version("Atspi", "2.0")
     from gi.repository import Gio, GLib
@@ -267,8 +308,15 @@ def check(shell, bus, lab, steps, shots):
     with tempfile.TemporaryDirectory(prefix="flow-wifi-shell-") as tmp:
         runtime = Path(tmp) / "runtime"
         runtime.mkdir(mode=0o700)
+        stub_bin, state_file = Path(tmp) / "bin", Path(tmp) / "nmcli-state"
+        stub_bin.mkdir()
+        (stub_bin / "nmcli").write_text(NMCLI_STUB)
+        (stub_bin / "nmcli").chmod(0o755)
+        state_file.write_text("@real")
         env = dict(os.environ, XDG_STATE_HOME=tmp, XDG_CONFIG_HOME=str(Path(tmp) / "config"), XDG_RUNTIME_DIR=str(runtime),
-                   WAYLAND_DISPLAY=wayland if wayland.startswith("/") else str(real_runtime / wayland))
+                   WAYLAND_DISPLAY=wayland if wayland.startswith("/") else str(real_runtime / wayland),
+                   PATH=f"{stub_bin}:{os.environ['PATH']}", FLOW_NMCLI_STATE=str(state_file),
+                   FLOW_NMCLI_REAL=shutil.which("nmcli"))
 
         def ipc(*call):
             try:
@@ -306,6 +354,7 @@ def check(shell, bus, lab, steps, shots):
                               None, Gio.DBusCallFlags.NONE, 5000, None)
         pointer = Pointer()
         original = next(w for w in read("workspaces") if w["is_focused"])
+        windows_at_start = {w["id"] for w in read("windows")}
         shell_process = settings_window = None
         try:
             # The focused output's empty workspace, so GNOME's window opens where nothing else is.
@@ -321,9 +370,17 @@ def check(shell, bus, lab, steps, shots):
             connectivity = nmcli("-t", "-f", "CONNECTIVITY", "general").stdout.strip()
             label = CONNECTIVITY.get(connectivity, "Network unavailable")
             wait_for(lambda: (r := network_row()) and label in r["words"],
-                           lambda: f"the Network row to show {label!r} for connectivity {connectivity!r} ({network_row()})")
-            steps.append(f"Quick settings' Network row shows {label!r} for NetworkManager's connectivity {connectivity!r} "
-                         "(the guest's wired connection decides it; the test leaves that alone)")
+                     lambda: f"the Network row to show {label!r} for connectivity {connectivity!r} ({network_row()})")
+            steps.append(f"Quick settings' Network row shows {label!r} for NetworkManager's real connectivity {connectivity!r}")
+            # The shell polls every 4 s while the panel is open; each state is a new answer, so a row stuck on
+            # one label fails.
+            for state, label in STUB_STATES:
+                state_file.write_text(state)
+                wait_for(lambda: (r := network_row()) and label in r["words"],
+                         lambda: f"the Network row to show {label!r} when nmcli answers {state!r} ({network_row()})",
+                         timeout=12)
+            state_file.write_text("@real")
+            steps.append("The row follows nmcli's answer through " + ", ".join(f"{s} → {l!r}" for s, l in STUB_STATES))
 
             # The hand-off: a click on the row opens GNOME's Wi-Fi panel, which lists the network.
             before = {w["id"] for w in read("windows")}
@@ -342,6 +399,13 @@ def check(shell, bus, lab, steps, shots):
                         return app
                 return None
 
+            def listed():
+                # GNOME rebuilds its rows as scans come in; an object that went away mid-walk is no answer yet.
+                try:
+                    return walk_panel()
+                except GLib.Error:
+                    return None
+
             def find(node, test, depth=0):
                 if node is None or depth > 40:
                     return None
@@ -353,9 +417,9 @@ def check(shell, bus, lab, steps, shots):
                         return hit
                 return None
 
-            def listed():
+            def walk_panel():
                 """The test network's row in GNOME's Wi-Fi panel, under the simulated radio, as
-                (row, connected), or None while the panel does not show it."""
+                (row, secure, connected), or None while the panel does not show it."""
                 app = settings_app()
                 if app is None:
                     return None
@@ -410,8 +474,8 @@ def check(shell, bus, lab, steps, shots):
             refused = nmcli("--wait", "20", "connection", "up", "uuid", wrong, check=False, timeout=30)
             state = device_state()
             nmcli("device", "disconnect", lab.client, check=False)
-            if refused.returncode == 0 or state.startswith("100"):
-                raise RuntimeError(f"A wrong passphrase connected {lab.client} ({state!r})")
+            if refused.returncode == 0 or not state.startswith("60"):
+                raise RuntimeError(f"A wrong passphrase left {lab.client} {state!r}, not waiting for a passphrase (60)")
             if "AP-STA-POSSIBLE-PSK-MISMATCH" not in lab.events():
                 raise RuntimeError(f"The access point never saw the wrong passphrase: {lab.events()[-800:]}")
             if lab.events().count("AP-STA-CONNECTED") != joined:
@@ -423,15 +487,11 @@ def check(shell, bus, lab, steps, shots):
                 raise RuntimeError(f"A wrong passphrase from nmcli opened windows in the session: "
                                    f"{[(w['app_id'], w['title']) for w in prompts]}")
             steps.append(f"A wrong passphrase was refused: the access point reported a passphrase mismatch and "
-                         f"{lab.client} never connected ({state})")
+                         f"{lab.client} stopped waiting for a new one ({state})")
         finally:
-            # Every window the test's processes opened: GNOME's Settings, or whatever a broken row opened instead.
-            try:
-                for w in read("windows"):
-                    if w.get("pid") and descends_from(w["pid"], os.getpid()):
-                        niri("action", "close-window", "--id", w["id"])
-            except (OSError, ValueError, subprocess.SubprocessError):
-                pass
+            if settings_window:
+                subprocess.run(["niri", "msg", "action", "close-window", "--id", str(settings_window["id"])],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
             if shell_process and shell_process.poll() is None:
                 shell_process.terminate()
                 try:
@@ -440,11 +500,19 @@ def check(shell, bus, lab, steps, shots):
                     shell_process.kill()
             try:
                 niri("action", "focus-workspace", original["idx"])
-            except (OSError, subprocess.SubprocessError):
+                # Apps the shell started end with the private bus at the latest; until then, none may be left open.
+                wait_for(lambda: {w["id"] for w in read("windows")} <= windows_at_start, "", timeout=10)
+            except RuntimeError:
+                problems.append("windows the test opened are still open: " + str(
+                    [(w["app_id"], w["title"]) for w in read("windows") if w["id"] not in windows_at_start]))
+            except (OSError, ValueError, subprocess.SubprocessError):
                 pass
 
 
 def main():
+    if sys.argv[1:] == ["--cleanup"]:
+        print("Removed: " + (", ".join(sweep()) or "nothing"))
+        return
     shell = os.environ.get("FLOW_SHELL")
     bus = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "")
     if not shell or "unix:" not in bus:
@@ -458,7 +526,8 @@ def main():
     if missing:
         raise RuntimeError(f"Not on PATH: {', '.join(missing)}")
     if Path("/sys/module/mac80211_hwsim").exists():
-        raise RuntimeError("mac80211_hwsim is already loaded (another run, or someone's radios): unload it first")
+        raise RuntimeError("mac80211_hwsim is already loaded: another run, or one that was killed. If none is running, "
+                           "remove what it left with: python3 tests/niri_wifi_hwsim_smoke.py --cleanup")
     wifi = [nm_fields(line)[0] for line in nmcli("-t", "-f", "DEVICE,TYPE", "device").stdout.splitlines()
             if nm_fields(line)[1] == "wifi"]
     if wifi:
@@ -472,8 +541,9 @@ def main():
     shots = Path(os.environ["FLOW_WIFI_SHOTS"]) if os.environ.get("FLOW_WIFI_SHOTS") else None
     if shots:
         shots.mkdir(parents=True, exist_ok=True)
-    # GNOME's Settings is started by the shell and leaves it; as a subreaper the test still owns it.
-    ctypes.CDLL(None).prctl(36, 1, 0, 0, 0)  # PR_SET_CHILD_SUBREAPER
+    # A run that is stopped still cleans up: these end it through the finally blocks.
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(sig, lambda number, frame: sys.exit(f"Stopped by signal {number}"))
     real_state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "flow"
     real_files = [real_state / name for name in ("spaces.json", "groups.json", "session.json")]
     real_digests = [digest(path) for path in real_files]
@@ -483,11 +553,11 @@ def main():
         network = real_network()
         try:
             lab.start()
-            check(shell, bus, lab, steps, shots)
-        except (OSError, RuntimeError, StopIteration, subprocess.SubprocessError, ValueError, KeyError) as exc:
+            check(shell, bus, lab, steps, shots, problems)
+        except Exception as exc:  # anything, so the comparisons below still run
             error = exc
         finally:
-            problems = lab.close()
+            problems += lab.close()
             if error and lab.events():
                 print("hostapd's log:\n" + lab.events()[-2000:], file=sys.stderr)
         # NetworkManager drops the radio's devices a moment after the module goes.
@@ -498,8 +568,9 @@ def main():
     if [digest(path) for path in real_files] != real_digests:
         problems.append("A real Flow Group, pin, or session file changed")
     if error or problems:
-        raise RuntimeError("\n".join(([str(error)] if error else []) + [f"Clean-up: {p}" for p in problems]))
-    print(json.dumps({"result": "pass", "steps": steps}, indent=1))
+        raise RuntimeError("\n".join(([f"{type(error).__name__}: {error}"] if error else [])
+                                     + [f"Clean-up: {p}" for p in problems]))
+    print(json.dumps({"result": "pass", "steps": steps}, indent=1, ensure_ascii=False))
 
 
 if __name__ == "__main__":
