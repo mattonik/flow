@@ -3,11 +3,11 @@
   {
    "key": "kate",
    "late": false,
-   "window": 2883,
+   "window": 2935,
    "title": "Welcome  \u2014 Kate",
    "app_id": "org.kde.kate",
-   "pid": 523144,
-   "spawned_pid": 523144,
+   "pid": 532758,
+   "spawned_pid": 532758,
    "extra_windows": [],
    "pid_windows": 1,
    "reader": {
@@ -24,10 +24,10 @@
      "Settings",
      "Help"
     ],
-    "median_s": 0.53,
+    "median_s": 0.4,
     "error": null,
     "ids": [
-     2883
+     2935
     ]
    },
    "fixed": {
@@ -44,10 +44,10 @@
      "Settings",
      "Help"
     ],
-    "median_s": 0.45,
+    "median_s": 0.41,
     "error": null,
     "ids": [
-     2883
+     2935
     ]
    },
    "probe": {
@@ -58,7 +58,7 @@
      "depth": 12,
      "bars": 1,
      "dropped": 6,
-     "ms": 351,
+     "ms": 319,
      "items": 186,
      "top": [
       "File",
@@ -78,7 +78,7 @@
      "depth": 17,
      "bars": 1,
      "dropped": 6,
-     "ms": 357,
+     "ms": 345,
      "items": 186,
      "top": [
       "File",
@@ -122,7 +122,7 @@
      "About Kate"
     ],
     "ok": true,
-    "s": 0.5,
+    "s": 0.43,
     "error": null,
     "opened": [
      "About Kate"
@@ -132,11 +132,11 @@
   {
    "key": "sqlitebrowser",
    "late": false,
-   "window": 2896,
+   "window": 2952,
    "title": "DB Browser for SQLite",
    "app_id": "sqlitebrowser",
-   "pid": 524313,
-   "spawned_pid": 524313,
+   "pid": 534232,
+   "spawned_pid": 534232,
    "extra_windows": [],
    "pid_windows": 1,
    "reader": {
@@ -148,10 +148,10 @@
      "Tools",
      "Help"
     ],
-    "median_s": 0.48,
+    "median_s": 0.46,
     "error": null,
     "ids": [
-     2896
+     2952
     ]
    },
    "fixed": {
@@ -163,10 +163,10 @@
      "Tools",
      "Help"
     ],
-    "median_s": 0.48,
+    "median_s": 0.47,
     "error": null,
     "ids": [
-     2896
+     2952
     ]
    },
    "probe": {
@@ -177,7 +177,7 @@
      "depth": 12,
      "bars": 1,
      "dropped": 0,
-     "ms": 363,
+     "ms": 369,
      "items": 67,
      "top": [
       "File",
@@ -192,7 +192,7 @@
      "depth": 14,
      "bars": 1,
      "dropped": 0,
-     "ms": 374,
+     "ms": 370,
      "items": 67,
      "top": [
       "File",
@@ -231,7 +231,7 @@
      "About"
     ],
     "ok": false,
-    "s": 15.19,
+    "s": 15.15,
     "error": "atspi_error: Did not receive a reply. Possible causes include: the remote application did not send a reply, the message bus security policy blocked the reply, the reply timeout expired, or the network connection was broken. (1)",
     "opened": [
      "About DB Browser for SQLite"
@@ -241,11 +241,11 @@
   {
    "key": "vlc",
    "late": false,
-   "window": 2899,
+   "window": 2955,
    "title": "VLC media player",
    "app_id": "vlc",
    "pid": 1022,
-   "spawned_pid": 524627,
+   "spawned_pid": 534556,
    "extra_windows": [],
    "pid_windows": 1,
    "reader": {
@@ -254,16 +254,16 @@
     "median_s": 0.08,
     "error": null,
     "ids": [
-     2899
+     2955
     ]
    },
    "fixed": {
     "items": 0,
     "top": [],
-    "median_s": 0.11,
+    "median_s": 0.09,
     "error": null,
     "ids": [
-     2899
+     2955
     ]
    },
    "probe": {
@@ -277,7 +277,7 @@
      "depth": 7,
      "bars": 1,
      "dropped": 14,
-     "ms": 117,
+     "ms": 110,
      "items": 62,
      "top": [
       "Media",
@@ -295,7 +295,7 @@
      "depth": 7,
      "bars": 1,
      "dropped": 14,
-     "ms": 112,
+     "ms": 114,
      "items": 62,
      "top": [
       "Media",
@@ -337,17 +337,17 @@
   {
    "key": "writer",
    "late": false,
-   "window": 2901,
+   "window": 2957,
    "title": "Untitled 1 \u2014 LibreOffice Writer",
    "app_id": "libreoffice-writer",
-   "pid": 525071,
-   "spawned_pid": 524966,
+   "pid": 534999,
+   "spawned_pid": 534895,
    "extra_windows": [],
    "pid_windows": 1,
    "reader": {
     "items": 0,
     "top": [],
-    "median_s": 0.1,
+    "median_s": 0.08,
     "error": "constructor returned NULL",
     "ids": []
    },
@@ -377,10 +377,10 @@
      "Window",
      "Help"
     ],
-    "median_s": 0.79,
+    "median_s": 0.77,
     "error": null,
     "ids": [
-     2901
+     2957
     ]
    },
    "probe": {
@@ -391,7 +391,7 @@
      "depth": 12,
      "bars": 2,
      "dropped": 1,
-     "ms": 622,
+     "ms": 575,
      "items": 1385,
      "top": [
       "File",
@@ -423,7 +423,7 @@
      "depth": 17,
      "bars": 2,
      "dropped": 1,
-     "ms": 645,
+     "ms": 634,
      "items": 1385,
      "top": [
       "File",
@@ -491,7 +491,7 @@
      "About LibreOffice"
     ],
     "ok": true,
-    "s": 0.8,
+    "s": 0.77,
     "error": null,
     "opened": [
      "About LibreOffice"
@@ -501,11 +501,11 @@
   {
    "key": "mousepad",
    "late": false,
-   "window": 2904,
+   "window": 2960,
    "title": "Untitled 1 - Mousepad",
    "app_id": "org.xfce.mousepad",
-   "pid": 525312,
-   "spawned_pid": 525312,
+   "pid": 535246,
+   "spawned_pid": 535246,
    "extra_windows": [],
    "pid_windows": 1,
    "reader": {
@@ -518,10 +518,10 @@
      "Document",
      "Help"
     ],
-    "median_s": 0.2,
+    "median_s": 0.19,
     "error": null,
     "ids": [
-     2904
+     2960
     ]
    },
    "fixed": {
@@ -534,10 +534,10 @@
      "Document",
      "Help"
     ],
-    "median_s": 0.2,
+    "median_s": 0.21,
     "error": null,
     "ids": [
-     2904
+     2960
     ]
    },
    "probe": {
@@ -548,7 +548,7 @@
      "depth": 8,
      "bars": 1,
      "dropped": 1,
-     "ms": 103,
+     "ms": 104,
      "items": 230,
      "top": [
       "File",
@@ -564,7 +564,7 @@
      "depth": 8,
      "bars": 1,
      "dropped": 1,
-     "ms": 104,
+     "ms": 105,
      "items": 230,
      "top": [
       "File",
@@ -604,7 +604,7 @@
      "About"
     ],
     "ok": true,
-    "s": 0.25,
+    "s": 0.24,
     "error": null,
     "opened": [
      "About mousepad"
@@ -614,29 +614,29 @@
   {
    "key": "mousepad-login-env",
    "late": false,
-   "window": 2907,
+   "window": 2963,
    "title": "Untitled 1 - Mousepad",
    "app_id": "org.xfce.mousepad",
-   "pid": 525596,
-   "spawned_pid": 525596,
+   "pid": 535524,
+   "spawned_pid": 535524,
    "extra_windows": [],
    "pid_windows": 1,
    "reader": {
     "items": 0,
     "top": [],
-    "median_s": 0.11,
+    "median_s": 0.08,
     "error": null,
     "ids": [
-     2907
+     2963
     ]
    },
    "fixed": {
     "items": 0,
     "top": [],
-    "median_s": 0.12,
+    "median_s": 0.09,
     "error": null,
     "ids": [
-     2907
+     2963
     ]
    },
    "probe": {
@@ -652,20 +652,20 @@
   {
    "key": "nautilus",
    "late": false,
-   "window": 2909,
+   "window": 2965,
    "title": "Home",
    "app_id": "org.gnome.Nautilus",
-   "pid": 525882,
-   "spawned_pid": 525882,
+   "pid": 535819,
+   "spawned_pid": 535819,
    "extra_windows": [],
    "pid_windows": 1,
    "reader": {
     "items": 0,
     "top": [],
-    "median_s": 0.1,
+    "median_s": 0.09,
     "error": null,
     "ids": [
-     2909
+     2965
     ]
    },
    "fixed": {
@@ -674,7 +674,7 @@
     "median_s": 0.11,
     "error": null,
     "ids": [
-     2909
+     2965
     ]
    },
    "probe": {
@@ -694,7 +694,7 @@
      "depth": 30,
      "bars": 0,
      "dropped": 0,
-     "ms": 64,
+     "ms": 61,
      "items": 0,
      "top": []
     },
@@ -707,29 +707,29 @@
   {
    "key": "text-editor",
    "late": false,
-   "window": 2914,
+   "window": 2970,
    "title": "New Document (Draft) - Text Editor",
    "app_id": "org.gnome.TextEditor",
-   "pid": 526463,
-   "spawned_pid": 526463,
+   "pid": 536393,
+   "spawned_pid": 536393,
    "extra_windows": [],
    "pid_windows": 1,
    "reader": {
     "items": 0,
     "top": [],
-    "median_s": 0.08,
+    "median_s": 0.12,
     "error": null,
     "ids": [
-     2914
+     2970
     ]
    },
    "fixed": {
     "items": 0,
     "top": [],
-    "median_s": 0.11,
+    "median_s": 0.12,
     "error": null,
     "ids": [
-     2914
+     2970
     ]
    },
    "probe": {
@@ -740,7 +740,7 @@
      "depth": 12,
      "bars": 0,
      "dropped": 0,
-     "ms": 11,
+     "ms": 13,
      "items": 0,
      "top": []
     },
@@ -749,7 +749,7 @@
      "depth": 25,
      "bars": 0,
      "dropped": 0,
-     "ms": 35,
+     "ms": 42,
      "items": 0,
      "top": []
     },
@@ -762,20 +762,20 @@
   {
    "key": "firefox",
    "late": false,
-   "window": 2916,
+   "window": 2972,
    "title": "Mozilla Firefox",
    "app_id": "firefox",
-   "pid": 527084,
-   "spawned_pid": 527084,
+   "pid": 537008,
+   "spawned_pid": 537008,
    "extra_windows": [],
    "pid_windows": 1,
    "reader": {
     "items": 0,
     "top": [],
-    "median_s": 0.11,
+    "median_s": 0.14,
     "error": null,
     "ids": [
-     2916
+     2972
     ]
    },
    "fixed": {
@@ -784,7 +784,7 @@
     "median_s": 0.13,
     "error": null,
     "ids": [
-     2916
+     2972
     ]
    },
    "probe": {
@@ -795,7 +795,7 @@
      "depth": 12,
      "bars": 1,
      "dropped": 7,
-     "ms": 24,
+     "ms": 23,
      "items": 0,
      "top": []
     },
@@ -804,7 +804,7 @@
      "depth": 14,
      "bars": 1,
      "dropped": 7,
-     "ms": 21,
+     "ms": 24,
      "items": 0,
      "top": []
     },
@@ -832,29 +832,29 @@
   {
    "key": "chromium",
    "late": false,
-   "window": 2921,
+   "window": 2977,
    "title": "about:blank - Chromium",
    "app_id": "chromium-browser",
-   "pid": 528535,
-   "spawned_pid": 528535,
+   "pid": 538487,
+   "spawned_pid": 538487,
    "extra_windows": [],
    "pid_windows": 1,
    "reader": {
     "items": 0,
     "top": [],
-    "median_s": 0.09,
+    "median_s": 0.1,
     "error": null,
     "ids": [
-     2921
+     2977
     ]
    },
    "fixed": {
     "items": 0,
     "top": [],
-    "median_s": 0.1,
+    "median_s": 0.11,
     "error": null,
     "ids": [
-     2921
+     2977
     ]
    },
    "probe": {
@@ -887,11 +887,11 @@
   {
    "key": "chromium-a11y",
    "late": false,
-   "window": 2923,
+   "window": 2979,
    "title": "about:blank - Chromium",
    "app_id": "chromium-browser",
-   "pid": 529159,
-   "spawned_pid": 529159,
+   "pid": 539120,
+   "spawned_pid": 539120,
    "extra_windows": [],
    "pid_windows": 1,
    "reader": {
@@ -900,16 +900,16 @@
     "median_s": 0.14,
     "error": null,
     "ids": [
-     2923
+     2979
     ]
    },
    "fixed": {
     "items": 0,
     "top": [],
-    "median_s": 0.14,
+    "median_s": 0.16,
     "error": null,
     "ids": [
-     2923
+     2979
     ]
    },
    "probe": {
@@ -920,7 +920,7 @@
      "depth": 10,
      "bars": 0,
      "dropped": 0,
-     "ms": 42,
+     "ms": 31,
      "items": 0,
      "top": []
     },
@@ -929,7 +929,7 @@
      "depth": 10,
      "bars": 0,
      "dropped": 0,
-     "ms": 40,
+     "ms": 31,
      "items": 0,
      "top": []
     },
@@ -942,29 +942,29 @@
   {
    "key": "vscodium",
    "late": false,
-   "window": 2925,
+   "window": 2981,
    "title": "VSCodium",
    "app_id": "codium",
-   "pid": 529838,
-   "spawned_pid": 529820,
+   "pid": 539792,
+   "spawned_pid": 539774,
    "extra_windows": [],
    "pid_windows": 1,
    "reader": {
     "items": 0,
     "top": [],
-    "median_s": 0.08,
+    "median_s": 0.09,
     "error": null,
     "ids": [
-     2925
+     2981
     ]
    },
    "fixed": {
     "items": 0,
     "top": [],
-    "median_s": 0.11,
+    "median_s": 0.1,
     "error": null,
     "ids": [
-     2925
+     2981
     ]
    },
    "probe": {
@@ -984,7 +984,7 @@
      "depth": 1,
      "bars": 0,
      "dropped": 0,
-     "ms": 1,
+     "ms": 0,
      "items": 0,
      "top": []
     },
@@ -999,11 +999,11 @@
   {
    "key": "vscodium-a11y",
    "late": false,
-   "window": 2927,
+   "window": 2983,
    "title": "VSCodium",
    "app_id": "codium",
-   "pid": 530502,
-   "spawned_pid": 530484,
+   "pid": 540432,
+   "spawned_pid": 540414,
    "extra_windows": [],
    "pid_windows": 1,
    "reader": {
@@ -1012,16 +1012,16 @@
     "median_s": 0.11,
     "error": null,
     "ids": [
-     2927
+     2983
     ]
    },
    "fixed": {
     "items": 0,
     "top": [],
-    "median_s": 0.13,
+    "median_s": 0.11,
     "error": null,
     "ids": [
-     2927
+     2983
     ]
    },
    "probe": {
@@ -1032,7 +1032,7 @@
      "depth": 12,
      "bars": 0,
      "dropped": 0,
-     "ms": 6,
+     "ms": 7,
      "items": 0,
      "top": []
     },
@@ -1041,7 +1041,7 @@
      "depth": 31,
      "bars": 1,
      "dropped": 0,
-     "ms": 23,
+     "ms": 37,
      "items": 7,
      "top": [
       "File",
@@ -1077,29 +1077,29 @@
   {
    "key": "vscodium-native",
    "late": false,
-   "window": 2929,
+   "window": 2985,
    "title": "VSCodium",
    "app_id": "codium",
-   "pid": 531166,
-   "spawned_pid": 531148,
+   "pid": 541095,
+   "spawned_pid": 541077,
    "extra_windows": [],
    "pid_windows": 1,
    "reader": {
     "items": 0,
     "top": [],
-    "median_s": 0.08,
+    "median_s": 0.1,
     "error": null,
     "ids": [
-     2929
+     2985
     ]
    },
    "fixed": {
     "items": 0,
     "top": [],
-    "median_s": 0.12,
+    "median_s": 0.1,
     "error": null,
     "ids": [
-     2929
+     2985
     ]
    },
    "probe": {
@@ -1110,7 +1110,7 @@
      "depth": 1,
      "bars": 0,
      "dropped": 0,
-     "ms": 2,
+     "ms": 1,
      "items": 0,
      "top": []
     },
@@ -1119,7 +1119,7 @@
      "depth": 1,
      "bars": 0,
      "dropped": 0,
-     "ms": 1,
+     "ms": 0,
      "items": 0,
      "top": []
     },
@@ -1134,29 +1134,29 @@
   {
    "key": "vscodium-native-a11y",
    "late": false,
-   "window": 2931,
+   "window": 2987,
    "title": "VSCodium",
    "app_id": "codium",
-   "pid": 531837,
-   "spawned_pid": 531819,
+   "pid": 541767,
+   "spawned_pid": 541749,
    "extra_windows": [],
    "pid_windows": 1,
    "reader": {
     "items": 0,
     "top": [],
-    "median_s": 0.1,
+    "median_s": 0.09,
     "error": null,
     "ids": [
-     2931
+     2987
     ]
    },
    "fixed": {
     "items": 0,
     "top": [],
-    "median_s": 0.11,
+    "median_s": 0.1,
     "error": null,
     "ids": [
-     2931
+     2987
     ]
    },
    "probe": {
@@ -1204,11 +1204,11 @@
   {
    "key": "foot",
    "late": false,
-   "window": 2933,
+   "window": 2989,
    "title": "floe@floe-test: /home/floe/flow-appmenu-cov/flow",
    "app_id": "foot",
-   "pid": 532224,
-   "spawned_pid": 532224,
+   "pid": 542145,
+   "spawned_pid": 542145,
    "extra_windows": [],
    "pid_windows": 1,
    "reader": {
@@ -1217,16 +1217,16 @@
     "median_s": 0.09,
     "error": null,
     "ids": [
-     2933
+     2989
     ]
    },
    "fixed": {
     "items": 0,
     "top": [],
-    "median_s": 0.1,
+    "median_s": 0.09,
     "error": null,
     "ids": [
-     2933
+     2989
     ]
    },
    "probe": {
@@ -1242,67 +1242,67 @@
   {
    "key": "kate",
    "late": true,
-   "window": 2882,
+   "window": 2934,
    "title": "Welcome  \u2014 Kate",
    "app_id": "org.kde.kate",
-   "pid": 523018,
-   "spawned_pid": 523018,
+   "pid": 532625,
+   "spawned_pid": 532625,
    "extra_windows": [],
    "late_first": {
     "items": 186,
-    "s": 0.51,
+    "s": 0.46,
     "error": null,
-    "id": 2882
+    "id": 2934
    },
    "late_second": {
     "items": 186,
-    "s": 0.57,
+    "s": 0.45,
     "error": null,
-    "id": 2882
+    "id": 2934
    }
   },
   {
    "key": "sqlitebrowser",
    "late": true,
-   "window": 2895,
+   "window": 2951,
    "title": "DB Browser for SQLite",
    "app_id": "sqlitebrowser",
-   "pid": 524180,
-   "spawned_pid": 524180,
+   "pid": 534101,
+   "spawned_pid": 534101,
    "extra_windows": [],
    "late_first": {
     "items": 0,
-    "s": 0.15,
+    "s": 0.14,
     "error": null,
-    "id": 2895
+    "id": 2951
    },
    "late_second": {
     "items": 0,
-    "s": 0.16,
+    "s": 0.13,
     "error": null,
-    "id": 2895
+    "id": 2951
    }
   },
   {
    "key": "vlc",
    "late": true,
-   "window": 2898,
+   "window": 2954,
    "title": "VLC media player",
    "app_id": "vlc",
    "pid": 1022,
-   "spawned_pid": 524492,
+   "spawned_pid": 534418,
    "extra_windows": [],
    "late_first": {
     "items": 0,
-    "s": 0.41,
+    "s": 0.14,
     "error": null,
-    "id": 2898
+    "id": 2954
    },
    "late_second": {
     "items": 0,
     "s": 0.14,
     "error": null,
-    "id": 2898
+    "id": 2954
    },
    "late_spawned": {
     "on_bus": false
@@ -1311,287 +1311,287 @@
   {
    "key": "writer",
    "late": true,
-   "window": 2900,
+   "window": 2956,
    "title": "Untitled 1 \u2014 LibreOffice Writer",
    "app_id": "libreoffice-writer",
-   "pid": 524893,
-   "spawned_pid": 524786,
+   "pid": 534822,
+   "spawned_pid": 534717,
    "extra_windows": [],
    "late_first": {
     "items": 1385,
-    "s": 0.97,
+    "s": 0.87,
     "error": null,
-    "id": 2900
+    "id": 2956
    },
    "late_second": {
     "items": 1385,
-    "s": 0.74,
+    "s": 0.81,
     "error": null,
-    "id": 2900
+    "id": 2956
    }
   },
   {
    "key": "mousepad",
    "late": true,
-   "window": 2903,
+   "window": 2959,
    "title": "Untitled 1 - Mousepad",
    "app_id": "org.xfce.mousepad",
-   "pid": 525198,
-   "spawned_pid": 525198,
+   "pid": 535124,
+   "spawned_pid": 535124,
    "extra_windows": [],
    "late_first": {
     "items": 230,
-    "s": 0.31,
+    "s": 0.24,
     "error": null,
-    "id": 2903
+    "id": 2959
    },
    "late_second": {
     "items": 230,
-    "s": 0.27,
+    "s": 0.24,
     "error": null,
-    "id": 2903
+    "id": 2959
    }
   },
   {
    "key": "mousepad-login-env",
    "late": true,
-   "window": 2906,
+   "window": 2962,
    "title": "Untitled 1 - Mousepad",
    "app_id": "org.xfce.mousepad",
-   "pid": 525473,
-   "spawned_pid": 525473,
+   "pid": 535412,
+   "spawned_pid": 535412,
    "extra_windows": [],
    "late_first": {
     "items": 0,
-    "s": 0.18,
+    "s": 0.15,
     "error": null,
-    "id": 2906
+    "id": 2962
    },
    "late_second": {
     "items": 0,
-    "s": 0.16,
+    "s": 0.11,
     "error": null,
-    "id": 2906
+    "id": 2962
    }
   },
   {
    "key": "nautilus",
    "late": true,
-   "window": 2908,
+   "window": 2964,
    "title": "Home",
    "app_id": "org.gnome.Nautilus",
-   "pid": 525752,
-   "spawned_pid": 525752,
+   "pid": 535684,
+   "spawned_pid": 535684,
    "extra_windows": [],
    "late_first": {
     "items": 0,
-    "s": 0.22,
+    "s": 0.13,
     "error": null,
-    "id": 2908
+    "id": 2964
    },
    "late_second": {
     "items": 0,
-    "s": 0.19,
+    "s": 0.15,
     "error": null,
-    "id": 2908
+    "id": 2964
    }
   },
   {
    "key": "text-editor",
    "late": true,
-   "window": 2913,
+   "window": 2969,
    "title": "New Document (Draft) - Text Editor",
    "app_id": "org.gnome.TextEditor",
-   "pid": 526324,
-   "spawned_pid": 526324,
+   "pid": 536260,
+   "spawned_pid": 536260,
    "extra_windows": [],
    "late_first": {
     "items": 0,
     "s": 0.15,
     "error": null,
-    "id": 2913
+    "id": 2969
    },
    "late_second": {
     "items": 0,
-    "s": 0.17,
+    "s": 0.14,
     "error": null,
-    "id": 2913
+    "id": 2969
    }
   },
   {
    "key": "firefox",
    "late": true,
-   "window": 2915,
+   "window": 2971,
    "title": "Mozilla Firefox",
    "app_id": "firefox",
-   "pid": 526613,
-   "spawned_pid": 526613,
+   "pid": 536552,
+   "spawned_pid": 536552,
    "extra_windows": [],
    "late_first": {
     "items": 0,
-    "s": 0.19,
+    "s": 0.18,
     "error": null,
-    "id": 2915
+    "id": 2971
    },
    "late_second": {
     "items": 0,
     "s": 0.16,
     "error": null,
-    "id": 2915
+    "id": 2971
    }
   },
   {
    "key": "chromium",
    "late": true,
-   "window": 2920,
+   "window": 2976,
    "title": "about:blank - Chromium",
    "app_id": "chromium-browser",
-   "pid": 528228,
-   "spawned_pid": 528228,
+   "pid": 538183,
+   "spawned_pid": 538183,
    "extra_windows": [],
    "late_first": {
     "items": 0,
     "s": 0.15,
     "error": null,
-    "id": 2920
+    "id": 2976
    },
    "late_second": {
     "items": 0,
-    "s": 0.16,
+    "s": 0.14,
     "error": null,
-    "id": 2920
+    "id": 2976
    }
   },
   {
    "key": "chromium-a11y",
    "late": true,
-   "window": 2922,
+   "window": 2978,
    "title": "about:blank - Chromium",
    "app_id": "chromium-browser",
-   "pid": 528850,
-   "spawned_pid": 528850,
+   "pid": 538804,
+   "spawned_pid": 538804,
    "extra_windows": [],
    "late_first": {
     "items": 0,
-    "s": 0.12,
+    "s": 0.13,
     "error": null,
-    "id": 2922
+    "id": 2978
    },
    "late_second": {
     "items": 0,
     "s": 0.15,
     "error": null,
-    "id": 2922
+    "id": 2978
    }
   },
   {
    "key": "vscodium",
    "late": true,
-   "window": 2924,
+   "window": 2980,
    "title": "VSCodium",
    "app_id": "codium",
-   "pid": 529508,
-   "spawned_pid": 529490,
-   "extra_windows": [],
-   "late_first": {
-    "items": 0,
-    "s": 0.12,
-    "error": null,
-    "id": 2924
-   },
-   "late_second": {
-    "items": 0,
-    "s": 0.1,
-    "error": null,
-    "id": 2924
-   }
-  },
-  {
-   "key": "vscodium-a11y",
-   "late": true,
-   "window": 2926,
-   "title": "VSCodium",
-   "app_id": "codium",
-   "pid": 530172,
-   "spawned_pid": 530154,
-   "extra_windows": [],
-   "late_first": {
-    "items": 0,
-    "s": 0.13,
-    "error": null,
-    "id": 2926
-   },
-   "late_second": {
-    "items": 0,
-    "s": 0.14,
-    "error": null,
-    "id": 2926
-   }
-  },
-  {
-   "key": "vscodium-native",
-   "late": true,
-   "window": 2928,
-   "title": "VSCodium",
-   "app_id": "codium",
-   "pid": 530853,
-   "spawned_pid": 530835,
-   "extra_windows": [],
-   "late_first": {
-    "items": 0,
-    "s": 0.16,
-    "error": null,
-    "id": 2928
-   },
-   "late_second": {
-    "items": 0,
-    "s": 0.14,
-    "error": null,
-    "id": 2928
-   }
-  },
-  {
-   "key": "vscodium-native-a11y",
-   "late": true,
-   "window": 2930,
-   "title": "VSCodium",
-   "app_id": "codium",
-   "pid": 531510,
-   "spawned_pid": 531492,
+   "pid": 539478,
+   "spawned_pid": 539460,
    "extra_windows": [],
    "late_first": {
     "items": 0,
     "s": 0.15,
     "error": null,
-    "id": 2930
+    "id": 2980
+   },
+   "late_second": {
+    "items": 0,
+    "s": 0.11,
+    "error": null,
+    "id": 2980
+   }
+  },
+  {
+   "key": "vscodium-a11y",
+   "late": true,
+   "window": 2982,
+   "title": "VSCodium",
+   "app_id": "codium",
+   "pid": 540125,
+   "spawned_pid": 540100,
+   "extra_windows": [],
+   "late_first": {
+    "items": 0,
+    "s": 0.13,
+    "error": null,
+    "id": 2982
+   },
+   "late_second": {
+    "items": 0,
+    "s": 0.12,
+    "error": null,
+    "id": 2982
+   }
+  },
+  {
+   "key": "vscodium-native",
+   "late": true,
+   "window": 2984,
+   "title": "VSCodium",
+   "app_id": "codium",
+   "pid": 540777,
+   "spawned_pid": 540759,
+   "extra_windows": [],
+   "late_first": {
+    "items": 0,
+    "s": 0.13,
+    "error": null,
+    "id": 2984
+   },
+   "late_second": {
+    "items": 0,
+    "s": 0.12,
+    "error": null,
+    "id": 2984
+   }
+  },
+  {
+   "key": "vscodium-native-a11y",
+   "late": true,
+   "window": 2986,
+   "title": "VSCodium",
+   "app_id": "codium",
+   "pid": 541438,
+   "spawned_pid": 541420,
+   "extra_windows": [],
+   "late_first": {
+    "items": 0,
+    "s": 0.14,
+    "error": null,
+    "id": 2986
    },
    "late_second": {
     "items": 0,
     "s": 0.13,
     "error": null,
-    "id": 2930
+    "id": 2986
    }
   },
   {
    "key": "foot",
    "late": true,
-   "window": 2932,
+   "window": 2988,
    "title": "floe@floe-test: /home/floe/flow-appmenu-cov/flow",
    "app_id": "foot",
-   "pid": 532154,
-   "spawned_pid": 532154,
+   "pid": 542075,
+   "spawned_pid": 542075,
    "extra_windows": [],
    "late_first": {
     "items": 0,
-    "s": 0.2,
+    "s": 0.16,
     "error": null,
-    "id": 2932
+    "id": 2988
    },
    "late_second": {
     "items": 0,
-    "s": 0.14,
+    "s": 0.15,
     "error": null,
-    "id": 2932
+    "id": 2988
    }
   }
  ],
@@ -1600,7 +1600,7 @@
    "key": "kate",
    "cases": [
     {
-     "window": 2885,
+     "window": 2937,
      "title": "Welcome  \u2014 Kate",
      "pid_windows": 2,
      "same_title_windows": 2,
@@ -1610,7 +1610,7 @@
        "role": "frame",
        "active": true,
        "items": 186,
-       "ms": 380,
+       "ms": 324,
        "bars": 1
       },
       {
@@ -1618,7 +1618,7 @@
        "role": "frame",
        "active": false,
        "items": 186,
-       "ms": 336,
+       "ms": 279,
        "bars": 1
       }
      ],
@@ -1634,11 +1634,11 @@
      ],
      "resolved": true,
      "frame_items": 186,
-     "frame_ms": 380,
+     "frame_ms": 324,
      "reader_items": 0
     },
     {
-     "window": 2886,
+     "window": 2938,
      "title": "Welcome  \u2014 Kate",
      "pid_windows": 2,
      "same_title_windows": 2,
@@ -1648,7 +1648,7 @@
        "role": "frame",
        "active": false,
        "items": 186,
-       "ms": 315,
+       "ms": 320,
        "bars": 1
       },
       {
@@ -1656,7 +1656,7 @@
        "role": "frame",
        "active": true,
        "items": 186,
-       "ms": 351,
+       "ms": 316,
        "bars": 1
       }
      ],
@@ -1672,13 +1672,13 @@
      ],
      "resolved": true,
      "frame_items": 186,
-     "frame_ms": 351,
+     "frame_ms": 316,
      "reader_items": 0
     }
    ],
    "layer_cases": [
     {
-     "window": 2885,
+     "window": 2937,
      "title": "Welcome  \u2014 Kate",
      "pid_windows": 2,
      "same_title_windows": 2,
@@ -1688,7 +1688,7 @@
        "role": "frame",
        "active": false,
        "items": 186,
-       "ms": 342,
+       "ms": 320,
        "bars": 1
       },
       {
@@ -1696,7 +1696,7 @@
        "role": "frame",
        "active": false,
        "items": 186,
-       "ms": 316,
+       "ms": 313,
        "bars": 1
       }
      ],
@@ -1710,7 +1710,7 @@
      "layer_up": true
     },
     {
-     "window": 2886,
+     "window": 2938,
      "title": "Welcome  \u2014 Kate",
      "pid_windows": 2,
      "same_title_windows": 2,
@@ -1720,7 +1720,7 @@
        "role": "frame",
        "active": false,
        "items": 186,
-       "ms": 358,
+       "ms": 320,
        "bars": 1
       },
       {
@@ -1728,7 +1728,7 @@
        "role": "frame",
        "active": false,
        "items": 186,
-       "ms": 425,
+       "ms": 325,
        "bars": 1
       }
      ],
@@ -1746,12 +1746,13 @@
     {
      "mode": "focused",
      "valid": true,
-     "window": 2887,
+     "window": 2939,
      "title": "Welcome  \u2014 Kate",
      "same_title_windows": 2,
      "resolved": true,
+     "expected": 2939,
      "changed": [
-      2887
+      2939
      ],
      "invoked": true,
      "invoke_error": null,
@@ -1760,12 +1761,13 @@
     {
      "mode": "focused",
      "valid": true,
-     "window": 2890,
+     "window": 2942,
      "title": "Welcome  \u2014 Kate",
      "same_title_windows": 2,
      "resolved": true,
+     "expected": 2942,
      "changed": [
-      2890
+      2942
      ],
      "invoked": true,
      "invoke_error": null,
@@ -1774,13 +1776,14 @@
     {
      "mode": "frame chosen, then layer",
      "valid": true,
-     "window": 2891,
+     "window": 2943,
      "title": "Welcome  \u2014 Kate",
      "same_title_windows": 2,
      "resolved": true,
+     "expected": 2943,
      "layer_up": true,
      "changed": [
-      2891
+      2943
      ],
      "invoked": true,
      "invoke_error": null,
@@ -1789,13 +1792,44 @@
     {
      "mode": "frame chosen, then layer",
      "valid": true,
-     "window": 2894,
+     "window": 2946,
      "title": "Welcome  \u2014 Kate",
      "same_title_windows": 2,
      "resolved": true,
+     "expected": 2946,
      "layer_up": true,
      "changed": [
-      2894
+      2946
+     ],
+     "invoked": true,
+     "invoke_error": null,
+     "correct": true
+    },
+    {
+     "mode": "other window's frame",
+     "valid": true,
+     "window": 2947,
+     "title": "Welcome  \u2014 Kate",
+     "same_title_windows": 2,
+     "resolved": true,
+     "expected": 2948,
+     "changed": [
+      2948
+     ],
+     "invoked": true,
+     "invoke_error": null,
+     "correct": true
+    },
+    {
+     "mode": "other window's frame",
+     "valid": true,
+     "window": 2950,
+     "title": "Welcome  \u2014 Kate",
+     "same_title_windows": 2,
+     "resolved": true,
+     "expected": 2949,
+     "changed": [
+      2949
      ],
      "invoked": true,
      "invoke_error": null,
@@ -1807,7 +1841,7 @@
    "key": "nautilus",
    "cases": [
     {
-     "window": 2910,
+     "window": 2966,
      "title": "Home",
      "pid_windows": 3,
      "same_title_windows": 2,
@@ -1817,15 +1851,15 @@
        "role": "frame",
        "active": true,
        "items": 0,
-       "ms": 9,
+       "ms": 11,
        "bars": 0
       },
       {
-       "name": "flow-appmenu-nautilus-x4m15byk",
+       "name": "flow-appmenu-nautilus-ldf_w6ll",
        "role": "frame",
        "active": false,
        "items": 0,
-       "ms": 11,
+       "ms": 10,
        "bars": 0
       },
       {
@@ -1833,7 +1867,7 @@
        "role": "frame",
        "active": false,
        "items": 0,
-       "ms": 11,
+       "ms": 9,
        "bars": 0
       }
      ],
@@ -1849,12 +1883,12 @@
      ],
      "resolved": true,
      "frame_items": 0,
-     "frame_ms": 9,
+     "frame_ms": 11,
      "reader_items": 0
     },
     {
-     "window": 2911,
-     "title": "flow-appmenu-nautilus-x4m15byk",
+     "window": 2967,
+     "title": "flow-appmenu-nautilus-ldf_w6ll",
      "pid_windows": 3,
      "same_title_windows": 1,
      "frames": [
@@ -1863,15 +1897,15 @@
        "role": "frame",
        "active": false,
        "items": 0,
-       "ms": 11,
+       "ms": 9,
        "bars": 0
       },
       {
-       "name": "flow-appmenu-nautilus-x4m15byk",
+       "name": "flow-appmenu-nautilus-ldf_w6ll",
        "role": "frame",
        "active": true,
        "items": 0,
-       "ms": 10,
+       "ms": 9,
        "bars": 0
       },
       {
@@ -1879,7 +1913,7 @@
        "role": "frame",
        "active": false,
        "items": 0,
-       "ms": 12,
+       "ms": 9,
        "bars": 0
       }
      ],
@@ -1894,11 +1928,11 @@
      ],
      "resolved": true,
      "frame_items": 0,
-     "frame_ms": 10,
+     "frame_ms": 9,
      "reader_items": 0
     },
     {
-     "window": 2912,
+     "window": 2968,
      "title": "Home",
      "pid_windows": 3,
      "same_title_windows": 2,
@@ -1912,7 +1946,7 @@
        "bars": 0
       },
       {
-       "name": "flow-appmenu-nautilus-x4m15byk",
+       "name": "flow-appmenu-nautilus-ldf_w6ll",
        "role": "frame",
        "active": false,
        "items": 0,
@@ -1946,7 +1980,7 @@
    ],
    "layer_cases": [
     {
-     "window": 2910,
+     "window": 2966,
      "title": "Home",
      "pid_windows": 3,
      "same_title_windows": 2,
@@ -1960,7 +1994,7 @@
        "bars": 0
       },
       {
-       "name": "flow-appmenu-nautilus-x4m15byk",
+       "name": "flow-appmenu-nautilus-ldf_w6ll",
        "role": "frame",
        "active": false,
        "items": 0,
@@ -1986,8 +2020,8 @@
      "layer_up": true
     },
     {
-     "window": 2911,
-     "title": "flow-appmenu-nautilus-x4m15byk",
+     "window": 2967,
+     "title": "flow-appmenu-nautilus-ldf_w6ll",
      "pid_windows": 3,
      "same_title_windows": 1,
      "frames": [
@@ -1996,11 +2030,11 @@
        "role": "frame",
        "active": false,
        "items": 0,
-       "ms": 9,
+       "ms": 10,
        "bars": 0
       },
       {
-       "name": "flow-appmenu-nautilus-x4m15byk",
+       "name": "flow-appmenu-nautilus-ldf_w6ll",
        "role": "frame",
        "active": false,
        "items": 0,
@@ -2012,7 +2046,7 @@
        "role": "frame",
        "active": false,
        "items": 0,
-       "ms": 9,
+       "ms": 7,
        "bars": 0
       }
      ],
@@ -2025,7 +2059,7 @@
      "layer_up": true
     },
     {
-     "window": 2912,
+     "window": 2968,
      "title": "Home",
      "pid_windows": 3,
      "same_title_windows": 2,
@@ -2035,11 +2069,11 @@
        "role": "frame",
        "active": false,
        "items": 0,
-       "ms": 10,
+       "ms": 11,
        "bars": 0
       },
       {
-       "name": "flow-appmenu-nautilus-x4m15byk",
+       "name": "flow-appmenu-nautilus-ldf_w6ll",
        "role": "frame",
        "active": false,
        "items": 0,
@@ -2070,7 +2104,7 @@
    "key": "firefox",
    "cases": [
     {
-     "window": 2917,
+     "window": 2973,
      "title": "Mozilla Firefox",
      "pid_windows": 3,
      "same_title_windows": 2,
@@ -2080,7 +2114,7 @@
        "role": "frame",
        "active": true,
        "items": 0,
-       "ms": 37,
+       "ms": 21,
        "bars": 1
       },
       {
@@ -2088,7 +2122,7 @@
        "role": "frame",
        "active": false,
        "items": 0,
-       "ms": 21,
+       "ms": 22,
        "bars": 1
       },
       {
@@ -2112,11 +2146,11 @@
      ],
      "resolved": true,
      "frame_items": 0,
-     "frame_ms": 37,
+     "frame_ms": 21,
      "reader_items": 0
     },
     {
-     "window": 2918,
+     "window": 2974,
      "title": "Gort! Klaatu barada nikto! \u2014 Mozilla Firefox",
      "pid_windows": 3,
      "same_title_windows": 1,
@@ -2126,7 +2160,7 @@
        "role": "frame",
        "active": false,
        "items": 0,
-       "ms": 24,
+       "ms": 16,
        "bars": 1
       },
       {
@@ -2134,7 +2168,100 @@
        "role": "frame",
        "active": true,
        "items": 0,
-       "ms": 24,
+       "ms": 27,
+       "bars": 1
+      },
+      {
+       "name": "Mozilla Firefox",
+       "role": "frame",
+       "active": false,
+       "items": 0,
+       "ms": 25,
+       "bars": 1
+      }
+     ],
+     "by_title": [
+      1
+     ],
+     "by_active": [
+      1
+     ],
+     "both": [
+      1
+     ],
+     "resolved": true,
+     "frame_items": 0,
+     "frame_ms": 27,
+     "reader_items": 0
+    },
+    {
+     "window": 2975,
+     "title": "Mozilla Firefox",
+     "pid_windows": 3,
+     "same_title_windows": 2,
+     "frames": [
+      {
+       "name": "Mozilla Firefox",
+       "role": "frame",
+       "active": false,
+       "items": 0,
+       "ms": 20,
+       "bars": 1
+      },
+      {
+       "name": "Gort! Klaatu barada nikto! \u2014 Mozilla Firefox",
+       "role": "frame",
+       "active": false,
+       "items": 0,
+       "ms": 21,
+       "bars": 1
+      },
+      {
+       "name": "Mozilla Firefox",
+       "role": "frame",
+       "active": true,
+       "items": 0,
+       "ms": 20,
+       "bars": 1
+      }
+     ],
+     "by_title": [
+      0,
+      2
+     ],
+     "by_active": [
+      2
+     ],
+     "both": [
+      2
+     ],
+     "resolved": true,
+     "frame_items": 0,
+     "frame_ms": 20,
+     "reader_items": 0
+    }
+   ],
+   "layer_cases": [
+    {
+     "window": 2973,
+     "title": "Mozilla Firefox",
+     "pid_windows": 3,
+     "same_title_windows": 2,
+     "frames": [
+      {
+       "name": "Mozilla Firefox",
+       "role": "frame",
+       "active": false,
+       "items": 0,
+       "ms": 21,
+       "bars": 1
+      },
+      {
+       "name": "Gort! Klaatu barada nikto! \u2014 Mozilla Firefox",
+       "role": "frame",
+       "active": false,
+       "items": 0,
+       "ms": 22,
        "bars": 1
       },
       {
@@ -2147,99 +2274,6 @@
       }
      ],
      "by_title": [
-      1
-     ],
-     "by_active": [
-      1
-     ],
-     "both": [
-      1
-     ],
-     "resolved": true,
-     "frame_items": 0,
-     "frame_ms": 24,
-     "reader_items": 0
-    },
-    {
-     "window": 2919,
-     "title": "Mozilla Firefox",
-     "pid_windows": 3,
-     "same_title_windows": 2,
-     "frames": [
-      {
-       "name": "Mozilla Firefox",
-       "role": "frame",
-       "active": false,
-       "items": 0,
-       "ms": 24,
-       "bars": 1
-      },
-      {
-       "name": "Gort! Klaatu barada nikto! \u2014 Mozilla Firefox",
-       "role": "frame",
-       "active": false,
-       "items": 0,
-       "ms": 28,
-       "bars": 1
-      },
-      {
-       "name": "Mozilla Firefox",
-       "role": "frame",
-       "active": true,
-       "items": 0,
-       "ms": 35,
-       "bars": 1
-      }
-     ],
-     "by_title": [
-      0,
-      2
-     ],
-     "by_active": [
-      2
-     ],
-     "both": [
-      2
-     ],
-     "resolved": true,
-     "frame_items": 0,
-     "frame_ms": 35,
-     "reader_items": 0
-    }
-   ],
-   "layer_cases": [
-    {
-     "window": 2917,
-     "title": "Mozilla Firefox",
-     "pid_windows": 3,
-     "same_title_windows": 2,
-     "frames": [
-      {
-       "name": "Mozilla Firefox",
-       "role": "frame",
-       "active": false,
-       "items": 0,
-       "ms": 24,
-       "bars": 1
-      },
-      {
-       "name": "Gort! Klaatu barada nikto! \u2014 Mozilla Firefox",
-       "role": "frame",
-       "active": false,
-       "items": 0,
-       "ms": 25,
-       "bars": 1
-      },
-      {
-       "name": "Mozilla Firefox",
-       "role": "frame",
-       "active": false,
-       "items": 0,
-       "ms": 23,
-       "bars": 1
-      }
-     ],
-     "by_title": [
       0,
       2
      ],
@@ -2249,7 +2283,7 @@
      "layer_up": true
     },
     {
-     "window": 2918,
+     "window": 2974,
      "title": "Gort! Klaatu barada nikto! \u2014 Mozilla Firefox",
      "pid_windows": 3,
      "same_title_windows": 1,
@@ -2259,7 +2293,7 @@
        "role": "frame",
        "active": false,
        "items": 0,
-       "ms": 21,
+       "ms": 22,
        "bars": 1
       },
       {
@@ -2267,7 +2301,7 @@
        "role": "frame",
        "active": false,
        "items": 0,
-       "ms": 23,
+       "ms": 21,
        "bars": 1
       },
       {
@@ -2288,7 +2322,7 @@
      "layer_up": true
     },
     {
-     "window": 2919,
+     "window": 2975,
      "title": "Mozilla Firefox",
      "pid_windows": 3,
      "same_title_windows": 2,
@@ -2306,7 +2340,7 @@
        "role": "frame",
        "active": false,
        "items": 0,
-       "ms": 23,
+       "ms": 22,
        "bars": 1
       },
       {
@@ -2314,7 +2348,7 @@
        "role": "frame",
        "active": false,
        "items": 0,
-       "ms": 21,
+       "ms": 20,
        "bars": 1
       }
      ],
@@ -2332,7 +2366,7 @@
  ],
  "notes": [],
  "env": {
-  "started": "2026-11-22T16:41:07+00:00",
+  "started": "2026-11-22T17:07:21+00:00",
   "roots": {
    "kdePackages.kate": "/nix/store/fj6yfbvaji546v74qbmn1fcmwlv7bk01-kate-26.08.3",
    "sqlitebrowser": "/nix/store/8dra42yhh7k6r8q0s98n4345gkph8g7n-sqlitebrowser-3.13.1",
@@ -2348,7 +2382,12 @@
    "firefox": "/nix/store/ikmh8rr8bwrr9hi0gc1126hdq7yn8b6n-firefox-159.0.1/bin/firefox",
    "foot": "/nix/store/gv3ljjcg86s9jdn0b9n034zx0i1s4mhx-foot-1.28.0/bin/foot"
   },
-  "finished": "2026-11-22T16:50:18+00:00",
+  "versions": {
+   "nixos": "26.11.20261107.f4a03c0 (Zokor)",
+   "niri": "niri 26.04 (Nixpkgs)",
+   "at-spi2-core": "/nix/store/6zmvmwr08gr5ac4k2k9s885sc9677zc5-at-spi2-core-2.62.0/lib/girepository-1.0"
+  },
+  "finished": "2026-11-22T17:16:48+00:00",
   "session_a11y": {
    "before": "b false",
    "after": "b false"

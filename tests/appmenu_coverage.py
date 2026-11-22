@@ -37,7 +37,7 @@ for its pinned nixpkgs). The system's configuration is not changed.
 
 Isolation from the session it runs in (it may be shared):
 - Every launch runs on a session bus of its own, with its own runtime directory, home, configuration, data and
-  cache directories, and GSettings in memory. Its accessibility bus is that bus's, so the session's
+  cache directories, and GSettings in a key file there. Its accessibility bus is that bus's, so the session's
   ``org.a11y.Status.IsEnabled``, which at-spi persists in dconf (``toolkit-accessibility``), is never set, and
   apps that write to $HOME (VSCodium's ``~/.vscode-oss``) write to the temporary one. The run records the
   session's switch, the dconf database's modification time and the home directory's entries before and after.
