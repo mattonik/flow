@@ -72,6 +72,77 @@ class SearchTest(unittest.TestCase):
             history.write_text("broken")
             self.assertEqual(search.recent_files(history, home), [])
 
+    def test_user_folders_are_the_xdg_ones_inside_the_home_folder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            home, config, elsewhere = base / "home", base / "config", base / "elsewhere"
+            for folder in (home / "Documents", home / "Pictures", home / "Work/Papers", home / "Music",
+                           home / "Desktop", config, elsewhere):
+                folder.mkdir(parents=True)
+            (home / "Videos").symlink_to(elsewhere)  # a link out of the home folder is not followed out
+            self.assertEqual(search.user_folders(home, config),
+                             [(home / name).resolve() for name in ("Desktop", "Documents", "Pictures", "Music")])
+            (config / "user-dirs.dirs").write_text(
+                '# xdg-user-dirs\n'
+                'XDG_DESKTOP_DIR="$HOME"\n'                       # turned off
+                'XDG_DOCUMENTS_DIR="$HOME/Work"\n'
+                f'XDG_PICTURES_DIR="{home}/Work/Papers"\n'        # inside Documents: walked with it
+                f'XDG_MUSIC_DIR="{elsewhere}"\n'                  # outside the home folder
+                'XDG_TEMPLATES_DIR="$HOME/Templates"\n')          # not a folder search walks
+            self.assertEqual(search.user_folders(home, config), [(home / "Work").resolve()])
+
+    def test_find_files_matches_names_nearest_first_with_hidden_files_and_no_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            docs, outside = base / "Documents", base / "outside"
+            (docs / "deep/deeper").mkdir(parents=True)
+            (docs / ".notes").mkdir()
+            outside.mkdir()
+            for path in (docs / "deep/deeper/Report draft.txt", docs / "report final.odt", docs / ".notes/report.md",
+                         docs / "summary.txt", outside / "report secret.txt"):
+                path.write_text("x")
+            (docs / "report link.txt").symlink_to(outside / "report secret.txt")
+            (docs / "linked folder").symlink_to(outside)
+            found = search.find_files("REPORT", [docs])
+            self.assertEqual(found, [docs / "report final.odt", docs / ".notes/report.md",
+                                     docs / "deep/deeper/Report draft.txt"])
+            self.assertEqual(search.find_files("draft report", [docs]), [docs / "deep/deeper/Report draft.txt"])
+            self.assertEqual(search.find_files("deep", [docs]), [docs / "deep", docs / "deep/deeper"])
+            self.assertEqual(search.find_files("re", [docs]), [])  # too short to walk for
+            rows = json.loads(search.file_rows([docs / "deep", docs / "summary.txt"]))
+            self.assertEqual([(r["title"], r["detail"], r["kind"]) for r in rows],
+                             [("deep", f"Folder · {docs}", "file"), ("summary.txt", f"File · {docs}", "file")])
+            self.assertEqual(rows[1]["value"], (docs / "summary.txt").as_uri())
+
+    def test_find_files_stops_at_its_bounds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            docs = Path(directory)
+            for index in range(5):
+                (docs / f"note {index}.txt").write_text("x")
+            nested = docs / "a/b/c"
+            nested.mkdir(parents=True)
+            (nested / "note deep.txt").write_text("x")
+            bounds = dict(search.WALK)
+            self.assertEqual(len(search.find_files("note", [docs], dict(bounds, results=3))), 3)
+            self.assertEqual(len(search.find_files("note", [docs], dict(bounds, entries=4))), 3)  # a, then three notes
+            self.assertNotIn(nested / "note deep.txt", search.find_files("note", [docs], dict(bounds, depth=3)))
+            self.assertIn(nested / "note deep.txt", search.find_files("note", [docs], dict(bounds, depth=4)))
+            ticks = iter(range(100))
+            self.assertEqual(search.find_files("note", [docs], dict(bounds, seconds=2.5), clock=lambda: next(ticks)),
+                             [docs / "note 0.txt"])
+
+    def test_files_mode_walks_the_users_folders(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            (home / "Documents").mkdir()
+            (home / "Documents/Quarterly report.txt").write_text("x")
+            (home / "report outside the user folders.txt").write_text("x")
+            out = io.StringIO()
+            with patch.dict("os.environ", {"HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config")}), \
+                    contextlib.redirect_stdout(out):
+                self.assertEqual(search.main(["--files", "report"]), 0)
+            self.assertEqual([r["title"] for r in json.loads(out.getvalue())], ["Quarterly report.txt"])
+
     def test_json_lists_the_results_and_names_apps_by_their_desktop_file(self):
         app = Mock()
         app.get_display_name.return_value = "Browser"

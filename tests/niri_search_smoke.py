@@ -17,6 +17,9 @@ Checked, through the shell's ``search_view`` and ``toast`` IPC calls and the sta
 - with the pointer (tests/pointer.py), the row under it is tinted, a click opens that row rather than
   the chosen one, and a click on the shade closes search;
 - a query that matches nothing says so, in its own space above the footer;
+- typing three letters or more walks the user folders for files by name (``flow-search --files``); a found file
+  is listed and opens; a slow walk for an older query is dropped; the row chosen with the arrow keys stays
+  chosen when a walk's answer arrives;
 - a result that fails to open shows a toast naming it, also when ``flow-search`` cannot even start;
 - a flow-search that does not answer with results, or cannot start, says search failed, not "Nothing matches".
 
@@ -44,6 +47,12 @@ ROWS = ([{"title": "Flow Settings", "detail": "Settings", "kind": "settings", "v
         + [{"title": a, "detail": "Open as Layer", "kind": "layer", "value": f"{a}.desktop", "icon": ""} for a in APPS])
 # What a slow listing saw before search was opened again: a window since closed.
 STALE_ROWS = [{"title": "Closed Window", "detail": "Open window · foot", "kind": "window", "value": "7", "icon": ""}]
+# Files a walk finds by name (flow-search --files): one, and an older walk's answer, since deleted.
+def file_row(name):
+    return {"title": name, "detail": "File · /home/floe/Documents", "kind": "file",
+            "value": "file:///home/floe/Documents/" + name.replace(" ", "%20"), "icon": ""}
+
+
 STAND_IN = """#!/bin/sh
 # Flow search, standing in: --json answers with the rows in $DIR/rows as they were when it started, after
 # the seconds in $DIR/slow if that exists, and counts the listings it finished in $DIR/listed. It ignores
@@ -55,6 +64,8 @@ case "$1" in
           [ -e "$DIR/ignore-term" ] && trap '' TERM
           rows=$(cat "$DIR/rows"); [ -e "$DIR/slow" ] && sleep "$(cat "$DIR/slow")"; printf '%s\n' "$rows"
           echo listed >> "$DIR/listed" ;;
+  --files) echo "$2" >> "$DIR/walked"; rows=$(cat "$DIR/files" 2>/dev/null || echo '[]')
+           [ -e "$DIR/walk-slow" ] && sleep "$(cat "$DIR/walk-slow")"; printf '%s\n' "$rows" ;;
   --open) echo "$2 $3" >> "$DIR/opened"; exit "$(cat "$DIR/open-exit" 2>/dev/null || echo 0)" ;;
   *) exit 2 ;;
 esac
@@ -249,6 +260,60 @@ def main():
             type_keys("-k", "Escape")
             wait_for(lambda: ipc("search_state") == "closed", "Escape to close search")
             steps.append("a query that matched nothing said so, above the footer")
+
+            def walked():
+                return (tmp / "walked").read_text().splitlines() if (tmp / "walked").exists() else []
+
+            # Files found by name while typing join the results, and Return opens the chosen one.
+            (tmp / "files").write_text(json.dumps([file_row("Quarterly report.odt")]))
+            open_search()
+            wait_for(lambda: (v := view()) and v["rows"], "the results again")
+            type_keys("quarterly")
+            wait_for(lambda: (v := view()) and [r["title"] for r in v["rows"]] == ["Quarterly report.odt"],
+                     lambda: f"the file found by name ({view()})")
+            if not walked() or walked()[-1] != "quarterly" or any(len(q) < 3 for q in walked()):
+                raise RuntimeError(f"Search walked for {walked()}, expected the typed query only")
+            type_keys("-k", "Return")
+            wait_for(lambda: opened_lines()[-1:] == ["file file:///home/floe/Documents/Quarterly%20report.odt"],
+                     lambda: f"the found file to open ({opened_lines()[-1:]})")
+            steps.append("typing walked the user folders for the query (never fewer than three letters), the file "
+                         "found by name was listed, and Return opened it")
+
+            # A slow walk for an older query is dropped: its file has since been deleted.
+            (tmp / "files").write_text(json.dumps([file_row("Report notes (deleted).md")]))
+            (tmp / "walk-slow").write_text("3")
+            open_search()
+            wait_for(lambda: (v := view()) and v["rows"], "the results again")
+            type_keys("report")
+            wait_for(lambda: walked()[-1:] == ["report"], "the walk for report")
+            (tmp / "files").write_text(json.dumps([file_row("Report notes.md")]))
+            (tmp / "walk-slow").unlink()
+            type_keys(" notes")
+            seen, end = [], time.monotonic() + 5  # past the end of the slow walk
+            while time.monotonic() < end:
+                seen.append([r["title"] for r in (view() or {"rows": []})["rows"]])
+                time.sleep(0.2)
+            if any("Report notes (deleted).md" in titles for titles in seen) or "Report notes.md" not in seen[-1]:
+                raise RuntimeError(f"Search showed an older walk's file, or not the new one: {seen[-1]}")
+            type_keys("-k", "Escape")
+            wait_for(lambda: ipc("search_state") == "closed", "Escape to close search")
+            steps.append("a slow walk for an older query was dropped: only the new query's file was shown")
+
+            # The chosen row stays chosen when a walk's answer arrives and ranks above it.
+            (tmp / "files").write_text(json.dumps([file_row("Notes")]))
+            (tmp / "walk-slow").write_text("2")
+            open_search()
+            wait_for(lambda: (v := view()) and v["rows"], "the results again")
+            type_keys("Notes")
+            wait_for(lambda: (v := view()) and len(v["rows"]) == 8, lambda: f"Notes results ({view()})")
+            type_keys("-k", "Down", "-k", "Down")  # Notes Client, the third row
+            wait_for(lambda: (v := view()) and any(r["kind"] == "file" for r in v["rows"]), "the walk's file")
+            (tmp / "walk-slow").unlink()
+            type_keys("-k", "Return")
+            wait_for(lambda: opened_lines()[-1:] == ["app /apps/Notes Client.desktop"],
+                     lambda: f"the chosen row to open ({opened_lines()[-1:]})")
+            steps.append("the row chosen with the arrow keys stayed chosen when a file found later ranked above it, "
+                         "and Return opened it")
 
             (tmp / "open-exit").write_text("3")
             open_search()

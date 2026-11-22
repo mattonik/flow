@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Search local applications and the current Flow workspace."""
+from collections import deque
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
+import time
 from urllib.parse import unquote, urlsplit
 import xml.etree.ElementTree as ET
 
@@ -37,6 +40,96 @@ def recent_files(history, home):
         if len(found) == 100:
             break
     return found
+
+
+# File search walks the XDG user folders by name while the user types: nothing is indexed or stored.
+USER_FOLDERS = {"DESKTOP": "Desktop", "DOCUMENTS": "Documents", "DOWNLOAD": "Downloads",
+                "PICTURES": "Pictures", "MUSIC": "Music", "VIDEOS": "Videos"}
+# The walk's bounds: what it returns, looks at, takes, and how deep it goes below a user folder.
+WALK = {"results": 50, "entries": 20000, "seconds": 0.3, "depth": 8}
+SHORTEST_QUERY = 3
+
+
+def user_folders(home, config):
+    """The XDG user folders, as user-dirs.dirs names them or by their default names: each once, inside the home
+    folder but never the home folder itself (xdg-user-dirs sets a folder to $HOME to turn it off)."""
+    named = {key: home / name for key, name in USER_FOLDERS.items()}
+    try:
+        lines = (config / "user-dirs.dirs").read_text(errors="replace").splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        found = re.fullmatch(r'XDG_([A-Z]+)_DIR="(.*)"', line.strip())
+        if not found or found[1] not in USER_FOLDERS:
+            continue
+        value = found[2]
+        if value == "$HOME" or value.startswith("$HOME/"):
+            named[found[1]] = home / value[6:]
+        elif value.startswith("/"):
+            named[found[1]] = Path(value)
+    folders = []
+    try:
+        top = home.resolve(strict=True)
+    except OSError:
+        return []
+    for key in USER_FOLDERS:
+        try:
+            folder = named[key].resolve(strict=True)
+            folder.relative_to(top)
+        except (OSError, ValueError, RuntimeError):
+            continue
+        # A folder inside another is walked with it.
+        if folder != top and folder.is_dir() and not any(folder.is_relative_to(f) for f in folders):
+            folders = [f for f in folders if not f.is_relative_to(folder)] + [folder]
+    return folders
+
+
+def name_matches(name, words):
+    """Whether a name holds every word of the query; file contents are not searched."""
+    folded = name.casefold()
+    return all(word in folded for word in words)
+
+
+def find_files(query, folders, bounds=WALK, clock=time.monotonic):
+    """Files and folders under ``folders`` whose names match ``query``, nearest first, within ``bounds``.
+
+    Hidden files and folders count; symbolic links are neither listed nor followed, so the walk stays inside
+    the user folders. Whatever the bounds leave unvisited is simply not found."""
+    words = query.casefold().split()
+    if len(query.strip()) < SHORTEST_QUERY:
+        return []
+    end = clock() + bounds["seconds"]
+    queue = deque((folder, 0) for folder in folders)
+    found, seen = [], 0
+    while queue:
+        folder, depth = queue.popleft()
+        try:
+            with os.scandir(folder) as listing:
+                entries = sorted(listing, key=lambda e: e.name.casefold())
+        except OSError:
+            continue
+        for entry in entries:
+            seen += 1
+            if seen > bounds["entries"] or clock() > end:
+                return found
+            try:
+                is_folder = entry.is_dir(follow_symlinks=False)
+                is_file = not is_folder and entry.is_file(follow_symlinks=False)
+            except OSError:
+                continue
+            if (is_folder or is_file) and name_matches(entry.name, words) and os.access(entry.path, os.R_OK):
+                found.append(Path(entry.path))
+                if len(found) == bounds["results"]:
+                    return found
+            if is_folder and depth + 1 < bounds["depth"]:
+                queue.append((entry.path, depth + 1))
+    return found
+
+
+def file_rows(paths):
+    """The rows the search panel shows for files found by name; they open as recent files do."""
+    return json.dumps([{"title": path.name, "detail": f"{'Folder' if path.is_dir() else 'File'} · {path.parent}",
+                        "kind": "file", "value": path.as_uri(), "icon": ""} for path in paths])
 
 
 def results(snapshot, apps, files=()):
@@ -97,11 +190,17 @@ def open_result(kind, value):
 
 
 def main(args):
-    """``--json`` lists every result for the shell's search panel; ``--open KIND VALUE`` opens an app or file."""
+    """``--json`` lists every result for the shell's search panel; ``--files QUERY`` finds files by name in the
+    user folders; ``--open KIND VALUE`` opens an app or file."""
     if len(args) == 3 and args[0] == "--open":
         return open_result(args[1], args[2])
+    if len(args) == 2 and args[0] == "--files":
+        home = Path.home()
+        config = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+        print(file_rows(find_files(args[1], user_folders(home, config))))
+        return 0
     if args != ["--json"]:
-        print("usage: flow-search --json | --open app|file VALUE", file=sys.stderr)
+        print("usage: flow-search --json | --files QUERY | --open app|file VALUE", file=sys.stderr)
         return 2
     from gi.repository import Gio
     try:
