@@ -629,6 +629,8 @@ ShellRoot {
             ? searchMatches.findIndex(r => r.kind + "\n" + r.value === searchChosenKey) : -1
         if (kept >= 0) searchIndex = kept
         else { searchIndex = 0; searchIndexChanged() }
+        // A new model scrolls the list back to its top; the chosen row stays in sight.
+        if (searchMatches.length) Qt.callLater(() => searchView.positionViewAtIndex(searchIndex, ListView.Contain))
     }
     // One listing per opening of search. A listing still running when search opens again lists what was there
     // before (windows since closed): it is sent SIGTERM and its answer dropped, so only the newest one is shown.
@@ -657,7 +659,8 @@ ShellRoot {
         }
     }
     // Files by name, walked in the user folders while typing (flow-search --files): one walk per query. A walk for
-    // an older query (each takes at most 0.3 s) finishes, and its answer is dropped. Nothing is indexed or stored.
+    // an older query is stopped as soon as the query changes, and an answer it still gives is dropped. Nothing is
+    // indexed or stored, and the query goes on stdin: a command line is readable by every user of the machine.
     property var searchFileResults: []
     property var searchWalk: null   // the walk for the current query; null once it has answered
     Component {
@@ -665,7 +668,9 @@ ShellRoot {
         Process {
             id: walker
             property string query: ""
-            command: ["flow-search", "--files", query]
+            command: ["flow-search", "--files"]
+            stdinEnabled: true
+            onStarted: write(query + "\n")
             stdout: StdioCollector {
                 onStreamFinished: {
                     if (root.searchWalk !== walker) return
@@ -683,13 +688,19 @@ ShellRoot {
     Timer { id: searchWalkTimer; interval: 150; onTriggered: root.walkSearchFiles() }
     onSearchQueryChanged: {
         searchArmed = ""
+        dropSearchWalk()
         if (searchQuery.trim().length < 3) searchFileResults = []
         searchWalkTimer.restart()
     }
     onSearchOpenChanged: if (!searchOpen) { searchArmed = ""; walkSearchFiles() }
+    function dropSearchWalk() {
+        const stale = searchWalk
+        searchWalk = null
+        if (stale) stale.running = false
+    }
     function walkSearchFiles() {
         const query = searchQuery.trim()
-        searchWalk = null
+        dropSearchWalk()
         if (!searchOpen || searchAppsOnly || query.length < 3) { searchFileResults = []; return }
         searchWalk = searchWalker.createObject(root, { query: query })
         searchWalk.running = true

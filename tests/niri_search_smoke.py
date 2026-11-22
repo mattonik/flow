@@ -66,7 +66,7 @@ case "$1" in
           [ -e "$DIR/ignore-term" ] && trap '' TERM
           rows=$(cat "$DIR/rows"); [ -e "$DIR/slow" ] && sleep "$(cat "$DIR/slow")"; printf '%s\n' "$rows"
           echo listed >> "$DIR/listed" ;;
-  --files) echo "$2" >> "$DIR/walked"; rows=$(cat "$DIR/files" 2>/dev/null || echo '[]')
+  --files) [ -e "$DIR/walk-ignore-term" ] && trap '' TERM; head -n 1 >> "$DIR/walked"; rows=$(cat "$DIR/files" 2>/dev/null || echo '[]')
            [ -e "$DIR/walk-slow" ] && sleep "$(cat "$DIR/walk-slow")"; printf '%s\n' "$rows" ;;
   --open) echo "$2 $3" >> "$DIR/opened"; exit "$(cat "$DIR/open-exit" 2>/dev/null || echo 0)" ;;
   *) exit 2 ;;
@@ -268,28 +268,35 @@ def main():
 
             # Files found by name while typing join the results, and Return opens the chosen one.
             (tmp / "files").write_text(json.dumps([file_row("Quarterly report.odt")]))
+            recent = dict(file_row("Quarterly report.odt"), detail="Recent file · /home/floe/Documents")
+            (tmp / "rows").write_text(json.dumps(ROWS + [recent]))  # also a recent file: listed once
             open_search()
             wait_for(lambda: (v := view()) and v["rows"], "the results again")
             type_keys("quarterly")
             wait_for(lambda: (v := view()) and [r["title"] for r in v["rows"]] == ["Quarterly report.odt"],
                      lambda: f"the file found by name ({view()})")
+            (tmp / "rows").write_text(json.dumps(ROWS))
             if not walked() or walked()[-1] != "quarterly" or any(len(q) < 3 for q in walked()):
                 raise RuntimeError(f"Search walked for {walked()}, expected the typed query only")
             type_keys("-k", "Return")
             wait_for(lambda: opened_lines()[-1:] == ["file file:///home/floe/Documents/Quarterly%20report.odt"],
                      lambda: f"the found file to open ({opened_lines()[-1:]})")
-            steps.append("typing walked the user folders for the query (never fewer than three letters), the file "
-                         "found by name was listed, and Return opened it")
+            steps.append("typing walked the user folders for the query, given on stdin (never fewer than three "
+                         "letters); the file found by name was listed once, though also a recent file, and Return "
+                         "opened it")
 
-            # A slow walk for an older query is dropped: its file has since been deleted.
+            # A slow walk for an older query is dropped: its file has since been deleted. It ignores being
+            # stopped, so it answers after the new walk, as a walk that is not stopped in time would.
             (tmp / "files").write_text(json.dumps([file_row("Report notes (deleted).md")]))
             (tmp / "walk-slow").write_text("3")
+            (tmp / "walk-ignore-term").touch()
             open_search()
             wait_for(lambda: (v := view()) and v["rows"], "the results again")
             type_keys("report")
             wait_for(lambda: walked()[-1:] == ["report"], "the walk for report")
             (tmp / "files").write_text(json.dumps([file_row("Report notes.md")]))
             (tmp / "walk-slow").unlink()
+            (tmp / "walk-ignore-term").unlink()
             type_keys(" notes")
             seen, end = [], time.monotonic() + 5  # past the end of the slow walk
             while time.monotonic() < end:

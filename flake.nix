@@ -30,7 +30,7 @@
       HOME=$TMPDIR PATH=/no-such ${search}/bin/flow-search --json > rows.json
       ${lib.getExe pkgs.python3} -c 'import json; rows = json.load(open("rows.json")); assert rows and rows[0]["kind"] == "settings", rows'
       mkdir -p $TMPDIR/Documents/.notes && touch "$TMPDIR/Documents/.notes/Quarterly report.txt"
-      HOME=$TMPDIR PATH=/no-such ${search}/bin/flow-search --files report > files.json
+      echo report | HOME=$TMPDIR PATH=/no-such ${search}/bin/flow-search --files > files.json
       ${lib.getExe pkgs.python3} -c 'import json; rows = json.load(open("files.json")); assert [r["title"] for r in rows] == ["Quarterly report.txt"], rows'
       rc=0; HOME=$TMPDIR PATH=/no-such ${search}/bin/flow-search --open file file:///no-such || rc=$?
       [ "$rc" -ne 0 ] && [ "$rc" -ne 127 ] || { echo "flow-search --open exited $rc: gio missing or a missing file opened"; exit 1; }
