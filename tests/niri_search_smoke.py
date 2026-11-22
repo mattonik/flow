@@ -2,7 +2,7 @@
 """The search panel of a development shell: it shows results, opens the chosen one and says why when it can't.
 
 Run inside a Niri session from the Flow checkout, with ``FLOW_SHELL`` set to the development ``shell.qml``,
-``wtype`` on PATH and the installed shell stopped (``systemctl --user stop flow-shell``: its keyboard
+``wtype`` and ``flow-pointer`` on PATH and the installed shell stopped (``systemctl --user stop flow-shell``: its keyboard
 surfaces would take the keys). The shell gets its own runtime directory, state and configuration, and a
 stand-in ``flow-search`` first on PATH that lists fixed results and records what it is asked to open, so
 no app starts. Keys are typed with wtype into the panel, which has the keyboard while open.
@@ -11,6 +11,8 @@ Checked, through the shell's ``search_view`` and ``toast`` IPC calls and the sta
 - the panel lists what ``flow-search --json`` answers;
 - typing ranks an exact title first and keeps ties in flow-search's order, so Return on "Notes" opens
   the Notes app, not "Notes Server" or Notes as a Layer, through ``flow-search --open app <desktop file>``;
+- with the pointer (tests/pointer.py), the row under it is tinted, a click opens that row rather than
+  the chosen one, and a click on the shade closes search;
 - a query that matches nothing says so, in its own space above the footer;
 - a result that fails to open shows a toast naming it, also when ``flow-search`` cannot even start;
 - a flow-search that does not answer with results, or cannot start, says search failed, not "Nothing matches".
@@ -29,6 +31,8 @@ import subprocess
 import sys
 import tempfile
 import time
+
+from pointer import Pointer
 
 # Enough ties that an unstable sort shows (the "Foot" query in the guest had six): every app twice.
 APPS = ["Notes Client", "Notes Server", "Notes", "Notes Viewer"]
@@ -110,6 +114,12 @@ def main():
             subprocess.run(["wtype", "-k", next(primer), *args], env=typing_env, check=True, timeout=10)
             time.sleep(0.3)
 
+        def target(name):
+            try:
+                return json.loads(ipc("pointer_target", name) or "null")
+            except ValueError:
+                return None
+
         def opened_lines():
             return opened.read_text().splitlines() if opened.exists() else []
 
@@ -118,6 +128,7 @@ def main():
             wait_for(lambda: ipc("search_state") == "open", "search to open")
             time.sleep(0.4)  # the panel takes the keyboard when it maps
 
+        pointer = Pointer()
         try:
             shell_process = subprocess.Popen(["quickshell", "-p", shell], env=env, stdin=subprocess.DEVNULL,
                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -145,6 +156,34 @@ def main():
                 raise RuntimeError(f"Return opened {opened_lines()}, expected the Notes app")
             steps.append("an exact title ranked first and ties kept flow-search's order; Return opened the Notes app "
                          "through flow-search --open")
+
+            # The pointer: the third row, not the chosen first one, so a click is told apart from Return.
+            pointer.park()
+            open_search()
+            wait_for(lambda: (v := view()) and v["rows"], "the results again")
+            type_keys("Notes")
+            wait_for(lambda: (v := view()) and len(v["rows"]) == 8, lambda: f"Notes results ({view()})")
+            row = pointer.hover(lambda: target("search_row:2"), "the third row")
+            if any((target(f"search_row:{i}") or {}).get("hovered") for i in (1, 3)):
+                raise RuntimeError("A row the pointer is not on was tinted")
+            pointer.click(row)
+            wait_for(lambda: len(opened_lines()) == 2, lambda: f"the clicked row to open ({opened_lines()})")
+            wait_for(lambda: ipc("search_state") == "closed", "search to close after the click")
+            if opened_lines()[-1] != "app /apps/Notes Client.desktop":
+                raise RuntimeError(f"Clicking the third row opened {opened_lines()[-1]!r}, expected Notes Client")
+            steps.append("with the pointer, only the row under it was tinted, and clicking the third row opened that "
+                         "row (Notes Client), not the chosen first one")
+
+            pointer.park()
+            open_search()
+            shade = wait_for(lambda: target("search_shade"), "the shade's place")
+            # Above the palette (at least 64 px down) and at the screen's left edge, clear of it at any width.
+            pointer.click((shade["screen"][0] + 4, shade["screen"][1] + 32))
+            wait_for(lambda: ipc("search_state") == "closed", "a click on the shade to close search")
+            if len(opened_lines()) != 2:
+                raise RuntimeError(f"A click on the shade opened {opened_lines()[2:]}")
+            steps.append("a click on the shade, outside the palette, closed search and opened nothing")
+            pointer.park()
 
             open_search()
             wait_for(lambda: (v := view()) and v["rows"], "the results again")

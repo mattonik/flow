@@ -2,7 +2,8 @@
 """Notification banners of a development shell, on a private bus.
 
 Run inside a Niri session from the Flow checkout under ``dbus-run-session``, with ``FLOW_SHELL`` set
-to the development ``shell.qml``. The shell owns the private bus's notification name, so the real
+to the development ``shell.qml``, ``flow-pointer`` on PATH and the installed shell stopped
+(``systemctl --user stop flow-shell``): its banners and island sit where the development shell's do. The shell owns the private bus's notification name, so the real
 session's notifications are untouched; the test sends notifications with ``busctl`` and reads what the
 banner shows through the shell's IPC (``banner``: the summary on screen, or ""). It runs with its own
 ``XDG_RUNTIME_DIR`` and state, is a child subreaper so a leaked event stream is caught, and checksums
@@ -12,7 +13,11 @@ Checked: a normal notification shows for about 5 s and then goes; a low-urgency 
 newer notification replaces the shown one; one that replaces an earlier notification (replaces_id) shows
 again; one the app closes leaves at once; quick settings and Desk hide a banner, which shows when they
 close; one that arrives with the panel open shows no banner after; a critical one stays past 9 s, a
-normal one does not push it off, and the panel takes it for good.
+normal one does not push it off, and the panel takes it for good. With the pointer (tests/pointer.py, so
+``flow-pointer`` on PATH and the installed shell stopped): resting on a banner holds it, and its 5 s start
+again when the pointer leaves (it rests there only after 2.5 s of them, so a count that merely paused
+would end too soon); a click runs the default action (``ActionInvoked``), or opens the panel when
+there is none; × dismisses it (``NotificationClosed``, reason 2).
 
 ``banner`` reports the shell's state (what the banner is set to show), not what the compositor draws;
 stacking and rendering are checked by screenshots.
@@ -27,6 +32,8 @@ import subprocess
 import sys
 import tempfile
 import time
+
+from pointer import Pointer
 
 NAME = "org.freedesktop.Notifications"
 URGENCY = {"low": 0, "normal": 1, "critical": 2}
@@ -77,10 +84,10 @@ def main():
             except subprocess.SubprocessError:
                 return None
 
-        def notify(summary, urgency="normal", replaces=0):
+        def notify(summary, urgency="normal", replaces=0, actions=()):
             out = subprocess.run(["busctl", f"--address={bus}", "--", "call", NAME, "/org/freedesktop/Notifications", NAME,
-                                  "Notify", "susssasa{sv}i", "Smoke", str(replaces), "", summary, "A body line", "0",
-                                  "1", "urgency", "y", str(URGENCY[urgency]), "-1"],
+                                  "Notify", "susssasa{sv}i", "Smoke", str(replaces), "", summary, "A body line",
+                                  str(len(actions)), *actions, "1", "urgency", "y", str(URGENCY[urgency]), "-1"],
                                  text=True, stdout=subprocess.PIPE, check=True).stdout
             return int(out.split()[1])
 
@@ -94,6 +101,32 @@ def main():
                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             return int(answer.stdout.split()[1]) if answer.returncode == 0 else None
 
+        def surfaces():
+            try:
+                return json.loads(ipc("surfaces") or "{}")
+            except ValueError:
+                return {}
+
+        def target(name):
+            try:
+                return json.loads(ipc("pointer_target", name) or "null")
+            except ValueError:
+                return None
+
+        signal_log = Path(tmp) / "signals"
+
+        def signals(member):
+            """The payloads of the notification signals named member that the shell has sent so far."""
+            found = []
+            for line in signal_log.read_text().splitlines():
+                try:
+                    message = json.loads(line)
+                except ValueError:
+                    continue
+                if message.get("member") == member:
+                    found.append(message["payload"]["data"])
+            return found
+
         def stays(value, seconds):
             end = time.monotonic() + seconds
             while time.monotonic() < end:
@@ -101,7 +134,11 @@ def main():
                     raise RuntimeError(f"The banner showed {ipc('banner')!r}, expected {value!r} for {seconds} s")
                 time.sleep(0.25)
 
+        pointer, monitor = Pointer(), None
         try:
+            with open(signal_log, "w") as log:
+                monitor = subprocess.Popen(["busctl", f"--address={bus}", "--json=short", "monitor", "--match",
+                                            f"type=signal,interface={NAME}"], stdout=log, stderr=subprocess.DEVNULL)
             shell_process = subprocess.Popen(["quickshell", "-p", shell], env=env, stdin=subprocess.DEVNULL,
                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             wait_for(lambda: ipc("banner") == "", "the development shell", timeout=20)
@@ -175,14 +212,57 @@ def main():
             stays("", 1.5)
             steps.append("a critical banner stayed past 9 s, a normal notification did not push it off, "
                          "and it left when the panel opened and did not come back")
+
+            # The pointer.
+            pointer.park()
+            notify("Held under the pointer")
+            wait_for(lambda: ipc("banner") == "Held under the pointer", "the banner to hold", timeout=3)
+            time.sleep(2.5)  # half its time: a count that only paused would end 2.5 s after the pointer leaves
+            pointer.hover(lambda: target("banner"), "the banner", timeout=2)
+            stays("Held under the pointer", 7)
+            pointer.park()
+            left = time.monotonic()
+            wait_for(lambda: ipc("banner") == "", "the banner to go once the pointer left", timeout=8)
+            gone = time.monotonic() - left
+            if not 4 <= gone <= 6.5:
+                raise RuntimeError(f"The banner went {gone:.1f} s after the pointer left, not about 5 s")
+            steps.append(f"the pointer resting on a banner held it for 7 s, and it went {gone:.1f} s after the pointer left")
+
+            opened = notify("Open me", actions=["default", "Open"])
+            wait_for(lambda: ipc("banner") == "Open me", "the banner with a default action", timeout=3)
+            pointer.click(pointer.hover(lambda: target("banner"), "the banner with a default action"))
+            wait_for(lambda: [opened, "default"] in signals("ActionInvoked"), lambda: f"ActionInvoked ({signals('ActionInvoked')})", timeout=3)
+            wait_for(lambda: ipc("banner") == "", "the clicked banner to go", timeout=2)
+            if surfaces().get("notifications"):
+                raise RuntimeError("A click on a banner with a default action opened the panel as well")
+            steps.append("a click on a banner ran the notification's default action, and opened no panel")
+
+            notify("No action here")
+            wait_for(lambda: ipc("banner") == "No action here", "the banner without actions", timeout=3)
+            pointer.click(pointer.hover(lambda: target("banner"), "the banner without actions"))
+            wait_for(lambda: surfaces().get("notifications"), "a click on a banner without actions to open the panel", timeout=3)
+            ipc("notifications")
+            wait_for(lambda: not surfaces().get("notifications"), "the panel to close", timeout=3)
+            steps.append("a click on a banner without a default action opened the panel")
+
+            dismissed = notify("Dismiss me", actions=["default", "Open"])
+            wait_for(lambda: ipc("banner") == "Dismiss me", "the banner to dismiss", timeout=3)
+            pointer.click(pointer.hover(lambda: target("banner_dismiss"), "the banner's ×"))
+            wait_for(lambda: [dismissed, 2] in signals("NotificationClosed"),
+                     lambda: f"NotificationClosed, reason 2 ({signals('NotificationClosed')})", timeout=3)
+            if ipc("banner") != "" or surfaces().get("notifications") or [dismissed, "default"] in signals("ActionInvoked"):
+                raise RuntimeError("× left the banner, opened the panel or ran the default action")
+            steps.append("× on a banner dismissed the notification (closed, reason 2) without running its action")
+            pointer.park()
             result = {"result": "pass", "steps": steps}
         finally:
-            if shell_process and shell_process.poll() is None:
-                shell_process.terminate()
-                try:
-                    shell_process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    shell_process.kill()
+            for process in (shell_process, monitor):
+                if process and process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
         time.sleep(1)
         if orphans():
             raise RuntimeError(f"The shell left its event stream running: {orphans()}")

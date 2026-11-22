@@ -34,6 +34,38 @@
       ln -s ${niriConfig} $out/niri.kdl
       printf '%s\n' ${lib.escapeShellArgs wrappers} > $out/wrappers
     '';
+    # A pointer for the guest tests (tests/flow-pointer/flow-pointer.c), as wtype is their keyboard. Test tooling:
+    # the module does not install it; the test guest's own configuration does. CI builds it.
+    packages.aarch64-linux.flow-pointer = let pkgs = nixpkgs.legacyPackages.aarch64-linux; in
+      pkgs.stdenv.mkDerivation {
+        pname = "flow-pointer";
+        version = "1";
+        src = ./tests/flow-pointer;
+        strictDeps = true;
+        nativeBuildInputs = [ pkgs.wayland-scanner pkgs.pkg-config ];
+        buildInputs = [ pkgs.wayland ];
+        buildPhase = ''
+          xml=${pkgs.wlr-protocols}/share/wlr-protocols/unstable/wlr-virtual-pointer-unstable-v1.xml
+          wayland-scanner client-header $xml virtual-pointer.h
+          wayland-scanner private-code $xml virtual-pointer.c
+          $CC -O2 -Wall -Wextra -Werror flow-pointer.c virtual-pointer.c $(pkg-config --cflags --libs wayland-client) -o flow-pointer
+        '';
+        installPhase = "install -Dm755 flow-pointer $out/bin/flow-pointer";
+        # Steps are checked before it connects, so a typo moves nothing: each bad call must fail without a
+        # display, and a good one must get as far as looking for one.
+        doInstallCheck = true;
+        installCheckPhase = ''
+          p=$out/bin/flow-pointer
+          for bad in "10" "0 10 move 1 1" "10 10 move 10 1" "10 10 move 1" "10 10 jump" "10 10 scroll 101" \
+                     "10 10 scroll" "10 10 wait -1" "10 10 click 5"; do
+            if out=$(WAYLAND_DISPLAY=no-such $p $bad 2>&1); then echo "flow-pointer $bad was accepted"; exit 1; fi
+            case $out in *"cannot connect"*) echo "flow-pointer $bad reached the display: $out"; exit 1;; esac
+          done
+          out=$(XDG_RUNTIME_DIR=$TMPDIR WAYLAND_DISPLAY=no-such $p 10 10 move 9 9 down up click right scroll -3 hscroll 2 wait 0 2>&1) || true
+          case $out in *"cannot connect"*) ;; *) echo "good steps did not reach the display: $out"; exit 1;; esac
+        '';
+        meta.mainProgram = "flow-pointer";
+      };
     nixosModules.default = import ./modules/flow.nix;
     nixosConfigurations.test = nixpkgs.lib.nixosSystem {
       system = "aarch64-linux";

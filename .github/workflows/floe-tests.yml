@@ -34,4 +34,4 @@ jobs:
       - name: Evaluate the test system
         run: nix eval .#nixosConfigurations.test.config.system.build.toplevel.drvPath
       - name: Build Flow's wrappers and validate the rendered Niri config
-        run: nix build -L --no-link .#checks.aarch64-linux.module
+        run: nix build -L --no-link .#checks.aarch64-linux.module .#packages.aarch64-linux.flow-pointer
