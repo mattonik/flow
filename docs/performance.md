@@ -190,17 +190,17 @@ The focus phase flips across five spaces, since what a push costs grows with the
 
 With the opt-in app menu on, the shell used to start `flow-appmenu identity` after every focus change and `flow-appmenu` for every menu it opened and every command, each a new Python with PyGObject (0.08–0.14 s of start-up, plus the menu walk). Now it starts one `flow-appmenu serve` while the setting is on, supervised like the controller, and sends it JSON lines: a probe when focus settles, a read when the menu opens, a command. A window's first probe chooses its accessible frame and remembers it and whether it has a menu; later probes answer from memory with one request on Niri's socket ([F-020](IMPLEMENTATION_STATUS.md)).
 
-The performance smoke runs the real reader now, on its own session bus, adds the reader's CPU to the helpers', and has three changed or new checks: no `flow-appmenu` run at idle, one `flow-appmenu serve` for the whole run, and the median probe of a terminal (an app without a menu: it is on no accessibility bus) under 50 ms, as the shell times it from its request to the answer, while focus moves every 0.5 s for 5 s. With this change, in the guest, after other sessions' runs:
+The performance smoke runs the real reader now, on its own session bus, adds the reader's CPU to the helpers', and has three changed or new checks: no `flow-appmenu` run at idle, one `flow-appmenu serve` for the whole run, and the median probe of an app without a menu under 50 ms, as the shell times it from its request to the answer. The probes counted are those while a Nautilus window (GTK 4: on the shell's accessibility bus, with no menu bar) opens on the smoke's bus and focus then moves between it and a terminal (on no accessibility bus) every 0.5 s for 5 s. With this change, in the guest:
 
 | Check | Limit | Resident reader |
 |---|---|---|
-| idle: shell CPU | < 1 % of a core | 0.38% |
-| idle: helpers CPU (the reader included) | < 1 % of a core | 0.07% |
+| idle: shell CPU | < 1 % of a core | 0.25% |
+| idle: helpers CPU (the reader included) | < 1 % of a core | 0.03% |
 | idle: flow-appmenu runs | 0 | 0 |
-| app menu: probe of an app without a menu, median | < 50 ms | 5.5 ms (3–27 ms) |
+| app menu: probe of an app without a menu (a terminal, Nautilus), median | < 50 ms | 4 ms |
 | app menu: flow-appmenu processes started | 1 (serve) | 1 |
-| focus every 0.25 s: helpers CPU | < 2.5 % of a core | 0.6% |
+| focus every 0.25 s: helpers CPU | < 2.5 % of a core | 1.06% |
 
-Every other check passed too (31 of 31). The guest's probes of apps with a menu, measured separately in a fresh reader: a window's first probe 20–40 ms (LibreOffice's first 170 ms), later ones 4–13 ms; reading the whole menu 108 ms (Mousepad, 230 items) to 352 ms (LibreOffice, 683 items).
+Every other check passed too (31 of 31). The probes were 2–7 ms but one: Nautilus's first, as its window opened, took 348 ms, while it chose the frame and looked for a menu bar in an app still starting up. A window's first probe is paid once; the median is the cost of a focus change. Probes of apps with a menu, measured separately in a fresh reader: a window's first probe 20–40 ms (LibreOffice's first 170 ms), later ones 4–13 ms; reading the whole menu 108 ms (Mousepad, 230 items) to 352 ms (LibreOffice, 683 items).
 
 The shell now runs on the smoke's own session bus, so no figure in this run includes the session bus's traffic; runs before this change are not like for like in that respect. The helpers were the installed ones for `flow-spaces` and `flow-search` (unchanged here) and this checkout's `flow-appmenu`. A first run with wrappers that ran `spaces.py` by path, without bytecode, read 36 ms for refresh and observe, as the bytecode row above predicts, and timed out waiting for the 0.05 s storm's final title; with the installed helpers neither happened.
