@@ -114,23 +114,16 @@ ShellRoot {
     property bool appMenuOpen: false
     property bool appMenuFocusChanged: false
     onAppMenuOpenChanged: {
-        if (!appMenuOpen && appMenuFocusChanged) {
+        if (!appMenuOpen) {   // a menu is read afresh each time it opens
             appMenu = null
             appMenuFocusChanged = false
+            appMenuError = ""
+            appMenuActivateAsked = 0
         }
     }
     property bool overviewOpen: false
-    property var appMenu: null
+    property var appMenu: null   // the open menu: {id (window), name, menus}
     property string appMenuError: ""
-    property bool openMenuWhenReady: false
-    function requestAppMenu() {
-        if (!menuPreferences.appMenuEnabled || root.deskOpen || root.overviewOpen || root.spacesOverviewOpen || root.searchOpen || appMenuProcess.running) return
-        root.switcherOpen = false
-        root.quickSettingsOpen = false
-        root.openMenuWhenReady = true
-        appMenuProcess.command = ["flow-appmenu"]
-        appMenuProcess.running = true
-    }
     Core.Settings {
         id: menuPreferences
         location: "file://" + (Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config") + "/flow-settings.ini"
@@ -143,50 +136,183 @@ ShellRoot {
         for (const index of root.appMenuPath) items = (items[index] && items[index].children) || []
         return items
     }
-    Process {
-        id: appMenuProcess
-        stdout: StdioCollector {
-            onStreamFinished: {
-                try {
-                    const result = JSON.parse(this.text)
-                    if (result && result.error) {
-                        if (root.appMenuOpen) root.appMenuFocusChanged = true
-                        else root.appMenu = null
-                        root.openMenuWhenReady = false; root.appMenuError = result.error; return
-                    }
-                    if (appMenuProcess.command.length === 1 && (!root.openMenuWhenReady || !root.appMenu || !result || root.appMenu.id !== result.id)) {
-                        root.openMenuWhenReady = false
-                        return
-                    }
-                    root.appMenu = result
-                    root.appMenuError = ""
-                    if (root.openMenuWhenReady && result) { root.appMenuPath = []; root.appMenuOpen = true }
-                    root.openMenuWhenReady = false
-                    if (appMenuProcess.command[1] === "activate") root.appMenuOpen = false
-                } catch (e) { root.appMenuError = "App menu unavailable" }
+    // The opt-in app menu (F-020). While the setting is on, one resident reader (session/appmenu.py, `flow-appmenu
+    // serve`) answers JSON lines: a probe when focus settles, the menu when it opens, and a command. A probe answers
+    // for the window Niri has focused: the first probe of a window chooses its accessible frame, which only works
+    // while the window has the keyboard, so probes are asked only while no Flow surface has it. Niri says which
+    // window has focus only sometimes (not for a window that opens focused), so every settle asks, and so does a
+    // change of the active window in Flow's state; the reader answers a window it knows from memory. The App button
+    // shows only for a window whose probe found a menu. Answers are kept per window until it closes; Super+M on a
+    // window with no menu known asks afresh before it says so.
+    property int appMenuWindow: -1   // the focused window as the last probe (or Niri's event) gave it; -1 for none
+    property int appMenuFocusMoves: 0   // Niri's focus events; a probe asked before the latest one is stale
+    property int appMenuProbeMoves: 0
+    property double appMenuProbeSent: 0
+    property var appMenuProbeTimes: []   // the last probes' round trips in ms, for tests/niri_performance_smoke.py
+    property int appMenuProbesAnswered: 0
+    property var appMenuProbes: ({})   // window id → the reader's probe answer
+    readonly property var appMenuProbe: appMenuProbes[appMenuWindow] || null
+    readonly property bool appMenuAvailable: menuPreferences.appMenuEnabled && !!appMenuProbe && appMenuProbe.has_menu === true
+    // The request each kind of answer is waited for by, 0 for none.
+    property int appMenuProbeAsked: 0
+    property int appMenuReadAsked: 0
+    property int appMenuActivateAsked: 0
+    property bool openMenuWhenReady: false   // cleared when another surface opens before the menu's answer
+    property int appMenuRequests: 0
+    property bool openMenuAfterProbe: false   // Super+M on a window with no menu known: open it if a fresh probe finds one
+    // A probe that found nothing final is asked again, 1.5, 4 and 10 s later, while focus stays: a window that opens
+    // focused gets the keyboard a moment after Niri's event, and its app registers on the bus after that.
+    readonly property var appMenuRetryDelays: [1500, 4000, 10000]
+    property int appMenuRetryMove: -1   // the focus move those retries are for
+    property int appMenuRetries: 0
+    function setAppMenuProbe(window, answer) {
+        const probes = Object.assign({}, appMenuProbes)
+        if (answer) probes[window] = answer
+        else delete probes[window]
+        appMenuProbes = probes
+    }
+    function appMenuSend(op, fields) {
+        if (!appMenuReader.running) return 0
+        appMenuRequests += 1
+        appMenuReader.write(JSON.stringify(Object.assign({ id: appMenuRequests, op: op }, fields)) + "\n")
+        return appMenuRequests
+    }
+    function sendAppMenuProbe(fresh) {
+        appMenuProbeMoves = appMenuFocusMoves
+        appMenuProbeSent = Date.now()
+        appMenuProbeAsked = appMenuSend("probe", fresh ? { fresh: true } : {})
+    }
+    function requestAppMenu() {
+        if (!menuPreferences.appMenuEnabled || root.deskOpen || root.overviewOpen || root.spacesOverviewOpen || root.searchOpen || appMenuReadAsked) return
+        if (!appMenuReader.running) { showToast("App menu unavailable"); return }
+        if (!appMenuAvailable) {
+            // Asked afresh, as the window still has the keyboard: its app may have registered, or shown its menu
+            // bar, since its last probe. Under another Flow surface the frame cannot be chosen.
+            if (appIdentityBlocked || appMenuProbeAsked) { showToast("No app menu"); return }
+            openMenuAfterProbe = true
+            sendAppMenuProbe(true)
+            return
+        }
+        root.switcherOpen = false
+        root.quickSettingsOpen = false
+        root.notificationsOpen = false
+        appMenuReadAsked = appMenuSend("read", { window: appMenuWindow })
+        openMenuWhenReady = appMenuReadAsked !== 0
+        if (!appMenuReadAsked) showToast("App menu unavailable")
+    }
+    function activateAppMenuItem(item) {
+        if (!root.appMenu || appMenuActivateAsked) return
+        appMenuError = ""
+        appMenuActivateAsked = appMenuSend("activate", { window: root.appMenu.id, path: item.path, label: item.label })
+        if (!appMenuActivateAsked) appMenuError = "App menu unavailable"
+    }
+    function appMenuAnswer(line) {
+        let answer = null
+        try { answer = JSON.parse(line) } catch (e) { return }
+        if (!answer || !answer.id) return
+        if (answer.id === appMenuProbeAsked) {
+            appMenuProbeAsked = 0
+            appMenuProbeTimes = appMenuProbeTimes.slice(-19).concat([Date.now() - appMenuProbeSent])
+            appMenuProbesAnswered += 1
+            if (answer.error || answer.window === null || !answer.final) {
+                if (appMenuRetryMove !== appMenuProbeMoves) { appMenuRetryMove = appMenuProbeMoves; appMenuRetries = 0 }
+                if (appMenuRetries < appMenuRetryDelays.length) {
+                    appMenuRetry.interval = appMenuRetryDelays[appMenuRetries]
+                    appMenuRetries += 1
+                    appMenuRetry.restart()
+                }
             }
+            const opening = openMenuAfterProbe
+            openMenuAfterProbe = false
+            if (!answer.error) {
+                if (appMenuProbeMoves === appMenuFocusMoves) appMenuWindow = answer.window === null ? -1 : answer.window
+                if (answer.window !== null)
+                    setAppMenuProbe(answer.window, { name: answer.name, has_menu: answer.has_menu, final: answer.final })
+            }
+            if (opening) {
+                if (appMenuAvailable) requestAppMenu()
+                else showToast("No app menu")
+            }
+        } else if (answer.id === appMenuReadAsked) {
+            appMenuReadAsked = 0
+            const wanted = openMenuWhenReady
+            openMenuWhenReady = false
+            if (answer.error) {
+                setAppMenuProbe(answer.window, null)   // probed again when focus next settles
+                showToast(answer.error)
+                requestAppIdentity()
+            } else if (wanted && answer.window === appMenuWindow && !appIdentityBlocked) {
+                appMenu = { id: answer.window, workspace: answer.workspace, name: answer.name, menus: answer.menus }
+                appMenuPath = []
+                appMenuOpen = true
+            }
+        } else if (answer.id === appMenuActivateAsked) {
+            appMenuActivateAsked = 0
+            // "unknown": the app has not answered yet, as with a modal dialog. The command was sent.
+            if (answer.done) appMenuOpen = false
+            else appMenuError = answer.error || "App menu unavailable"
         }
     }
-    // The focused app's identity is asked for when focus moves (Niri's events), when the menu is turned on and
-    // when Desk, Niri's overview or the menu closes; never again for the same focus. It reads only Niri, not the
-    // accessibility bus (session/appmenu.py), so asking again would answer the same.
     function requestAppIdentity() { appIdentityTimer.restart() }
-    readonly property bool appIdentityBlocked: appMenuOpen || deskOpen || overviewOpen
-    onAppIdentityBlockedChanged: if (!appIdentityBlocked) requestAppIdentity()   // it asks only if no menu is held then
+    // Any Flow surface that takes the keyboard: the window's frame is no longer `active` under it.
+    readonly property bool appIdentityBlocked: appMenuOpen || deskOpen || overviewOpen || spacesOverviewOpen || searchOpen
+                                               || switcherOpen || quickSettingsOpen || notificationsOpen
+    onAppIdentityBlockedChanged: if (!appIdentityBlocked) requestAppIdentity()
     Connections {
         target: menuPreferences
-        function onAppMenuEnabledChanged() { root.requestAppIdentity() }
+        function onAppMenuEnabledChanged() {
+            root.appMenuOpen = false
+            root.appMenuProbes = ({})
+            if (menuPreferences.appMenuEnabled) {
+                root.appMenuExits = 0
+                if (!appMenuRelease.running) appMenuReader.running = true   // else once the release has run
+            } else if (appMenuReader.running) appMenuReader.running = false   // its exit releases accessibility
+            else appMenuRelease.running = true
+        }
     }
     Timer {
         id: appIdentityTimer; interval: 300
-        Component.onCompleted: root.requestAppIdentity()
         onTriggered: {
-            if (!menuPreferences.appMenuEnabled || root.appMenu || root.appIdentityBlocked) return
-            if (appMenuProcess.running) { restart(); return }
-            appMenuProcess.command = ["flow-appmenu", "identity"]
-            appMenuProcess.running = true
+            if (!menuPreferences.appMenuEnabled || root.appIdentityBlocked) return
+            if (root.appMenuProbeAsked || root.appMenuReadAsked) { restart(); return }
+            root.sendAppMenuProbe(false)
         }
     }
+    Timer { id: appMenuRetry; onTriggered: if (root.appMenuRetryMove === root.appMenuFocusMoves) root.requestAppIdentity() }
+    // Started only while the setting is on, and again if it stops, as the controller is (below). When the setting
+    // goes off, the reader is stopped and `flow-appmenu release` switches accessibility off, if Flow switched it on.
+    // A reader started again meanwhile waits for the release: started first, it would see accessibility still on,
+    // record nothing, and then run with it switched off.
+    Process {
+        id: appMenuRelease
+        command: ["flow-appmenu", "release"]
+        onExited: if (menuPreferences.appMenuEnabled && !appMenuReader.running) appMenuReader.running = true
+    }
+    Process {
+        id: appMenuReader
+        command: ["sh", "-c", "command -v setpriv >/dev/null && exec setpriv --pdeathsig TERM flow-appmenu serve; exec flow-appmenu serve"]
+        Component.onCompleted: if (menuPreferences.appMenuEnabled && !appMenuRelease.running) running = true
+        stdinEnabled: true
+        stdout: SplitParser { onRead: line => root.appMenuAnswer(line) }
+        stderr: SplitParser { onRead: line => console.warn("flow-appmenu: " + line) }
+        onStarted: { appMenuHealthy.restart(); root.requestAppIdentity() }
+        onExited: {
+            appMenuHealthy.stop()
+            const opening = root.openMenuWhenReady
+            root.appMenuProbeAsked = 0; root.appMenuReadAsked = 0; root.appMenuActivateAsked = 0
+            root.openMenuWhenReady = false
+            root.appMenuProbes = ({})
+            if (root.appMenuOpen) root.appMenuError = "App menu unavailable"
+            if (!menuPreferences.appMenuEnabled) { appMenuRelease.running = true; return }
+            if (opening) root.showToast("App menu unavailable")
+            appMenuRestart.interval = Math.min(2000 * Math.pow(2, root.appMenuExits), 60000)
+            root.appMenuExits += 1
+            appMenuRestart.restart()
+        }
+    }
+    property int appMenuExits: 0   // since one last served for 30 s
+    Timer { id: appMenuRestart; onTriggered: if (menuPreferences.appMenuEnabled && !appMenuReader.running && !appMenuRelease.running) appMenuReader.running = true }
+    Timer { id: appMenuHealthy; interval: 30000; onTriggered: root.appMenuExits = 0 }
     // Flow's resident controller (session/flow_controller.py) reads Niri's events, refreshes Flow's state
     // in-process when they ask for it, and sends that state here, with the few Niri events the shell reacts to.
     // The shell starts it, and starts it again if it stops: 2 s later, then twice as long each time it stops
@@ -242,24 +368,32 @@ ShellRoot {
         return refreshAsked
     }
     function niriEvent(event) {
-        if (event.WindowsChanged || event.WindowFocusChanged || event.WorkspaceActiveWindowChanged) requestAppIdentity()
-        if (event.WindowFocusChanged && event.WindowFocusChanged.id !== null && appMenu && appMenu.id !== event.WindowFocusChanged.id) {
-            if (appMenuOpen) appMenuFocusChanged = true
-            else appMenu = null
-            openMenuWhenReady = false
+        if (event.WindowFocusChanged || event.WorkspaceActiveWindowChanged || event.WindowsChanged) {
+            appMenuFocusMoves += 1
+            requestAppIdentity()
         }
-        if (event.WorkspaceActiveWindowChanged && appMenu &&
-                event.WorkspaceActiveWindowChanged.workspace_id === appMenu.workspace_id &&
-                event.WorkspaceActiveWindowChanged.active_window_id !== null &&
-                event.WorkspaceActiveWindowChanged.active_window_id !== appMenu.id) {
-            if (appMenuOpen) appMenuFocusChanged = true
-            else appMenu = null
-            openMenuWhenReady = false
+        // A Flow surface taking the keyboard (the menu's own) moves Niri's focus to no window: not a move.
+        if (event.WindowFocusChanged && (event.WindowFocusChanged.id !== null || !appIdentityBlocked)) {
+            appMenuWindow = event.WindowFocusChanged.id === null ? -1 : event.WindowFocusChanged.id
+            if (appMenu && event.WindowFocusChanged.id !== null && appMenu.id !== appMenuWindow) appMenuFocusChanged = true
         }
-        if (event.WindowClosed && appMenu && appMenu.id === event.WindowClosed.id) {
-            if (appMenuOpen) appMenuFocusChanged = true
-            else appMenu = null
-            openMenuWhenReady = false
+        // Focus moving to another window of the menu's workspace while the menu holds the keyboard: Niri sends no
+        // WindowFocusChanged then, only this.
+        const moved = event.WorkspaceActiveWindowChanged
+        if (moved && appMenu && moved.workspace_id === appMenu.workspace && moved.active_window_id !== null
+                && moved.active_window_id !== appMenu.id)
+            appMenuFocusChanged = true
+        if (event.WindowsChanged) {
+            const focused = event.WindowsChanged.windows.find(w => w.is_focused)
+            appMenuWindow = focused ? focused.id : -1
+            const live = event.WindowsChanged.windows.map(w => String(w.id))
+            const probes = {}
+            for (const id in appMenuProbes) if (live.includes(id)) probes[id] = appMenuProbes[id]
+            appMenuProbes = probes
+        }
+        if (event.WindowClosed) {
+            setAppMenuProbe(event.WindowClosed.id, null)
+            if (appMenu && appMenu.id === event.WindowClosed.id) appMenuFocusChanged = true
         }
         if (event.OverviewOpenedOrClosed) {
             overviewOpen = event.OverviewOpenedOrClosed.is_open
@@ -394,7 +528,11 @@ ShellRoot {
     // Flow's state as flow-spaces or the controller reported it.
     function applySpaces(result) {
         if (result.error) { spacesError = result.error; return }
-        if (JSON.stringify(windows) !== JSON.stringify(result.windows)) windows = result.windows
+        if (JSON.stringify(windows) !== JSON.stringify(result.windows)) {
+            const active = w => (w.find(item => item.active) || { id: -1 }).id
+            if (active(windows) !== active(result.windows)) { appMenuFocusMoves += 1; requestAppIdentity() }
+            windows = result.windows
+        }
         if (JSON.stringify(displaySpaces) !== JSON.stringify(result.spaces)) displaySpaces = result.spaces
         if (JSON.stringify(layers) !== JSON.stringify(result.layers || [])) layers = result.layers || []
         if (JSON.stringify(incompleteGroups) !== JSON.stringify(result.incomplete_groups || [])) incompleteGroups = result.incomplete_groups || []
@@ -1630,13 +1768,20 @@ ShellRoot {
         // the item shows of the pointer: a home indicator lit, a search row tinted, a banner held (its time
         // stopped), the banner's × in its hover state, a panel row its hover tint. Names: home, overview_home
         // and desk_home (the home indicators), overview_row, search_shade, search_row:N (only while the row is
-        // wholly in view), banner, banner_dismiss and quick_network (Quick settings' Network row).
+        // wholly in view), banner, banner_dismiss, quick_network (Quick settings' Network row), app_button (the App
+        // button) and app_item:N (the open app menu's row N, only while wholly in view; "hovered": its hover state).
         function pointer_target(name: string): string {
             let row = name.startsWith("search_row:") ? searchView.itemAtIndex(Number(name.slice(11))) : null
             if (row) {
                 const top = row.mapToItem(searchView, 0, 0).y
                 if (top < 0 || top + row.height > searchView.height) row = null
             }
+            let entry = name.startsWith("app_item:") ? appMenuItems.itemAt(Number(name.slice(9))) : null
+            if (entry) {
+                const top = entry.mapToItem(appMenuFlick, 0, 0).y
+                if (top < 0 || top + entry.height > appMenuFlick.height) entry = null
+            }
+            if (entry) row = null
             const found = ({
                 home: () => [homeIndicator, workHome, workHome.lit],
                 overview_home: () => [spacesOverview, overviewHome, overviewHome.lit],
@@ -1645,9 +1790,11 @@ ShellRoot {
                 search_shade: () => [searchPanel, searchShade, false],
                 banner: () => [notificationBanner, bannerCard, notificationBanner.held],
                 banner_dismiss: () => [notificationBanner, bannerDismiss, bannerDismiss.hovered],
-                quick_network: () => [quickSettingsWindow, networkRow, networkRow.hovered]
+                quick_network: () => [quickSettingsWindow, networkRow, networkRow.hovered],
+                app_button: () => [appMenuTrigger, appMenuButton, appMenuButton.hovered]
             })[name]
-            const [window, item, hovered] = found ? found() : row ? [searchPanel, row, row.tinted] : [null, null, false]
+            const [window, item, hovered] = found ? found() : row ? [searchPanel, row, row.tinted]
+                : entry ? [appMenuSurface, entry, entry.hovered] : [null, null, false]
             if (!window || !window.visible || !item.visible || !window.screen) return ""
             const corner = item.mapToItem(null, 0, 0)
             return JSON.stringify({ window: [window.width, window.height],
@@ -1657,8 +1804,21 @@ ShellRoot {
                                     rect: [corner.x, corner.y, item.width, item.height], hovered: hovered === true })
         }
         function launcher_state(): string { return root.launcherBusy() ? "open" : "closed" }
+        // The app menu as the shell holds it, for scripted checks: the focused window, its probe, whether the
+        // App button shows, the open menu's labels at its current level, and its error.
+        function app_menu(): string {
+            return JSON.stringify({ enabled: menuPreferences.appMenuEnabled, reader: appMenuReader.running,
+                                    window: root.appMenuWindow, probe: root.appMenuProbe, button: appMenuTrigger.visible,
+                                    open: root.appMenuOpen, menu_window: root.appMenu ? root.appMenu.id : null,
+                                    labels: root.appMenuOpen ? root.currentAppItems().map(i => i.label) : [],
+                                    error: root.appMenuError, focus_changed: root.appMenuFocusChanged,
+                                    waiting: root.appMenuActivateAsked !== 0, probe_ms: root.appMenuProbeTimes,
+                                    probes: root.appMenuProbesAnswered })
+        }
+        function app_menu_enabled(on: bool): void { menuPreferences.appMenuEnabled = on; menuPreferences.sync() }
+        // Super+M: the focused window's menu, or a toast when it has none.
         function menu(): void {
-            if (menuPreferences.appMenuEnabled && root.appMenu && !root.deskOpen && !root.overviewOpen && !root.spacesOverviewOpen && !root.searchOpen) {
+            if (menuPreferences.appMenuEnabled && !root.deskOpen && !root.overviewOpen && !root.spacesOverviewOpen && !root.searchOpen) {
                 if (root.appMenuOpen) root.appMenuOpen = false
                 else root.requestAppMenu()
             }
@@ -2133,7 +2293,16 @@ ShellRoot {
                             text: "Experimental application menu"
                             checked: menuPreferences.appMenuEnabled
                             Accessible.name: text
+                            Accessible.description: menuSwitchNote.text
                             onToggled: { menuPreferences.appMenuEnabled = checked; menuPreferences.sync(); root.appMenuOpen = false }
+                        }
+                        // What turning it on changes (coverage report, findings 6 and 9): at-spi keeps the switch
+                        // for the user, Qt 5 reads it only at start, and apps of a session started before at-spi2-core
+                        // was installed have accessibility switched off in their environment.
+                        Text {
+                            id: menuSwitchNote
+                            text: "Shows an App button when the focused app has a menu Flow can read, such as Kate, Mousepad or LibreOffice. Turning it on switches accessibility on for your user, and it stays on in later sessions. Qt 5 apps that are already running need a restart, and apps started in a session from before accessibility support was installed need a new login. Turning it off switches accessibility off again, if Flow switched it on."
+                            color: floeTheme.textMuted; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 14; font.family: floeTheme.interfaceFont
                         }
                         SectionLabel { text: "SESSION RECOVERY"; topPadding: 12 }
                         FlowSwitch {
@@ -3223,21 +3392,27 @@ ShellRoot {
     // shortcut: only published accessibility menus are shown; add toolkit-specific bridges when verified.
     PanelWindow {
         id: appMenuTrigger
-        visible: menuPreferences.appMenuEnabled && !root.deskOpen && !root.overviewOpen && root.appMenu && !root.appMenuOpen
+        visible: root.appMenuAvailable && !root.deskOpen && !root.overviewOpen && !root.appMenuOpen
         anchors { top: true; left: true }
-        implicitWidth: 220; implicitHeight: 44; margins.left: 8
-        // On the Island's row, flush with the top edge as the tab is, leaving 8px before the centred tab;
-        // below it on a narrow screen, where panels hang too.
-        margins.top: screen && screen.width < workIslandContent.implicitWidth + 472 ? 56 : 0
+        implicitWidth: 220; implicitHeight: 44
+        // On the Island's row, flush with the top edge as the tab is, 8px right of the centred tab: the button
+        // shows only for apps with a menu bar, and Qt's and GTK's menu bars start at the left, so the left of
+        // the row would cover the app's own File and Edit menus. Below the tab on a narrow screen, where panels
+        // hang too.
+        readonly property bool narrow: !screen || screen.width < workIslandContent.implicitWidth + 472
+        margins.left: narrow ? 8 : Math.round((screen.width + workIslandContent.implicitWidth) / 2) + 8
+        margins.top: narrow ? 56 : 0
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         FlowButton {
+            id: appMenuButton
             anchors.fill: parent
-            text: root.appMenu ? root.appMenu.name + "  ▾" : "Application"
+            text: (root.appMenuProbe ? root.appMenuProbe.name : "Application") + "  ▾"
             onClicked: root.requestAppMenu()
         }
     }
     PanelWindow {
+        id: appMenuSurface
         visible: menuPreferences.appMenuEnabled && root.appMenuOpen && !root.deskOpen && !root.overviewOpen
         anchors { top: true; bottom: true; left: true; right: true }
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
@@ -3248,10 +3423,12 @@ ShellRoot {
             anchors.fill: parent; focus: true
             Keys.onEscapePressed: root.appMenuOpen = false
             Rectangle {
-                x: 8; y: appMenuTrigger.margins.top + appMenuTrigger.implicitHeight + 8
+                x: Math.max(8, Math.min(appMenuTrigger.margins.left, parent.width - width - 8))
+                y: appMenuTrigger.margins.top + appMenuTrigger.implicitHeight + 8
                 width: Math.min(390, parent.width - 16); height: Math.min(menuColumn.implicitHeight + 32, parent.height - y - 8)
                 radius: 16; color: floeTheme.surface; border.color: floeTheme.border
                 Flickable {
+                    id: appMenuFlick
                     anchors.fill: parent; anchors.margins: 16
                     contentWidth: width; contentHeight: menuColumn.implicitHeight; clip: true
                     Column {
@@ -3270,19 +3447,17 @@ ShellRoot {
                             onClicked: root.appMenuPath = root.appMenuPath.slice(0, -1)
                         }
                         Repeater {
+                            id: appMenuItems
                             model: root.currentAppItems()
                             FlowButton {
                                 required property var modelData
                                 required property int index
                                 width: menuColumn.width
                                 text: modelData.label + (modelData.children ? "   ›" : "")
-                                enabled: modelData.enabled && !appMenuProcess.running && !root.appMenuFocusChanged
+                                enabled: modelData.enabled && !root.appMenuActivateAsked && !root.appMenuFocusChanged
                                 onClicked: {
                                     if (modelData.children) root.appMenuPath = root.appMenuPath.concat([index])
-                                    else {
-                                        appMenuProcess.command = ["flow-appmenu", "activate", String(root.appMenu.id), JSON.stringify(modelData.path), modelData.label]
-                                        appMenuProcess.running = true
-                                    }
+                                    else root.activateAppMenuItem(modelData)
                                 }
                             }
                         }

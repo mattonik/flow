@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -50,7 +51,7 @@ class CoverageHelpersTest(unittest.TestCase):
 # --- A fake accessibility tree, walked by the reader and by the probe -------------------------------------------
 
 ROLES = dict(ROLE_MENU_BAR=1, ROLE_MENU=2, ROLE_MENU_ITEM=3, ROLE_CHECK_MENU_ITEM=4, ROLE_RADIO_MENU_ITEM=5,
-             ROLE_FRAME=6, ROLE_PANEL=7, ROLE_PUSH_BUTTON=8)
+             ROLE_FRAME=6, ROLE_PANEL=7, ROLE_PUSH_BUTTON=8, ROLE_WINDOW=9, ROLE_DIALOG=10)
 
 
 class State:
@@ -84,7 +85,8 @@ class Node:
 
 def fake_pyatspi(app):
     desktop = Node("ROLE_PANEL", children=[app])
-    return types.SimpleNamespace(**ROLES, STATE_ENABLED=0, Registry=types.SimpleNamespace(getDesktop=lambda _: desktop))
+    return types.SimpleNamespace(**ROLES, STATE_ENABLED=0, STATE_SHOWING=1, STATE_ACTIVE=2, DESKTOP_COORDS=0,
+                                 Registry=types.SimpleNamespace(getDesktop=lambda _: desktop))
 
 
 def menu(name, *items):
@@ -102,16 +104,17 @@ def labels(menus):
 
 
 class WalkMatchesReaderTest(unittest.TestCase):
-    """The probe's menu_walk counts what session/appmenu.py's walk reads: both run on one tree must agree."""
+    """The probe's menu_walk lists what session/appmenu.py's Reader reads from one menu bar. Its caps are the
+    earlier reader's (over the whole app), which the committed table measured: checked here on their own."""
 
     def reader_menus(self, app):
         appmenu = coverage.load_reader()
-        workspaces = [{"id": 1, "is_focused": True, "active_window_id": 5}]
-        wins = [{"id": 5, "pid": 42, "app_id": "x", "title": "t"}]
-        with patch.dict(sys.modules, {"pyatspi": fake_pyatspi(app)}), \
-                patch.object(appmenu, "niri", side_effect=lambda what: workspaces if what == "workspaces" else wins), \
-                patch.object(appmenu, "app_name", return_value="x"):
-            return appmenu.active_window()["menus"]
+        wins = [{"id": 5, "pid": 42, "app_id": "x", "title": "t", "is_focused": True}]
+        r = appmenu.Reader(fake_pyatspi(app), niri_request=lambda what: {"Windows": wins})
+        with patch.object(appmenu, "app_name", return_value="x"):
+            probe = json.loads(r.answer(json.dumps({"id": 1, "op": "probe"})))
+            self.assertTrue(probe["has_menu"], probe)
+            return json.loads(r.answer(json.dumps({"id": 2, "op": "read", "window": 5})))["menus"]
 
     def probe_walk(self, app, capped=True):
         st, found = {"nodes": 0, "depth": 0, "bars": 0, "dropped": 0}, []
@@ -130,28 +133,28 @@ class WalkMatchesReaderTest(unittest.TestCase):
         app = Node("ROLE_PANEL", "app", [Node("ROLE_FRAME", "w", [Node("ROLE_PANEL", children=[bar]),
                                                                     Node("ROLE_PUSH_BUTTON", "OK")])], pid=42)
         State.reads = 0
-        self.reader_menus(app)
-        reader_reads, State.reads = State.reads, 0
+        self.probe_walk(app)
+        # one state read per menu node that yields an entry (File, New, Recent, a.txt, b.txt, Help, Tips, About)
+        self.assertEqual(State.reads, 8)
         found, st = self.assert_same(app)
-        self.assertEqual(State.reads - reader_reads, reader_reads)  # assert_same ran both walks once more
         self.assertEqual(found, ["New", "a.txt", "b.txt", "Tips", "About"])
         # "Lazy" (an empty menu) and "Odd" (an item with children but no items) are both dropped, and counted
         self.assertEqual((st["bars"], st["dropped"]), (1, 2))
 
-    def test_depth_cap_at_the_same_level_as_the_reader(self):
+    def test_depth_cap_of_the_earlier_reader(self):
         # app at depth 0; an item at depth 12 is read, one at depth 13 is not
         at_12 = nest(Node("ROLE_MENU_BAR", children=[menu("A", "twelve")]), 9)   # bar 10, menu 11, item 12
         at_13 = nest(Node("ROLE_MENU_BAR", children=[menu("B", "thirteen")]), 10)  # bar 11, menu 12, item 13
         app = Node("ROLE_PANEL", "app", [at_12, at_13], pid=42)
-        found, _ = self.assert_same(app)
-        self.assertEqual(found, ["twelve"])
+        _, _, found = self.probe_walk(app)
+        self.assertEqual([n.name for n in found], ["twelve"])
 
-    def test_node_cap_at_the_same_node_as_the_reader(self):
+    def test_node_cap_of_the_earlier_reader(self):
         for buttons, expected in ((1996, ["last"]), (1997, [])):  # the item is node 2000, then node 2001
             app = Node("ROLE_PANEL", "app", [*(Node("ROLE_PUSH_BUTTON") for _ in range(buttons)),
                                              Node("ROLE_MENU_BAR", children=[menu("M", "last")])], pid=42)
-            found, _ = self.assert_same(app)
-            self.assertEqual(found, expected, buttons)
+            _, _, found = self.probe_walk(app)
+            self.assertEqual([n.name for n in found], expected, buttons)
             _, _, uncapped = self.probe_walk(app, capped=False)
             self.assertEqual([n.name for n in uncapped], ["last"])
 
