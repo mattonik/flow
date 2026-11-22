@@ -118,7 +118,7 @@ class Client:
 
 
 class Controller:
-    def __init__(self, state_dir, niri_path, server):
+    def __init__(self, state_dir, niri_path, server, listened=None):
         self.state_dir = state_dir
         self.niri_path = niri_path
         self.server = server
@@ -137,7 +137,8 @@ class Controller:
         self.recent = collections.deque(maxlen=1000)  # when the last refreshes ran (wall clock), for the smoke
         self.stats = {"refreshes": 0, "observes": 0, "events": 0, "title_only": 0, "pushes": 0, "busy": 0,
                       "reshapes": 0, "failures": 0, "refresh_ms": 0.0, "first_watcher_ms": None}
-        self.started = time.monotonic()  # it listens from now: how soon the first watcher came, for the smoke
+        # When it began listening: how soon the first watcher came, for the smoke.
+        self.started = time.monotonic() if listened is None else listened
 
     # Niri's event stream -------------------------------------------------------------------------------------
 
@@ -469,9 +470,10 @@ def main():
         return 2
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     server, lock = listen(Path(runtime))  # waits while another controller serves this session
+    listened = time.monotonic()
     print("listening", flush=True)  # the shell connects on this line rather than waiting for its next try
     try:
-        Controller(Path(state_home()) / "flow", niri_path, server).serve()
+        Controller(Path(state_home()) / "flow", niri_path, server, listened).serve()
     except KeyboardInterrupt:
         pass
     finally:
