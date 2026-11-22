@@ -225,15 +225,15 @@ def main():
             niri("action", "consume-or-expel-window-right", "--id", window("b")["id"])
             spaces("refresh")
             expect(["n", "a", "b", "u"], "the Group's apps apart again, an open app after them")
-            recovered = tool("flow-recovery", "restore")
-            if not recovered["message"].startswith("Restored 4 windows.") or "Group" in recovered["message"]:
-                raise RuntimeError(f"Recovery did not rebuild the pinned Group before an open app: {recovered}")
+            for marker in runtime.glob("flow-recovery-*"):  # automatic recovery, as at the start of a session
+                marker.unlink()
+            recover()  # succeeds only when every window was restored in its saved order
             current = spaces("refresh")
             expect(["ab", "n", "u"], "the recovered pinned Group back in pin order")
             if not {p["id"]: p for p in current["pins"]}[group_pin]["available"]:
                 raise RuntimeError(f"The Group pin did not reach the recovered Group: {current['pins']}")
-            steps.append("with the pinned Group's apps apart and an app already open after them, recovery rebuilt "
-                         f"the Group ({recovered['message']!r}) and the pins went back in order")
+            steps.append("with the pinned Group's apps apart and an app already open after them, automatic recovery "
+                         "rebuilt the Group and succeeded, since the next refresh's pin order is the saved order")
             niri("action", "close-window", "--id", window("u")["id"])
             expect(["ab", "n"], "the unpinned app closed")
             steps.append("with the pinned Group's apps apart and an unpinned app after them, Rejoin Group was offered "

@@ -512,14 +512,23 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 if pinned_group:
                     forward = columns == list(range(columns[0], columns[0] + n))
                     backward = columns == list(range(columns[0], columns[0] - n, -1))
-                    # As Rejoin Group does: the columns after the Group close up as its apps join one column, in
-                    # the same order, and pinned ones go back in pin order at the next refresh.
+                    # Joined as Rejoin Group joins one (spaces.stack_columns): the columns after the Group close up
+                    # as its apps join one column, in the same order, and pinned ones go back in pin order at the
+                    # next refresh.
                     if not (forward or backward):
                         report.append("Pinned Group apps are apart or out of order; group not restored")
                         groups_ok = False
                         continue
-                    for member in found[1:]:
-                        action("action", "consume-or-expel-window-" + ("left" if forward else "right"), "--id", member["id"])
+                    try:
+                        spaces.stack_columns(list(member_ids), "left" if forward else "right", workspace_id,
+                                             "Group members moved unexpectedly; group not restored",
+                                             act=action, look=checked_snapshot)
+                    except ValueError as exc:
+                        if workspace_changed:
+                            raise
+                        report.append(str(exc))
+                        groups_ok = False
+                        continue
                 else:
                     moved_ok = True
                     for index in range(1, n):
@@ -569,7 +578,10 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 if destinations:
                     workspace, live = checked_snapshot()
                     if any(w.get("workspace_id") == workspace_id and w.get("app_id") in pinned for w in live):
-                        if not saved_order_matches(entries, restored, workspace, live):
+                        # The next refresh puts pinned spaces first, in pin order: an order it will bring back is saved.
+                        if not (saved_order_matches(entries, restored, workspace, live) or saved_order_matches(
+                                entries, restored, workspace,
+                                spaces.pin_ordered(workspace, live, pinned_groups, session or "", registered or ()))):
                             report.append("Pinned spaces keep their positions; session order needs manual recovery")
                         destinations = []
                     else:

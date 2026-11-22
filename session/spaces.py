@@ -348,6 +348,46 @@ def rejoin_plan(group, workspace, windows, pins):
     return found, direction
 
 
+def stack_columns(ids, direction, workspace_id, failure, act=None, look=None):
+    """Stack the single-window columns ``ids`` (adjacent, in Group order, ``direction`` "left" or "right" towards
+    the first) into one column, one at a time. Rejoin Group and session recovery both join a Group this way.
+    After each step but the last, which the caller confirms, the column must hold exactly the windows joined
+    so far and the rest must still be single windows, or ``failure`` is raised. Columns after them close up."""
+    act, look = act or command, look or snapshot
+    for count, ident in enumerate(ids[1:], 2):
+        # shortcut: Niri's targeted action can consume a neighbor after a race; use consume-only by ID when available.
+        act("action", "consume-or-expel-window-" + direction, "--id", ident)
+        if count == len(ids):
+            return
+        ws, live = look()
+        first = next((w for w in live if w.get("id") == ids[0]), None)
+        rest = [next((w for w in live if w.get("id") == other), None) for other in ids[count:]]
+        if (ws["id"] != workspace_id or not first
+                or [w["id"] for w in column_windows(ws, live, position(first)[0])] != ids[:count]
+                or not all(eligible(w, ws, live) for w in rest)):
+            raise ValueError(failure)
+
+
+def pin_ordered(workspace, windows, pins, socket, groups=()):
+    """``windows`` as the next refresh's pin ordering (``reconcile``) will leave them: the columns of pinned spaces
+    first, in pin order, then the others in their order. Unchanged while that ordering is paused."""
+    if has_side_layout(workspace, windows, groups):
+        return windows
+    tiled = sorted((w for w in windows if w.get("workspace_id") == workspace["id"] and position(w)),
+                   key=lambda w: position(w))
+    columns = []
+    for w in tiled:
+        if not columns or position(columns[-1][-1])[0] != position(w)[0]:
+            columns.append([])
+        columns[-1].append(w)
+    pinned = [pin_window(pin, workspace, windows, socket, groups) for pin in pins]
+    lead = [next(c for c in columns if w in c) for w in pinned if w]
+    order = lead + [c for c in columns if c not in lead]
+    moved = {w["id"]: [index, row] for index, column in enumerate(order, 1) for row, w in enumerate(column, 1)}
+    return [{**w, "layout": {**w.get("layout", {}), "pos_in_scrolling_layout": moved[w["id"]]}} if w["id"] in moved
+            else w for w in windows]
+
+
 def find_group(groups, group_id):
     matches = [group for group in groups if group.get("id") == group_id]
     if len(matches) != 1:
@@ -487,18 +527,8 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
                 or [(w["id"], position(w)) for w in current] != [(w["id"], position(w)) for w in found]):
             raise ValueError("Group or focus changed; try again")
         ids = [w["id"] for w in current]
-        for count, member in enumerate(current[1:], 2):
-            # shortcut: Niri's targeted action can consume a neighbor after a race; use consume-only by ID when available.
-            command("action", "consume-or-expel-window-" + direction, "--id", member["id"])
-            if count == len(ids):
-                break  # The final check below confirms the last step.
-            ws, live = snapshot()
-            first = next((w for w in live if w.get("id") == ids[0]), None)
-            rest = [next((w for w in live if w.get("id") == ident), None) for ident in ids[count:]]
-            if (ws["id"] != workspace["id"] or not first
-                    or [w["id"] for w in column_windows(ws, live, position(first)[0])] != ids[:count]
-                    or not all(eligible(w, ws, live) for w in rest)):
-                raise ValueError("Could not confirm Group rejoin; saved Group remains. Check the windows before retrying")
+        stack_columns(ids, direction, workspace["id"],
+                      "Could not confirm Group rejoin; saved Group remains. Check the windows before retrying")
         workspace, windows = snapshot()
         check = {"group_id": group["id"], "members": group["members"], "session": ""}
         joined = group_windows(check, workspace, windows, socket, groups)
