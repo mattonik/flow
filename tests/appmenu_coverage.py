@@ -711,9 +711,9 @@ def narrow_case(pid, win):
 
 
 def ground_truth(app, pid, win, case, mine):
-    """Invokes GROUND_TRUTH through the chosen frame's menu; correct when only the focused window's title changed."""
-    if app["key"] not in GROUND_TRUTH or not case["resolved"]:
-        return None
+    """Invokes GROUND_TRUTH through the frame ``case`` chose; correct when only the focused window's title changed."""
+    if not case["resolved"]:
+        return {"invoked": False, "error": "no frame chosen", "changed": [], "correct": False}
     before = {w["id"]: windows()[w["id"]]["title"] for w in mine}
     result = probe(pid, "--invoke", case["both"][0], *GROUND_TRUTH[app["key"]])
     time.sleep(1.5)
@@ -760,8 +760,20 @@ def multi(app, root, tmp):
         with exclusive_layer(tmp) as up:
             case = narrow_case(pid, win)
             case["layer_up"] = up
-            case["truth"] = ground_truth(app, pid, win, case, mine)
         row["layer_cases"].append(case)
+    if app["key"] in GROUND_TRUTH:  # last: the command changes the windows' titles
+        row["truth"] = []
+        for win in mine:
+            focus(win["id"])
+            chosen = narrow_case(pid, win)
+            row["truth"].append({"window": win["id"], "title": chosen["title"], "mode": "focused",
+                                 **ground_truth(app, pid, win, chosen, mine)})
+        for win in mine:
+            focus(win["id"])
+            chosen = narrow_case(pid, win)  # chosen before the layer maps, as a reader could when the menu opens
+            with exclusive_layer(tmp) as up:
+                row["truth"].append({"window": win["id"], "title": chosen["title"], "mode": "frame chosen, then layer",
+                                     "layer_up": up, **ground_truth(app, pid, win, chosen, mine)})
     return row
 
 
@@ -956,18 +968,25 @@ def table(data):
         if not any(m.get(kind) for m in data["multi"]):
             continue
         out += (f"\n\n{title}:\n\n| App | Focused window | Windows of PID | With this title | Frames | Match title | "
-                "Active | Both | Resolved | Items in that frame | Frame walk ms | Ground truth |\n")
-        out += "|---|---|---|---|---|---|---|---|---|---|---|---|\n"
+                "Active | Both | Resolved | Items in that frame | Frame walk ms |\n")
+        out += "|---|---|---|---|---|---|---|---|---|---|---|\n"
         for m in data["multi"]:
             for c in m.get(kind, []):
-                truth = c.get("truth")
-                truth_text = "—" if not truth else ("correct window" if truth["correct"] else f"wrong: changed {truth['changed']}")
                 layer = "" if kind == "cases" or c.get("layer_up") else " (layer not up)"
                 out += (f"| {m['key']} | {c['title']}{layer} | {c['pid_windows']} | {c['same_title_windows']} | "
                         f"{len(c['frames'])} | {len(c['by_title'])} | {len(c['by_active'])} | {len(c['both'])} | "
-                        f"{yes(c['resolved'])} | {c.get('frame_items', '—')} | {c.get('frame_ms', '—')} | {truth_text} |\n")
+                        f"{yes(c['resolved'])} | {c.get('frame_items', '—')} | {c.get('frame_ms', '—')} |\n")
             if m.get("error"):
                 out += f"| {m['key']} | {m['error']} |" + " |" * 10 + "\n"
+    truths = [(m["key"], t) for m in data["multi"] for t in m.get("truth", [])]
+    if truths:
+        out += ("\n\nGround truth (File > New through the chosen frame's menu):\n\n"
+                "| App | Window | How the frame was chosen | Invoked | Windows whose title changed | Correct |\n"
+                "|---|---|---|---|---|---|\n")
+        for key, t in truths:
+            mode = t["mode"] + ("" if t.get("layer_up", True) else " (layer not up)")
+            out += (f"| {key} | {t['window']} ({t['title']}) | {mode} | {yes(t['invoked'])}{' ' + t['error'] if t.get('error') else ''} | "
+                    f"{t['changed']} | {yes(t['correct'])} |\n")
     if data.get("notes"):
         out += "\n\nNotes:\n" + "\n".join(f"- {n}" for n in data["notes"])
     return out
