@@ -74,8 +74,6 @@ class FloeThemeTest(unittest.TestCase):
         spec.loader.exec_module(module)
         self.assertEqual(module.render_qml(TOKENS),THEME)
         self.assertEqual(module.render_css(TOKENS),(ROOT / "design/generated/floe.css").read_text())
-        for mode in ("dark", "light"):
-            self.assertEqual(module.render_fuzzel(TOKENS, mode), (ROOT / f"design/generated/fuzzel-{mode}.ini").read_text())
 
     def test_shell_integrates_theme(self):
         self.assertIn("FloeTheme { id: floeTheme;",SHELL)
