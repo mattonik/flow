@@ -611,17 +611,46 @@ ShellRoot {
         return scored.slice(0, 60).map(entry => entry.result)
     }
     onSearchMatchesChanged: searchIndex = 0
-    Process {
-        id: searchList
-        command: ["flow-search", "--json"]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                let rows = null
-                try { rows = JSON.parse(this.text) } catch (error) {}
-                root.searchFailed = !Array.isArray(rows)
-                root.searchResults = Array.isArray(rows) ? rows : []
+    // One listing per opening of search. A listing still running when search opens again lists what was there
+    // before (windows since closed), so it is stopped and its answer dropped: only the newest one is shown.
+    property var searchListing: null   // the listing this opening waits for; null once it has answered
+    Component {
+        id: searchLister
+        Process {
+            id: lister
+            command: ["flow-search", "--json"]
+            property bool began: false
+            property bool answered: false
+            property bool ended: false
+            function settle() { if (answered && ended) destroy() }
+            stdout: StdioCollector {
+                onStreamFinished: {
+                    if (root.searchListing === lister) {
+                        let rows = null
+                        try { rows = JSON.parse(this.text) } catch (error) {}
+                        root.searchFailed = !Array.isArray(rows)
+                        root.searchResults = Array.isArray(rows) ? rows : []
+                        root.searchListing = null
+                    }
+                    lister.answered = true
+                    lister.settle()
+                }
+            }
+            onStarted: began = true
+            // A stopped one may never finish its stream: nobody waits for its answer, so it goes when it exits.
+            onExited: { ended = true; if (root.searchListing !== lister) answered = true; settle() }
+            // One that never starts never answers: search says it failed (searchFailed is already set).
+            onRunningChanged: if (!running && !began) {
+                if (root.searchListing === lister) root.searchListing = null
+                destroy()
             }
         }
+    }
+    function listSearchResults() {
+        const stale = searchListing
+        searchListing = searchLister.createObject(root)
+        if (stale) stale.running = false
+        searchListing.running = true
     }
     // Apps and files open through flow-search, whose wrapper has gio. One process per open, so each failure
     // is shown: one that ran and failed, and one that never started (a Process that cannot start never exits).
@@ -661,7 +690,7 @@ ShellRoot {
         searchResults = []   // never the last run's: its windows may have closed
         searchFailed = true    // until flow-search prints its list: one that never starts never answers
         searchOpen = true
-        if (!searchList.running) searchList.running = true
+        listSearchResults()
     }
     function closeSearch() { searchOpen = false }
     function runSearchResult(result) {
@@ -2442,7 +2471,7 @@ ShellRoot {
                 height: palette.resultsHeight
                 horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                 wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
-                text: searchList.running ? "Looking…"
+                text: root.searchListing ? "Looking…"
                     : root.searchFailed ? "Search couldn’t list anything. Close it and try again."
                     : root.searchQuery.trim() ? "Nothing matches “" + root.searchQuery.trim() + "”"
                     : "Nothing to show"

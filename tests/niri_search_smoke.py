@@ -9,6 +9,8 @@ no app starts. Keys are typed with wtype into the panel, which has the keyboard 
 
 Checked, through the shell's ``search_view`` and ``toast`` IPC calls and the stand-in's log:
 - the panel lists what ``flow-search --json`` answers;
+- search opened again while a slow listing still runs shows the new listing, never the old one's answer
+  (what was there before: windows since closed);
 - typing ranks an exact title first and keeps ties in flow-search's order, so Return on "Notes" opens
   the Notes app, not "Notes Server" or Notes as a Layer, through ``flow-search --open app <desktop file>``;
 - with the pointer (tests/pointer.py), the row under it is tinted, a click opens that row rather than
@@ -39,12 +41,16 @@ APPS = ["Notes Client", "Notes Server", "Notes", "Notes Viewer"]
 ROWS = ([{"title": "Flow Settings", "detail": "Settings", "kind": "settings", "value": "settings", "icon": ""}]
         + [{"title": a, "detail": "Application", "kind": "app", "value": f"/apps/{a}.desktop", "icon": ""} for a in APPS]
         + [{"title": a, "detail": "Open as Layer", "kind": "layer", "value": f"{a}.desktop", "icon": ""} for a in APPS])
+# What a slow listing saw before search was opened again: a window since closed.
+STALE_ROWS = [{"title": "Closed Window", "detail": "Open window · foot", "kind": "window", "value": "7", "icon": ""}]
 STAND_IN = """#!/bin/sh
-# Flow search, standing in: --json answers with the rows in $DIR/rows (or fails when $DIR/fail-list
-# exists); --open records its arguments and exits with the code in $DIR/open-exit.
+# Flow search, standing in: --json answers with the rows in $DIR/rows as they were when it started, after
+# the seconds in $DIR/slow if that exists (or fails when $DIR/fail-list exists); --open records its arguments
+# and exits with the code in $DIR/open-exit.
 DIR={dir}
 case "$1" in
-  --json) [ -e "$DIR/fail-list" ] && {{ echo "usage: flow-search" >&2; exit 2; }}; cat "$DIR/rows" ;;
+  --json) [ -e "$DIR/fail-list" ] && {{ echo "usage: flow-search" >&2; exit 2; }}
+          rows=$(cat "$DIR/rows"); [ -e "$DIR/slow" ] && sleep "$(cat "$DIR/slow")"; printf '%s\n' "$rows" ;;
   --open) echo "$2 $3" >> "$DIR/opened"; exit "$(cat "$DIR/open-exit" 2>/dev/null || echo 0)" ;;
   *) exit 2 ;;
 esac
@@ -142,6 +148,28 @@ def main():
             if [r["title"] for r in shown["rows"]] != [r["title"] for r in ROWS] or shown["message"]:
                 raise RuntimeError(f"The panel did not list flow-search's results in order: {shown}")
             steps.append("the panel listed flow-search's results in their order")
+
+            # A listing still running when search opens again answers with what was there when it began.
+            def close_search():
+                ipc("search")
+                wait_for(lambda: ipc("search_state") == "closed", "search to close")
+
+            close_search()
+            (tmp / "rows").write_text(json.dumps(STALE_ROWS))
+            (tmp / "slow").write_text("4")
+            open_search()
+            wait_for(lambda: (v := view()) and v["message"] == "Looking…", lambda: f"the slow listing ({view()})")
+            close_search()
+            (tmp / "rows").write_text(json.dumps(ROWS))
+            (tmp / "slow").unlink()
+            open_search()
+            fresh = wait_for(lambda: (v := view()) and v["rows"] and v, lambda: f"the new listing ({view()})")
+            time.sleep(5)  # past the end of the slow listing
+            last = view()
+            for shown in (fresh, last):
+                if [r["title"] for r in shown["rows"]] != [r["title"] for r in ROWS]:
+                    raise RuntimeError(f"Search opened again showed an older listing: {shown}")
+            steps.append("search opened again during a slow listing showed the new listing, not the old one's answer")
 
             type_keys("Notes")
             ranked = wait_for(lambda: (v := view()) and len(v["rows"]) == 8 and v, lambda: f"Notes results ({view()})")
