@@ -51,6 +51,19 @@
           $CC -O2 -Wall -Wextra -Werror flow-pointer.c virtual-pointer.c $(pkg-config --cflags --libs wayland-client) -o flow-pointer
         '';
         installPhase = "install -Dm755 flow-pointer $out/bin/flow-pointer";
+        # Steps are checked before it connects, so a typo moves nothing: each bad call must fail without a
+        # display, and a good one must get as far as looking for one.
+        doInstallCheck = true;
+        installCheckPhase = ''
+          p=$out/bin/flow-pointer
+          for bad in "10" "0 10 move 1 1" "10 10 move 10 1" "10 10 move 1" "10 10 jump" "10 10 scroll 101" \
+                     "10 10 scroll" "10 10 wait -1" "10 10 click 5"; do
+            if out=$(WAYLAND_DISPLAY=no-such $p $bad 2>&1); then echo "flow-pointer $bad was accepted"; exit 1; fi
+            case $out in *"cannot connect"*) echo "flow-pointer $bad reached the display: $out"; exit 1;; esac
+          done
+          out=$(XDG_RUNTIME_DIR=$TMPDIR WAYLAND_DISPLAY=no-such $p 10 10 move 9 9 down up click right scroll -3 hscroll 2 wait 0 2>&1) || true
+          case $out in *"cannot connect"*) ;; *) echo "good steps did not reach the display: $out"; exit 1;; esac
+        '';
         meta.mainProgram = "flow-pointer";
       };
     nixosModules.default = import ./modules/flow.nix;

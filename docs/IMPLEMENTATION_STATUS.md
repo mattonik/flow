@@ -1,6 +1,6 @@
 # Implementation status against Flow Master Spec v1.1
 
-Updated 2026-11-13. This is a repository and recorded-evidence audit, not a new full acceptance run. **Partial** means some relevant behavior exists but the whole journey is not established. **Open** means the acceptance journey has not been demonstrated. See [milestones](milestones.md) and [graphics validation](graphics-validation.md) for prior evidence and its limits. Recent targeted checks ran in the UTM guest; they do not validate every journey below.
+Updated 2026-11-22. This is a repository and recorded-evidence audit, not a new full acceptance run. **Partial** means some relevant behavior exists but the whole journey is not established. **Open** means the acceptance journey has not been demonstrated. See [milestones](milestones.md) and [graphics validation](graphics-validation.md) for prior evidence and its limits. Recent targeted checks ran in the UTM guest; they do not validate every journey below.
 
 The recorded test environment is an Apple Silicon Mac running UTM 5.0.8, QEMU ARM64 with HVF, 8 GiB RAM and virtio-ramfb-gl; NixOS 26.11 with Niri 26.04 and virgl acceleration. Exact host model and physical input details were not recorded. No journey below is promoted to a full pass solely from the HTML prototypes or from unit tests.
 
@@ -272,7 +272,7 @@ Tests:
 - **`test_prototype_surfaces.py`:** checks the JSON results and the configuration.
 - **Screenshots:** both appearances were captured in the guest with three apps.
 
-Not verified: a real wheel and touch drag on the home indicator, because the guest has no pointer injection, and the Overview with several displays. On a second display it shows that display's spaces, but snapshots come from the island's screen.
+Not verified: a touch drag on the home indicator, a physical wheel, and the Overview with several displays. A pointer's tap, swipe up and wheel notches have been checked since 2026-11-22 (see *Pointer in the guest tests*). On a second display it shows that display's spaces, but snapshots come from the island's screen.
 
 ### The prototype's Island and Desk (2026-11-21)
 
@@ -306,7 +306,7 @@ Verified:
 - **Source checks** in `test_desk_layout.py`, scoped to Desk's window: its Island, the four tools and the four foot entries, the handler each one runs, and that the content keeps clear of the Island's and home indicator's bands. Each assertion was shown to fail when the code it covers was changed.
 - **The existing smokes** pass. They drive the shell over IPC and never render Desk, so they cover none of this layout.
 
-Not verified: hover and pressed states, because the guest has no pointer injection.
+Not verified: hover and pressed states of Desk's buttons. Of Desk, the guest's virtual pointer (2026-11-22, see *Pointer in the guest tests*) has so far tapped only its home indicator.
 
 ### The prototype's system panels (2026-11-21)
 
@@ -395,7 +395,7 @@ Tests:
 A NEMESIS review of the first version found that replaced notifications never showed, that a normal notification pushed a critical banner off, that the timer ran while the banner was hidden or held, that the banner ignored Desk, Overview, the switcher and the app menu, no keyboard path outside Desk, no default action on click, false claims about the IPC and the display, and weak tests. All are fixed as described above.
 
 Not verified:
-- **Pointer:** clicking the banner, the default action and the pointer holding it, because the guest has no pointer injection.
+- **Pointer:** a physical one. A virtual pointer has clicked the banner, run its default action, held it and dismissed it since 2026-11-22 (see *Pointer in the guest tests*).
 - **Screen reader:** the announcement was not heard with a running screen reader.
 - **Super+N:** not pressed, because the guest has no key injection; the binding passes `niri validate`.
 - **Several displays:** not tried.
@@ -423,7 +423,7 @@ The wtype-driven tests had a latent flaw, fixed in both `niri_search_smoke.py` a
 
 A NEMESIS review found that a `flow-search` that could not start was still silent, both listing and opening; that a second open during a slow first lost its failure; and that the icon handling was guesswork no app in the guest needed. All are fixed as above; the speculative icon code was removed.
 
-Not verified: clicking a result with a pointer, opening a recent file from the installed shell, and icons given as absolute paths (no app in the guest uses one). Reopening search while a slow listing is still running can show that listing's results; it predates this change.
+Not verified: opening a recent file from the installed shell, and icons given as absolute paths (no app in the guest uses one). Reopening search while a slow listing is still running can show that listing's results; it predates this change.
 
 ### Moving along a row in Overview (2026-11-21)
 
@@ -661,3 +661,21 @@ Not covered:
 - Startup's `watchFiles` switch has no automated test. A development copy that sets it unconditionally did not reload after an edit, while an unchanged copy did. The `/etc/flow` condition itself relies on Quickshell's `shellDir` not resolving symlinks; Quickshell 0.3.2 does not.
 
 Limitations: An older generation cannot read a version 2 pin file and reports *Invalid saved spaces* without changing it. Restoring `spaces.v1.json` rolls back, but it holds the pins from before the first conversion, so pins made since are lost. An older generation also rejects a `groups.json` that contains a Group of three or four apps, which stops every `flow-spaces` call; dissolve or shrink such Groups to two apps before rolling back. Touch, physical rotation and real hotplug remain open.
+
+### Pointer in the guest tests (2026-11-22)
+
+The guest tests could type with wtype but not point, so every hover, click, swipe and wheel check above was marked *not verified*. They now have a pointer:
+- **`flow-pointer`** (`tests/pointer/flow-pointer.c`, the flake's `packages.aarch64-linux.flow-pointer`): a small client of Niri's `zwlr_virtual_pointer_v1`, as wtype is of its virtual keyboard. One call runs a gesture: absolute moves, press, release, click, wheel notches and waits, so a drag keeps its button held. Every step is checked before it connects, so a typo moves nothing. It is test tooling: the module does not install it. CI builds it, and the build's own check runs nine bad calls and one good one without a display.
+- **Why not wlrctl:** it can move, click and scroll, but cannot hold a button, and the home indicator's swipe needs one held. It also moves only relatively; Niri's mapping of absolute motion onto the layout of every output (the area `tests/pointer.py` computes from `niri msg outputs`) reaches any display directly.
+- **No acceleration:** Niri applies none to a virtual pointer. One relative move from the corner and ten smaller ones both put the cursor at (640, 400) (`docs/screenshots/2026-11-22-pointer`).
+- **Targets:** the shell's new `pointer_target` IPC call reports where a named item is: its rectangle in its layer window, the window's size, anchors, margins and screen, and whether the pointer is on it. `tests/pointer.py` turns that into a point on the layout, as the focus walk places its controls. `test_pointer.py` covers that arithmetic, including a second screen and outputs left of and above the origin.
+- **The installed shell must be stopped** for these tests. Its home indicator, island and banners sit where a development shell's do, so a click could reach either; `Pointer()` refuses to start otherwise.
+
+What the pointer now checks, each with a development shell in the guest:
+- **Search (`niri_search_smoke.py`):** only the row under the pointer shows it; a click on the third row opens that row, not the chosen first one, so a click is told apart from Return; a click on the shade outside the palette closes search and opens nothing.
+- **Banners (`niri_notification_banner_smoke.py`):** the pointer resting on a banner holds it for 7 s, and it goes 5 s after the pointer leaves; a click runs the default action (`ActionInvoked`, read from a monitor on the test's private bus) and opens no panel, or opens the panel when there is none; × dismisses it (`NotificationClosed`, reason 2) without running the action.
+- **Home indicator and Overview (`niri_prototype_surfaces_smoke.py`):** the home indicator shows the pointer on it; a tap opens Overview, a tap on Overview's goes on to Desk, and a tap on Desk's returns to work; one wheel notch over Overview's row moves the selection one space down, and one back up, from the row's start, whose next space the keyboard step names; a swipe up opens Overview, and releasing after it is not also a tap.
+
+MUTATIONS_PLACEHOLDER
+
+Not covered: a physical mouse or touchpad (a touchpad's smooth scrolling, and libinput's acceleration, never reach a virtual pointer), touch, the pointer on a second display, hover and pressed states of other controls, and the cursor's shape. Running these tests needs `flow-pointer` on PATH; the guest's machine configuration installs it once Flow's `main` has it.
