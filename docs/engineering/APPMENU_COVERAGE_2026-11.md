@@ -183,14 +183,14 @@ Recommended answer, for the spec and D-012:
 - **Do not add permanent menu chrome.** Keep the App button conditional: shown only when the focused window's read returned items. Keep the menu off by default.
 - **Keep native menus, always.** One harmless command per app shows that invocation works, not that every command does. Items that appear only while a menu is open (Firefox), or that the walk drops (finding 2), could not be offered at all.
 - **Treat AT-SPI menus as an extra command source for the apps that have one,** for the App button and for search's application commands (§8.2). Do not treat them as a menu system.
-- **Before any rollout:**
-  - catch the desktop-file lookup failure, and fix `tests/test_appmenu.py`'s mock (finding 1);
-  - choose and remember the window's frame (title and `active`) when the menu opens (finding 10);
-  - match X11 windows by `app_id` and title (finding 8);
-  - treat a reply timeout as "sent, result unknown", and shorten the wait (finding 3);
-  - find out which of LibreOffice's two menu bars the user sees (finding 4);
-  - decide, and tell the user, that enabling the menu turns accessibility on persistently (finding 9), and that Electron apps may keep forced renderer accessibility in their own configuration (finding 7);
-  - say that enabling at-spi2-core needs a new login (finding 6).
+- **Before any rollout** (status after the resident reader, 2026-11-22: `flow-appmenu serve`, [F-020](../IMPLEMENTATION_STATUS.md)):
+  - catch the desktop-file lookup failure, and fix `tests/test_appmenu.py`'s mock (finding 1). *Done:* `TypeError` falls back to the `app_id` or title, and the test's mock raises as PyGObject does.
+  - choose and remember the window's frame (title and `active`) when the menu opens (finding 10). *Done, earlier than that:* the reader chooses the frame at the window's first probe, when focus settles and before any Flow surface takes the keyboard, and remembers it until the window closes. The guest smoke's two same-titled Kate windows each got File > New only in themselves.
+  - match X11 windows by `app_id` and title (finding 8). *Done:* a window whose PID is xwayland-satellite's is matched among the frames named as its title, preferring apps named as its `app_id`. VLC's menu (8 menus, 60 items) is found.
+  - treat a reply timeout as "sent, result unknown", and shorten the wait (finding 3). *Done:* `doAction` waits 1 s (`Atspi.set_timeout`), and a timeout closes the menu with no error; DB Browser's modal About closes the menu within 2 s.
+  - find out which of LibreOffice's two menu bars the user sees (finding 4). *Done:* both are showing, but one is 0 pixels high (in the frame's root pane); the one in the scroll pane above the document is 29 pixels high and is the only one listed (11 menus, 683 items).
+  - decide, and tell the user, that enabling the menu turns accessibility on persistently (finding 9), and that Electron apps may keep forced renderer accessibility in their own configuration (finding 7). *Done for finding 9:* the setting's text says so, and turning the setting off switches accessibility off again only if Flow switched it on (and no screen reader runs). Finding 7 is moot while Flow never forces renderer accessibility.
+  - say that enabling at-spi2-core needs a new login (finding 6). *Done:* in the setting's text.
 
 ## Method
 

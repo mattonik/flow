@@ -406,6 +406,25 @@ class SwitchTest(unittest.TestCase):
             self.assertFalse(appmenu.release(switch, mark))
             self.assertEqual((switch.sets, mark.exists()), ([True], False))
 
+    def test_a_launcher_without_the_screen_reader_property(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mark = Path(tmp) / "mark"
+            switch = self.Fake(False)
+            appmenu.switch_on(switch, mark)
+            del switch.values["ScreenReaderEnabled"]  # get() raises, as the guest's at-spi2-core 2.62 does
+            self.assertTrue(appmenu.release(switch, mark))
+            self.assertEqual((switch.sets, mark.exists()), ([True, False], False))
+
+    def test_the_mark_stays_when_switching_off_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mark = Path(tmp) / "mark"
+            switch = self.Fake(False)
+            appmenu.switch_on(switch, mark)
+            switch.set = Mock(side_effect=OSError("bus gone"))
+            with self.assertRaises(OSError):
+                appmenu.release(switch, mark)
+            self.assertTrue(mark.exists())  # a later release tries again
+
     def test_mark_lives_in_flows_state(self):
         with patch.dict(appmenu.os.environ, {"XDG_STATE_HOME": "/s"}):
             self.assertEqual(appmenu.marker(), Path("/s/flow/appmenu-switched-accessibility-on"))

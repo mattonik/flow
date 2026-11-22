@@ -357,11 +357,15 @@ def release(switch, mark):
     """Accessibility off again, only if Flow switched it on, and not under a running screen reader."""
     if not mark.exists():
         return False
-    mark.unlink()
-    if switch.get("IsEnabled") and not switch.get("ScreenReaderEnabled"):
+    try:
+        reading = switch.get("ScreenReaderEnabled")
+    except Exception:  # at-spi2-core 2.62's launcher has no such property
+        reading = False
+    switched = switch.get("IsEnabled") and not reading
+    if switched:
         switch.set(False)
-        return True
-    return False
+    mark.unlink()
+    return switched
 
 
 def serve():
