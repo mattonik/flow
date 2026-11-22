@@ -284,10 +284,11 @@ def main():
                     pass
                 time.sleep(1)
                 changed = [i for i in titles if windows()[i]["title"] != titles[i]]
+                error = state().get("error")
                 if state().get("open"):  # still open with an error: close it for the next step
                     ipc("menu")
                 check(f"File > New in Kate window {'A' if chosen == kate_a else 'B'} changes only that window",
-                      changed == [chosen], changed=changed, chosen=chosen, error=state().get("error"), before=titles,
+                      changed == [chosen], changed=changed, chosen=chosen, error=error, before=titles,
                       after={i: windows()[i]["title"] for i in titles})
 
             # DB Browser's modal About.
