@@ -204,7 +204,7 @@ ShellRoot {
             controllerRestart.restart()
         }
         stderr: SplitParser { onRead: line => console.warn("flow-controller: " + line) }
-        // It serves: connect now, not at the next try (startup waited up to a quarter of a second for it).
+        // It serves: connect now (startup used to wait up to a quarter of a second for a timer).
         stdout: SplitParser { onRead: line => { if (line === "listening" && !controller.connected) controller.connected = true } }
     }
     property int controllerExits: 0   // since one last served for 30 s
@@ -231,9 +231,9 @@ ShellRoot {
             }
         }
     }
-    // Until the controller listens (it starts with the shell, and says when it serves) and after it stops, the
-    // shell tries again.
-    Timer { id: controllerConnect; interval: 250; running: true; repeat: true; onTriggered: if (controller.connected) stop(); else controller.connected = true }
+    // The shell connects when the controller says it listens (it starts with the shell, and again after it
+    // stops). Should that line not come, or the connection drop, it tries again every second.
+    Timer { id: controllerConnect; interval: 1000; running: true; repeat: true; onTriggered: if (controller.connected) stop(); else controller.connected = true }
     property int refreshAsked: 0
     property int deskRefresh: 0
     // A refresh now, answered even if nothing changed: Desk opening, an action that finished, a display resized.

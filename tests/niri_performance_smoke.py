@@ -27,7 +27,7 @@ Checked (the limits are the PRs': docs/performance.md):
 - focus moving every 0.05 s for 6 s: never 1.5 s without a refresh (a maximum wait);
 - focus moving every 0.25 s for 6 s: at most 16 refreshes (a minimum interval), the helpers under 2.5% of a core;
 - the shell connecting to its controller under 100 ms after the controller listens (it says so on stdout;
-  the shell's fallback retries every 250 ms);
+  the shell's fallback retries every second);
 - ``flow-spaces refresh`` and ``observe`` medians under 30 ms (actions, and the Platform API without a shell,
   still run it); the controller's own refreshes under 10 ms on average; ``flow-search --json`` under 200 ms,
   and it asks flow-spaces only to observe;
