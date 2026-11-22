@@ -41,6 +41,10 @@ class WindowOriginTest(unittest.TestCase):
     def test_anchored_all_round_fills_from_the_corner(self):
         self.assertEqual(window_origin(target((1280, 800), (True, True, True, True))), (0, 0))
 
+    def test_anchored_to_opposite_edges_is_centred_inside_the_margins(self):
+        # Left and right: 400 wide between margins of 100 and 300 on a 1280 screen; top and bottom alike.
+        self.assertEqual(window_origin(target((400, 200), (True, True, True, True), (40, 60, 100, 300))), (340, 290))
+
 
 class CenterTest(unittest.TestCase):
     def test_item_on_a_second_screen(self):

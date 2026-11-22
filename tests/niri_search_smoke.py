@@ -11,7 +11,7 @@ Checked, through the shell's ``search_view`` and ``toast`` IPC calls and the sta
 - the panel lists what ``flow-search --json`` answers;
 - typing ranks an exact title first and keeps ties in flow-search's order, so Return on "Notes" opens
   the Notes app, not "Notes Server" or Notes as a Layer, through ``flow-search --open app <desktop file>``;
-- with the pointer (tests/pointer.py), a row shows the pointer on it, a click opens that row rather than
+- with the pointer (tests/pointer.py), the row under it is tinted, a click opens that row rather than
   the chosen one, and a click on the shade closes search;
 - a query that matches nothing says so, in its own space above the footer;
 - a result that fails to open shows a toast naming it, also when ``flow-search`` cannot even start;
@@ -32,7 +32,7 @@ import sys
 import tempfile
 import time
 
-from pointer import Pointer, center
+from pointer import Pointer
 
 # Enough ties that an unstable sort shows (the "Foot" query in the guest had six): every app twice.
 APPS = ["Notes Client", "Notes Server", "Notes", "Notes Viewer"]
@@ -163,23 +163,22 @@ def main():
             wait_for(lambda: (v := view()) and v["rows"], "the results again")
             type_keys("Notes")
             wait_for(lambda: (v := view()) and len(v["rows"]) == 8, lambda: f"Notes results ({view()})")
-            row = wait_for(lambda: target("search_row:2"), "the third row's place")
-            pointer.move(center(row))
-            wait_for(lambda: (t := target("search_row:2")) and t["hovered"], "the third row to show the pointer on it")
-            if any((target(f"search_row:{i}") or {}).get("hovered") for i in (0, 1, 3)):
-                raise RuntimeError("A row the pointer is not on showed it")
-            pointer.click(center(row))
+            row = pointer.hover(lambda: target("search_row:2"), "the third row")
+            if any((target(f"search_row:{i}") or {}).get("hovered") for i in (1, 3)):
+                raise RuntimeError("A row the pointer is not on was tinted")
+            pointer.click(row)
             wait_for(lambda: len(opened_lines()) == 2, lambda: f"the clicked row to open ({opened_lines()})")
             wait_for(lambda: ipc("search_state") == "closed", "search to close after the click")
             if opened_lines()[-1] != "app /apps/Notes Client.desktop":
                 raise RuntimeError(f"Clicking the third row opened {opened_lines()[-1]!r}, expected Notes Client")
-            steps.append("with the pointer, only the row under it showed it, and clicking the third row opened that "
+            steps.append("with the pointer, only the row under it was tinted, and clicking the third row opened that "
                          "row (Notes Client), not the chosen first one")
 
             pointer.park()
             open_search()
             shade = wait_for(lambda: target("search_shade"), "the shade's place")
-            pointer.click((shade["screen"][0] + 40, center(shade)[1]))  # left of the palette
+            # Above the palette (at least 64 px down) and at the screen's left edge, clear of it at any width.
+            pointer.click((shade["screen"][0] + 4, shade["screen"][1] + 32))
             wait_for(lambda: ipc("search_state") == "closed", "a click on the shade to close search")
             if len(opened_lines()) != 2:
                 raise RuntimeError(f"A click on the shade opened {opened_lines()[2:]}")

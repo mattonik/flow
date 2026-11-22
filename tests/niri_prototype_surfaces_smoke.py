@@ -2,7 +2,9 @@
 """Flow's Overview, home indicator and search panel behave, on a running development shell.
 
 Run inside a Niri session from the Flow checkout, with ``FLOW_SHELL`` set to the development
-``shell.qml``, the focused output's active workspace empty, and ``flow-spaces`` on PATH. ``FLOW_GRIM``
+``shell.qml``, the focused output's active workspace empty, ``flow-spaces`` and ``flow-pointer`` on PATH, and
+the installed shell stopped (``systemctl --user stop flow-shell``): its home indicator sits where the
+development shell's does. ``FLOW_GRIM``
 may name a grim binary; without one the snapshot check is skipped. The shell gets its own runtime
 directory, state and configuration; Wayland and Niri are reached by absolute paths. Every shell
 process the test started is found by that runtime directory and stopped at the end (Quickshell
@@ -17,7 +19,7 @@ What is checked, through the shell's IPC calls:
 - A snapshot of a space is taken once it has settled in the work view, and none of Desk.
 
 With the pointer (tests/pointer.py, so ``flow-pointer`` on PATH and the installed shell stopped):
-- the home indicator shows the pointer on it; a tap opens Overview, a tap on Overview's goes on to Desk,
+- the home indicator lights under the pointer; a tap opens Overview, a tap on Overview's goes on to Desk,
   and a tap on Desk's returns to work;
 - one wheel notch over Overview's row moves the selection one space, down to the next and up to the
   previous;
@@ -212,12 +214,9 @@ def main():
 
             # The pointer.
             pointer.park()
-            home = wait_for(lambda: target("home"), "the home indicator")
-            pointer.move(center(home))
-            wait_for(lambda: (t := target("home")) and t["hovered"], "the home indicator to notice the pointer")
-            pointer.click(center(home))
+            pointer.click(pointer.hover(lambda: target("home"), "the home indicator"))
             wait_for(lambda: open_surfaces() == ["overview"], lambda: f"a tap on the home indicator to open Overview ({open_surfaces()})")
-            steps.append("the home indicator showed the pointer on it, and a tap opened Overview")
+            steps.append("the home indicator lit under the pointer, and a tap opened Overview")
 
             # From the row's start, whose next space overview_move names: a notch that moved two would land past it.
             row = wait_for(lambda: target("overview_row"), "Overview's row")
@@ -231,9 +230,12 @@ def main():
             while step(-1):
                 pass
             start, next_space = ipc("overview_selected"), (step(1), ipc("overview_selected"))[1]
+            third_space = (step(1), ipc("overview_selected"))[1]
             step(-1)
-            if ipc("overview_selected") != start or next_space == start:
-                raise RuntimeError(f"Overview's row has fewer than two spaces, or moving did not return ({start}, {next_space})")
+            step(-1)
+            if ipc("overview_selected") != start or len({start, next_space, third_space}) != 3:
+                raise RuntimeError(f"Overview's row has fewer than three spaces, or moving did not return "
+                                   f"({start}, {next_space}, {third_space})")
             pointer.scroll(center(row), 1)
             wait_for(lambda: ipc("overview_selected") == next_space,
                      lambda: f"a notch down to select the next space {next_space} ({ipc('overview_selected')})")
@@ -245,14 +247,14 @@ def main():
                      lambda: f"a notch up to select the first space {start} again ({ipc('overview_selected')})")
             steps.append("one wheel notch over Overview's row moved the selection one space down, and one back up")
 
-            pointer.click(center(wait_for(lambda: target("overview_home"), "Overview's home indicator")))
+            pointer.click(pointer.hover(lambda: target("overview_home"), "Overview's home indicator"))
             wait_for(lambda: open_surfaces() == ["desk"], lambda: f"a tap on Overview's home indicator to open Desk ({open_surfaces()})")
-            pointer.click(center(wait_for(lambda: target("desk_home"), "Desk's home indicator")))
+            pointer.click(pointer.hover(lambda: target("desk_home"), "Desk's home indicator"))
             wait_for(lambda: open_surfaces() == [], lambda: f"a tap on Desk's home indicator to return to work ({open_surfaces()})")
             steps.append("a tap on Overview's home indicator went on to Desk, and one on Desk's returned to work")
 
             pointer.park()
-            start = center(wait_for(lambda: target("home"), "the home indicator again"))
+            start = pointer.hover(lambda: target("home"), "the home indicator again")
             pointer.drag(start, (start[0], start[1] - 60))
             wait_for(lambda: open_surfaces() == ["overview"], lambda: f"a swipe up to open Overview ({open_surfaces()})")
             time.sleep(1)

@@ -34,13 +34,13 @@
       ln -s ${niriConfig} $out/niri.kdl
       printf '%s\n' ${lib.escapeShellArgs wrappers} > $out/wrappers
     '';
-    # A pointer for the guest tests (tests/pointer/flow-pointer.c), as wtype is their keyboard. Test tooling:
+    # A pointer for the guest tests (tests/flow-pointer/flow-pointer.c), as wtype is their keyboard. Test tooling:
     # the module does not install it; the test guest's own configuration does. CI builds it.
     packages.aarch64-linux.flow-pointer = let pkgs = nixpkgs.legacyPackages.aarch64-linux; in
       pkgs.stdenv.mkDerivation {
         pname = "flow-pointer";
         version = "1";
-        src = ./tests/pointer;
+        src = ./tests/flow-pointer;
         strictDeps = true;
         nativeBuildInputs = [ pkgs.wayland-scanner pkgs.pkg-config ];
         buildInputs = [ pkgs.wayland ];

@@ -1,5 +1,5 @@
 """A pointer for the guest tests: moves, clicks, drags and wheel notches through ``flow-pointer``
-(tests/pointer/flow-pointer.c, the flake's ``flow-pointer`` package), which uses Niri's virtual-pointer
+(tests/flow-pointer/flow-pointer.c, the flake's ``flow-pointer`` package), which uses Niri's virtual-pointer
 protocol as wtype uses its virtual keyboard.
 
 Targets come from the shell's ``pointer_target`` IPC call: an item's rectangle in its layer window, the
@@ -14,6 +14,7 @@ import atexit
 import json
 import shutil
 import subprocess
+import time
 
 
 def layout_box(outputs):
@@ -28,14 +29,18 @@ def layout_box(outputs):
 
 
 def window_origin(target):
-    """Where a layer window sits on its screen, from its anchors and margins: anchored to an edge it keeps
-    its margin there (anchored to both sides, it starts at the left or top one); anchored to neither side,
-    it is centred."""
+    """Where a layer window sits on its screen, as layer-shell places it from its anchors and margins:
+    anchored to one edge it keeps its margin there; anchored to both opposite edges, or neither, it is
+    centred between them (inside the margins when anchored to both)."""
     (top, bottom, left, right), (mt, mb, ml, mr) = target["place"]["anchors"], target["place"]["margins"]
     (w, h), (_, _, sw, sh) = target["window"], target["screen"]
-    x = ml if left else sw - w - mr if right else (sw - w) // 2
-    y = mt if top else sh - h - mb if bottom else (sh - h) // 2
-    return x, y
+
+    def along(start, end, m_start, m_end, size, room):
+        if start and end:
+            return m_start + (room - m_start - m_end - size) // 2
+        return m_start if start else room - size - m_end if end else (room - size) // 2
+
+    return along(left, right, ml, mr, w, sw), along(top, bottom, mt, mb, h, sh)
 
 
 def center(target):
@@ -77,10 +82,25 @@ class Pointer:
                 args += ["move", str(x), str(y)]
             else:
                 args += [str(part) for part in (step if isinstance(step, tuple) else (step,))]
-        subprocess.run(["flow-pointer", str(self.width), str(self.height), *args], env=self.env, check=True, timeout=30)
+        waited = sum(int(args[i + 1]) for i, arg in enumerate(args) if arg == "wait") / 1000
+        subprocess.run(["flow-pointer", str(self.width), str(self.height), *args], env=self.env, check=True,
+                       timeout=20 + waited)
 
     def move(self, at):
         self.run(("move", *at))
+
+    def hover(self, read, label="the target", timeout=10):
+        """Moves onto the item ``read()`` gives (a ``pointer_target``, or None while it is hidden) and waits until
+        it shows the pointer, so a click that follows lands on a surface that is on screen. Returns its middle."""
+        end, last = time.monotonic() + timeout, None
+        while time.monotonic() < end:
+            last = read()
+            if last:
+                self.move(center(last))
+                if last["hovered"]:
+                    return center(last)
+            time.sleep(0.2)
+        raise RuntimeError(f"Timed out waiting for {label} to show the pointer ({last})")
 
     def click(self, at, button="left"):
         self.run(("move", *at), ("wait", 50), ("click", button))
@@ -96,5 +116,7 @@ class Pointer:
                  ("wait", 50), "up")
 
     def park(self):
-        """Away from the shell's edges, so no hover lingers into the next check."""
-        self.move((self.left + self.width // 2, self.top + self.height // 2))
+        """8 px in from the layout's bottom left corner, where the shell has nothing to hover (the work
+        indicator is at the bottom right, the home indicator at the middle; Niri's hot corner is the top
+        left), so no hover lingers into the next check."""
+        self.move((self.left + 8, self.top + self.height - 8))

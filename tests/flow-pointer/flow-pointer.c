@@ -15,8 +15,9 @@
  *   hscroll N        N wheel notches, right (positive) or left (negative)
  *   wait MS          wait MS milliseconds
  *
- * A gesture that needs a held button (a drag) is one invocation: the pointer, and with it any held
- * button, goes away when the program exits. A button still held at the end is released first.
+ * A gesture that needs a held button (a drag) is one invocation, since the pointer goes away when the
+ * program exits. A button still held at the end is released first; one held when the program is killed
+ * is left to the compositor. Exits 1 if the compositor drops the connection, 2 for a bad call.
  */
 #define _POSIX_C_SOURCE 200809L
 #include <errno.h>
@@ -71,6 +72,15 @@ static int number(const char *text, long min, long max, long *value) {
     return 1;
 }
 
+/* Sends what is queued and waits for the compositor to have handled it; exits if the connection is gone, so a
+ * test never carries on as if the pointer had moved. */
+static void sync_or_exit(struct wl_display *display) {
+    if (wl_display_roundtrip(display) < 0) {
+        fprintf(stderr, "flow-pointer: lost the Wayland connection\n");
+        exit(1);
+    }
+}
+
 static int button_code(const char *name) {
     if (!name || strcmp(name, "left") == 0) return BTN_LEFT;
     if (strcmp(name, "right") == 0) return BTN_RIGHT;
@@ -114,7 +124,7 @@ int main(int argc, char **argv) {
     if (!display) return fail("cannot connect to the Wayland display", getenv("WAYLAND_DISPLAY"));
     struct wl_registry *registry = wl_display_get_registry(display);
     wl_registry_add_listener(registry, &registry_listener, NULL);
-    wl_display_roundtrip(display);
+    sync_or_exit(display);
     if (!manager) return fail("the compositor has no zwlr_virtual_pointer_manager_v1", NULL);
     struct zwlr_virtual_pointer_v1 *pointer = zwlr_virtual_pointer_manager_v1_create_virtual_pointer(manager, NULL);
 
@@ -134,7 +144,7 @@ int main(int argc, char **argv) {
             }
             if (strcmp(step, "click") == 0) {
                 zwlr_virtual_pointer_v1_frame(pointer);
-                wl_display_roundtrip(display);
+                sync_or_exit(display);
             }
             if (strcmp(step, "down") != 0) {
                 zwlr_virtual_pointer_v1_button(pointer, now_ms(), code, WL_POINTER_BUTTON_STATE_RELEASED);
@@ -152,7 +162,7 @@ int main(int argc, char **argv) {
             continue;
         }
         zwlr_virtual_pointer_v1_frame(pointer);
-        wl_display_roundtrip(display);
+        sync_or_exit(display);
     }
     for (int b = 0; b < 3; b++) {
         if (!held[b]) continue;
@@ -161,7 +171,7 @@ int main(int argc, char **argv) {
     }
     zwlr_virtual_pointer_v1_destroy(pointer);
     zwlr_virtual_pointer_manager_v1_destroy(manager);
-    wl_display_roundtrip(display);
+    sync_or_exit(display);
     wl_display_disconnect(display);
     return 0;
 }

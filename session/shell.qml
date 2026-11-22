@@ -884,6 +884,8 @@ ShellRoot {
         hoverEnabled: true
         property real pressY: 0
         property bool dragged: false
+        // Drawn as under the pointer or pressed: the line at its full width, in the accent (pointer_target).
+        readonly property bool lit: line.width === 65 && Qt.colorEqual(line.color, floeTheme.accent)
         onPressed: mouse => { pressY = mouse.y; dragged = false }
         onPositionChanged: mouse => { if (pressed && pressY - mouse.y > 14 && !dragged) { dragged = true; root.toggleSpacesOverview() } }
         onClicked: if (!dragged) root.toggleSpacesOverview()
@@ -1378,21 +1380,27 @@ ShellRoot {
             return JSON.stringify(found)
         }
         // Read-only, for tests that point at the shell with tests/pointer.py: where a named item is (its window's
-        // size, place and screen, and its rectangle in that window) and whether the pointer is on it, or "" while
-        // it is hidden. Names: home, overview_home and desk_home (the home indicators), overview_row,
-        // search_shade, search_row:N, banner and banner_dismiss.
+        // size, place and screen, and its rectangle in that window), or "" while it is hidden. "hovered" is what
+        // the item shows of the pointer: a home indicator lit, a search row tinted, a banner held (its time
+        // stopped), the banner's × in its hover state. Names: home, overview_home and desk_home (the home
+        // indicators), overview_row, search_shade, search_row:N (only while the row is wholly in view),
+        // banner and banner_dismiss.
         function pointer_target(name: string): string {
-            const row = name.startsWith("search_row:") ? searchView.itemAtIndex(Number(name.slice(11))) : null
+            let row = name.startsWith("search_row:") ? searchView.itemAtIndex(Number(name.slice(11))) : null
+            if (row) {
+                const top = row.mapToItem(searchView, 0, 0).y
+                if (top < 0 || top + row.height > searchView.height) row = null
+            }
             const found = ({
-                home: () => [homeIndicator, workHome, workHome.containsMouse],
-                overview_home: () => [spacesOverview, overviewHome, overviewHome.containsMouse],
-                desk_home: () => [deskWindow, deskHome, deskHome.containsMouse],
+                home: () => [homeIndicator, workHome, workHome.lit],
+                overview_home: () => [spacesOverview, overviewHome, overviewHome.lit],
+                desk_home: () => [deskWindow, deskHome, deskHome.lit],
                 overview_row: () => [spacesOverview, overviewRow, false],
                 search_shade: () => [searchPanel, searchShade, false],
                 banner: () => [notificationBanner, bannerCard, notificationBanner.held],
                 banner_dismiss: () => [notificationBanner, bannerDismiss, bannerDismiss.hovered]
             })[name]
-            const [window, item, hovered] = found ? found() : row ? [searchPanel, row, row.hovered] : [null, null, false]
+            const [window, item, hovered] = found ? found() : row ? [searchPanel, row, row.tinted] : [null, null, false]
             if (!window || !window.visible || !item.visible || !window.screen) return ""
             const corner = item.mapToItem(null, 0, 0)
             return JSON.stringify({ window: [window.width, window.height],
@@ -2377,7 +2385,8 @@ ShellRoot {
                     required property var modelData
                     required property int index
                     readonly property bool chosen: index === root.searchIndex
-                    readonly property bool hovered: rowArea.containsMouse
+                    // Drawn as under the pointer: tinted without being the chosen row (pointer_target).
+                    readonly property bool tinted: !chosen && Qt.colorEqual(color, floeTheme.surfaceSelected)
                     width: searchView.width; height: 58; radius: 10
                     color: chosen || rowArea.containsMouse ? floeTheme.surfaceSelected : "transparent"
                     // The chosen row also gets the focus colour's edge, never tint alone.
