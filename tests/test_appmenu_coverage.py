@@ -220,9 +220,12 @@ class SessionIsolationTest(unittest.TestCase):
                 patch.object(coverage, "close_window") as close, \
                 patch.object(coverage, "start_private_bus"), patch.object(coverage, "stop_private_bus"), \
                 patch.object(coverage, "stop_own_processes") as stop_own, patch.object(coverage.time, "sleep"):
-            with coverage.phase({"key": "kate"}):
-                pass
+            with patch.object(coverage, "stop_private_bus") as stop_bus:
+                with coverage.phase({"key": "kate"}) as tmp:
+                    saved = coverage.state_file().read_text()
+        self.assertIn(tmp, saved)  # --cleanup knows the directory before anything starts in it
         self.assertEqual(sorted(c.args[0] for c in close.call_args_list), [2, 5, 7])
+        stop_bus.assert_called()
         stop_own.assert_called()
 
     def test_cleanup_after_a_kill_closes_and_stops_only_the_runs_own(self):
@@ -286,14 +289,72 @@ class SessionIsolationTest(unittest.TestCase):
             self.assertTrue(env[name].startswith(self.tmp.name), name)
         self.assertEqual(env["WAYLAND_DISPLAY"], "/run/user/1000/wayland-1")
         self.assertEqual((env["GSETTINGS_BACKEND"], env["DBUS_SESSION_BUS_ADDRESS"], env[coverage.MARKER]),
-                         ("memory", "unix:path=/tmp/dbus-mine", "run-1"))
+                         ("keyfile", "unix:path=/tmp/dbus-mine", "run-1"))
 
-    def test_restore_runs_once(self):
+    def test_nothing_runs_on_the_sessions_bus(self):
+        with self.assertRaises(RuntimeError):
+            coverage.bus_env()
+        with patch.object(coverage, "run") as run:  # the reader switches accessibility on: never the session's
+            with self.assertRaises(RuntimeError):
+                coverage.reader()
+            with self.assertRaises(RuntimeError):
+                coverage.probe(1)
+            run.assert_not_called()
+            coverage.STATE["bus"] = "unix:path=/tmp/dbus-mine"
+            run.return_value = ({}, 0, 0)
+            coverage.reader()
+            coverage.reader(fixed=True)
+            coverage.probe(1)
+        for call in run.call_args_list:
+            self.assertEqual(call.args[1]["DBUS_SESSION_BUS_ADDRESS"], "unix:path=/tmp/dbus-mine")
+
+    def test_private_bus_starts_with_its_own_runtime_settings_and_no_session_bus(self):
+        daemon = MagicMock(pid=1)
+        daemon.stdout.readline.return_value = "unix:path=/tmp/dbus-new,guid=1\n"
+        with patch.object(coverage.subprocess, "Popen", return_value=daemon) as popen, \
+                patch.dict(coverage.os.environ, {"XDG_RUNTIME_DIR": "/run/user/1000",
+                                                 "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus"}):
+            coverage.start_private_bus(self.tmp.name)
+        env = popen.call_args.kwargs["env"]
+        self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", env)  # its at-spi launcher must not reach the session's bus
+        for name in ("XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "HOME"):
+            self.assertTrue(env[name].startswith(self.tmp.name), name)
+        self.assertEqual(env["GSETTINGS_BACKEND"], "keyfile")
+        self.assertEqual(coverage.STATE["bus"], "unix:path=/tmp/dbus-new,guid=1")
+
+    def test_restore_runs_once_and_stops_everything(self):
         coverage.STATE.update(windows={2}, workspace=None)
-        with patch.object(coverage, "close_window") as close, patch.object(coverage, "stop_own_processes"):
+        with patch.object(coverage, "close_window") as close, patch.object(coverage, "stop_own_processes") as own, \
+                patch.object(coverage, "stop_private_bus") as bus:
             coverage.restore()
             coverage.restore()
         close.assert_called_once_with(2, wait=0)
+        own.assert_called_once()
+        bus.assert_called_once()
+
+    def test_a_signal_restores_and_exits(self):
+        with patch.object(coverage, "restore") as restore:
+            with self.assertRaises(SystemExit) as stopped:
+                coverage.on_signal(15, None)
+        restore.assert_called_once()
+        self.assertEqual(stopped.exception.code, 143)
+
+    def test_own_processes_never_include_the_run_itself(self):
+        with patch.object(coverage.os, "getpid", return_value=100):
+            self.assertEqual(coverage.own_processes(), [101, 300, 301])
+
+    def test_survivors_of_sigterm_get_sigkill(self):
+        signals = []
+        with patch.object(coverage, "own_processes", side_effect=[[100, 300], [300]]), \
+                patch.object(coverage, "kill", side_effect=lambda pid, sig: signals.append((pid, sig))), \
+                patch.object(coverage.time, "sleep"):
+            coverage.stop_own_processes()
+        self.assertEqual(signals, [(100, coverage.signal.SIGTERM), (300, coverage.signal.SIGTERM),
+                                   (300, coverage.signal.SIGKILL)])
+
+    def test_ground_truth_counts_only_windows_whose_title_changed(self):
+        self.assertEqual(coverage.changed_windows({1: "Welcome", 2: "Welcome"}, {1: "Untitled", 2: "Welcome"}), [1])
+        self.assertEqual(coverage.changed_windows({1: "a", 2: "a"}, {1: "a", 2: "a"}), [])
 
 
 if __name__ == "__main__":

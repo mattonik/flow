@@ -231,10 +231,12 @@ def note(text):
 # --- The run's private session bus and its accessibility switch -------------------------------------------------
 
 def bus_env(env=None):
-    """``env`` (default: this process's) on the run's private session bus."""
+    """``env`` (default: this process's) on the run's private session bus. Fails closed: whatever runs with it
+    (the reader, which switches accessibility on, the probe, busctl, an app) must never reach the session's bus."""
+    if not STATE["bus"]:
+        raise RuntimeError("no private session bus: refusing to run on the session's bus")
     env = dict(os.environ if env is None else env)
-    if STATE["bus"]:
-        env["DBUS_SESSION_BUS_ADDRESS"] = STATE["bus"]
+    env["DBUS_SESSION_BUS_ADDRESS"] = STATE["bus"]
     return env
 
 
@@ -243,14 +245,13 @@ A11Y = ("org.a11y.Bus", "/org/a11y/bus", "org.a11y.Status", "IsEnabled")
 
 def set_a11y(on):
     """The private bus's accessibility switch. Never the session's: it persists in the user's dconf."""
-    if not STATE["bus"]:
-        raise RuntimeError("no private session bus: refusing to set the session's accessibility switch")
     subprocess.run(["busctl", "--user", "set-property", *A11Y, "b", "true" if on else "false"], check=True,
                    env=bus_env(), stdout=subprocess.DEVNULL)
 
 
 def session_a11y():
-    """The session's own switch, read only (for the record)."""
+    """The session's own switch, read only (for the record). The read may start the session's accessibility bus
+    if it is not running; it does not change the switch."""
     out = subprocess.run(["busctl", "--user", "get-property", *A11Y], capture_output=True, text=True)
     return out.stdout.strip() or out.stderr.strip()
 
@@ -258,7 +259,7 @@ def session_a11y():
 def start_private_bus(tmp):
     """A session bus of the launch's own, in its runtime directory, so its accessibility bus binds
     <tmp>/runtime/at-spi/bus, not the session's. Fails closed: without it an app could join the session's."""
-    env = {k: v for k, v in app_env(tmp).items() if k != "DBUS_SESSION_BUS_ADDRESS"}
+    env = launch_env(tmp)
     proc = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1"], env=env,
                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True, start_new_session=True)
     STATE["bus_proc"] = proc
@@ -397,8 +398,11 @@ def state_file():
 
 
 def save_state():
-    state_file().write_text(json.dumps({"run": STATE["run"], "tmps": sorted(STATE["tmps"]),
-                                        "windows": sorted(STATE["windows"])}))
+    """Written whole or not at all, so a kill mid-write leaves the previous state for --cleanup."""
+    partial = state_file().with_suffix(".partial")
+    partial.write_text(json.dumps({"run": STATE["run"], "tmps": sorted(STATE["tmps"]),
+                                   "windows": sorted(STATE["windows"])}))
+    partial.replace(state_file())
 
 
 def close_owned_windows(x11_app_id=None):
@@ -463,9 +467,12 @@ def store_path(attr):
     return subprocess.check_output([*nix, "build", "--no-link", "--print-out-paths", *extra, ref], text=True).split()[0]
 
 
-def app_env(tmp, extra=None):
-    """A launch's environment: the private bus, and a runtime directory, home and XDG directories of its own."""
-    env = bus_env()
+def launch_env(tmp, extra=None):
+    """A launch's environment without a session bus: a runtime directory, home and XDG directories of its own,
+    and GSettings in a key file under that configuration directory. The private bus and its accessibility bus are
+    started with it, so the launcher's switch (which at-spi persists through GSettings) lands in that key file,
+    where the launch's apps read it as they would dconf, and never in the user's dconf."""
+    env = {k: v for k, v in os.environ.items() if k != "DBUS_SESSION_BUS_ADDRESS"}
     real_runtime = os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
     display = env.get("WAYLAND_DISPLAY", "wayland-0")
     env["WAYLAND_DISPLAY"] = display if display.startswith("/") else str(Path(real_runtime) / display)
@@ -474,11 +481,16 @@ def app_env(tmp, extra=None):
         path = Path(tmp) / sub
         path.mkdir(mode=0o700, exist_ok=True)
         env[name] = str(path)
-    env["GSETTINGS_BACKEND"] = "memory"  # GTK apps save window state on close; at-spi keeps its switch here
+    env["GSETTINGS_BACKEND"] = "keyfile"  # under XDG_CONFIG_HOME/glib-2.0/settings/keyfile
     env.pop("GI_TYPELIB_PATH", None)  # the runner's, for pyatspi; an app's own wrapper sets its own
     env[MARKER] = STATE["run"]
     env.update(extra or {})
     return env
+
+
+def app_env(tmp, extra=None):
+    """A launch's environment on the private bus."""
+    return bus_env(launch_env(tmp, extra))
 
 
 def spawn(argv, tmp, extra_env=None):
@@ -642,7 +654,7 @@ def leaves(items, prefix=()):
 
 
 def count(result):
-    return sum(1 for _ in leaves(result.get("menus", [])))
+    return sum(1 for _ in leaves((result or {}).get("menus", [])))
 
 
 def find_command(menus, command):
@@ -824,23 +836,35 @@ def truth_case(app, root, tmp, which, mode):
                   resolved=chosen["resolved"], valid=chosen["same_title_windows"] >= 2)
     before = {w["id"]: windows()[w["id"]]["title"] for w in pair}
 
+    # The negative control goes through the other same-titled frame: then the other window must change.
+    target, frame = win, chosen["both"][0] if chosen["resolved"] else None
+    if mode == "other window's frame":
+        others = [i for i in chosen["by_title"] if i != frame]
+        target, frame = pair[1 - which], (others[0] if chosen["resolved"] and len(others) == 1 else None)
+    result["expected"] = target["id"]
+
     def invoke_through_frame():
-        if not chosen["resolved"]:
+        if frame is None:
             return {"invoked": False, "error": "no frame chosen"}
-        return probe(pid, "--invoke", chosen["both"][0], *GROUND_TRUTH[app["key"]])
-    if mode == "focused":
-        done = invoke_through_frame()
-    else:
+        return probe(pid, "--invoke", frame, *GROUND_TRUTH[app["key"]])
+    if mode == "frame chosen, then layer":
         with exclusive_layer(tmp) as up:
             result["layer_up"] = up
             done = invoke_through_frame()
+    else:
+        done = invoke_through_frame()
     time.sleep(1.5)
     after = {w["id"]: windows()[w["id"]]["title"] for w in pair}
-    result["changed"] = [wid for wid in before if before[wid] != after[wid]]
+    result["changed"] = changed_windows(before, after)
     result.update(invoked=done.get("invoked", False), invoke_error=done.get("error"),
-                  correct=result["changed"] == [win["id"]])
+                  correct=result["changed"] == [target["id"]])
     close_all(pair)
     return result
+
+
+def changed_windows(before, after):
+    """Windows whose title differs between the two {id: title} maps."""
+    return [wid for wid in before if before[wid] != after.get(wid)]
 
 
 # --- The walk, and the probe: runs in its own process, with pyatspi ------------------------------------------
@@ -1053,16 +1077,17 @@ def table(data):
     truths = [(m["key"], t) for m in data["multi"] for t in m.get("truth", [])]
     if truths:
         out += ("\n\nGround truth (in a fresh pair of windows, File > New through the frame chosen for one):\n\n"
-                "| App | Window | Windows with its title | How the frame was chosen | Invoked | "
-                "Windows whose title changed | Correct |\n|---|---|---|---|---|---|---|\n")
+                "| App | Focused window | Windows with its title | Frame invoked through | Invoked | "
+                "Window that should change | Windows whose title changed | Correct |\n|---|---|---|---|---|---|---|---|\n")
         for key, t in truths:
             if "window" not in t:
-                out += f"| {key} | {t.get('error')} | | {t['mode']} | | | |\n"
+                out += f"| {key} | {t.get('error')} | | {t['mode']} | | | | |\n"
                 continue
             mode = t["mode"] + ("" if t.get("layer_up", True) else " (layer not up)")
             invoked = yes(t["invoked"]) + (f" ({t['invoke_error']})" if t.get("invoke_error") else "")
             out += (f"| {key} | {t['window']} ({t['title']}) | {t['same_title_windows']} | {mode} | {invoked} | "
-                    f"{t['changed']} | {yes(t['correct'])}{'' if t['valid'] else ' (title unique: not a test)'} |\n")
+                    f"{t.get('expected', t['window'])} | {t['changed']} | "
+                    f"{yes(t['correct'])}{'' if t['valid'] else ' (title unique: not a test)'} |\n")
     env = data.get("env", {})
     if env:
         out += ("\n\nThe session around the run: accessibility switch (`org.a11y.Status.IsEnabled`) "
@@ -1073,6 +1098,20 @@ def table(data):
     if data.get("notes"):
         out += "\n\nNotes:\n" + "\n".join(f"- {n}" for n in data["notes"])
     return out
+
+
+def versions():
+    """The system's NixOS, Niri and at-spi versions, for the record."""
+    found = {}
+    for name, argv in (("nixos", ["nixos-version"]), ("niri", ["niri", "--version"])):
+        try:
+            found[name] = subprocess.run(argv, capture_output=True, text=True, timeout=10).stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            found[name] = None
+    launcher = shutil.which("at-spi-bus-launcher") or ""
+    found["at-spi2-core"] = next((p for p in os.environ.get("GI_TYPELIB_PATH", "").split(":") if "at-spi2-core" in p),
+                                 launcher)
+    return found
 
 
 def session_snapshot():
@@ -1122,7 +1161,7 @@ def main():
     before = session_snapshot()
     data = {"rows": [], "late": [], "multi": [], "notes": STATE["notes"],
             "env": {"started": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-                    "roots": roots, "system": system}}
+                    "roots": roots, "system": system, "versions": versions()}}
     save_state()
     niri_action("focus-workspace", str(empty["idx"]))
     try:
@@ -1145,7 +1184,7 @@ def main():
                     row = multi(app, root, tmp)
                 if app["key"] in GROUND_TRUTH:
                     row["truth"] = []
-                    for mode in ("focused", "frame chosen, then layer"):
+                    for mode in ("focused", "frame chosen, then layer", "other window's frame"):
                         for which in (0, 1):
                             print(f"{app['key']}: ground truth, {mode}, window {which + 1}", file=sys.stderr, flush=True)
                             with phase(app) as tmp:
