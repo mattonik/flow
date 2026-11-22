@@ -40,7 +40,7 @@ import sys
 import tempfile
 import time
 
-from pointer import Pointer
+from pointer import Pointer, center
 
 # Enough ties that an unstable sort shows (the "Foot" query in the guest had six): every app twice.
 APPS = ["Notes Client", "Notes Server", "Notes", "Notes Viewer"]
@@ -374,7 +374,8 @@ def main():
             not_run("two Returns 50 ms apart")
             type_keys("-k", "Escape")
             restart_shown()
-            row = pointer.hover(lambda: target("search_row:0"), "the Restart row")
+            # The chosen row is not tinted under the pointer, so its place is taken, not its hover.
+            row = center(wait_for(lambda: target("search_row:0"), "the Restart row's place"))
             pointer.run(("move", *row), ("wait", 50), ("click", "left"), ("wait", 120), ("click", "left"))
             wait_for(lambda: (v := view()) and v["rows"][0]["armed"], "Restart armed by a double-click")
             not_run("a double-click")
