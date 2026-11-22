@@ -243,14 +243,32 @@ def main():
             expect(["ab", "n"], "the unpinned app closed")
             steps.append("with the pinned Group's apps apart and an unpinned app after them, Rejoin Group was offered "
                          "and stacked them; the pins went back in order and the Group pin reached the Group")
+            # Dissolving with a pinned space after the Group: the app's pin belongs to another display for now (as
+            # when its monitor was unplugged), so this display's pin ordering leaves it after the Group.
+            saved_pins = json.loads((state / "spaces.json").read_text())
+            home_display = next(p for p in saved_pins["pins"] if p["id"] == app_pin)["display"]
+            elsewhere = dict(saved_pins, displays={**saved_pins["displays"],
+                                                   "flow-test:elsewhere": {"connector": "HDMI-A-9", "label": "Elsewhere"}})
+            for p in elsewhere["pins"]:
+                if p["id"] == app_pin:
+                    p["display"] = "flow-test:elsewhere"
+            (state / "spaces.json").write_text(json.dumps(elsewhere))
             spaces("unpin", group_pin)
-            expect(["n", "ab"], "the app pin first once the Group is unpinned")  # pinned spaces lead the strip
+            expect(["ab", "n"], "another display's pin after the unpinned Group")
             niri("action", "focus-window", "--id", window("a")["id"])
             spaces("dissolve-group", group_id)
-            expect(["n", "a", "b"], "the recovered Group dissolved")
+            expect(["a", "b", "n"], "the recovered Group dissolved, the pinned space moved right")
+            back = json.loads((state / "spaces.json").read_text())
+            for p in back["pins"]:
+                if p["id"] == app_pin:
+                    p["display"] = home_display
+            (state / "spaces.json").write_text(json.dumps(back))
+            spaces("refresh")
+            expect(["n", "a", "b"], "the app pin first once it is this display's again")  # pinned spaces lead
             if any(g["id"] == group_id for g in groups()):
                 raise RuntimeError("The dissolved Group is still saved")
-            steps.append("the recovered Group changed to side by side and back, and dissolved with its apps open")
+            steps.append("the recovered Group changed to side by side and back, and dissolved with its apps open, "
+                         "with another display's pinned space after it moving right in order")
 
             # A side-by-side Group with a saved split.
             spaces("unpin", app_pin)

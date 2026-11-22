@@ -662,10 +662,8 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
             if has_side_layout(current_workspace, current_windows, groups):
                 raise ValueError("Return side-by-side Groups to a stack before changing Groups")
             stacked = [next(w for w in current_windows if w["id"] == member["id"]) for member in current["members"]]
-            column = position(stacked[0])[0]
-            if any(w.get("workspace_id") == workspace["id"] and not w.get("is_floating") and w.get("app_id") in pinned_apps(pins)
-                   and (position(w) or [0])[0] > column for w in current_windows):
-                raise ValueError("Move pinned spaces left before dissolving this Group")
+            # The columns after the Group move right as its apps get columns of their own, in the same order, and
+            # this display's pinned spaces go back in pin order at the next refresh, as for Rejoin Group.
             stacked.sort(key=lambda w: position(w)[1])
             # Expel from the bottom so the separated windows keep the stack's top-to-bottom order.
             for member in reversed(stacked[1:]):

@@ -198,16 +198,24 @@ class GroupRegistryTest(unittest.TestCase):
             spaces.run([], "unstack", None, ws, pair, "session", registered)
         command.assert_not_called()
 
-    def test_dissolve_does_not_shift_an_unrelated_pin_to_the_right(self):
+    def test_dissolve_shifts_a_pin_after_it_in_the_same_order(self):
+        # As Rejoin Group may close columns up, dissolving may move the columns after the Group right, a pinned
+        # one included (another display's pin, say, which this display's pin ordering leaves where it is).
         ws = {"id": 1, "active_window_id": 1}
         windows = [window(1, "a", 1), window(2, "b", 1, 2), window(3, "pinned", 2)]
         registered = [{"id": "g", "label": "Work", "members": ["a", "b"]}]
-        pins = [{"id": "p", "label": "Pinned", "app_id": "pinned", "window_id": 3}]
-        with patch.object(spaces, "snapshot", return_value=(ws, windows)), patch.object(spaces, "command") as command, \
-             self.assertRaisesRegex(ValueError, "pinned spaces left"):
+        pins = [{"id": "p", "label": "Pinned", "app_id": "pinned", "window_id": 3, "display": "elsewhere"}]
+
+        def separate(*args):
+            windows[1]["layout"]["pos_in_scrolling_layout"] = [2, 1]
+            windows[2]["layout"]["pos_in_scrolling_layout"] = [3, 1]
+
+        with patch.object(spaces, "snapshot", return_value=(ws, windows)), \
+             patch.object(spaces, "command", side_effect=separate) as command:
             spaces.run(pins, "dissolve-group", "g", ws, windows, "session", registered)
-        command.assert_not_called()
-        self.assertEqual(registered[0]["id"], "g")
+        command.assert_called_once_with("action", "consume-or-expel-window-right", "--id", 2)
+        self.assertEqual([w["layout"]["pos_in_scrolling_layout"][0] for w in windows], [1, 2, 3])
+        self.assertEqual(registered, [])
 
     def test_dissolve_allows_a_pin_to_the_left(self):
         ws = {"id": 1, "active_window_id": 1}
