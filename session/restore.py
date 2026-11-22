@@ -89,6 +89,8 @@ def saved_order_matches(entries, restored, workspace, windows):
     if len(restored) != len(entries) or not saved_ids <= {w["id"] for w in current}:
         return False
     placed = [w for w in current if w.get("layout", {}).get("pos_in_scrolling_layout")]
+    if len(placed) != len(current):
+        return False  # a tiled window without a place: nothing can be confirmed
     kept = sorted({w["layout"]["pos_in_scrolling_layout"][0] for w in placed if w["id"] in saved_ids})
     if any(w["id"] not in saved_ids and w["layout"]["pos_in_scrolling_layout"][0] in kept for w in placed):
         return False
@@ -418,7 +420,10 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                     candidate = {"group_id": group["id"], "members": group["members"], "session": None}
                     pair = spaces.group_windows(candidate, current, live, session or "", registered)
                     if not pair:
-                        report.append("Side-by-side Group is unavailable or ambiguous; check manually")
+                        # Every saved window is in its saved order, so the apps are there: another window that is
+                        # not in the session sits between them.
+                        report.append("Side-by-side Group order needs manual recovery: another window is between "
+                                      "its apps; choose Repair Group layout")
                         continue
                     ids = [w["id"] for w in pair]
                     active = current.get("active_window_id")
@@ -456,7 +461,9 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 action("action", "focus-window", "--id", window["id"])
                 current, live = checked_snapshot()
                 if any(w.get("workspace_id") == workspace_id and w.get("app_id") in pinned for w in live):
-                    report.append("Pinned spaces keep their positions; session order needs manual recovery")
+                    # A pinned app appeared meanwhile (one opened at login, say): judged as at the top of the loop.
+                    if not saved_order_matches(entries, restored, current, live):
+                        report.append("Pinned spaces keep their positions; session order needs manual recovery")
                     break
                 action("action", "move-column-to-index", index)
         else:

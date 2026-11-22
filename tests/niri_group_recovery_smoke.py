@@ -10,7 +10,7 @@ A reboot closes every app and starts a new Niri session. Both are simulated with
 session: the windows are closed, the saved session, the Groups' window bindings and the pins are marked as
 coming from an earlier Niri session, an app is opened as at login (once), and recovery runs as the shell runs
 it at the start of a session (``flow-recovery auto-start``, which reports success only when every saved window
-was restored in its saved order). Checked, for a pinned, renamed stacked Group beside a pinned app and
+was restored and, with a pinned app or a side-by-side Group on the workspace, confirmed in its saved order). Checked, for a pinned, renamed stacked Group beside a pinned app and
 then for a side-by-side Group with a saved split:
 - recovery opens every app again and rebuilds the Group: one column in saved member order, or its
   columns at the saved proportions;

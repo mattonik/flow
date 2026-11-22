@@ -81,6 +81,8 @@ class RecoveryTest(unittest.TestCase):
                                                             shifted + [window(4, "d", column)]))
         stacked = window(4, "d", 2) | {"layout": {"pos_in_scrolling_layout": [2, 3]}}
         self.assertFalse(restore.saved_order_matches(entries, restored, ws, [a, b, c, stacked]))
+        # A tiled window without a place in the strip: nothing can be confirmed.
+        self.assertFalse(restore.saved_order_matches(entries, restored, ws, [a, b, c, window(4, "d", 3) | {"layout": {}}]))
         # An open Layer floats above the restored work and is not part of it.
         layer = {**window(5, "notes", 1), "is_floating": True, "layout": {"pos_in_scrolling_layout": None}}
         self.assertTrue(restore.saved_order_matches(entries, restored, ws, [a, b, c, layer]))
@@ -326,6 +328,28 @@ class RecoveryTest(unittest.TestCase):
                 restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), Mock(),
                                 pinned={"one"}, session="current", registered=[group])
 
+    def test_side_group_recovery_beside_a_window_opened_at_login(self):
+        group = {"id": "g", "label": "Work", "members": ["one", "two"], "layout": "side-by-side", "side_ratio": 0.6}
+        saved = {"version": 1, "groups": [group], "windows": [{"app_id": "one", "column": 1},
+                                                                {"app_id": "two", "column": 2}]}
+        ws = {"id": 1, "active_window_id": 2}
+        # Before the Group, the window opened at login is a space of its own, and the saved split is applied.
+        windows = [window(9, "login", 1), window(1, "one", 2), window(2, "two", 3)]
+        actions = Mock()
+        report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                        session="current", registered=[group])
+        self.assertEqual((report, count), ([], 2))
+        actions.assert_any_call("action", "set-window-width", "--id", 1, "60%")
+        actions.assert_any_call("action", "set-window-width", "--id", 2, "40%")
+        # Between the Group's apps it parts them: the report says so and points to the repair.
+        windows = [window(1, "one", 1), window(9, "login", 2), window(2, "two", 3)]
+        actions = Mock()
+        report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                    session="current", registered=[group])
+        self.assertEqual(report, ["Side-by-side Group order needs manual recovery: another window is between its "
+                                  "apps; choose Repair Group layout"])
+        self.assertNotIn("set-window-width", [call.args[1] for call in actions.call_args_list])
+
     def test_side_group_recovery_does_not_resize_wrong_order(self):
         ws = {"id": 1, "active_window_id": 1}
         windows = [window(1, "one", 2), window(2, "two", 1)]
@@ -481,15 +505,20 @@ class RecoveryTest(unittest.TestCase):
         self.assertNotIn("move-column-to-index", [call.args[1] for call in actions.call_args_list])
 
     def test_single_window_recovery_stops_if_a_pin_appears_before_move(self):
+        # A pinned app that maps while recovery works (one opened at login): nothing more is moved, and the order
+        # is judged as for any pin. In a column of its own it leaves the saved order; stacked with it, it does not.
         ws = {"id": 1, "active_window_id": 1}
         saved = {"version": 1, "windows": [{"app_id": "one", "column": 1}]}
         windows = [window(1, "one", 1)]
-        snapshots = Mock(side_effect=[(ws, windows), (ws, windows + [window(2, "pin", 2)]),
-                                      (ws, windows)])
-        actions = Mock()
-        report, _ = restore.restore(saved, ws, windows, [], Mock(), snapshots, actions, pinned={"pin"})
-        self.assertTrue(any("Pinned spaces keep" in message for message in report))
-        self.assertNotIn("move-column-to-index", [call.args[1] for call in actions.call_args_list])
+        stacked = window(2, "pin", 1) | {"layout": {"pos_in_scrolling_layout": [1, 2]}}
+        for pin, expected in ((window(2, "pin", 2), []),
+                              (stacked, ["Pinned spaces keep their positions; session order needs manual recovery"])):
+            with self.subTest(pin=pin["layout"]):
+                snapshots = Mock(side_effect=[(ws, windows), (ws, windows + [pin]), (ws, windows + [pin])])
+                actions = Mock()
+                report, _ = restore.restore(saved, ws, windows, [], Mock(), snapshots, actions, pinned={"pin"})
+                self.assertEqual(report, expected)
+                self.assertNotIn("move-column-to-index", [call.args[1] for call in actions.call_args_list])
 
     def test_single_window_recovery_ignores_pins_on_another_workspace(self):
         ws = {"id": 1, "active_window_id": 1}
