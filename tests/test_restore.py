@@ -786,6 +786,56 @@ class RecoveryTest(unittest.TestCase):
         self.assertIn("Group members moved unexpectedly; group not restored", report)
         self.assertNotIn(call("action", "consume-or-expel-window-left", "--id", 3), actions.call_args_list)
 
+    def test_pinned_group_recovery_counts_only_this_displays_pins(self):
+        # A pin of another display does not lead this display's strip at the next refresh, so its order is not
+        # the saved one here.
+        saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two"]}],
+                 "windows": [{"app_id": "notes", "column": 1}, {"app_id": "one", "column": 2},
+                             {"app_id": "two", "column": 2}]}
+        pins = [{"app_id": "notes", "display": "ext"},
+                {"app_id": "one", "members": ["one", "two"], "group_id": "group-id", "display": "main"}]
+        ws, windows = {"id": 1}, [window(1, "one", 1), window(2, "two", 2), window(3, "notes", 3)]
+        actions = Mock(side_effect=NiriActions(ws, windows))
+        report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                    pinned={"one", "two", "notes"}, pinned_groups=pins, display="main",
+                                    registered=[{"id": "group-id", "label": "Pair", "members": ["one", "two"]}])
+        self.assertEqual(report, ["Pinned spaces keep their positions; session order needs manual recovery"])
+
+    def test_pinned_group_recovery_stops_when_the_workspace_changes_during_the_join(self):
+        saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two", "three"]}],
+                 "windows": [{"app_id": app, "column": 1} for app in ("one", "two", "three")]}
+        pin = {"app_id": "one", "members": ["one", "two", "three"], "group_id": "group-id"}
+        ws, windows = {"id": 1}, [window(1, "one", 1), window(2, "two", 2), window(3, "three", 3)]
+        niri, moved = NiriActions(ws, windows), []
+
+        def act(kind, action, *args):
+            niri(kind, action, *args)
+            moved.append(args)  # the user switched workspaces right after the first step
+
+        actions = Mock(side_effect=act)
+        with self.assertRaisesRegex(ValueError, "Workspace changed"):
+            restore.restore(saved, ws, windows, [], Mock(), lambda: ({"id": 2} if moved else ws, windows), actions,
+                            pinned={"one", "two", "three"}, pinned_groups=[pin])
+        self.assertNotIn(call("action", "consume-or-expel-window-left", "--id", 3), actions.call_args_list)
+
+    def test_pinned_group_recovery_stops_when_a_later_app_is_no_longer_a_single_window(self):
+        saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two", "three"]}],
+                 "windows": [{"app_id": app, "column": 1} for app in ("one", "two", "three")]}
+        pin = {"app_id": "one", "members": ["one", "two", "three"], "group_id": "group-id"}
+        ws, windows = {"id": 1}, [window(1, "one", 1), window(2, "two", 2), window(3, "three", 3)]
+        niri = NiriActions(ws, windows)
+
+        def act(kind, action, *args):
+            niri(kind, action, *args)
+            if args[-1:] == (2,):
+                windows[2]["is_floating"] = True  # three became a floating window meanwhile
+
+        actions = Mock(side_effect=act)
+        report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                    pinned={"one", "two", "three"}, pinned_groups=[pin])
+        self.assertIn("Group members moved unexpectedly; group not restored", report)
+        self.assertNotIn(call("action", "consume-or-expel-window-left", "--id", 3), actions.call_args_list)
+
     def test_pinned_group_recovery_rejects_duplicate_saved_membership(self):
         saved = {"version": 1, "groups": [{"id": "first", "members": ["one", "two"]},
                                           {"id": "second", "members": ["two", "one"]}],

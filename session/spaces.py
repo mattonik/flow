@@ -348,6 +348,10 @@ def rejoin_plan(group, workspace, windows, pins):
     return found, direction
 
 
+class ColumnsMoved(ValueError):
+    """A step of stack_columns did not land: the windows are not where joining them needs them."""
+
+
 def stack_columns(ids, direction, workspace_id, failure, act=None, look=None):
     """Stack the single-window columns ``ids`` (adjacent, in Group order, ``direction`` "left" or "right" towards
     the first) into one column, one at a time. Rejoin Group and session recovery both join a Group this way.
@@ -365,12 +369,23 @@ def stack_columns(ids, direction, workspace_id, failure, act=None, look=None):
         if (ws["id"] != workspace_id or not first
                 or [w["id"] for w in column_windows(ws, live, position(first)[0])] != ids[:count]
                 or not all(eligible(w, ws, live) for w in rest)):
-            raise ValueError(failure)
+            raise ColumnsMoved(failure)
 
 
 def pin_ordered(workspace, windows, pins, socket, groups=()):
     """``windows`` as the next refresh's pin ordering (``reconcile``) will leave them: the columns of pinned spaces
-    first, in pin order, then the others in their order. Unchanged while that ordering is paused."""
+    first, in pin order, then the others in their order. Unchanged while that ordering is paused. ``pins`` are the
+    display's own, as reconcile gets them; Groups are told by their bindings in this Niri session (``socket``), as
+    a refresh tells them."""
+    global SESSION
+    previous, SESSION = SESSION, socket
+    try:
+        return _pin_ordered(workspace, windows, pins, socket, groups)
+    finally:
+        SESSION = previous
+
+
+def _pin_ordered(workspace, windows, pins, socket, groups):
     if has_side_layout(workspace, windows, groups):
         return windows
     tiled = sorted((w for w in windows if w.get("workspace_id") == workspace["id"] and position(w)),
