@@ -13,7 +13,6 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "design/tokens/floe.tokens.json"
 QML_PATH = ROOT / "session/FloeTheme.qml"
 CSS_PATH = ROOT / "design/generated/floe.css"
-FUZZEL_PATHS = {mode: ROOT / f"design/generated/fuzzel-{mode}.ini" for mode in ("dark", "light")}
 NIRI_PATHS = {mode: ROOT / f"design/generated/niri-{mode}.kdl" for mode in ("dark", "light")}
 SWAYLOCK_PATHS = {mode: ROOT / f"design/generated/swaylock-{mode}.conf" for mode in ("dark", "light")}
 
@@ -65,50 +64,6 @@ def render_css(tokens):
 
 def px(token):
     return int(token["$value"].removesuffix("px"))
-
-def render_fuzzel(tokens, mode):
-    """The app launcher and search (fuzzel): a Floe panel, in one appearance."""
-    colors = tokens["semantic"][mode]
-    def rgba(role, alpha="ff"):
-        return colors[role]["$value"].lstrip("#").lower() + alpha
-    family = tokens["typography"]["family"]["interface"]["$value"][0]
-    body = px(tokens["typography"]["size"]["body"])
-    return "\n".join([
-        "# Generated from design/tokens/floe.tokens.json by design/scripts/generate_theme.py. Do not edit.",
-        "[main]",
-        f"font={family}:pixelsize={body}",
-        'prompt=""',
-        "placeholder=Search apps",
-        "icons-enabled=yes",
-        "lines=8",
-        "width=36",
-        "horizontal-pad=24",
-        "vertical-pad=20",
-        "inner-pad=14",
-        # Rows as tall as the minimum touch target; a bare number would be points.
-        f"line-height={px(tokens['sizing']['target-min'])}px",
-        "",
-        "[colors]",
-        f"background={rgba('surface')}",
-        f"text={rgba('text-primary')}",
-        f"prompt={rgba('accent')}",
-        f"placeholder={rgba('text-muted')}",
-        f"input={rgba('text-primary')}",
-        f"match={rgba('accent')}",
-        # The selected row is an accent fill with on-accent text, never a tint: fuzzel draws no outline.
-        f"selection={rgba('accent')}",
-        f"selection-text={rgba('on-accent')}",
-        f"selection-match={rgba('on-accent')}",
-        f"counter={rgba('text-muted')}",
-        # Full strength: in Arctic Daylight the panel's edge is what separates it from the canvas.
-        f"border={rgba('border')}",
-        "",
-        "[border]",
-        "width=1",
-        f"radius={px(tokens['radius']['md'])}",
-        f"selection-radius={px(tokens['radius']['sm'])}",
-        "",
-    ])
 
 def render_niri(tokens, mode):
     """Niri's colours in one appearance; niri.kdl includes one, and the shell keeps a per-user copy in
@@ -176,7 +131,6 @@ def main():
     tokens = json.loads(SOURCE.read_text(encoding="utf-8"))
     outdated = []
     outputs = [(QML_PATH, render_qml(tokens)), (CSS_PATH, render_css(tokens)),
-               *((path, render_fuzzel(tokens, mode)) for mode, path in FUZZEL_PATHS.items()),
                *((path, render_niri(tokens, mode)) for mode, path in NIRI_PATHS.items()),
                *((path, render_swaylock(tokens, mode)) for mode, path in SWAYLOCK_PATHS.items())]
     for path, content in outputs:

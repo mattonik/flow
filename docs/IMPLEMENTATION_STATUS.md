@@ -264,7 +264,7 @@ Flow used Niri's own Overview (a vertical zoom of workspaces), fuzzel for search
   - **Footer:** "Enter to open · ↑ ↓ to choose · Esc to close". Escape works from anywhere in the panel.
   - **Behaviour:** `flow-search --json` lists the results, the shell filters them as you type and runs the choice. Apps and files open through `flow-search --open`, in their own scope. See *Search on the installed system*.
   - **What is listed:** Flow settings, quick settings, pins (also other displays'), open windows, recent files and installed apps, each app also as a Layer. Apps without a desktop file are left out, since they cannot be opened by name.
-  - **The old command:** `flow-apps` still exists as a standalone fuzzel launcher. Nothing in the shell uses it. `flow-search`'s fuzzel mode was removed (2026-11-21).
+  - **No fuzzel:** `flow-search`'s fuzzel mode was removed (2026-11-21), and the standalone fuzzel launcher `flow-apps`, which nothing started, with its themed wrapper and generated fuzzel themes (2026-11-22). Flow no longer installs fuzzel.
 - **Platform API:** `ShowOverview` opens Flow's Overview, and `ShowLauncher` opens the panel's app view. Both count an Overview that is still opening as open.
 
 Tests:
@@ -484,13 +484,6 @@ Surface by surface:
   - **Not yet effective:** swayidle is a Niri startup command, so its new lock command applies from the next sign-in.
   - **Focus ring:** one colour cannot stand out against both light and dark app content.
   - **CI:** it evaluates no Nix, so the module is only checked when the guest builds it.
-- **App launcher and search (fuzzel):** themed from the same tokens. The theme generator writes `design/generated/fuzzel-dark.ini` and `fuzzel-light.ini`:
-  - the panel in the surface tone, with a full-strength border and a 14 px radius
-  - Noto Sans at the 16 px body size, with rows as tall as the 44 px touch target
-  - the selected row as an accent fill with on-accent text, since fuzzel cannot draw a selection outline
-  - placeholder text in place of a prompt
-
-  `session/flow-fuzzel.sh` picks the file that matches the Desk's appearance switch. A user's own `~/.config/fuzzel/fuzzel.ini` takes precedence. `test_launcher_theme.py` checks every colour pair in both files against the audit's thresholds, runs the wrapper with a stand-in fuzzel, and checks that the launcher and search use it. In the guest, the installed launcher (dark) and search (with a light appearance file) were captured; flipping the Desk switch itself was not exercised, because the guest cannot click.
 - **Desk:** a larger search field, pins as cards, activities as cards with a progress track, and tools sized to their labels.
 - **Switcher:** a rounded bottom sheet. Each space is a card, and a Group's actions sit in a two-column grid with *Dissolve* as the danger action.
 - **Quick settings, notifications and the toast** are rounded panels.
@@ -648,7 +641,7 @@ So the shell is now the `flow-shell` user unit instead of a Niri `spawn-at-start
 - **Failures:** it restarts on failure two seconds apart, and gives up after five starts in a minute.
 - **Environment:** its launcher takes `PATH` from the user manager, which holds the login session's environment because Niri imports it. Before this, a NixOS unit's own `PATH` would have dropped `~/.nix-profile/bin` and the like for every app opened from Desk or search.
 - **Restarts on a switch:** its restart triggers are the shell's files (one store directory, also installed as `/etc/flow`) and the Quickshell package. A switch therefore restarts it when either changes, or when its launcher does (a change to coreutils, procps, gnused or systemd also counts), as `switch-to-configuration` does for any changed user unit. The installed shell turns Quickshell's file watching off, so it never half-reloads; a development shell keeps live reload.
-- **Apps get their own scopes:** the unit sets `FLOW_APP_SCOPES=1`. Every launch path then starts the app with `systemd-run --user --scope`: the shell's own launches, the app launcher's prefix, search, and the `gio launch` of opening a Layer, a missing Group member or a restored session (`session/launching.py`). So apps are never part of the shell's unit, and stopping or restarting the shell, or a limit on it, never touches them. `KillMode=process` stays as a safeguard for any path that misses a scope. Development shells and tests launch directly.
+- **Apps get their own scopes:** the unit sets `FLOW_APP_SCOPES=1`. Every launch path then starts the app with `systemd-run --user --scope`: the shell's own launches, search, and the `gio launch` of opening a Layer, a missing Group member or a restored session (`session/launching.py`). So apps are never part of the shell's unit, and stopping or restarting the shell, or a limit on it, never touches them. `KillMode=process` stays as a safeguard for any path that misses a scope. Development shells and tests launch directly.
 - **First switch:** a switch does not start a new unit wanted by `niri.service`. Per-user activation therefore starts `flow-shell` while Niri runs, but only if the unit has never run under this user manager, so a user who stopped it to run a development shell keeps it stopped. The launcher first ends any older installed shell, matched by its command line with or without the store path, and waits up to five seconds for it to exit. That also ends a test shell someone started on `/etc/flow/shell.qml`.
 - **Rolling back** to a generation from before this one stops the `flow-shell` unit, and that generation only starts its shell when Niri starts. Sign in again after such a rollback.
 

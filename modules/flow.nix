@@ -19,27 +19,6 @@ let
     export GI_TYPELIB_PATH="${pkgs.at-spi2-core}/lib/girepository-1.0:${pkgs.glib}/lib/girepository-1.0:${pkgs.gobject-introspection}/lib/girepository-1.0''${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
     exec ${pkgs.python3.withPackages (p: [ p.pyatspi p.pygobject3 ])}/bin/python3 ${../session/appmenu.py} "$@"
   '';
-  appLaunch = pkgs.writeShellScriptBin "flow-app-launch" ''
-    ${lib.getExe pkgs.quickshell} ipc -p /etc/flow/shell.qml call desk leave >/dev/null 2>&1 || true
-    # Launched apps must not inherit the launcher's closed output pipes. From the installed shell they
-    # get an app scope of their own (session/launching.py).
-    if [ "''${FLOW_APP_SCOPES:-}" = 1 ]; then
-      exec ${pkgs.systemd}/bin/systemd-run --user --scope --collect --quiet -- "$@" </dev/null >/dev/null 2>&1
-    fi
-    exec "$@" </dev/null >/dev/null 2>&1
-  '';
-  # fuzzel in Floe's theme, following the user's appearance setting (session/flow-fuzzel.sh). Not
-  # named `fuzzel`: inside `with pkgs; [ … ]` a let binding would replace the fuzzel package itself.
-  themedFuzzel = pkgs.writeShellScriptBin "flow-fuzzel" ''
-    export FLOW_FUZZEL_BIN=${lib.getExe pkgs.fuzzel} FLOW_FUZZEL_THEMES=${../design/generated}
-    export PATH="${pkgs.gnugrep}/bin:$PATH"
-    exec ${pkgs.bash}/bin/sh ${../session/flow-fuzzel.sh} "$@"
-  '';
-  launcher = pkgs.writeShellScriptBin "flow-apps" ''
-    user_name="$(${pkgs.coreutils}/bin/id -un)"
-    export XDG_DATA_DIRS="''${XDG_DATA_DIRS:+$XDG_DATA_DIRS:}$HOME/.nix-profile/share:$HOME/.local/state/nix/profile/share:/etc/profiles/per-user/$user_name/share:/nix/var/nix/profiles/default/share:/run/current-system/sw/share:/usr/local/share:/usr/share"
-    exec ${themedFuzzel}/bin/flow-fuzzel --layer=overlay --keyboard-focus=on-demand --override=main.exit-on-keyboard-focus-loss=yes --launch-prefix=${lib.getExe appLaunch} "$@"
-  '';
   search = pkgs.writeShellScriptBin "flow-search" ''
     user_name="$(${pkgs.coreutils}/bin/id -un)"
     export XDG_DATA_DIRS="''${XDG_DATA_DIRS:+$XDG_DATA_DIRS:}$HOME/.nix-profile/share:$HOME/.local/state/nix/profile/share:/etc/profiles/per-user/$user_name/share:/nix/var/nix/profiles/default/share:/run/current-system/sw/share:/usr/local/share:/usr/share"
@@ -168,7 +147,7 @@ in {
     # Without it the session bus cannot start the accessibility bus and nothing is exposed.
     services.gnome.at-spi2-core.enable = true;
     environment.systemPackages = (with pkgs; [
-      foot fuzzel quickshell swaylock firefox nautilus gnome-control-center networkmanagerapplet spaces launcher appmenu keyboard wvkbd wifiSettings niriAppearanceSync grim
+      foot quickshell swaylock firefox nautilus gnome-control-center networkmanagerapplet spaces appmenu keyboard wvkbd wifiSettings niriAppearanceSync grim
       xwayland-satellite mesa-demos wayland-utils recovery search wireplumber networkmanager flowCli
     ]) ++ lib.optionals config.services.desktopManager.plasma6.enable [ (lib.hiPrio kdeSettings) ];
     services.dbus.packages = [ flowApiActivation ];
@@ -220,8 +199,6 @@ in {
     };
     environment.etc."niri/config.kdl".source = niriConfig;
     environment.etc."flow".source = shellFiles;
-    # Plain fuzzel, started by anything else, gets the dark theme too.
-    environment.etc."xdg/fuzzel/fuzzel.ini".source = ../design/generated/fuzzel-dark.ini;
     environment.sessionVariables.NIXOS_OZONE_WL = "1";
   };
 }
