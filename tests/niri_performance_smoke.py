@@ -29,8 +29,12 @@ Checked (the limits are the PRs': docs/performance.md):
 - ``flow-spaces refresh`` and ``observe`` medians under 30 ms (actions, and the Platform API without a shell,
   still run it); the controller's own refreshes under 10 ms on average; ``flow-search --json`` under 200 ms,
   and it asks flow-spaces only to observe;
-- Overview shown (after the snapshot of the active space it takes first) under 200 ms, Desk showing a fresh
-  refresh under 150 ms and search showing its rows under 300 ms (medians of 5).
+- Overview's first frame with every card (after the snapshot of the active space it takes first) under 200 ms, Desk showing a fresh
+  refresh under 150 ms and search showing its rows under 300 ms (medians of 5);
+- focus moving every 0.25 s across five spaces: the shell under 2.5% of a core (hidden surfaces rebuild nothing);
+- an activity without a known amount: the shell under 5% of a core while the island or Overview's island shows
+  it, its dot breathing on a clock stepping every 80 ms, and on Desk its bar sweeping at 16 ms; the clock stops
+  once the activity has a known amount, and with no activity.
 
 ``FLOW_PERF_IDLE`` shortens the idle phase (seconds) while developing; the limits stay those of 60 s.
 Prints one JSON line per check and a final ``{"result": ...}``; exits 1 if any check failed.
@@ -305,7 +309,7 @@ def main():
             def closed(state_call):
                 return lambda: wait_for(lambda: ipc(state_call)[0] == "closed", state_call, timeout=5)
 
-            surface("Overview shown", "overview", ["overview_open"], lambda: (ipc("overview_close"), closed("overview_state")()), 200)
+            surface("Overview's first frame", "overview", ["overview_open"], lambda: (ipc("overview_close"), closed("overview_state")()), 200)
             surface("Desk with a fresh answer", "desk", ["desk_open"], lambda: (ipc("leave"), closed("desk_state")()), 150)
             surface("search rows shown", "search", ["search"], lambda: (ipc("search"), closed("search_state")()), 300)
             time.sleep(1)
@@ -368,12 +372,13 @@ def main():
             # Focus storms between the two tiles.
             sock = NiriSocket()
 
+            tiles = [tile_a, tile_b]
+
             def flip(period, seconds):
-                begin = time.time()
-                ident = tile_a
+                begin, step = time.time(), 0
                 while time.time() - begin < seconds:
-                    ident = tile_b if ident == tile_a else tile_a
-                    sock.focus(ident)
+                    step += 1
+                    sock.focus(tiles[step % len(tiles)])
                     time.sleep(period)
                 return begin, time.time()
 
@@ -383,10 +388,16 @@ def main():
             check("focus every 0.05 s: longest gap between refreshes", gap, "< 1.5", gap < 1.5, "s")
             time.sleep(1)
             quiet()
-            helpers = helpers_cpu()
+            # Five spaces, so what a state push costs the shell shows (each surface lists every space).
+            tiles += [terminal(f"perf tile {name}", "sh", "-c", "sleep 3600") for name in "cde"]
+            time.sleep(1)
+            quiet()
+            helpers, own = helpers_cpu(), cpu(pid)[0]
             start, end = flip(0.25, 6)
             time.sleep(0.5)
             share = 100 * (helpers_cpu() - helpers) / (time.time() - start)
+            own_share = 100 * (cpu(pid)[0] - own) / (time.time() - start)
+            check("focus every 0.25 s: shell CPU", own_share, "< 2.5", own_share < 2.5, "% of a core")
             count = len(refreshes(start, end))
             check("focus every 0.25 s: refreshes", count, "<= 16", count <= 16)
             check("focus every 0.25 s: helpers CPU", share, "< 2.5", share < 2.5, "% of a core")
@@ -394,6 +405,64 @@ def main():
             if stats and stats["refreshes"]:
                 mean = stats["refresh_ms"] / stats["refreshes"]
                 check("controller refresh mean", mean, "< 10", mean < 10, "ms")
+
+            # An activity without a known amount (ADR-0010): the shell reads what the Platform API publishes.
+            def publish(activities):
+                staged = runtime / "flow-activities.json.tmp"
+                staged.write_text(json.dumps({"version": 1, "activities": activities}))
+                os.replace(staged, runtime / "flow-activities.json")
+
+            def shell_cpu(seconds):
+                own, begin = cpu(pid)[0], time.time()
+                time.sleep(seconds)
+                return 100 * (cpu(pid)[0] - own) / (time.time() - begin)
+
+            def clock():
+                try:
+                    return json.loads(ipc("busy_clock")[0])
+                except ValueError:
+                    return None  # a shell without the call: main before 2026-11-22
+
+            def ticking(seconds=1.0):
+                """The busy clock's interval if its phase moved over ``seconds``, else None."""
+                before = clock()
+                time.sleep(seconds)
+                after = clock()
+                return after["interval"] if before and after and after["running"] and after["phase"] != before["phase"] else None
+
+            busy = [{"id": "busy", "owner": "Smoke", "title": "Working", "progress": -1}]
+            publish(busy)
+            wait_for(lambda: "Working" in ipc("activity_list")[0], "the busy activity in the island")
+            time.sleep(1)
+            share = shell_cpu(10)
+            check("busy activity, island showing: shell CPU", share, "< 5", share < 5, "% of a core")
+            moved = ticking()
+            check("busy activity, island showing: the dot breathes", moved, "every 80 ms", moved == 80)
+            ipc("overview_open")
+            wait_for(lambda: ipc("overview_state")[0] == "open", "Overview, with its own island")
+            time.sleep(1)
+            share = shell_cpu(10)
+            check("busy activity in Overview: shell CPU", share, "< 5", share < 5, "% of a core")
+            moved = ticking()
+            check("busy activity in Overview: the dot breathes", moved, "every 80 ms", moved == 80)
+            ipc("overview_close")
+            wait_for(lambda: ipc("overview_state")[0] == "closed", "Overview to close")
+            ipc("desk_open")
+            wait_for(lambda: ipc("desk_state")[0] == "open", "Desk, with the activity's sweeping bar")
+            moved = ticking()
+            check("busy activity on Desk: the bar sweeps", moved, "every 16 ms", moved == 16)
+            ipc("leave")
+            wait_for(lambda: ipc("desk_state")[0] == "closed", "Desk to close")
+            publish([{**busy[0], "progress": 0.5}])
+            time.sleep(1)
+            stopped = clock()
+            check("an activity with a known amount: the clock stops", stopped and stopped["running"], "stopped",
+                  stopped is not None and not stopped["running"])
+            publish([])
+            time.sleep(1)
+            stopped = clock()
+            check("no activity: the clock stops", stopped and stopped["running"], "stopped",
+                  stopped is not None and not stopped["running"])
         finally:
             if sock:
                 sock.close()
