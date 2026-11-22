@@ -417,13 +417,14 @@ def main():
             wait_for(lambda: ipc("desk_state") == "open", "Desk to open")
             ipc("toggle")
             wait_for(lambda: ipc("desk_state") == "closed", "Desk to close")
-            (tmp / "rows").write_text(json.dumps(ROWS))
             open_search()
             wait_for(lambda: (v := view()) and v["rows"], "the results again")
             type_keys("save session")
-            wait_for(lambda: (v := view()) and v["rows"] and v["rows"][0]["title"] == "Save session", "Save session")
+            wait_for(lambda: (v := view()) and v["rows"] and v["rows"][0]["title"] == "Save session",
+                     lambda: f"Save session ({view()}, search {ipc('search_state')}, desk {ipc('desk_state')})")
             type_keys("-k", "Return")
             wait_for(lambda: ipc("toast"), "the Save session result as a toast", timeout=30)
+            (tmp / "rows").write_text(json.dumps(ROWS))
             steps.append(f"Lock screen ran on one Return, Open Desk opened Desk, and Save session said {ipc('toast')!r}")
 
             (tmp / "open-exit").write_text("3")
