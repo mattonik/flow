@@ -381,15 +381,19 @@ class ControllerTest(unittest.TestCase):
             self.messages(0.3)
         self.assertEqual(self.controller.clients, [])
 
-    def test_it_counts_how_soon_its_first_client_came(self):
-        self.messages(0.1)  # this test's client, connected in setUp, is accepted
-        self.assertIsInstance(self.controller.stats["first_client_ms"], int)
-        first = self.controller.stats["first_client_ms"]
-        late = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.addCleanup(late.close)
-        late.connect(str(fc.socket_path()))
+    def test_it_counts_how_soon_its_first_watcher_came_not_other_clients(self):
+        self.messages(0.1)  # this test's client, connected in setUp, only connected
+        self.assertIsNone(self.controller.stats["first_watcher_ms"])
+        self.ask({"get": "stats"})
         self.messages(0.1)
-        self.assertEqual(self.controller.stats["first_client_ms"], first)  # only the first counts
+        self.assertIsNone(self.controller.stats["first_watcher_ms"])  # asking for stats is not watching
+        self.ask({"watch": True})
+        self.messages(0.1)
+        first = self.controller.stats["first_watcher_ms"]
+        self.assertIsInstance(first, int)
+        self.ask({"watch": True})
+        self.messages(0.1)
+        self.assertEqual(self.controller.stats["first_watcher_ms"], first)  # only the first counts
 
     def test_a_second_controller_waits_until_the_first_has_gone(self):
         taken = []

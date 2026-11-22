@@ -261,9 +261,12 @@ def main():
             observed = json.loads(subprocess.check_output([real["flow-spaces"], "observe"], env=env, text=True))
             if not any(item.get("shaped") for item in observed.get("layers", [])):
                 raise RuntimeError(f"The Layer was not shaped: {observed.get('layers')}")
+            # The shell watches its controller (its only watcher): how soon after the controller listened. Read
+            # once the shell shows spaces, so that this smoke's own request is not taken for the shell's.
+            wait_for(lambda: '"spaces":[{' in ipc("spaces_view")[0].replace(" ", ""), "the shell's first state", timeout=10)
             stats = controller_stats(runtime, tmp)
-            if stats and "first_client_ms" in stats:  # a shell from before 2026-11-22 has no such count
-                came = stats["first_client_ms"]
+            if stats and "first_watcher_ms" in stats:  # a controller from before 2026-11-22 has no such count
+                came = stats["first_watcher_ms"]
                 check("the shell connects as its controller listens", came, "< 100",
                       came is not None and came < 100, "ms")
             time.sleep(8)  # the app menu's first answers and their retries
