@@ -42,17 +42,19 @@ def recent_files(history, home):
     return found
 
 
-# File search walks the XDG user folders by name while the user types: nothing is indexed or stored.
+# File search walks the XDG user folders by name while the user types: nothing is indexed or stored. Desktop,
+# Documents and Downloads come before the media folders, level by level.
 USER_FOLDERS = {"DESKTOP": "Desktop", "DOCUMENTS": "Documents", "DOWNLOAD": "Downloads",
                 "PICTURES": "Pictures", "MUSIC": "Music", "VIDEOS": "Videos"}
-# The walk's bounds: what it returns, looks at, takes, and how deep it goes below a user folder.
-WALK = {"results": 50, "entries": 20000, "seconds": 0.3, "depth": 8}
+# The walk's bounds: how many results, how long, and how deep below the folder it walks.
+WALK = {"results": 50, "seconds": 0.3, "depth": 8}
 SHORTEST_QUERY = 3
 
 
 def user_folders(home, config):
-    """The XDG user folders, as user-dirs.dirs names them or by their default names: each once, inside the home
-    folder but never the home folder itself (xdg-user-dirs sets a folder to $HOME to turn it off)."""
+    """The XDG user folders, as user-dirs.dirs names them or by their default names, wherever they are: each
+    once, and never the root, the home folder or a folder holding it (xdg-user-dirs sets a folder to $HOME to
+    turn it off)."""
     named = {key: home / name for key, name in USER_FOLDERS.items()}
     try:
         lines = (config / "user-dirs.dirs").read_text(errors="replace").splitlines()
@@ -67,50 +69,68 @@ def user_folders(home, config):
             named[found[1]] = home / value[6:]
         elif value.startswith("/"):
             named[found[1]] = Path(value)
-    folders = []
     try:
         top = home.resolve(strict=True)
     except OSError:
         return []
+    folders = []
     for key in USER_FOLDERS:
         try:
             folder = named[key].resolve(strict=True)
-            folder.relative_to(top)
-        except (OSError, ValueError, RuntimeError):
+        except (OSError, RuntimeError):
             continue
-        # A folder inside another is walked with it.
-        if folder != top and folder.is_dir() and not any(folder.is_relative_to(f) for f in folders):
+        if top.is_relative_to(folder) or not folder.is_dir():
+            continue
+        # A folder inside another is walked with it, whichever comes first.
+        if not any(folder.is_relative_to(f) for f in folders):
             folders = [f for f in folders if not f.is_relative_to(folder)] + [folder]
     return folders
 
 
+def mount_points():
+    """Where file systems are mounted (/proc/self/mountinfo), so the walk never enters another one: a network
+    mount that hangs would hang it, and a bind mount could lead out of the user folders."""
+    try:
+        lines = Path("/proc/self/mountinfo").read_text().splitlines()
+    except OSError:
+        return frozenset()
+    return frozenset(re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), line.split(" ")[4])
+                     for line in lines if len(line.split(" ")) > 4)
+
+
 def name_matches(name, words):
-    """Whether a name holds every word of the query; file contents are not searched."""
-    folded = name.casefold()
+    """Whether a name holds every word of the query; file contents are not searched. Case is folded as the
+    shell's ranking folds it."""
+    folded = name.lower()
     return all(word in folded for word in words)
 
 
-def find_files(query, folders, bounds=WALK, clock=time.monotonic):
-    """Files and folders under ``folders`` whose names match ``query``, nearest first, within ``bounds``.
+def find_files(query, folders, bounds=WALK, clock=time.monotonic, mounts=frozenset()):
+    """Files and folders under ``folders`` whose names match ``query``, level by level, within ``bounds``.
 
-    Hidden files and folders count; symbolic links are neither listed nor followed, so the walk stays inside
-    the user folders. Whatever the bounds leave unvisited is simply not found."""
-    words = query.casefold().split()
+    Hidden files and folders count. Symbolic links are neither listed nor followed and other file systems are
+    not entered, so the walk stays inside the user folders. The clock is checked while a folder is read too, so
+    a huge folder cannot hold the walk past its time; whatever the time leaves unvisited is simply not found."""
+    words = query.lower().split()
     if len(query.strip()) < SHORTEST_QUERY:
         return []
     end = clock() + bounds["seconds"]
     queue = deque((folder, 0) for folder in folders)
-    found, seen = [], 0
+    found = []
     while queue:
         folder, depth = queue.popleft()
+        read, late = [], False
         try:
             with os.scandir(folder) as listing:
-                entries = sorted(listing, key=lambda e: e.name.casefold())
+                for entry in listing:
+                    read.append(entry)
+                    if len(read) % 256 == 0 and clock() > end:
+                        late = True
+                        break
         except OSError:
-            continue
-        for entry in entries:
-            seen += 1
-            if seen > bounds["entries"] or clock() > end:
+            pass
+        for entry in sorted(read, key=lambda e: e.name.lower()):
+            if clock() > end:
                 return found
             try:
                 is_folder = entry.is_dir(follow_symlinks=False)
@@ -121,8 +141,10 @@ def find_files(query, folders, bounds=WALK, clock=time.monotonic):
                 found.append(Path(entry.path))
                 if len(found) == bounds["results"]:
                     return found
-            if is_folder and depth + 1 < bounds["depth"]:
+            if is_folder and depth + 1 < bounds["depth"] and entry.path not in mounts:
                 queue.append((entry.path, depth + 1))
+        if late:
+            return found
     return found
 
 
@@ -190,17 +212,19 @@ def open_result(kind, value):
 
 
 def main(args):
-    """``--json`` lists every result for the shell's search panel; ``--files QUERY`` finds files by name in the
-    user folders; ``--open KIND VALUE`` opens an app or file."""
+    """``--json`` lists every result for the shell's search panel; ``--files`` finds files by name in the user
+    folders, for the query on its first line of input; ``--open KIND VALUE`` opens an app or file."""
     if len(args) == 3 and args[0] == "--open":
         return open_result(args[1], args[2])
-    if len(args) == 2 and args[0] == "--files":
+    if args == ["--files"]:
+        # The query comes on stdin: a command line is readable by every user of the machine.
+        query = sys.stdin.readline().rstrip("\n")
         home = Path.home()
         config = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
-        print(file_rows(find_files(args[1], user_folders(home, config))))
+        print(file_rows(find_files(query, user_folders(home, config), mounts=mount_points())))
         return 0
     if args != ["--json"]:
-        print("usage: flow-search --json | --files QUERY | --open app|file VALUE", file=sys.stderr)
+        print("usage: flow-search --json | --files (query on stdin) | --open app|file VALUE", file=sys.stderr)
         return 2
     from gi.repository import Gio
     try:
