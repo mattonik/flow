@@ -117,3 +117,71 @@ The performance smoke now counts the controller's refreshes (it reports them on 
 Phase 1 fails one check, the one this phase is for: a refresh as a process costs about 20 ms of CPU, so 12 refreshes in 6 s kept 8.5% of a core busy, against 1.1% for the controller. In the controller a refresh takes about 6 ms. Under a title changing every 0.3 s the controller refreshes once a second (11 times), where phase 1 relabelled in the shell. Both stay within the limits, and the shell itself spends less (2.9% against 4.2%), because each refresh hands it the whole state once a second instead of a relabelling per title.
 
 With the controller neutralised to start `flow-spaces refresh` processes instead of refreshing in-process, the smoke fails the helpers' CPU under focus changes (8.2%) and the controller's refresh time (40 ms on average). The controller's own behaviour is unit-tested (`tests/test_flow_controller.py`): when it refreshes, the title-only test (with focus timestamps), the forwarded events, the answer to a refresh asked for and that it skips the minimum interval, retrying every 0.1 s while an action holds the lock without spinning, desktop names read afresh, a client that floods dropped, reshaping left to a process of its own, a failing refresh not stopping the loop, and one controller per runtime folder and Flow state. Each of these, neutralised, fails its test.
+
+## Hidden surfaces and the busy indicator (2026-11-22)
+
+The last part of phase 2. A probe in the guest measured a development shell with five terminals as spaces (`surface-probe`, not committed; the smoke now checks the same). The display runs at 120 Hz.
+
+| Shell, on main | CPU (one core) |
+|---|---|
+| Idle | 0.5–0.7% |
+| Focus moving every 0.25 s | 6.2–6.5% |
+| An activity without a known amount, the island showing it | 20% |
+| The same, with Overview open | 20.7% |
+
+**The busy indicator.** An activity without a known amount shows a breathing dot in the island, in Overview's island and in Desk's, and a sweeping bar on Desk's card. One clock drove them, a `NumberAnimation` advancing on every frame. Each frame repainted the island's surface, so a 6 px dot held a fifth of a core for as long as the activity lasted. Three variants were tried with the island showing the activity (the Overview figures were taken with Overview's own island left out of the clock, a bug, so they are not given):
+
+| Variant | Island showing |
+|---|---|
+| Main: every frame | 20% |
+| Every frame, only while shown | 19.8% |
+| Only while shown, stepping every 80 ms | 3.1% |
+| Only while shown, the dot on the render thread (`OpacityAnimator`) | 17.1% |
+
+The cost is the frame rate, not the bindings. So the clock is a `Timer` that steps every 80 ms (12.5 times a second, enough for a breathing dot), every 16 ms while a sweeping bar is on screen (Desk), and advances by elapsed time. The clock runs only while an indicator is on screen: an island whose chip shows a breathing dot (the work island, Overview's, or Desk's, each saying whether its dot breathes) in a window that is shown, or Desk showing a sweeping bar. So it stops for an activity with a known amount, for a chip too narrow for its dot, and with reduced motion. The first version left Overview's own island out and froze a visible dot there; the review found it. A second version counted indicators as they appeared and went away, and missed some: the clock kept running after the activity ended. The smoke caught that through the clock's own IPC call.
+
+**Hidden surfaces.** Desk, Overview, the switcher and the Notifications panel stay hidden most of the time, yet each state push rebuilt their lists (pins, spaces, Layers, Groups' repair cards, activities, notifications), as did the work indicator's Group members while Desk or Overview hid it. A hidden surface's lists are now empty, so it builds nothing. They are built when it opens. Overview builds its cards while it takes the snapshot that comes before it, so its first frame already shows every snapshot: [before and after, 50 ms after opening](screenshots/2026-11-22-overview-first-frame).
+
+The windows themselves were not moved into `LazyLoader`s. Their cost while hidden was the lists, now gone. What stays is their static parts: deleting Desk, Overview, search and the switcher outright took the shell from 175 to 164 MB, the most `LazyLoader`s could save while those surfaces are closed. In exchange, a `LazyLoader` would rebuild a whole window (Desk's ambient grid, its shapes, every binding) on every open, against the 150 and 200 ms budgets, where a list built at open costs a handful of delegates. Code outside the windows also refers to ids inside them in about 50 places. A follow-up could key the lists by ID, so that a visible list does not rebuild its delegates on every push either.
+
+The same probe, run twice on each, main and this change one after the other:
+
+| Shell (one core) | Main | 2026-11-22 |
+|---|---|---|
+| Idle | 0.4–0.5% | 0.3–0.5% |
+| Focus moving every 0.25 s | 6.2–7.1% | 1.1–1.2% |
+| An activity without a known amount, the island showing it | 19.4% | 2.7–3.1% |
+| The same, with Overview open (its own island breathing) | 20.8–20.9% | 4.7–4.9% |
+| RSS at start | 180–181 MB | 174–176 MB |
+| RSS after opening Desk, Overview and search once | 191–192 MB | 186 MB |
+
+The performance smoke, main (as installed) and this change one after the other; the rows this change concerns (the focus row from later runs across five spaces). Main's shell has no `busy_clock` call, so its clock rows cannot be read. Its Overview figure ends when Overview is set to show, before any card is built, where this change's ends at the first frame with every card (160 ms, within the 200 ms limit).
+
+| Check | Limit | Main | 2026-11-22 |
+|---|---|---|---|
+| idle: shell CPU | < 1 % of a core | 0.38% | 0.25% |
+| Overview's first frame | < 200 ms | 43 ms | 160 ms |
+| Desk with a fresh answer | < 150 ms | 115 ms | 97 ms |
+| search rows shown | < 300 ms | 177 ms | 154 ms |
+| title every 0.3 s: shell CPU | < 5 % of a core | 2.39% | 0.37% |
+| title every 0.05 s: shell CPU | < 10 % of a core | 2.11% | 0.62% |
+| focus every 0.25 s: shell CPU (five spaces, later runs) | < 2.5 % of a core | 4.85–5.31% ✗ | 1.06% |
+| busy activity, island showing: shell CPU | < 5 % of a core | 20.19% ✗ | 2.8% |
+| busy activity, island showing: the dot breathes | every 80 ms | — ✗ | 80 |
+| busy activity in Overview: shell CPU | < 5 % of a core | 20.79% ✗ | 4.29% |
+| busy activity in Overview: the dot breathes | every 80 ms | — ✗ | 80 |
+| busy activity on Desk: the bar sweeps | every 16 ms | — ✗ | 16 |
+| an activity with a known amount: the clock stops | stopped | — ✗ | stopped |
+| no activity: the clock stops | stopped | — ✗ | stopped |
+
+The other checks pass on both, as in the controller's table above. The whole guest suite passes with this change (the two-display smoke needs a second active output).
+
+Each change neutralised in turn, keeping its symbols (idle 20 s):
+
+| Neutralised | How | Failing check (limit) |
+|---|---|---|
+| Hidden surfaces build nothing | every list built again while hidden | shell CPU under focus changes every 0.25 s across five spaces: 5.78% (< 2.5) |
+| 12.5 Hz | the clock steps every 8 ms | shell CPU with the island showing a busy activity 21.8% (< 5), in Overview 25.8% (< 5); the clock's interval 8 ms (80 and 16) |
+| Only while an indicator shows | the clock runs while any activity exists | the clock does not stop for an activity with a known amount |
+
+The focus phase flips across five spaces, since what a push costs grows with the spaces each surface lists. With two, main read 0.6–2.0% and this change 0.6–1.1%, too close to tell apart. With five, this change read 1.06% twice and main 4.85–5.31%; the limit is 2.5%.

@@ -508,7 +508,8 @@ ShellRoot {
     }
     // For tests/niri_performance_smoke.py: how long the last opening of each surface took inside the shell, from
     // the request to its content. Desk: until it shows the refresh it asked the controller for. Overview:
-    // until it is shown, after its snapshot. Search: until it shows a listing. Each entry is {ms, count}.
+    // until its first frame with every card, after its snapshot. Search: until it shows a listing. Each entry
+    // is {ms, count}.
     property var openStarted: ({})
     property var openTook: ({})
     function openBegins(name) { openStarted[name] = Date.now() }
@@ -517,7 +518,6 @@ ShellRoot {
         openTook[name] = { ms: Date.now() - openStarted[name], count: ((openTook[name] || {}).count || 0) + 1 }
         delete openStarted[name]
     }
-    onSpacesOverviewOpenChanged: if (spacesOverviewOpen) openEnds("overview")
     function toggleDesk() {
         overviewPending = false
         spacesOverviewOpen = false   // one surface at a time
@@ -526,9 +526,9 @@ ShellRoot {
         switcherOpen = false
         appMenuOpen = false
         openMenuWhenReady = false
-        if (!deskOpen) Quickshell.execDetached(["niri", "msg", "action", "close-overview"])
+        if (!deskOpen) { Quickshell.execDetached(["niri", "msg", "action", "close-overview"]); openBegins("desk") }
         deskOpen = !deskOpen
-        if (deskOpen) { openBegins("desk"); deskRefresh = requestRefresh() }
+        if (deskOpen) deskRefresh = requestRefresh()
     }
 
     // The search panel is the launcher; closeLauncher remains the name its callers know.
@@ -613,9 +613,10 @@ ShellRoot {
             // Desk, search or another panel opened meanwhile: they win, Overview does not stack on them.
             if (!overviewPending || deskOpen || searchOpen || switcherOpen || quickSettingsOpen
                 || notificationsOpen || appMenuOpen || overviewOpen) { overviewPending = false; return }
-            overviewPending = false
+            // Open first, then no longer pending: the cards built during the snapshot stay.
             overviewSpaceId = activeSpace ? String(activeSpace.id) : ""
             spacesOverviewOpen = true
+            overviewPending = false
         }
         // The space on screen now is the freshest: snapshot it, then show the row. Not while a move is
         // still settling, which would catch the scroll halfway under the old space's name.
@@ -908,12 +909,26 @@ ShellRoot {
     // The brand's standard curve, cubic-bezier(.22, 1, .36, 1).
     readonly property var standardCurve: [0.22, 1, 0.36, 1, 1, 1]
     // One clock for every "busy, amount unknown" indicator, so a card rebuilt by an activity update
-    // picks up where the last one was instead of starting its sweep again. 0–1, looping.
+    // picks up where the last one was instead of starting its sweep again. 0–1, looping every 1.6 s, by
+    // elapsed time. It runs only while an indicator is on screen, since each step repaints the surface showing
+    // it: a breathing dot in the island, Overview's or Desk's (each island says whether its dot breathes), or a
+    // sweeping bar on Desk. Dots step 12.5 times a second; a sweeping bar needs 60. docs/performance.md has
+    // the measurements.
     property real busyPhase: 0
-    NumberAnimation on busyPhase {
-        from: 0; to: 1; duration: 1600; loops: Animation.Infinite
-        running: root.motionQuick > 0 && (root.deskOpen ? root.activities.some(a => !(a.progress >= 0))
-            : root.activities.length > 0 && !(root.activities[0].progress >= 0))
+    readonly property bool busySweeping: deskWindow.visible && root.motionQuick > 0 && root.activities.some(a => !(a.progress >= 0))
+    readonly property bool busyBreathing: (workIsland.visible && workIslandContent.breathing)
+        || (spacesOverview.visible && overviewIsland.breathing) || (deskWindow.visible && deskIsland.breathing)
+    property real busyLast: 0
+    Timer {
+        id: busyClock
+        interval: root.busySweeping ? 16 : 80; repeat: true
+        running: root.busySweeping || root.busyBreathing
+        onRunningChanged: root.busyLast = Date.now()
+        onTriggered: {
+            const now = Date.now()
+            root.busyPhase = (root.busyPhase + Math.max(0, Math.min(now - root.busyLast, 200)) / 1600) % 1
+            root.busyLast = now
+        }
     }
     // Line icons on a 24-unit grid, drawn by the shell so no icon font is needed.
     readonly property var iconPaths: ({
@@ -1315,6 +1330,9 @@ ShellRoot {
     component SystemIsland: Rectangle {
         // The width of the screen the island is on; an activity chip only takes what is left.
         property real room: 1280
+        // Its chip shows a breathing dot (the shared busy clock moves it), with motion on.
+        readonly property bool breathing: activityChip.visible && !activityChip.determinate && !activityChip.compact
+            && root.motionQuick > 0
         implicitWidth: islandControls.implicitWidth + 12; implicitHeight: 44
         color: floeTheme.canvas
         topLeftRadius: 0; topRightRadius: 0; bottomLeftRadius: 14; bottomRightRadius: 14
@@ -1496,6 +1514,11 @@ ShellRoot {
                                     layers: root.layers.map(l => l.id) })
         }
         // Each window of the workspace with the label the shell shows for it, for tests/niri_performance_smoke.py.
+        // The shared busy clock, for tests/niri_performance_smoke.py.
+        function busy_clock(): string {
+            return JSON.stringify({ running: busyClock.running, interval: busyClock.interval, phase: root.busyPhase,
+                                    breathing: root.busyBreathing, sweeping: root.busySweeping })
+        }
         function open_took(name: string): string { return JSON.stringify(root.openTook[name] || { ms: -1, count: 0 }) }
         function window_labels(): string { return JSON.stringify(root.windows.map(w => [w.id, w.label])) }
         function desk_state(): string { return root.deskOpen ? "open" : "closed" }
@@ -1759,6 +1782,7 @@ ShellRoot {
             focus: true
             Keys.onEscapePressed: root.deskOpen = false
             SystemIsland {
+                id: deskIsland
                 room: parent.width
                 anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter
             }
@@ -1877,7 +1901,7 @@ ShellRoot {
                                 width: parent.width
                                 spacing: 8
                                 Repeater {
-                                    model: root.pins
+                                    model: deskWindow.visible ? root.pins : []  // hidden, it rebuilds nothing
                                     Flow {
                                         required property var modelData
                                         required property int index
@@ -1922,7 +1946,7 @@ ShellRoot {
                                 width: parent.width
                                 spacing: 8
                                 Repeater {
-                                    model: root.otherPins
+                                    model: deskWindow.visible ? root.otherPins : []  // hidden, it rebuilds nothing
                                     Flow {
                                         required property var modelData
                                         width: parent.width; spacing: 3
@@ -2034,7 +2058,7 @@ ShellRoot {
                         visible: root.activities.length > 0
                         width: parent.width; spacing: 8
                         Repeater {
-                            model: root.activities
+                            model: deskWindow.visible ? root.activities : []  // hidden, it rebuilds nothing
                             Rectangle {
                                 id: activityCard
                                 required property var modelData
@@ -2254,7 +2278,7 @@ ShellRoot {
                     spacing: 2
                     SectionLabel { anchors.verticalCenter: parent.verticalCenter; leftPadding: 14; rightPadding: 6; text: "GROUP" }
                     Repeater {
-                        model: root.activeSpace && root.activeSpace.group_id ? root.activeSpace.members : []
+                        model: workIndicatorWindow.visible && root.activeSpace && root.activeSpace.group_id ? root.activeSpace.members : []
                         IslandButton {
                             id: groupFocusButton
                             required property var modelData
@@ -2317,6 +2341,14 @@ ShellRoot {
         FocusScope {
             id: overviewFocus
             anchors.fill: parent; focus: true
+            // For open_took: the first frame shown with every card.
+            Connections {
+                target: overviewFocus.Window.window
+                function onFrameSwapped() {
+                    if (root.openStarted.overview && spacesOverview.visible && overviewRow.count === root.displaySpaces.length)
+                        root.openEnds("overview")
+                }
+            }
             Keys.onEscapePressed: root.closeSpacesOverview()
             Keys.onLeftPressed: root.moveOverview(-1)
             Keys.onRightPressed: root.moveOverview(1)
@@ -2328,6 +2360,7 @@ ShellRoot {
                 else if (event.key === Qt.Key_End) { root.overviewIndex = Math.max(0, root.displaySpaces.length - 1); event.accepted = true }
             }
             SystemIsland {
+                id: overviewIsland
                 room: parent.width; z: 3
                 anchors { top: parent.top; horizontalCenter: parent.horizontalCenter }
             }
@@ -2358,12 +2391,13 @@ ShellRoot {
                 height: spacesOverview.cardHeight + 52
                 orientation: ListView.Horizontal
                 spacing: 32
-                model: root.displaySpaces
+                // Hidden, it rebuilds nothing; the cards are built while Overview takes its snapshot.
+                model: spacesOverview.visible || root.overviewPending ? root.displaySpaces : []
                 // Assigning a new model resets currentIndex to 0, so it is set from the selection, which is
                 // a space id (root.overviewIndex), whenever either changes; only a drag writes it back.
                 function follow() { if (currentIndex !== root.overviewIndex) currentIndex = root.overviewIndex }
                 Connections { target: root; function onOverviewIndexChanged() { overviewRow.follow() } }
-                onCountChanged: Qt.callLater(follow)
+                onCountChanged: { follow(); if (count) positionViewAtIndex(currentIndex, ListView.Center) }
                 onModelChanged: Qt.callLater(follow)
                 onCurrentIndexChanged: if (moving && currentIndex >= 0) root.selectOverview(currentIndex)
                 highlightRangeMode: ListView.StrictlyEnforceRange
@@ -2789,7 +2823,7 @@ ShellRoot {
                     width: parent.width; spacing: 8
                     SectionLabel { width: 72; height: 44; verticalAlignment: Text.AlignVCenter; text: "LAYERS" }
                     Repeater {
-                        model: root.layers
+                        model: switcherWindow.visible ? root.layers : []  // hidden, it rebuilds nothing
                         Flow {
                             required property var modelData
                             // Room for one Layer's four controls; narrower screens wrap them.
@@ -2834,7 +2868,7 @@ ShellRoot {
                     Row {
                         id: windowRow; spacing: 12
                         Repeater {
-                            model: root.displaySpaces
+                            model: switcherWindow.visible ? root.displaySpaces : []  // hidden, it rebuilds nothing
                             Rectangle {
                                 id: spaceCard
                                 required property var modelData
@@ -3081,7 +3115,7 @@ ShellRoot {
                     width: parent.width; spacing: 8
                     SectionLabel { text: "GROUPS NEEDING ATTENTION"; topPadding: 4 }
                     Repeater {
-                        model: root.incompleteGroups
+                        model: switcherWindow.visible ? root.incompleteGroups : []  // hidden, it rebuilds nothing
                         Rectangle {
                             id: attentionCard
                             required property var modelData
@@ -3347,7 +3381,7 @@ ShellRoot {
             // Newest first, so reading and Tab order match what is on screen. The reversed copy rebuilds the
             // list on each change (at most 20 items, by the trim above), so focus inside it does not survive
             // a notification arriving or going.
-            model: [...notificationServer.trackedNotifications.values].reverse()
+            model: notificationPanel.visible ? [...notificationServer.trackedNotifications.values].reverse() : []  // hidden, it rebuilds nothing
             delegate: Item {
                 required property var modelData
                 required property int index
