@@ -1377,6 +1377,30 @@ ShellRoot {
                 }
             return JSON.stringify(found)
         }
+        // Read-only, for tests that point at the shell with tests/pointer.py: where a named item is (its window's
+        // size, place and screen, and its rectangle in that window) and whether the pointer is on it, or "" while
+        // it is hidden. Names: home, overview_home and desk_home (the home indicators), overview_row,
+        // search_shade, search_row:N, banner and banner_dismiss.
+        function pointer_target(name: string): string {
+            const row = name.startsWith("search_row:") ? searchView.itemAtIndex(Number(name.slice(11))) : null
+            const found = ({
+                home: () => [homeIndicator, workHome, workHome.containsMouse],
+                overview_home: () => [spacesOverview, overviewHome, overviewHome.containsMouse],
+                desk_home: () => [deskWindow, deskHome, deskHome.containsMouse],
+                overview_row: () => [spacesOverview, overviewRow, false],
+                search_shade: () => [searchPanel, searchShade, false],
+                banner: () => [notificationBanner, bannerCard, notificationBanner.held],
+                banner_dismiss: () => [notificationBanner, bannerDismiss, bannerDismiss.hovered]
+            })[name]
+            const [window, item, hovered] = found ? found() : row ? [searchPanel, row, row.hovered] : [null, null, false]
+            if (!window || !window.visible || !item.visible || !window.screen) return ""
+            const corner = item.mapToItem(null, 0, 0)
+            return JSON.stringify({ window: [window.width, window.height],
+                                    screen: [window.screen.x, window.screen.y, window.screen.width, window.screen.height],
+                                    place: { anchors: [window.anchors.top, window.anchors.bottom, window.anchors.left, window.anchors.right],
+                                             margins: [window.margins.top, window.margins.bottom, window.margins.left, window.margins.right] },
+                                    rect: [corner.x, corner.y, item.width, item.height], hovered: hovered === true })
+        }
         function launcher_state(): string { return root.launcherBusy() ? "open" : "closed" }
         function menu(): void {
             if (menuPreferences.appMenuEnabled && root.appMenu && !root.deskOpen && !root.overviewOpen && !root.spacesOverviewOpen && !root.searchOpen) {
@@ -1505,6 +1529,7 @@ ShellRoot {
                 anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter
             }
             HomeIndicator {
+                id: deskHome
                 z: 2; width: 160; height: 44
                 anchors { bottom: parent.bottom; horizontalCenter: parent.horizontalCenter }
             }
@@ -1946,7 +1971,7 @@ ShellRoot {
         implicitWidth: 126; implicitHeight: 24
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
-        HomeIndicator { anchors.fill: parent }
+        HomeIndicator { id: workHome; anchors.fill: parent }
     }
     PanelWindow {
         // Work indicator: the focused app of an active Group, and the space's place in this display's Flow.
@@ -2272,6 +2297,7 @@ ShellRoot {
                 textFormat: Text.PlainText; color: floeTheme.textMuted; font.pixelSize: 12; font.family: floeTheme.interfaceFont
             }
             HomeIndicator {
+                id: overviewHome
                 z: 2; width: 160; height: 44
                 anchors { bottom: parent.bottom; horizontalCenter: parent.horizontalCenter }
             }
@@ -2292,6 +2318,7 @@ ShellRoot {
         anchors.fill: parent; focus: true
         Keys.onEscapePressed: root.closeSearch()
         Rectangle {
+            id: searchShade
             anchors.fill: parent; color: Qt.alpha(floeTheme.canvas, 0.72)
             MouseArea { anchors.fill: parent; onClicked: root.closeSearch() }
         }
@@ -2350,6 +2377,7 @@ ShellRoot {
                     required property var modelData
                     required property int index
                     readonly property bool chosen: index === root.searchIndex
+                    readonly property bool hovered: rowArea.containsMouse
                     width: searchView.width; height: 58; radius: 10
                     color: chosen || rowArea.containsMouse ? floeTheme.surfaceSelected : "transparent"
                     // The chosen row also gets the focus colour's edge, never tint alone.

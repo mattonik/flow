@@ -34,6 +34,25 @@
       ln -s ${niriConfig} $out/niri.kdl
       printf '%s\n' ${lib.escapeShellArgs wrappers} > $out/wrappers
     '';
+    # A pointer for the guest tests (tests/pointer/flow-pointer.c), as wtype is their keyboard. Test tooling:
+    # the module does not install it; the test guest's own configuration does. CI builds it.
+    packages.aarch64-linux.flow-pointer = let pkgs = nixpkgs.legacyPackages.aarch64-linux; in
+      pkgs.stdenv.mkDerivation {
+        pname = "flow-pointer";
+        version = "1";
+        src = ./tests/pointer;
+        strictDeps = true;
+        nativeBuildInputs = [ pkgs.wayland-scanner pkgs.pkg-config ];
+        buildInputs = [ pkgs.wayland ];
+        buildPhase = ''
+          xml=${pkgs.wlr-protocols}/share/wlr-protocols/unstable/wlr-virtual-pointer-unstable-v1.xml
+          wayland-scanner client-header $xml virtual-pointer.h
+          wayland-scanner private-code $xml virtual-pointer.c
+          $CC -O2 -Wall -Wextra -Werror flow-pointer.c virtual-pointer.c $(pkg-config --cflags --libs wayland-client) -o flow-pointer
+        '';
+        installPhase = "install -Dm755 flow-pointer $out/bin/flow-pointer";
+        meta.mainProgram = "flow-pointer";
+      };
     nixosModules.default = import ./modules/flow.nix;
     nixosConfigurations.test = nixpkgs.lib.nixosSystem {
       system = "aarch64-linux";
