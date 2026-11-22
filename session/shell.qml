@@ -305,7 +305,7 @@ ShellRoot {
     readonly property bool recoveryWorking: recoveryProcess.running && !String(recoveryProcess.command[1]).startsWith("auto-")
     // Desk's Save session button, and search's. From search, Desk is closed, so the result is a toast.
     property bool recoveryToast: false
-    function saveSession(fromSearch) {
+    function startSaveSession(fromSearch) {
         const busy = recoveryProcess.running ? "Wait for automatic recovery to finish" : spacesWorking ? "Wait for the current action" : ""
         if (busy) { if (fromSearch) showToast(busy); else recoveryMessage = busy; return }
         recoveryToast = fromSearch
@@ -792,7 +792,7 @@ ShellRoot {
             else if (result.value === "overview") openSpacesOverview()
             else if (result.value === "notifications") { if (!notificationsOpen) toggleNotifications() }
             else if (result.value === "pin") spaceAction("pin")
-            else if (result.value === "save-session") saveSession(true)
+            else if (result.value === "save-session") startSaveSession(true)
         }
         else if (result.kind === "settings") {
             if (result.value === "quick_open") { if (!quickSettingsOpen) toggleQuickSettings() }
@@ -2042,7 +2042,7 @@ ShellRoot {
                         Text { text: "Save your documents, then save the current window list before restarting."; color: floeTheme.textMuted; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 14; font.family: floeTheme.interfaceFont }
                         Flow {
                             width: parent.width; spacing: 8
-                            FlowButton { id: saveSession; implicitHeight: 44; text: "Save session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: root.saveSession(false) }
+                            FlowButton { id: saveSession; implicitHeight: 44; text: "Save session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: root.startSaveSession(false) }
                             FlowButton { id: restoreSession; implicitHeight: 44; variant: "quiet"; text: "Restore session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: { if (recoveryProcess.running) { root.recoveryMessage = "Wait for automatic recovery to finish"; return } root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
                         }
                         Text { id: recoveryStatus; visible: root.recoveryMessage !== ""; text: root.recoveryMessage; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
