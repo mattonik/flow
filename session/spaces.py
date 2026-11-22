@@ -383,7 +383,7 @@ def rejoin_plan(group, workspace, windows, pins):
     # The user asks for a rejoin, so the columns after the Group may close up as its apps join one column: they
     # keep their order, and pinned ones go back in pin order at the next refresh, once no side-by-side Group or
     # unfinished layout change pauses that (and only this display's pins). Session recovery rebuilds a pinned
-    # Group the same way; dissolving, which nobody asks to move other columns, keeps its rule against it.
+    # Group the same way, and dissolving one moves the columns after it right, in the same order.
     return found, direction
 
 
