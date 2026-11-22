@@ -183,8 +183,10 @@ def main():
             spaces("group-layout", group_id)
             expect(["ab", "n"], "the recovered Group stacked again")
             spaces("unpin", group_pin)
+            expect(["n", "ab"], "the app pin first once the Group is unpinned")  # pinned spaces lead the strip
+            niri("action", "focus-window", "--id", window("a")["id"])
             spaces("dissolve-group", group_id)
-            expect(["a", "b", "n"], "the recovered Group dissolved")
+            expect(["n", "a", "b"], "the recovered Group dissolved")
             if any(g["id"] == group_id for g in groups()):
                 raise RuntimeError("The dissolved Group is still saved")
             steps.append("the recovered Group changed to side by side and back, and dissolved with its apps open")
@@ -197,7 +199,7 @@ def main():
             spaces("group-layout", side_id)
             for _ in range(2):
                 spaces("member-wider", str(window("a")["id"]))
-            expect(["a", "b", "n"], "the side-by-side Group")
+            expect(["n", "a", "b"], "the side-by-side Group")
             split = group(side_id).get("side_ratio")
             saved_ratios = [split, 1 - split] if isinstance(split, float) else None
             if not saved_ratios or saved_ratios[0] <= saved_ratios[1]:
@@ -207,7 +209,7 @@ def main():
             recovered = tool("flow-recovery", "restore")
             if recovered.get("message") != "Restored 3 windows.":
                 raise RuntimeError(f"Side-by-side recovery after the apps closed was incomplete: {recovered}")
-            expect(["a", "b", "n"], "the recovered side-by-side Group")
+            expect(["n", "a", "b"], "the recovered side-by-side Group")
             widths = [window(s)["layout"]["tile_size"][0] for s in "ab"]
             if any(abs(w / sum(widths) - r) > 0.05 for w, r in zip(widths, saved_ratios)):
                 raise RuntimeError(f"Recovery gave the Group {widths}, not the saved split {saved_ratios}")
@@ -218,9 +220,9 @@ def main():
                          "with every app closed: its columns, its split and its binding to the new windows")
             niri("action", "focus-window", "--id", window("a")["id"])
             spaces("group-layout", side_id)
-            expect(["ab", "n"], "the recovered side-by-side Group stacked")
+            expect(["n", "ab"], "the recovered side-by-side Group stacked")
             spaces("dissolve-group", side_id)
-            expect(["a", "b", "n"], "the recovered side-by-side Group dissolved")
+            expect(["n", "a", "b"], "the recovered side-by-side Group dissolved")
             steps.append("the recovered side-by-side Group stacked and dissolved with its apps open")
             result = {"result": "pass", "niri": niri("version").strip(), "steps": steps}
         finally:
