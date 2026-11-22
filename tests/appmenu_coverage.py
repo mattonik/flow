@@ -71,8 +71,9 @@ import uuid
 READER = Path(__file__).resolve().parents[1] / "session" / "appmenu.py"
 CAP_NODES, CAP_DEPTH = 2000, 12  # session/appmenu.py's walk limits
 PROC = Path("/proc")
-# Every process the run starts carries this in its environment, also one that detaches into a session of its
-# own (VSCodium's launcher does): that is how the run knows its own processes and windows.
+# Every process the run starts carries this in its environment. A process that detaches into a session of its
+# own and rewrites its environment's memory for its title (VSCodium's main process, as Chromium does) is known by
+# a temporary directory of the run in its command line instead; and every descendant of an own process is own.
 MARKER = "FLOW_APPMENU_COVERAGE_RUN"
 
 FIREFOX_PREFS = """user_pref("browser.shell.checkDefaultBrowser", false);
@@ -203,7 +204,7 @@ MULTI = {
 # A window-scoped command invoked through the chosen frame's own menu bar: its window's title changes.
 GROUND_TRUTH = {"kate": ("^File$", "^New$")}
 
-STATE = {"run": uuid.uuid4().hex, "a11y": None, "a11y_set": None, "procs": [], "sids": set(), "app_pids": set(), "windows": set(),
+STATE = {"run": uuid.uuid4().hex, "tmps": set(), "a11y": None, "a11y_set": None, "procs": [], "sids": set(), "app_pids": set(), "windows": set(),
          "workspace": None, "run_workspace": None, "roots": [], "bus": None, "bus_proc": None, "notes": []}
 
 
@@ -297,8 +298,40 @@ def bus_clients(address, proc_root=None):
     return processes_with([f"DBUS_SESSION_BUS_ADDRESS={address}", f"DBUS_STARTER_ADDRESS={address}"], proc_root)
 
 
+def cmdline_of(pid, proc_root=None):
+    try:
+        return ((proc_root or PROC) / str(pid) / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+    except OSError:
+        return ""
+
+
+def parent_of(pid, proc_root=None):
+    try:
+        stat = ((proc_root or PROC) / str(pid) / "stat").read_text()
+    except OSError:
+        return None
+    return int(stat.rsplit(")", 1)[1].split()[1])
+
+
+def marked(pid, proc_root=None):
+    """The run's marker in the environment, or one of its temporary directories in the command line."""
+    if f"{MARKER}={STATE['run']}".encode() in environ_of(pid, proc_root):
+        return True
+    cmdline = cmdline_of(pid, proc_root)
+    return any(tmp in cmdline for tmp in STATE["tmps"])
+
+
 def own_processes(proc_root=None):
-    return processes_with([f"{MARKER}={STATE['run']}"], proc_root)
+    """The run's processes: marked ones and all their descendants."""
+    pids = [int(e.name) for e in (proc_root or PROC).iterdir() if e.name.isdigit()]
+    parents = {pid: parent_of(pid, proc_root) for pid in pids}
+    own = {pid for pid in pids if marked(pid, proc_root)}
+    grown = True
+    while grown:
+        more = {pid for pid in pids if pid not in own and parents.get(pid) in own}
+        own |= more
+        grown = bool(more)
+    return sorted(own)
 
 
 def stop_own_processes():
@@ -348,7 +381,7 @@ def state_file():
 def save_state():
     proc = STATE["bus_proc"]
     state_file().write_text(json.dumps({
-        "run": STATE["run"], "a11y": STATE["a11y"], "a11y_set": STATE["a11y_set"], "sids": sorted(STATE["sids"]),
+        "run": STATE["run"], "tmps": sorted(STATE["tmps"]), "a11y": STATE["a11y"], "a11y_set": STATE["a11y_set"], "sids": sorted(STATE["sids"]),
         "windows": sorted(STATE["windows"]), "bus_pid": proc.pid if proc else None, "bus": STATE["bus"]}))
 
 
@@ -360,7 +393,7 @@ def cleanup():
     except FileNotFoundError:
         print("no state file: nothing to clean up")
         return
-    STATE["sids"], STATE["run"] = set(saved["sids"]), saved["run"]
+    STATE["sids"], STATE["run"], STATE["tmps"] = set(saved["sids"]), saved["run"], set(saved["tmps"])
     current = windows()
     for wid, w in current.items():  # Niri never reuses a window id, so saved ones are still the run's own
         if wid in saved["windows"] or owned(w.get("pid")):
@@ -468,8 +501,7 @@ def session_of(pid, proc_root=None):
 def owned(pid):
     """Whether ``pid`` is a process the run started (it carries the run's marker, or is in one of its sessions),
     or an app process its windows joined."""
-    return bool(pid) and (pid in STATE["app_pids"] or session_of(pid) in STATE["sids"]
-                          or f"{MARKER}={STATE['run']}".encode() in environ_of(pid))
+    return bool(pid) and (pid in STATE["app_pids"] or session_of(pid) in STATE["sids"] or marked(pid))
 
 
 def is_own_window(window, x11_app_id=None):
@@ -517,6 +549,8 @@ def focus(wid):
 def phase(app):
     """A temporary directory for one launch of ``app``, and its private session bus if it needs one."""
     with tempfile.TemporaryDirectory(prefix=f"flow-appmenu-{app['key']}-", ignore_cleanup_errors=True) as tmp:
+        STATE["tmps"].add(tmp)
+        save_state()
         try:
             if app.get("private_bus"):
                 start_private_bus(tmp)
