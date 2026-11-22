@@ -20,7 +20,8 @@ then for a side-by-side Group with a saved split:
 - with the pinned Group's apps apart and an unpinned app after them, Rejoin Group stacks them (the manual path),
   and so does recovery; Rejoin Group does too with a pinned app still after them, another display's, or this
   display's while a side-by-side Group pauses pin ordering, and once that Group is stacked or dissolved, the
-  pins go back in pin order (at once, or at the next refresh).
+  pins go back in pin order (at once, or at the next refresh); an unfinished layout change (simulated) pauses
+  pin ordering too, until it is finished.
 Real state files are checksummed.
 """
 
@@ -315,9 +316,31 @@ def main():
             expect(["ab", "n", "uv"], "the pins back in pin order once the second Group, stacked, ended the pause")
             pins_reached(spaces("refresh"))
             expect(["ab", "n", "uv"], "the pins still in pin order at the next refresh")
+            # An unfinished layout change pauses pin ordering too, with no Group side by side yet. Simulated: the
+            # stacked second Group's change to side by side is interrupted before its first Niri action, which leaves
+            # only its pending layout saved (as a crash or a refused action does).
+            saved = json.loads((state / "groups.json").read_text())
+            next(g for g in saved["groups"] if g["id"] == other_id)["pending_layout"] = "side-by-side"
+            (state / "groups.json").write_text(json.dumps(saved))
+            niri("action", "focus-window", "--id", window("a")["id"])
+            niri("action", "move-column-to-index", 3)
+            expect(["n", "uv", "ab"], "the pinned Group moved to the end, a layout change unfinished")
+            paused = spaces("refresh")  # synchronous: any reordering is done when it returns
+            if columns() != ["n", "uv", "ab"]:
+                raise RuntimeError(f"Pin ordering ran during an unfinished layout change: {columns()}")
+            entry = next((e for e in paused["incomplete_groups"] if e["id"] == other_id), None)
+            if not entry or not entry.get("can_resume_layout"):
+                raise RuntimeError(f"Finish layout change was not offered: {paused['incomplete_groups']}")
+            spaces("resume-group-layout", other_id)  # Finish layout change: side by side, so still paused
+            expect(["n", "u", "v", "ab"], "the layout change finished, the second Group side by side")
+            if columns() != ["n", "u", "v", "ab"] or group(other_id).get("pending_layout") \
+                    or group(other_id).get("layout") != "side-by-side":
+                raise RuntimeError(f"The finished layout change left a pending layout or moved pins: {group(other_id)}")
+            steps.append("with the pinned Group moved behind the stacked second Group while its change to side by side "
+                         "was unfinished (simulated), a refresh left the pins out of order and offered Finish layout "
+                         "change, which put the Group side by side with the pins still paused")
+
             # Dissolved while side by side: dissolving does not order pins, so they go back at the next refresh.
-            spaces("group-layout", other_id)
-            expect(["ab", "n", "u", "v"], "the second Group side by side again")
             pinned_last("before dissolving the second Group")
             spaces("dissolve-group", other_id)
             if columns() != ["n", "u", "v", "ab"]:
