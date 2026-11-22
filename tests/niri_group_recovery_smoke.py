@@ -19,7 +19,8 @@ then for a side-by-side Group with a saved split:
 - the recovered Group goes on working: its layout changes both ways, and it dissolves with its apps open;
 - with the pinned Group's apps apart and an unpinned app after them, Rejoin Group stacks them (the manual path),
   and so does recovery; Rejoin Group does too with a pinned app still after them, another display's, or this
-  display's while a side-by-side Group pauses pin ordering.
+  display's while a side-by-side Group pauses pin ordering, and once that Group is stacked or dissolved, the
+  pins go back in pin order (at once, or at the next refresh).
 Real state files are checksummed.
 """
 
@@ -285,14 +286,52 @@ def main():
                     or not any(sp.get("group_id") == other_id and sp.get("group_layout") == "side-by-side"
                                for sp in current["spaces"])):
                 raise RuntimeError(f"The rejoin left a Group or pin behind: {current['pins']}, {group(other_id)}")
-            niri("action", "focus-window", "--id", window("u")["id"])
-            spaces("group-layout", other_id)
-            spaces("dissolve-group", other_id)
-            niri("action", "close-window", "--id", window("v")["id"])
-            expect(["ab", "n", "u"], "the second Group dissolved and v closed")
             steps.append("with this display's pinned app after the pinned Group's apps, while a side-by-side Group "
                          "paused pin ordering, Rejoin Group was offered and stacked them; the side-by-side Group "
                          "stayed whole after them and the Group pin reached the Group")
+
+            # The pause ending by the unpinned side-by-side Group's own change (the pinned Group's ending is checked
+            # above, where the next refresh puts the app pin first). The pinned Group goes to the end, behind it.
+            def pinned_last(label):
+                niri("action", "focus-window", "--id", window("a")["id"])
+                niri("action", "move-column-to-index", 4)
+                expect(["n", "u", "v", "ab"], f"the pinned Group moved to the end, {label}")
+                paused = spaces("refresh")  # synchronous: any reordering is done when it returns
+                if columns() != ["n", "u", "v", "ab"]:
+                    raise RuntimeError(f"Pin ordering ran while paused, {label}: {columns()}")
+                if {group_pin, app_pin} - {p["id"] for p in paused["pins"] if p.get("available")}:
+                    raise RuntimeError(f"A pin is not this display's or not available while paused: {paused['pins']}")
+                niri("action", "focus-window", "--id", window("u")["id"])
+
+            def pins_reached(current):
+                pins = {p["id"]: p for p in current["pins"]}
+                if (set(pins[group_pin]["window_ids"]) != {window("a")["id"], window("b")["id"]}
+                        or pins[app_pin]["window_ids"] != [window("n")["id"]]):
+                    raise RuntimeError(f"A pin lost its windows after the pause: {current['pins']}")
+
+            # Stacked: a layout change ends with a refresh, so the pins go back at once.
+            pinned_last("before stacking the second Group")
+            spaces("group-layout", other_id)
+            expect(["ab", "n", "uv"], "the pins back in pin order once the second Group, stacked, ended the pause")
+            pins_reached(spaces("refresh"))
+            expect(["ab", "n", "uv"], "the pins still in pin order at the next refresh")
+            # Dissolved while side by side: dissolving does not order pins, so they go back at the next refresh.
+            spaces("group-layout", other_id)
+            expect(["ab", "n", "u", "v"], "the second Group side by side again")
+            pinned_last("before dissolving the second Group")
+            spaces("dissolve-group", other_id)
+            if columns() != ["n", "u", "v", "ab"]:
+                raise RuntimeError(f"Dissolving the side-by-side Group moved columns: {columns()}")
+            pins_reached(spaces("refresh"))
+            expect(["ab", "n", "u", "v"], "the pins back in pin order at the refresh after the dissolve")
+            if any(g["id"] == other_id for g in groups()):
+                raise RuntimeError("The dissolved second Group is still saved")
+            niri("action", "close-window", "--id", window("v")["id"])
+            expect(["ab", "n", "u"], "v closed")
+            steps.append("with the pinned Group moved behind the unpinned side-by-side Group, a refresh left the pins "
+                         "out of order while that Group paused pin ordering; stacking it put the pinned Group and the "
+                         "pinned app back first, in pin order, and so did the next refresh after dissolving it while "
+                         "side by side")
 
             # Recovery does the same: the pinned Group's apps apart with an app already open after them.
             tool("flow-recovery", "save")
