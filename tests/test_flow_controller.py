@@ -77,12 +77,22 @@ def window(ident, title, column):
             "layout": {"pos_in_scrolling_layout": [column, 1], "tile_size": [600.0, 800.0]}}
 
 
+def end(stream):
+    """Close a client's stream. Closing flushes what is still buffered, and that raises once the client has hung
+    up: the client is gone either way, and the socket is closed even when the flush fails."""
+    try:
+        stream.close()
+    except OSError:
+        pass
+
+
 class FakeNiri:
     """Niri's socket: queries answered from ``self.windows``; an event stream the test writes to."""
 
     def __init__(self, path):
         self.windows = [window(7, "one", 1), window(8, "two", 2)]
         self.streams = []
+        self.lock = threading.Lock()  # the streams are shared by each connection's thread and the test's
         self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.server.bind(path)
         self.server.listen()
@@ -99,36 +109,64 @@ class FakeNiri:
     def handle(self, connection):
         stream = connection.makefile("rwb")
         connection.close()  # the stream keeps the socket open until it is closed
-        for line in stream:
-            request = json.loads(line)
-            if request == "EventStream":
-                stream.write(b'{"Ok":"Handled"}\n')
+        try:
+            for line in stream:
+                request = json.loads(line)
+                if request == "EventStream":
+                    stream.write(b'{"Ok":"Handled"}\n')
+                    stream.flush()
+                    with self.lock:
+                        self.streams.append(stream)
+                    self.send({"WorkspacesChanged": {"workspaces": [WORKSPACE]}})
+                    self.send({"WindowsChanged": {"windows": self.windows}})
+                    return
+                answer = {"Workspaces": [WORKSPACE], "Windows": self.windows, "Outputs": OUTPUTS}[request]
+                stream.write(json.dumps({"Ok": {request: answer}}).encode() + b"\n")
                 stream.flush()
-                self.streams.append(stream)
-                self.send({"WorkspacesChanged": {"workspaces": [WORKSPACE]}})
-                self.send({"WindowsChanged": {"windows": self.windows}})
-                return
-            answer = {"Workspaces": [WORKSPACE], "Windows": self.windows, "Outputs": OUTPUTS}[request]
-            stream.write(json.dumps({"Ok": {request: answer}}).encode() + b"\n")
-            stream.flush()
-        stream.close()
+        except OSError:
+            pass  # the client hung up before it had its answer
+        end(stream)
 
     def send(self, event):
-        for stream in list(self.streams):
-            try:
-                stream.write(json.dumps(event).encode() + b"\n")
-                stream.flush()
-            except OSError:
-                self.streams.remove(stream)
+        with self.lock:  # so a stream is not ended between writing an event and flushing it
+            for stream in list(self.streams):
+                try:
+                    stream.write(json.dumps(event).encode() + b"\n")
+                    stream.flush()
+                except OSError:
+                    self.streams.remove(stream)
+                    end(stream)
 
     def end_streams(self):
-        for stream in self.streams:
-            stream.close()
-        self.streams = []
+        with self.lock:
+            for stream in self.streams:
+                end(stream)
+            self.streams = []
 
     def close(self):
         self.end_streams()
         self.server.close()
+
+
+class FakeNiriTest(unittest.TestCase):
+    def test_a_stream_whose_reader_has_gone_ends_quietly(self):
+        """The controller hangs up while an event is written to its stream but not yet flushed: ending the
+        stream flushes it, which fails, and the stream is closed all the same."""
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        path = str(Path(folder.name) / "niri.sock")
+        niri = FakeNiri(path)
+        reader = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        reader.connect(path)
+        reader.sendall(b'"EventStream"\n')
+        with reader.makefile("rb") as lines:
+            for _ in range(3):  # Handled, then the workspaces and the windows
+                lines.readline()
+        reader.close()
+        [stream] = niri.streams
+        stream.write(b"{}\n")  # written, not yet flushed
+        niri.close()
+        self.assertTrue(stream.closed)
 
 
 class ControllerTest(unittest.TestCase):

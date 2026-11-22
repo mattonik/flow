@@ -50,6 +50,24 @@ class SpacesTest(unittest.TestCase):
         command.assert_not_called()
 
     @patch.object(spaces, "command")
+    def test_reconcile_waits_for_an_unfinished_layout_change(self, command):
+        # A stacked Group's change to side by side, interrupted once its apps were split: only the pending layout
+        # says it is a Group mid-change, and the pinned app behind it stays there until the change is finished.
+        group = {"id": "g", "label": "Work", "members": ["a", "b"], "layout": "stack", "pending_layout": "side-by-side"}
+        windows = [window(1, "a", 1), window(2, "b", 2), window(3, "pinned", 3)]
+        pin = {"id": "p", "label": "Pinned", "app_id": "pinned", "window_id": 3}
+        spaces.run([pin], "refresh", None, {"id": 1, "active_window_id": 1}, windows, "session", [group])
+        command.assert_not_called()
+        # Finished side by side, the Group still pauses it; with neither, the pinned app goes first.
+        del group["pending_layout"]
+        group["layout"] = "side-by-side"
+        spaces.run([pin], "refresh", None, {"id": 1, "active_window_id": 1}, windows, "session", [group])
+        command.assert_not_called()
+        group["layout"] = "stack"
+        spaces.run([pin], "refresh", None, {"id": 1, "active_window_id": 1}, windows, "session", [group])
+        command.assert_any_call("action", "move-column-to-index", 1)
+
+    @patch.object(spaces, "command")
     def test_unpinned_group_remembers_its_last_focused_member(self, command):
         group = {"id": "g", "label": "Work", "members": ["a", "b"], "layout": "side-by-side"}
         windows = [window(1, "a", 1), window(2, "b", 2), window(3, "other", 3)]
