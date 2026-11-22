@@ -1297,6 +1297,12 @@ ShellRoot {
         // Read-only, for scripted checks of shell feedback.
         function toast(): string { return root.toast }
         function spaces_error(): string { return root.spacesError }
+        // What the shell last read from flow-spaces: pins with their windows, spaces with their Group layout, Layers.
+        function spaces_view(): string {
+            return JSON.stringify({ pins: root.pins.map(p => ({ id: p.id, kind: p.kind, window_ids: p.window_ids || [] })),
+                                    spaces: root.displaySpaces.map(s => ({ id: s.id, group_id: s.group_id || "", group_layout: s.group_layout || "" })),
+                                    layers: root.layers.map(l => l.id) })
+        }
         function desk_state(): string { return root.deskOpen ? "open" : "closed" }
         function overview_state(): string { return root.spacesOverviewOpen ? "open" : "closed" }
         // Back to work without choosing, as Escape does.
@@ -1456,6 +1462,8 @@ ShellRoot {
         function focus_window(id: string): void { root.spaceAction("focus-window", id) }
         // Open an installed app (desktop ID) as a Layer over the current space.
         function open_layer(id: string): void { root.spaceAction("open-layer", id) }
+        // Stack ↔ side by side, as the Group's layout button does.
+        function group_layout(id: string): void { root.spaceAction("group-layout", id) }
         // Super+number: pinned space on the main display, from any display.
         function focus(index: int): void {
             if (index > 0 && index <= 9) root.spaceAction("focus-number", "0:" + index)
