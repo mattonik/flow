@@ -3,23 +3,28 @@
 
 Run inside a Niri session from the Flow checkout with the installed shell stopped (``systemctl --user stop
 flow-shell``: it would react to the same events), ``FLOW_SHELL`` naming the development ``shell.qml`` and the
-``flow-spaces`` and ``flow-search`` to measure first on PATH, with ``foot``. The shell gets its own runtime
+``flow-spaces`` and ``flow-search`` to measure first on PATH, with ``foot`` and ``nautilus``. The shell gets its own runtime
 directory, state and configuration, with the opt-in app menu turned on. The work happens on the focused
 display's empty workspace, which must be free: three terminals open there, one of them shaped as a Layer
-(``flow-spaces make-layer``), and are closed afterwards.
+(``flow-spaces make-layer``), and later more terminals and a Nautilus window; all are closed afterwards.
 
 Every ``flow-spaces``, ``flow-search`` and ``flow-appmenu`` the shell starts goes through a recorder first on its
-PATH, which logs the time and arguments and runs the real one. ``flow-appmenu`` is a stand-in that answers
-``null``, as the real one does while the focused workspace has no window: the shell, holding no menu, must not
-keep asking. A refresh is one the shell's resident controller ran (ADR-0011; it reports them on its socket) or
+PATH, which logs the time and arguments and runs the real one (``flow-appmenu`` too, which must be one with
+``serve``). The shell runs on a private session bus of the smoke's own, with GSettings in a key file, so the
+app-menu reader switches on that bus's accessibility, never the session's. The terminals are on no accessibility
+bus, so for the reader they are apps without a menu; so is a Nautilus window the smoke opens on the shell's bus. A refresh is one the shell's resident controller ran
+(ADR-0011; it reports them on its socket) or
 a ``flow-spaces`` the shell started (before the controller, every refresh was one). Helper timings are medians of
 11 runs after 3 that warm the guest up. CPU time comes from /proc: the shell's own, and its helpers': those it
-has reaped, and its running controller. Surface timings are the shell's own (its ``open_took`` IPC call): from
+has reaped, its running controller and its app-menu reader. Surface timings are the shell's own (its ``open_took`` IPC call): from
 the request to the surface's content, so IPC does not count.
 
 Checked (the limits are the PRs': docs/performance.md):
-- idle 60 s: the shell and its helpers each under 1% of a core, at most 3 refreshes and at most 3 flow-appmenu
-  runs;
+- idle 60 s: the shell and its helpers each under 1% of a core, at most 3 refreshes and no flow-appmenu run;
+- the app menu: one ``flow-appmenu serve`` started for the whole run, so none per focus change; and a probe of an
+  app without a menu, as the shell times it from its request to the answer, under 50 ms: the median of the probes
+  while Nautilus (GTK 4, on the shell's accessibility bus, no menu bar) opens and focus then moves between it and a
+  terminal (on no accessibility bus) every 0.5 s for 5 s;
 - a title changing every 0.3 s for 10 s: at most 12 refreshes, the helpers under 10% of a core and the shell
   under 5%;
 - a title changing every 0.05 s for 7.5 s: the shell's label for that window never unchanged for 1.5 s, and the
@@ -48,22 +53,21 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import socket
 import statistics
 import subprocess
 import sys
 import time
 
-from isolated_state import IsolatedState
+from isolated_state import IsolatedState, started_with
 
 TICK = os.sysconf("SC_CLK_TCK")
+# Variables that name a bus directly: never passed to what runs on the smoke's private bus.
+BUS_VARIABLES = ("DBUS_SESSION_BUS_ADDRESS", "AT_SPI_BUS_ADDRESS", "DBUS_STARTER_ADDRESS", "DBUS_STARTER_BUS_TYPE")
 RECORDER = """#!{bash}
 printf '%s %s %s %s\\n' "$EPOCHREALTIME" "$PPID" "$$" "$*" >> {log}
 exec {real} "$@"
-"""
-APPMENU = """#!{bash}
-printf '%s %s %s %s\\n' "$EPOCHREALTIME" "$PPID" "$$" "$*" >> {log}
-echo null
 """
 # The storm terminal waits for "PERIOD COUNT" in its go file, then retitles itself COUNT times, PERIOD s apart.
 STORM = r"""d={dir}; while :; do
@@ -169,13 +173,13 @@ def timed(command, env, repeat=11, warm_up=3):
 
 def main():
     shell = os.environ.get("FLOW_SHELL")
-    if not shell or not shutil.which("foot"):
-        raise RuntimeError("Run with FLOW_SHELL set and foot on PATH")
+    if not shell or not shutil.which("foot") or not shutil.which("nautilus"):
+        raise RuntimeError("Run with FLOW_SHELL set and foot and nautilus on PATH")
     if subprocess.run(["systemctl", "--user", "is-active", "--quiet", "flow-shell"]).returncode == 0:
         raise RuntimeError("Stop the installed shell first: it reacts to the same events")
-    real = {name: shutil.which(name) for name in ("flow-spaces", "flow-search")}
-    if not all(real.values()):
-        raise RuntimeError("flow-spaces and flow-search must be on PATH")
+    real = {name: shutil.which(name) for name in ("flow-spaces", "flow-search", "flow-appmenu")}
+    if not all(real.values()) or not shutil.which("dbus-daemon"):
+        raise RuntimeError("flow-spaces, flow-search, flow-appmenu and dbus-daemon must be on PATH")
     bash = shutil.which("bash")
     idle_seconds = float(os.environ.get("FLOW_PERF_IDLE", 60))
     start_workspace = next(w for w in read("workspaces") if w["is_focused"])
@@ -183,7 +187,7 @@ def main():
     empty = max((w for w in read("workspaces") if w["output"] == output), key=lambda w: w["idx"])
     if any(w["workspace_id"] == empty["id"] for w in read("windows")):
         raise RuntimeError("The focused display has no empty workspace")
-    results, terminals, shell_process, sock = [], [], None, None
+    results, terminals, shell_process, sock, bus = [], [], None, None, None
 
     def check(name, value, limit, ok, unit="", samples=None):
         results.append(ok)
@@ -198,17 +202,32 @@ def main():
             folder.mkdir()
         (config / "flow-settings.ini").write_text("[General]\nappMenuEnabled=true\n")
         logs = {name: tmp / f"{name}.log" for name in ("flow-spaces", "flow-search", "flow-appmenu")}
-        for name in ("flow-spaces", "flow-search"):
+        for name in ("flow-spaces", "flow-search", "flow-appmenu"):
             (bin_dir / name).write_text(RECORDER.format(bash=bash, log=logs[name], real=real[name]))
-        (bin_dir / "flow-appmenu").write_text(APPMENU.format(bash=bash, log=logs["flow-appmenu"]))
         for path in bin_dir.iterdir():
             path.chmod(0o755)
         wayland = os.environ.get("WAYLAND_DISPLAY", "wayland-1")
         real_runtime = Path(os.environ["XDG_RUNTIME_DIR"])
-        env = dict(os.environ, XDG_STATE_HOME=str(tmp), XDG_CONFIG_HOME=str(config), XDG_RUNTIME_DIR=str(runtime),
+        # The shell's own session bus, whose accessibility bus and switch (in a GSettings key file) the app-menu
+        # reader may switch on: never the session's, which at-spi persists in the user's dconf.
+        bus_env = {k: v for k, v in os.environ.items() if k not in BUS_VARIABLES}
+        bus_env.update(XDG_RUNTIME_DIR=str(runtime), XDG_CONFIG_HOME=str(config), GSETTINGS_BACKEND="keyfile",
+                       FLOW_PERF_BUS=str(tmp))
+        bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1"], env=bus_env,
+                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        address = bus.stdout.readline().strip()
+        if not address:
+            raise RuntimeError("The private session bus did not start")
+        env = dict(bus_env, XDG_STATE_HOME=str(tmp), DBUS_SESSION_BUS_ADDRESS=address,
                    WAYLAND_DISPLAY=wayland if wayland.startswith("/") else str(real_runtime / wayland),
                    PATH=f"{bin_dir}:{os.environ['PATH']}")
         app_env = dict(os.environ)  # terminals open in the real session, outside Flow's state
+        # Nautilus on the shell's bus, so on its accessibility bus, in folders of its own; a session started before
+        # at-spi2-core was enabled would switch GTK's accessibility off through these two.
+        files_env = {k: v for k, v in env.items() if k not in ("NO_AT_BRIDGE", "GTK_A11Y", "GI_TYPELIB_PATH", "PYTHONPATH")}
+        for name in ("HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"):
+            (tmp / name.lower()).mkdir()
+            files_env[name] = str(tmp / name.lower())
 
         def ipc(*call):
             start = time.perf_counter()
@@ -223,13 +242,31 @@ def main():
             started = [stamp for stamp, _, _ in runs(logs["flow-spaces"], start, end, {pid})]
             return sorted(started + [stamp for stamp in stats["recent"] if start <= stamp <= end])
 
+        def reader():
+            """The shell's running app-menu reader (flow-appmenu serve), or None."""
+            for child in Path(f"/proc/{pid}/task/{pid}/children").read_text().split():
+                try:
+                    if b"appmenu" in Path(f"/proc/{child}/cmdline").read_bytes():
+                        return int(child)
+                except OSError:
+                    pass
+            return None
+
         def helpers_cpu():
-            """CPU seconds of the shell's helpers: those it reaped, and its running controller."""
+            """CPU seconds of the shell's helpers: those it reaped, its running controller and app-menu reader."""
             total = cpu(pid)[1]
             stats = controller_stats(runtime, tmp)
             if stats:
                 total += sum(cpu(stats["pid"]))
+            if reader():
+                total += sum(cpu(reader()))
             return total
+
+        def app_menu():
+            try:
+                return json.loads(ipc("app_menu")[0])
+            except ValueError:
+                return {}  # a shell without the call: main before the resident reader
 
         def quiet(seconds=1.5, timeout=20):
             """Wait until nothing has refreshed Flow's state for this long."""
@@ -254,6 +291,7 @@ def main():
             layer = terminal("perf layer", "sh", "-c", "sleep 3600")
             subprocess.run([real["flow-spaces"], "make-layer", str(layer)], env=env, check=True,
                            stdout=subprocess.DEVNULL, timeout=30)
+            shell_started = time.time()
             shell_process = subprocess.Popen(["quickshell", "-p", shell], env=env, stdin=subprocess.DEVNULL,
                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             pid = shell_process.pid
@@ -287,7 +325,7 @@ def main():
             spaces_runs = refreshes(start, end)
             check("idle: refreshes", len(spaces_runs), "<= 3", len(spaces_runs) <= 3)
             menu_runs = runs(logs["flow-appmenu"], start, end)
-            check("idle: flow-appmenu runs", len(menu_runs), "<= 3", len(menu_runs) <= 3)
+            check("idle: flow-appmenu runs", len(menu_runs), "0", len(menu_runs) == 0)
 
             # Helpers, run here as the shell runs them.
             for action in ("refresh", "observe"):
@@ -423,6 +461,30 @@ def main():
                 mean = stats["refresh_ms"] / stats["refreshes"]
                 check("controller refresh mean", mean, "< 10", mean < 10, "ms")
 
+            # The app menu: its probes, while focus moves slowly enough for each to settle, between a terminal (on no
+            # accessibility bus) and Nautilus (GTK 4: on the shell's accessibility bus, with no menu bar), from
+            # before Nautilus opens, so its first probe, which chooses its frame and looks for a menu bar, counts.
+            time.sleep(1)
+            before = app_menu().get("probes", 0)
+            files = subprocess.Popen(["nautilus", "--new-window", str(tmp)], env=files_env, stdin=subprocess.DEVNULL,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            terminals.append(files)
+            browser = wait_for(lambda: next((w["id"] for w in read("windows") if w.get("pid") == files.pid), None),
+                               "Nautilus", timeout=30)
+            time.sleep(2)
+            tiles[:] = [tile_a, browser]
+            flip(0.5, 5)
+            time.sleep(0.6)
+            state = app_menu()
+            fresh = min(state.get("probes", 0) - before, 20)
+            probes = state.get("probe_ms", [])[-fresh:] if fresh > 0 else []
+            took = statistics.median(probes) if probes else -1
+            check("app menu: probe of an app without a menu (a terminal, Nautilus), median", took, "< 50",
+                  0 <= took < 50, "ms", probes)
+            started = runs(logs["flow-appmenu"], shell_started, time.time())
+            check("app menu: flow-appmenu processes started", len(started), "1 (serve)",
+                  [args for _, _, args in started] == ["serve"])
+
             # An activity without a known amount (ADR-0010): the shell reads what the Platform API publishes.
             def publish(activities):
                 staged = runtime / "flow-activities.json.tmp"
@@ -496,6 +558,12 @@ def main():
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     process.kill()
+            if bus:
+                bus.terminate()
+                bus.wait(timeout=10)
+                time.sleep(0.5)
+                for leftover in started_with(f"FLOW_PERF_BUS={tmp}"):  # its accessibility bus
+                    os.kill(leftover, signal.SIGTERM)
             niri("action", "focus-workspace", start_workspace["idx"])
     passed = all(results)
     print(json.dumps({"result": "pass" if passed else "fail"}))
