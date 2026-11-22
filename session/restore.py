@@ -79,17 +79,33 @@ def groups_unchanged_or_focused(before, after, workspace, windows):
 
 
 def saved_order_matches(entries, restored, workspace, windows):
+    """Whether every saved window is back in its saved column and row.
+
+    Windows that are not in the saved session, such as apps opened at login, are spaces of their own: a column
+    holding only such windows is left out, and the saved windows' columns count without it. A column that mixes
+    them with saved windows is not the saved one."""
     current = [w for w in windows if w.get("workspace_id") == workspace["id"] and not w.get("is_floating")]
-    if len(restored) != len(entries) or {w["id"] for _, w in restored} != {w["id"] for w in current}:
+    saved_ids = {w["id"] for _, w in restored}
+    if len(restored) != len(entries) or not saved_ids <= {w["id"] for w in current}:
         return False
+    placed = [w for w in current if w.get("layout", {}).get("pos_in_scrolling_layout")]
+    if len(placed) != len(current):
+        return False  # a tiled window without a place: nothing can be confirmed
+    kept = sorted({w["layout"]["pos_in_scrolling_layout"][0] for w in placed if w["id"] in saved_ids})
+    if any(w["id"] not in saved_ids and w["layout"]["pos_in_scrolling_layout"][0] in kept for w in placed):
+        return False
+    renumbered = {column: index for index, column in enumerate(kept, 1)}
     rows = Counter()
     for entry, saved_window in restored:
         column = entry.get("column")
         if not isinstance(column, int) or isinstance(column, bool) or column < 1:
             return False
         rows[column] += 1
-        live = next((w for w in current if w["id"] == saved_window["id"]), None)
-        if not live or live.get("is_floating") or live.get("layout", {}).get("pos_in_scrolling_layout") != [column, rows[column]]:
+        live = next((w for w in placed if w["id"] == saved_window["id"]), None)
+        if not live:
+            return False
+        live_column, live_row = live["layout"]["pos_in_scrolling_layout"]
+        if [renumbered[live_column], live_row] != [column, rows[column]]:
             return False
     return True
 
@@ -404,7 +420,10 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                     candidate = {"group_id": group["id"], "members": group["members"], "session": None}
                     pair = spaces.group_windows(candidate, current, live, session or "", registered)
                     if not pair:
-                        report.append("Side-by-side Group is unavailable or ambiguous; check manually")
+                        # Every saved window is in its saved order, so the apps are there: another window that is
+                        # not in the session sits between them.
+                        report.append("Side-by-side Group order needs manual recovery: another window is between "
+                                      "its apps; choose Repair Group layout")
                         continue
                     ids = [w["id"] for w in pair]
                     active = current.get("active_window_id")
@@ -442,7 +461,9 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 action("action", "focus-window", "--id", window["id"])
                 current, live = checked_snapshot()
                 if any(w.get("workspace_id") == workspace_id and w.get("app_id") in pinned for w in live):
-                    report.append("Pinned spaces keep their positions; session order needs manual recovery")
+                    # A pinned app appeared meanwhile (one opened at login, say): judged as at the top of the loop.
+                    if not saved_order_matches(entries, restored, current, live):
+                        report.append("Pinned spaces keep their positions; session order needs manual recovery")
                     break
                 action("action", "move-column-to-index", index)
         else:
