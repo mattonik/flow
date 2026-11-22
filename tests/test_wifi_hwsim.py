@@ -2,11 +2,12 @@
 radios are mac80211_hwsim's."""
 
 import os
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
 
-from niri_wifi_hwsim_smoke import hwsim_radios, nm_fields
+from niri_wifi_hwsim_smoke import descends_from, hwsim_radios, nm_fields
 
 
 class NmFieldsTest(unittest.TestCase):
@@ -52,6 +53,22 @@ class HwsimRadiosTest(unittest.TestCase):
 
     def test_no_wireless_at_all(self):
         self.assertEqual(hwsim_radios(self.sys / "nowhere"), {})
+
+
+class DescendsFromTest(unittest.TestCase):
+    @unittest.skipUnless(Path("/proc/self/stat").exists(), "needs Linux's /proc")
+    def test_own_process_and_child(self):
+        child = subprocess.Popen(["sleep", "5"])
+        try:
+            self.assertTrue(descends_from(os.getpid(), os.getpid()))
+            self.assertTrue(descends_from(child.pid, os.getpid()))
+            self.assertFalse(descends_from(os.getppid(), os.getpid()))
+        finally:
+            child.kill()
+            child.wait()
+
+    def test_a_process_that_is_gone(self):
+        self.assertFalse(descends_from(2 ** 22 + 7, os.getpid()))
 
 
 if __name__ == "__main__":

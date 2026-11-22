@@ -14,7 +14,7 @@ The recorded test environment is an Apple Silicon Mac running UTM 5.0.8, QEMU AR
 | F-006 Layer dismissal | Partial | A Layer is a compact floating window over the current space; floating windows are no longer counted as spaces (2026-11-20). Search can open any app as a Layer, and the switcher can make the focused standalone app one. In the guest, a Layer was opened over a pinned, resized side-by-side Group and closed again. The Group, its pin, every column and width, and the Flow state were unchanged, and focus returned to the same Group app. Portrait outputs get a bottom sheet, open Layers reshape when the output rotates, and a Layer can join the Group beneath it. Touch is not implemented. |
 | F-007 Desk/Overview | Partial | In the ARM64 guest, opening and closing Desk and Niri Overview retained the same four window IDs, workspace, scrolling positions and focused window. At a simulated 320×512 logical portrait size, Group switcher keyboard navigation and pin editing remained visible; the original display and window state were restored. Gesture, physical touch, multi-display and visual-transition acceptance remain open. |
 | F-008 Search | Partial | Search covers recent local files within the user’s home folder, Flow settings, quick settings, installed applications, open windows and saved pins, including closed apps. File indexing and commands are missing. The settings shell actions were checked through IPC. Until 2026-11-21 the installed search listed nothing and opened nothing (see *Search on the installed system*); since then an app was found and opened from it on the installed configuration. A recent-file result from an isolated history was selected in the guest and opened in Kate; naturally populated history and the settings results still need end-to-end validation. |
-| F-009 Island/system | Partial | Island, quick settings, lock, a temporary notification inbox and notification banners exist. Apps can show Activities with progress in the island through the Platform API (ADR-0010, 2026-11-21); they are labelled with their owner and end with the app's connection. Quick Settings opens GNOME's Wi-Fi panel and the connection-profile editor, and controls one unambiguous MPRIS player. The guest showed the no-adapter Wi-Fi state; real scanning/authentication, durable notification history and independent availability across all contexts remain unverified. |
+| F-009 Island/system | Partial | Island, quick settings, lock, a temporary notification inbox and notification banners exist. Apps can show Activities with progress in the island through the Platform API (ADR-0010, 2026-11-21); they are labelled with their owner and end with the app's connection. Quick Settings opens GNOME's Wi-Fi panel and the connection-profile editor, and controls one unambiguous MPRIS player. The guest showed the no-adapter Wi-Fi state; since 2026-11-22 a simulated WPA2 network (`niri_wifi_hwsim_smoke.py`, see *Simulated Wi-Fi*) was found, joined with the right passphrase and refused with a wrong one, and the Network row opened GNOME's panel listing it. Real Wi-Fi hardware, Bluetooth (Flow has no control for it), durable notification history and independent availability across all contexts remain unverified. |
 | F-010 Real accounts | Open | Two-user and guest isolation and switching have not been verified. |
 | F-011 Display hotplug | Partial | In the guest, a second virtual output was disconnected and reconnected through its DRM connector (2026-11-20). Its pins stayed with it and nothing on the other display was reordered, then the pins came back in order. A pinned three-app Group and a single app were moved between the two outputs as one destination each. Physical monitors, docks, connector changes and serial-number identity are unit-tested only. |
 | F-012 Portal correctness | Partial | The guest's portal broker is active and owns its session D-Bus name. A disposable unsandboxed chooser request returned the selected test-file URI, and a second request returned a cancel response. Sandboxed file access, saving, screenshots, screenshare, clipboard and drag/drop remain unverified. |
@@ -685,6 +685,44 @@ Fifteen mutations of the shell were checked against these steps in the guest, af
 The fifteenth passes: `onClicked` also acting on the release after a swipe. The indicator's window hides once Overview opens, so the release never reaches it. In the first run, the click and × mutants failed for the wrong reason: the run before left the pointer on the banner, which held their first banner. Parking fixed that; rerun after it, they fail at their own steps. A first version of the resuming-count mutation shortened the count whenever the banner hid, and so failed an earlier step; the one counted above resumes only after the pointer held the banner.
 
 Not covered: a physical mouse or touchpad (a touchpad's smooth scrolling, and libinput's acceleration, never reach a virtual pointer), touch, the pointer on a second display, hover and pressed states of other controls, and the cursor's shape. Running these tests needs `flow-pointer` on PATH; the guest's machine configuration installs it once Flow's `main` has it.
+
+### Simulated Wi-Fi (2026-11-22)
+
+Flow's part of Wi-Fi is Quick settings' *Network* row, which shows NetworkManager's connectivity and opens
+`flow-wifi-settings`, and that wrapper, which starts GNOME's Wi-Fi panel. Networks, passwords and
+connections are GNOME's panel, nm-applet (started by its XDG autostart entry, it is the session's secret
+agent) and NetworkManager. `niri_wifi_hwsim_smoke.py` (run by `run_wifi_hwsim_smoke.sh`, see
+[hardware testing](hardware-testing.md)) tests that path in the guest with no Wi-Fi hardware: the kernel's
+`mac80211_hwsim` makes two radios, one runs a WPA2 access point (hostapd) in a network namespace of its own,
+and NetworkManager uses the other. With a development shell on a private bus:
+- NetworkManager found the test network as WPA2 on the simulated radio.
+- The Network row showed *Connected* for NetworkManager's `full` connectivity. The guest's wired
+  connection decides that, and the test leaves it alone, so the row is checked against NetworkManager but
+  never changes during the test.
+- A click on the row (the pointer) closed Quick settings and opened GNOME's Settings at its Wi-Fi panel,
+  which listed the network under the simulated radio as a WPA2 network (read over AT-SPI).
+- A profile with the right passphrase connected: the access point reported the station, a ping reached the
+  access point over the radio, the default route stayed the wired one, and GNOME's panel showed the network
+  as connected. Disconnecting ended it on both sides.
+- A profile with a wrong passphrase was refused: the access point reported a passphrase mismatch, and the
+  radio stopped at *need authentication*. No prompt opened in the session.
+
+The test runs this checkout's shell and this checkout's `flow-wifi-settings`, built from the module check.
+Three mutations of Flow's part fail it, each at its own step: the row opening the connection editor
+instead (GNOME's Settings never opens), the wrapper opening GNOME's Network panel instead of Wi-Fi (the
+Wi-Fi panel never lists the network), and the row showing *Online* for full connectivity. The radios,
+namespace, hostapd and profiles are removed after every run, passed or failed, and the real profiles,
+devices and default route are compared before and after. A new wireless interface makes NixOS restart
+`wpa_supplicant`, so the test refuses to run beside another Wi-Fi device.
+
+Seen in its screenshots (`docs/screenshots/2026-11-22-wifi-hwsim`), not fixed here: GNOME's panel shows a
+broken-image placeholder where its signal-strength icons belong, and the island covers the top of the
+panel's title.
+
+Not covered: real Wi-Fi hardware and drivers, roaming, enterprise (802.1X) networks, captive portals, and
+connecting from GNOME's panel itself (the panel's password dialog and nm-applet's re-prompt after a wrong
+password). The test connects through `nmcli`. A USB dongle passed through from the Mac covers the first;
+see [hardware testing](hardware-testing.md).
 
 ## What needs bare metal (2026-11-22)
 

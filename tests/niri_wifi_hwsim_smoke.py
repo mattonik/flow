@@ -119,6 +119,19 @@ def read(kind):
     return json.loads(niri("-j", kind))
 
 
+def descends_from(pid, ancestor):
+    """Whether process pid is ancestor or runs under it. The test is a subreaper, so what the shell starts
+    and leaves (execDetached) runs under the test."""
+    while pid > 1:
+        if pid == ancestor:
+            return True
+        try:
+            pid = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            return False
+    return False
+
+
 def real_network():
     """What the test must not change: every profile, every device's state and connection, and the default
     routes. Taken before the radios exist and after they are gone."""
@@ -412,9 +425,13 @@ def check(shell, bus, lab, steps, shots):
             steps.append(f"A wrong passphrase was refused: the access point reported a passphrase mismatch and "
                          f"{lab.client} never connected ({state})")
         finally:
-            if settings_window:
-                subprocess.run(["niri", "msg", "action", "close-window", "--id", str(settings_window["id"])],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+            # Every window the test's processes opened: GNOME's Settings, or whatever a broken row opened instead.
+            try:
+                for w in read("windows"):
+                    if w.get("pid") and descends_from(w["pid"], os.getpid()):
+                        niri("action", "close-window", "--id", w["id"])
+            except (OSError, ValueError, subprocess.SubprocessError):
+                pass
             if shell_process and shell_process.poll() is None:
                 shell_process.terminate()
                 try:
