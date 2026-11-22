@@ -9,8 +9,8 @@ be unchanged, and Super+number must still reach the same pin. Real state files a
 
 Then the shell restarts during Flow actions it started: a Group layout change (twice), a pin and a Layer
 opening. Each action waits on Flow's session lock, held here, while its shell is stopped (SIGTERM or
-SIGKILL) and a new one starts; the lock is then released. The action must still finish, its state must be
-whole (no Group left mid-change), and the new shell must show the result.
+SIGKILL); the lock is then released, so the action runs, with its output pipes closed, while a new shell
+starts. It must finish, its state must be whole (no Group left mid-change), and the new shell must show it.
 The isolated state folder must be gone afterwards: a stopped shell's helpers can outlive it and write there.
 """
 
@@ -44,6 +44,14 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
 
 
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
 def wait_for(test, label, timeout=15):
     end = time.monotonic() + timeout
     while time.monotonic() < end:
@@ -67,7 +75,7 @@ def main():
     token = uuid.uuid4().hex[:8]
     apps = {s: f"flow-restart-{token}-{s}" for s in "pabu"}
     layer_app = f"flow-restart-{token}-layer"
-    processes, steps, result, shell_process = [], [], None, None
+    processes, steps, result, shell_process, orphan = [], [], None, None, None
     with IsolatedState("flow-shell-restart-") as tmp:
         data = Path(tmp) / "data"
         (data / "applications").mkdir(parents=True)
@@ -169,13 +177,6 @@ def main():
                                        text=True, stdout=subprocess.PIPE).stdout.split()
                 return [int(pid) for pid in found]
 
-            def alive(pid):
-                try:
-                    os.kill(pid, 0)
-                    return True
-                except ProcessLookupError:
-                    return False
-
             def view():
                 return json.loads(ipc("call", "desk", "spaces_view"))
 
@@ -218,17 +219,35 @@ def main():
                     else:
                         raise RuntimeError("The shell's refreshes kept running")
                     ipc("call", "desk", *call)
-                    pid = wait_for(lambda: actions(f"{action}( |$)"), f"the shell's flow-spaces {action}", timeout=10)[0]
+                    while not (mine := actions(f"{action}( |$)")):
+                        # A refresh that began first waits on the lock, the action queued behind it in the shell.
+                        # Let it run, and take the lock back as it exits, before the shell starts the action.
+                        first = wait_for(lambda: actions(""), lambda: f"the shell's flow-spaces {action}", timeout=10)
+                        fcntl.flock(lock, fcntl.LOCK_UN)
+                        while any(alive(pid) for pid in first):
+                            time.sleep(0.002)
+                        fcntl.flock(lock, fcntl.LOCK_EX)
+                        if not actions(""):
+                            time.sleep(1)
+                            if not actions(""):
+                                raise RuntimeError(f"flow-spaces {action} ran before the shell could be stopped; run again")
+                    orphan = mine[0]
                     shell_process.send_signal(sig)
                     shell_process.wait(timeout=10)
-                    if not alive(pid):
+                    if not alive(orphan):
                         raise RuntimeError(f"Stopping the shell ended its flow-spaces {action}")
-                    shell_process = start()
-                wait_for(lambda: not alive(pid), f"flow-spaces {action} to finish", timeout=60)
+                # The lock is released: the action runs while the new shell starts, its startup refresh and
+                # automatic layout and recovery included.
+                shell_process = start()
+                wait_for(lambda: not alive(orphan), f"flow-spaces {action} to finish", timeout=60)
+                orphan = None
                 wait_for(finished, f"{action} to be whole and shown by the new shell", timeout=20)
-                steps.append(f"{action}, its shell stopped by {sig.name}: the action finished, whole, and the new shell showed it")
+                steps.append(f"{action}, its shell stopped by {sig.name}: the action ran as a new shell started, "
+                             "finished whole, and the new shell showed it")
             result = {"result": "pass", "niri": niri("version").strip(), "steps": steps}
         finally:
+            if orphan and alive(orphan):
+                os.kill(orphan, signal.SIGKILL)
             if shell_process and shell_process.poll() is None:
                 shell_process.terminate()
                 try:
