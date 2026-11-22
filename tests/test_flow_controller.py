@@ -1,5 +1,6 @@
 """The resident controller: when it refreshes, what it pushes, and that it never waits on an action."""
 import fcntl
+import io
 import json
 import os
 from pathlib import Path
@@ -402,6 +403,31 @@ class ControllerTest(unittest.TestCase):
             self.assertIsNotNone(server)
             server.close()
             lock.close()
+
+
+class MainTest(unittest.TestCase):
+    def test_it_says_listening_once_its_socket_takes_connections(self):
+        """The shell connects when it reads the line, instead of at its next try a quarter of a second on."""
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        tmp = Path(folder.name)
+        (tmp / "runtime").mkdir()
+        said = []
+
+        class Serving:
+            def __init__(self, *args):
+                pass
+
+            def serve(self):
+                said.append(output.getvalue())
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as shell:
+                    shell.connect(str(fc.socket_path()))  # as the shell would on reading it
+
+        with patch.dict(os.environ, {"NIRI_SOCKET": str(tmp / "niri.sock"), "XDG_RUNTIME_DIR": str(tmp / "runtime"),
+                                     "XDG_STATE_HOME": str(tmp / "state-home")}), \
+                patch.object(fc, "Controller", Serving), patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(fc.main(), 0)
+        self.assertEqual(said, ["listening\n"])
 
 
 class NiriStateFocusTimestampTest(unittest.TestCase):

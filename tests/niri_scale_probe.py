@@ -8,7 +8,7 @@ machines can be put side by side.
 Run inside a Niri session from the Flow checkout, as tests/niri_performance_smoke.py is run: the installed shell
 stopped, ``FLOW_SHELL`` naming the development ``shell.qml``, ``flow-spaces`` and ``foot`` on PATH, and an empty
 workspace on the focused display. The shell gets its own runtime directory, state and configuration. Terminals
-open on the empty workspace as spaces, and are closed afterwards.
+open on the empty workspace as spaces, each showing a screenful of text, and are closed afterwards.
 
 The shell runs with Qt's render-loop timing on (``qt.scenegraph.time.renderloop``): for every frame of every
 shell window Qt logs how long the frame took to sync, render and swap, and the time since the window's previous
@@ -25,8 +25,8 @@ Measured, for each count of spaces in ``FLOW_PROBE_SPACES`` (default ``5 24``):
   drew in the first 0.8 s of each opening and each closing, across all its windows: how many windows it built
   afresh, the frames, the render threads' work (sync and render, not the swap), the longest frame, and for the window that drew the most,
   the longest gap between two frames and how many gaps were longer than one and a half refresh periods;
-- the snapshot Overview takes before it shows, as the shell takes it (``grim`` scaled to 640 px wide), at the
-  display's mode and scale.
+- the snapshot Overview takes before it shows, as the shell takes it (``grim`` at the display's resolution), and
+  scaled by ``grim`` to 640 px wide as the shell took it before, with the size of each file.
 
 Checked against the budgets of docs/performance.md where there is one (Overview under 200 ms, Desk under 150 ms,
 search under 300 ms, at most two frames at idle); the rest is reported. Prints one JSON line per measurement and a final
@@ -185,7 +185,9 @@ def main():
                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10).stdout.strip()
 
         def terminal(title):
-            process = subprocess.Popen(["foot", "-T", title, "sh", "-c", "sleep 3600"], env=app_env,
+            # A screenful of text, as work leaves it: what a snapshot costs to encode depends on it.
+            process = subprocess.Popen(["foot", "-T", title, "sh", "-c", "ls -la /etc /usr/bin /nix/store 2>/dev/null | head -400; sleep 3600"],
+                                       env=app_env,
                                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             terminals.append(process)
             return wait_for(lambda: next((w["id"] for w in read("windows") if w.get("pid") == process.pid), None),
@@ -332,16 +334,18 @@ def main():
                 surface("Desk with a fresh answer", "desk", ["desk_open"], "desk_state", ["leave"], 150)
                 surface("search rows shown", "search", ["search"], "search_state", ["search"], 300)
 
-            # Overview's snapshot, as the shell takes it.
-            scale = min(1, 640 / max(1, logical["width"]))
+            # Overview's snapshot, as the shell takes it (at the display's resolution), and as it took it before
+            # 2026-11-22 (scaled by grim to 640 px wide).
             shot = tmp / "shot.jpg"
-            took_ms = []
-            for _ in range(8):
-                start = time.perf_counter()
-                subprocess.run(["grim", "-o", output_name, "-s", str(scale), "-t", "jpeg", "-q", "72", str(shot)],
-                               check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                took_ms.append(round((time.perf_counter() - start) * 1000))
-            report("Overview's snapshot (grim)", statistics.median(took_ms[2:]), "ms", samples=took_ms[2:])
+            for name, scaling in (("Overview's snapshot (grim)", []),
+                                  ("a snapshot scaled by grim to 640 px", ["-s", str(min(1, 640 / max(1, logical["width"])))])):
+                took_ms = []
+                for _ in range(8):
+                    start = time.perf_counter()
+                    subprocess.run(["grim", "-o", output_name, *scaling, "-t", "jpeg", "-q", "72", str(shot)],
+                                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    took_ms.append(round((time.perf_counter() - start) * 1000))
+                report(name, statistics.median(took_ms[2:]), "ms", samples=took_ms[2:], bytes=shot.stat().st_size)
         finally:
             if shell_process:
                 stop(shell_process)

@@ -29,8 +29,9 @@ Checked (the limits are the PRs': docs/performance.md):
 - ``flow-spaces refresh`` and ``observe`` medians under 30 ms (actions, and the Platform API without a shell,
   still run it); the controller's own refreshes under 10 ms on average; ``flow-search --json`` under 200 ms,
   and it asks flow-spaces only to observe;
-- Overview's first frame with every card (after the snapshot of the active space it takes first) under 200 ms, Desk showing a fresh
-  refresh under 150 ms and search showing its rows under 300 ms (medians of 5);
+- Overview's first frame with every card, each one on screen showing its snapshot (after the snapshot of the
+  active space it takes first), under 200 ms, Desk showing a fresh refresh under 150 ms and search showing its
+  rows under 300 ms (medians of 5);
 - focus moving every 0.25 s across five spaces: the shell under 2.5% of a core (hidden surfaces rebuild nothing);
 - an activity without a known amount: the shell under 5% of a core while the island or Overview's island shows
   it, its dot breathing on a clock stepping every 80 ms, and on Desk its bar sweeping at 16 ms; the clock stops
