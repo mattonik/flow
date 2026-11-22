@@ -135,6 +135,7 @@ class GroupRegistryTest(unittest.TestCase):
                      patch.object(spaces, "snapshot", side_effect=lambda: (ws, windows)), \
                      patch.object(spaces, "session_id", return_value="session"), patch.object(spaces, "command", side_effect=action), \
                      patch.object(spaces, "display_state", return_value=OUTPUTS), \
+                     patch.object(spaces, "full_state", side_effect=lambda: (*spaces.snapshot(), *spaces.display_state())), \
                      contextlib.redirect_stdout(io.StringIO()) as output:
                     spaces.main()
                 return json.loads(output.getvalue())
@@ -315,6 +316,7 @@ class GroupRegistryTest(unittest.TestCase):
                  patch.object(spaces, "snapshot", side_effect=lambda: (ws, pair)), \
                  patch.object(spaces, "session_id", return_value="session"), patch.object(spaces, "command", side_effect=separate), \
                  patch.object(spaces, "display_state", return_value=OUTPUTS), \
+                 patch.object(spaces, "full_state", side_effect=lambda: (*spaces.snapshot(), *spaces.display_state())), \
                  patch.object(groups.os, "replace", side_effect=OSError("disk full")), \
                  self.assertRaisesRegex(ValueError, "stack its apps and retry"):
                 spaces.main()

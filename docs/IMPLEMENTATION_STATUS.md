@@ -252,7 +252,7 @@ Flow used Niri's own Overview (a vertical zoom of workspaces), fuzzel for search
   - Desk, search, the switcher, quick settings and notifications each close Overview.
   - Any of them opening while Overview is still taking its snapshot cancels it.
   - An error or a pin from Overview is a toast, not a Desk opened underneath.
-  - The Desk gives search the keyboard, and the app menu and the auto-layout timer never act under these surfaces.
+  - The Desk gives search the keyboard, and the app menu and automatic layout never act under these surfaces.
   - Niri's top-left hot corner is off, because Overview is Flow's. Niri's live overview stays in the Spaces switcher, and the touchpad's four-finger swipe still opens it.
 - **The home indicator:** a 48 × 4 line on a dark halo, so it reads over light and dark apps (65 px and accent on hover). It replaces the *Overview* and *Spaces* buttons.
   - It takes input in only the bottom 126 × 24, the prototype's size, because Flow's columns reach the screen's edge.
@@ -539,9 +539,21 @@ A NEMESIS review found that the first version of the test killed the shell while
 
 Not covered: a restart while `flow-recovery restore` opens apps, a development shell reloading during an action, and the lost error.
 
+### Under a stream of compositor events (2026-11-22)
+
+The shell coalesces the refreshes Niri's events ask for: 150 ms after the last event, at most 1 s after the first unanswered one, and at least 0.5 s after the previous refresh. A window whose only change is its title is relabelled from the event, with no `flow-spaces` run. The new title shows at once, then at most once a second. `flow-spaces` reads Niri over one socket connection, and the helpers run compiled bytecode from the store, so `refresh` and `observe` dropped from about 66 ms to 22 ms. `flow-search` observes instead of refreshing. The opt-in app menu asks for the focused app's identity when focus moves, not every 1.5 s. Automatic layout runs when a Group does not suit its display's orientation, not every 2 s.
+
+`tests/niri_performance_smoke.py` measures it in the guest. Main failed 10 of its 17 checks:
+
+- At idle it ran 30 `flow-spaces` and 40 `flow-appmenu` in 60 s.
+- A title changing every 0.3 s caused 37 refreshes, 32% of a core in children.
+- Under faster titles, and under fast focus changes, the shell's state was fresh only every 2 s. That was the automatic-layout poll, and only because a shaped Layer was open.
+
+The 2026-11-22 change passes all 17. With each fix neutralised in turn, the smoke fails. The numbers, the method and the review that shaped it are in [Performance](performance.md#under-a-stream-of-compositor-events-2026-11-22).
+
 ### Search opened again during a slow listing (2026-11-22)
 
-Each opening of search lists the results again, since windows may have closed. There was one listing process, and an opening while it still ran started none, so the panel showed that listing's answer: what was there before. The shell now starts a listing per opening. A listing still running gets SIGTERM, and its answer is dropped: only the newest is shown. A stopped listing's output ends at once, empty, which without the check would have said that search failed while the new one was still looking. SIGTERM stops `search.py`, not the `flow-spaces refresh` it started: that refresh finishes under `spaces.lock`, and the new listing's refresh waits for it. Killing a refresh part-way could leave its Niri actions half-done, so it is left to finish.
+Each opening of search lists the results again, since windows may have closed. There was one listing process, and an opening while it still ran started none, so the panel showed that listing's answer: what was there before. The shell now starts a listing per opening. A listing still running gets SIGTERM, and its answer is dropped: only the newest is shown. A stopped listing's output ends at once, empty, which without the check would have said that search failed while the new one was still looking. SIGTERM stops `search.py`, not the `flow-spaces` it started, which finishes under `spaces.lock`; the new listing's waits for it. Since 2026-11-22 that is `flow-spaces observe`, which only reads (see *Under a stream of compositor events*); it was a `refresh`, which could reconcile pins and write state.
 
 `niri_search_smoke.py` has a step for it. Its stand-in `flow-search` answers with the rows as they were when it started, after a delay. Search opens during a 4 s listing of a window since closed, closes, and opens again while the new rows take 2 s. Every view in the next 6 s must say *Looking…* or show the new rows, and only the new listing may finish. The step runs again with an old listing that ignores SIGTERM and answers after the new one: its answer must be dropped too. In the guest both pass, and three mutations of the shell each fail: the old single listing (the closed window came back), taking every listing's answer (the late answer replaced the new one), and not stopping the old listing (two finished).
 
@@ -656,7 +668,7 @@ The shell's read-only `controls` IPC call reports what each control shows. Qt ex
 - **Return did nothing on a switch.** Qt's Switch toggles only on Space. Now Return and Enter flip it once, even when the key is held.
 - **Clipped or hidden focus.** A control scrolled into view sat flush with the clipped edge, so its ring was cut off (Save session at the bottom of Desk). Quick settings and Notifications never scrolled to the focused control at all. One `reveal` now scrolls every view around a control that takes focus from the keyboard, keeping 8 px clear: Desk, the switcher and its row of cards, and both panels. It replaces some 60 per-control handlers, main's new Desk included.
 - **A focused unnamed panel.** Quick settings and Notifications scroll in a ScrollView, a focus scope that reported focus along with the control inside it. Screen readers now skip it.
-- **Focus dropped by background work.** Session recovery and most switcher actions were disabled while `flow-spaces` ran, including the periodic refresh (every 30 s, and after Niri events) and automatic layout (every 2 s while a Group asks for it), and while automatic recovery ran. A focused control that turns disabled loses keyboard focus. Neither now disables them:
+- **Focus dropped by background work.** Session recovery and most switcher actions were disabled while `flow-spaces` ran, including the periodic refresh (every 30 s, and after Niri events) and automatic layout (then every 2 s while a Group asked for it; since 2026-11-22 only when a Group does not suit its display), and while automatic recovery ran. A focused control that turns disabled loses keyboard focus. Neither now disables them:
   - space actions queue behind a refresh;
   - `flow-recovery` waits for `flow-spaces` on `spaces.lock`;
   - space actions also queue behind automatic layout and automatic recovery, and run when they end;

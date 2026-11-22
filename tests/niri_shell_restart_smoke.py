@@ -172,8 +172,9 @@ def main():
             steps.append("Super+1 and Super+2 still reached the pinned app and the pinned Group")
 
             def actions(pattern):
-                """The shell's flow-spaces processes whose arguments match ``pattern``."""
-                found = subprocess.run(["pgrep", "-P", str(shell_process.pid), "-f", f"spaces\\.py {pattern}"],
+                """The shell's flow-spaces processes whose arguments match ``pattern``: the installed wrapper runs
+                ``python3 -m spaces``, a development one may run ``spaces.py`` by its path."""
+                found = subprocess.run(["pgrep", "-P", str(shell_process.pid), "-f", f"(spaces\\.py|-m spaces) {pattern}"],
                                        text=True, stdout=subprocess.PIPE).stdout.split()
                 return [int(pid) for pid in found]
 

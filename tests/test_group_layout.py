@@ -135,11 +135,11 @@ class GroupLayoutTest(unittest.TestCase):
                 group = {**self.group, "auto_layout": True}
                 groups.write(state / "groups.json", [group])
                 (state / "groups.initialized").touch()
-                outputs = json.dumps({"test": {"logical": {"width": width, "height": height}}})
+                outputs = {"test": {"logical": {"width": width, "height": height}}}
                 with patch.object(sys, "argv", ["spaces", "auto-layout"]), \
                      patch.object(spaces, "snapshot", return_value=(ws, self.windows)), \
+                     patch.object(spaces, "full_state", return_value=(ws, self.windows, outputs, [ws])), \
                      patch.object(spaces, "session_id", return_value="s"), \
-                     patch.object(spaces, "command", return_value=outputs), \
                      patch.object(spaces, "change_group_layout") as change, \
                      contextlib.redirect_stdout(io.StringIO()):
                     spaces.run_locked(state)

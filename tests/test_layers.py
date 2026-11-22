@@ -89,6 +89,7 @@ class LayerTest(unittest.TestCase):
 
         self.niri("action", "focus-window", "--id", 9)
         with patch.object(spaces, "display_state", return_value=(landscape, [])), \
+             patch.object(spaces, "full_state", side_effect=lambda: (*spaces.snapshot(), *spaces.display_state())), \
              patch.object(spaces, "snapshot", side_effect=settling):
             self.run_op("make-layer")
         self.assertEqual(next(heights, "done"), "done")
@@ -108,6 +109,7 @@ class LayerTest(unittest.TestCase):
 
         self.niri("action", "focus-window", "--id", 9)
         with patch.object(spaces, "display_state", return_value=(landscape, [])), \
+             patch.object(spaces, "full_state", side_effect=lambda: (*spaces.snapshot(), *spaces.display_state())), \
              patch.object(spaces, "snapshot", side_effect=settling):
             self.run_op("make-layer")
         # A working area smaller than the output gives 450, not 480; the wait still ends at once.
@@ -247,6 +249,7 @@ class LayerRotationTest(unittest.TestCase):
         with patch.object(sys, "argv", ["flow-spaces", *args]), \
              patch.object(spaces, "snapshot", side_effect=self.niri.snapshot), \
              patch.object(spaces, "display_state", side_effect=lambda: (outputs, [self.niri.snapshot()[0]])), \
+             patch.object(spaces, "full_state", side_effect=lambda: (*spaces.snapshot(), *spaces.display_state())), \
              patch.object(spaces, "session_id", return_value="s"), \
              patch.object(spaces, "command", side_effect=self.niri), \
              contextlib.redirect_stdout(io.StringIO()):
@@ -296,6 +299,7 @@ class LayerRotationTest(unittest.TestCase):
         sized = {"Virtual-1": {"logical": {"x": 0, "y": 0, "width": 1280, "height": 800}}}
         with patch.object(Path, "home", return_value=home), patch.dict(os.environ, {"XDG_STATE_HOME": ""}), \
              patch.object(spaces, "display_state", return_value=(sized, [])), \
+             patch.object(spaces, "full_state", side_effect=lambda: (*spaces.snapshot(), *spaces.display_state())), \
              patch.object(spaces, "snapshot", side_effect=self.niri.snapshot), \
              patch.object(spaces, "command", side_effect=self.niri):
             ws, windows = self.niri.snapshot()

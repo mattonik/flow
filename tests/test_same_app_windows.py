@@ -36,6 +36,7 @@ class SameAppTest(unittest.TestCase):
         with patch.object(sys, "argv", ["flow-spaces", *args]), \
              patch.object(spaces, "snapshot", side_effect=self.niri.snapshot), \
              patch.object(spaces, "display_state", side_effect=lambda: (OUTPUTS, [self.niri.snapshot()[0]])), \
+             patch.object(spaces, "full_state", side_effect=lambda: (*spaces.snapshot(), *spaces.display_state())), \
              patch.object(spaces, "session_id", side_effect=lambda: self.session), \
              patch.object(spaces, "command", side_effect=self.niri), \
              contextlib.redirect_stdout(io.StringIO()) as output:
