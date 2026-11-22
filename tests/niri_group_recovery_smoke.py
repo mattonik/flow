@@ -18,7 +18,8 @@ then for a side-by-side Group with a saved split:
   is bound to them in this Niri session;
 - the recovered Group goes on working: its layout changes both ways, and it dissolves with its apps open;
 - with the pinned Group's apps apart and an unpinned app after them, Rejoin Group stacks them (the manual path),
-  and so does recovery; Rejoin Group does too with another display's pinned app still after them.
+  and so does recovery; Rejoin Group does too with a pinned app still after them, another display's, or this
+  display's while a side-by-side Group pauses pin ordering.
 Real state files are checksummed.
 """
 
@@ -68,7 +69,7 @@ def main():
     if any(w.get("workspace_id") == workspace["id"] for w in read("windows")):
         raise RuntimeError("The focused output's active workspace must be empty")
     token = uuid.uuid4().hex[:8]
-    apps = {s: f"flow-recovery-{token}-{s}" for s in "abnul"}
+    apps = {s: f"flow-recovery-{token}-{s}" for s in "abnulv"}
     steps, result = [], None
     with IsolatedState("flow-group-recovery-") as tmp:
         data = Path(tmp) / "data"
@@ -256,6 +257,39 @@ def main():
                 raise RuntimeError(f"The Group pin did not reach the rejoined Group: {current['pins']}")
             steps.append("with another display's pinned app still after the pinned Group's apps, Rejoin Group was "
                          "offered and stacked them; the columns after closed up in order and the Group pin reached it")
+
+            # And with this display's own pinned app after them: possible only while pin ordering is paused, as it
+            # is while a side-by-side Group is on the workspace. A second Group of u and a new app v gives one.
+            niri("action", "focus-window", "--id", window("u")["id"])
+            open_app("v")
+            expect(["ab", "n", "u", "v"], "another app after u")
+            niri("action", "focus-window", "--id", window("u")["id"])
+            spaces("stack")
+            other_id = next(g["group_id"] for g in spaces("create-group")["spaces"] if g.get("group_id") and g["group_id"] != group_id)
+            spaces("group-layout", other_id)
+            expect(["ab", "n", "u", "v"], "a side-by-side Group after the pinned app")
+            niri("action", "consume-or-expel-window-right", "--id", window("b")["id"])
+            entry = next(e for e in spaces("refresh")["incomplete_groups"] if e["id"] == group_id)
+            expect(["a", "b", "n", "u", "v"], "this display's pinned app after the Group's apps, pin ordering paused")
+            if not entry["can_rejoin"]:
+                raise RuntimeError(f"Rejoin Group was not offered with this display's pinned app after it: {entry}")
+            spaces("rejoin-group", group_id)
+            current = spaces("refresh")
+            expect(["ab", "n", "u", "v"], "the pinned Group rejoined, the side-by-side Group intact after it")
+            pins = {p["id"]: p for p in current["pins"]}
+            if (set(pins[group_pin]["window_ids"]) != {window("a")["id"], window("b")["id"]}
+                    or group(other_id).get("layout") != "side-by-side"
+                    or not any(sp.get("group_id") == other_id and sp.get("group_layout") == "side-by-side"
+                               for sp in current["spaces"])):
+                raise RuntimeError(f"The rejoin left a Group or pin behind: {current['pins']}, {group(other_id)}")
+            niri("action", "focus-window", "--id", window("u")["id"])
+            spaces("group-layout", other_id)
+            spaces("dissolve-group", other_id)
+            niri("action", "close-window", "--id", window("v")["id"])
+            expect(["ab", "n", "u"], "the second Group dissolved and v closed")
+            steps.append("with this display's pinned app after the pinned Group's apps, while a side-by-side Group "
+                         "paused pin ordering, Rejoin Group was offered and stacked them; the side-by-side Group "
+                         "stayed whole after them and the Group pin reached the Group")
 
             # Recovery does the same: the pinned Group's apps apart with an app already open after them.
             tool("flow-recovery", "save")
