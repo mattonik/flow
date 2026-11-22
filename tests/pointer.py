@@ -10,6 +10,7 @@ Run with the installed shell stopped: its home indicator, island and banners sit
 shell's do, and a click could reach either.
 """
 
+import atexit
 import json
 import shutil
 import subprocess
@@ -54,6 +55,16 @@ class Pointer:
             raise RuntimeError("Stop the installed shell first: its surfaces would take the pointer")
         outputs = json.loads(subprocess.check_output(["niri", "msg", "-j", "outputs"], text=True, timeout=10))
         self.left, self.top, self.width, self.height = layout_box(outputs)
+        # The pointer stays where the last gesture left it, across runs: one left resting on a banner holds
+        # the next run's first banner. So start parked, and park again on the way out, failed or not.
+        self.park()
+        atexit.register(self._park_quietly)
+
+    def _park_quietly(self):
+        try:
+            self.park()
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            pass
 
     def run(self, *steps):
         """Runs flow-pointer steps, with ``("move", x, y)`` in layout coordinates."""

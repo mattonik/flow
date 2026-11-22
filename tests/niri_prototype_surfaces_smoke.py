@@ -21,8 +21,9 @@ With the pointer (tests/pointer.py, so ``flow-pointer`` on PATH and the installe
   and a tap on Desk's returns to work;
 - one wheel notch over Overview's row moves the selection one space, down to the next and up to the
   previous;
-- a swipe up from the home indicator opens Overview, and only Overview: releasing after the swipe is not
-  also a tap.
+- a swipe up from the home indicator opens Overview, and only Overview is open after the release. (The
+  indicator's window hides under the pointer once Overview opens, so the release never reaches it; that
+  ``onClicked`` ignores a release after a swipe cannot be shown here.)
 """
 
 import hashlib
@@ -259,7 +260,7 @@ def main():
                 raise RuntimeError(f"After a swipe up and release, {open_surfaces()} were open, not Overview alone")
             ipc("overview_close")
             wait_for(lambda: open_surfaces() == [], "Overview to close")
-            steps.append("a swipe up from the home indicator opened Overview, and releasing did not go on to Desk")
+            steps.append("a swipe up from the home indicator opened Overview, and only Overview after the release")
             pointer.park()
             result = {"result": "pass", "steps": steps}
         finally:
