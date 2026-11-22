@@ -15,7 +15,8 @@ then for a side-by-side Group with a saved split:
   columns at the saved proportions;
 - the Group keeps its ID and name, its pin and the neighbouring pin reach the new windows, and the Group
   is bound to them in this Niri session;
-- the recovered Group goes on working: its layout changes both ways, and it dissolves with its apps open.
+- the recovered Group goes on working: its layout changes both ways, and it dissolves with its apps open;
+- with the pinned Group's apps apart and another app after them, Rejoin Group stacks them (the manual path).
 Real state files are checksummed.
 """
 
@@ -65,7 +66,7 @@ def main():
     if any(w.get("workspace_id") == workspace["id"] for w in read("windows")):
         raise RuntimeError("The focused output's active workspace must be empty")
     token = uuid.uuid4().hex[:8]
-    apps = {s: f"flow-recovery-{token}-{s}" for s in "abn"}
+    apps = {s: f"flow-recovery-{token}-{s}" for s in "abnu"}
     steps, result = [], None
     with IsolatedState("flow-group-recovery-") as tmp:
         data = Path(tmp) / "data"
@@ -200,6 +201,27 @@ def main():
             expect(["a", "b", "n"], "the recovered Group side by side")
             spaces("group-layout", group_id)
             expect(["ab", "n"], "the recovered Group stacked again")
+
+            # The manual path: the pinned Group's apps in columns of their own with an unpinned app after them, as
+            # when the user opens them again with recovery off. Rejoin Group stacks them all the same.
+            niri("action", "focus-window", "--id", window("n")["id"])
+            open_app("u")
+            expect(["ab", "n", "u"], "an unpinned app after the pinned app")
+            niri("action", "consume-or-expel-window-right", "--id", window("b")["id"])
+            entry = next(e for e in spaces("refresh")["incomplete_groups"] if e["id"] == group_id)
+            expect(["n", "a", "b", "u"], "the Group's apps apart, the app pin first")  # pins lead the strip
+            if not entry["can_rejoin"]:
+                raise RuntimeError(f"Rejoin Group was not offered: {entry}")
+            spaces("rejoin-group", group_id)
+            current = spaces("refresh")
+            expect(["ab", "n", "u"], "the rejoined pinned Group back in pin order")
+            pins = {p["id"]: p for p in current["pins"]}
+            if not pins[group_pin]["available"] or set(pins[group_pin]["window_ids"]) != {window("a")["id"], window("b")["id"]}:
+                raise RuntimeError(f"The Group pin did not reach the rejoined Group: {current['pins']}")
+            niri("action", "close-window", "--id", window("u")["id"])
+            expect(["ab", "n"], "the unpinned app closed")
+            steps.append("with the pinned Group's apps apart and an unpinned app after them, Rejoin Group was offered "
+                         "and stacked them; the pins went back in order and the Group pin reached the Group")
             spaces("unpin", group_pin)
             expect(["n", "ab"], "the app pin first once the Group is unpinned")  # pinned spaces lead the strip
             niri("action", "focus-window", "--id", window("a")["id"])

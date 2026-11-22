@@ -337,18 +337,14 @@ def rejoin_plan(group, workspace, windows, pins):
         direction = "right"
     else:
         raise ValueError("Place the Group apps in adjacent columns, in saved order, before rejoining")
-    right_col = max(columns)
     claims = [pin for pin in pins if set(group["members"]) & set(pin.get("members", [pin.get("app_id")]))]
     if len(claims) > 1 or any(pin.get("group_id") != group["id"] or
                               set(pin.get("members", [])) != set(group["members"]) for pin in claims):
         raise ValueError("Unpin conflicting apps before rejoining")
-    if claims and any(w.get("workspace_id") == workspace["id"] and not w.get("is_floating")
-                      and (position(w) or [0])[0] > right_col for w in windows):
-        raise ValueError("Move the pinned Group apps to the end before rejoining")
-    others = pinned_apps([pin for pin in pins if pin not in claims])
-    if any(w.get("workspace_id") == workspace["id"] and w.get("app_id") in others
-           and (position(w) or [0])[0] > right_col for w in windows):
-        raise ValueError("Move other pinned spaces left before rejoining")
+    # The user asks for a rejoin, so the columns after the Group may close up as its apps join one column: they
+    # keep their order, and pinned ones go back in pin order at the next refresh, once no side-by-side Group or
+    # unfinished layout change pauses that (and only this display's pins). Dissolving and automatic recovery,
+    # which nobody asks to move other columns, keep their rules against it.
     return found, direction
 
 
