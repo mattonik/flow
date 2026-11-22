@@ -326,6 +326,7 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
         raise ValueError("Mixed stacked and side-by-side Groups require manual recovery")
     group_ids = {id(entry) for group in groups for entry in group}
     report, restored = [], []
+    launched = set()  # windows this recovery opened: they have no place of their own to keep yet
     original = workspace.get("active_window_id")
     workspace_id = workspace["id"]
     workspace_changed = False
@@ -374,6 +375,7 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
             if not desktop:
                 report.append(f"{app_id}: no matching installed application")
                 continue
+            before = {w.get("id") for w in get_snapshot()[1]}
             try:
                 launch(desktop)
             except (OSError, subprocess.SubprocessError):
@@ -385,6 +387,8 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 matches = [w for w in windows if w.get("app_id") == app_id]
                 if matches:
                     break
+            if len(matches) == 1 and matches[0]["id"] not in before:
+                launched.add(matches[0]["id"])
         valid_group_window = (id(entry) in group_ids and len(matches) == 1
                               and matches[0].get("workspace_id") == workspace["id"]
                               and not matches[0].get("is_floating")
@@ -512,9 +516,11 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 if pinned_group:
                     forward = columns == list(range(columns[0], columns[0] + n))
                     backward = columns == list(range(columns[0], columns[0] - n, -1))
-                    live_columns = [w.get("layout", {}).get("pos_in_scrolling_layout")
-                                    for w in live if w.get("workspace_id") == workspace_id and not w.get("is_floating")]
-                    if not (forward or backward) or any(pos and pos[0] > max(columns) for pos in live_columns):
+                    # Joining the column shifts every column after it. Only windows this recovery opened may
+                    # be there, as after a restart, when it opens the apps in saved order.
+                    after = [w for w in live if w.get("workspace_id") == workspace_id and not w.get("is_floating")
+                             and (w.get("layout", {}).get("pos_in_scrolling_layout") or [0])[0] > max(columns)]
+                    if not (forward or backward) or any(w.get("id") not in launched for w in after):
                         report.append("Pinned Group cannot be restored without shifting other spaces")
                         groups_ok = False
                         continue
