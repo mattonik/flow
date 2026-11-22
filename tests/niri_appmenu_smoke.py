@@ -254,6 +254,7 @@ def main():
             focus(kate_a)
             wait_for(lambda: state().get("button"), "the App button for Kate")
             known = set(windows())
+            wait_for(lambda: not ipc("toast"), "the toast to go", timeout=5)  # out of the screenshot
             open_menu()
             shot("3-menu-kate.png")
             choose("^Help$", "Help")
