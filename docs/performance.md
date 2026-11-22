@@ -84,3 +84,36 @@ Each fix was neutralised in turn, keeping its symbols, and the smoke was run aga
 No variant failed any other check.
 
 The title-every-0.05-s check is guarded by two fixes, the in-place titles and the maximum wait: either one alone keeps the label fresh within 1.5 s. Neutralising one at a time therefore leaves it passing.
+
+## A resident controller (2026-11-22)
+
+Phase 2 moves Flow's refresh into a resident process, `flow-controller` ([ADR-0011](engineering/ADR-0011-resident-controller.md)). The shell starts it. It reads Niri's event stream from Niri's socket into the ADR-0004 projection and refreshes in-process when the events ask for it, by phase 1's rules. It sends the state to the shell and to the Platform API over a Unix socket. The shell keeps no event stream of its own and starts no `flow-spaces` to refresh; the session runs one event stream instead of two, and the API reads state without starting a process.
+
+The performance smoke now counts the controller's refreshes (it reports them on its socket) and adds the controller's CPU to the helpers'. It has three new checks: the helpers' CPU at idle and under focus changes every 0.25 s, and the controller's own refresh time. Phase 1, as installed from main, and the controller were measured one after the other in the guest:
+
+| Check | Limit | Phase 1 (main) | Controller |
+|---|---|---|---|
+| idle: shell CPU | < 1 % of a core | 0.27% | 0.17% |
+| idle: helpers CPU | < 1 % of a core | 0.27% | 0.07% |
+| idle: refreshes | <= 3 | 2 | 2 |
+| idle: flow-appmenu runs | <= 3 | 0 | 0 |
+| flow-spaces refresh median | < 30 ms | 21 ms | 23 ms |
+| flow-spaces observe median | < 30 ms | 20 ms | 21 ms |
+| flow-search --json median | < 200 ms | 104 ms | 109 ms |
+| flow-search asks flow-spaces | observe only | observe | observe |
+| Overview shown | < 200 ms | 39 ms | 40 ms |
+| Desk with a fresh answer | < 150 ms | 64 ms | 54 ms |
+| search rows shown | < 300 ms | 172 ms | 146 ms |
+| title every 0.3 s: refreshes | <= 12 | 0 | 11 |
+| title every 0.3 s: helpers CPU | < 10 % of a core | 0.0% | 0.55% |
+| title every 0.3 s: shell CPU | < 5 % of a core | 4.15% | 2.84% |
+| title every 0.05 s: longest stale label | < 1.5 s | 1.08 s | 1.02 s |
+| title every 0.05 s: shell CPU | < 10 % of a core | 3.6% | 2.86% |
+| focus every 0.05 s: longest gap between refreshes | < 1.5 s | 1.05 s | 1.06 s |
+| focus every 0.25 s: refreshes | <= 16 | 12 | 12 |
+| focus every 0.25 s: helpers CPU | < 2.5 % of a core | 8.51% ✗ | 1.06% |
+| controller refresh mean | < 10 ms | — | 6.16 ms |
+
+Phase 1 fails one check, the one this phase is for: a refresh as a process costs about 20 ms of CPU, so 12 refreshes in 6 s kept 8.5% of a core busy, against 1.1% for the controller. In the controller a refresh takes about 6 ms. Under a title changing every 0.3 s the controller refreshes once a second (11 times), where phase 1 relabelled in the shell. Both stay within the limits, and the shell itself spends less (2.9% against 4.2%), because each refresh hands it the whole state once a second instead of a relabelling per title.
+
+With the controller neutralised to start `flow-spaces refresh` processes instead of refreshing in-process, the smoke fails the helpers' CPU under focus changes (8.2%) and the controller's refresh time (40 ms on average). The controller's own behaviour is unit-tested (`tests/test_flow_controller.py`): when it refreshes, the title-only test (with focus timestamps), the forwarded events, the answer to a refresh asked for and that it skips the minimum interval, retrying every 0.1 s while an action holds the lock without spinning, desktop names read afresh, a client that floods dropped, reshaping left to a process of its own, a failing refresh not stopping the loop, and one controller per runtime folder and Flow state. Each of these, neutralised, fails its test.
