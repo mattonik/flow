@@ -211,6 +211,63 @@ class LargerGroupTest(unittest.TestCase):
         self.assertEqual(niri.layout(), [["a", "b", "c"], ["other"], ["d"]])
         self.assertEqual(pins[0]["window_ids"], [1, 2, 3])
 
+    def test_pin_ordered_is_what_reconcile_leaves(self):
+        pin = {"id": "pin", "group_id": "g", "members": ["a", "b"], "app_id": "a"}
+        cases = {
+            "a pinned app moved ahead": ({"id": "g", "label": "Pair", "members": ["a", "b"]}, [[9], [1, 2]]),
+            # Bound in this session to windows that have closed: a refresh does not see the Group, nor may the model.
+            "a Group bound to closed windows": ({"id": "g", "label": "Pair", "members": ["a", "b"],
+                                                 "bound": {"session": "s", "windows": {"a": 101, "b": 102}}}, [[9], [1, 2]]),
+            "a side-by-side Group pauses it": ({"id": "g", "label": "Pair", "members": ["a", "b"], "layout": "side-by-side"},
+                                               [[9], [1], [2]]),
+        }
+        for label, (group, columns) in cases.items():
+            with self.subTest(label):
+                pins = [dict(pin), {"id": "other", "app_id": "other"}]
+                niri = self.niri(columns, active=9)
+                ws, windows = niri.snapshot()
+                modelled = {w["id"]: w["layout"]["pos_in_scrolling_layout"]
+                            for w in spaces.pin_ordered(ws, windows, pins, "s", [group])}
+                self.assertIsNone(spaces.SESSION)  # the model leaves no binding behind
+                spaces.SESSION = "s"  # as a refresh runs reconcile
+                try:
+                    spaces.reconcile(pins, ws, windows, "s", [group])
+                finally:
+                    spaces.SESSION = None
+                _, after = niri.snapshot()
+                self.assertEqual(modelled, {w["id"]: w["layout"]["pos_in_scrolling_layout"] for w in after})
+                niri.columns = []  # the next case starts its own Niri
+
+    def test_rejoin_checks_each_step_of_the_join(self):
+        registry = [three()]
+        niri = self.niri([[1], [2], [3]])
+        skipped = []
+
+        def misroute(kind, action, *args):
+            if args[-1:] == (2,):
+                skipped.append(args)  # Niri put b elsewhere
+                return None
+            return niri(kind, action, *args)
+
+        with patch.object(spaces, "command", side_effect=misroute) as command:
+            with self.assertRaisesRegex(ValueError, "Could not confirm Group rejoin"):
+                self.run_op(niri, "rejoin-group", "g", registry)
+        self.assertTrue(skipped)
+        self.assertNotIn(("action", "consume-or-expel-window-left", "--id", 3), [c.args for c in command.call_args_list])
+
+    def test_rejoin_stops_when_the_workspace_changes_during_the_join(self):
+        registry = [three()]
+        niri = self.niri([[1], [2], [3]])
+
+        def switch(kind, action, *args):
+            niri(kind, action, *args)
+            niri.workspace = 2  # the user switched workspaces right after the first step
+
+        with patch.object(spaces, "command", side_effect=switch) as command:
+            with self.assertRaisesRegex(ValueError, "Could not confirm Group rejoin"):
+                self.run_op(niri, "rejoin-group", "g", registry)
+        self.assertNotIn(("action", "consume-or-expel-window-left", "--id", 3), [c.args for c in command.call_args_list])
+
     def test_three_app_side_repair_moves_each_member_into_place(self):
         group = three("side-by-side")
         niri = self.niri([[1], [9], [2], [3]], active=9)

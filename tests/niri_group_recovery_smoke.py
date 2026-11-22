@@ -16,7 +16,8 @@ then for a side-by-side Group with a saved split:
 - the Group keeps its ID and name, its pin and the neighbouring pin reach the new windows, and the Group
   is bound to them in this Niri session;
 - the recovered Group goes on working: its layout changes both ways, and it dissolves with its apps open;
-- with the pinned Group's apps apart and another app after them, Rejoin Group stacks them (the manual path).
+- with the pinned Group's apps apart and another app after them, Rejoin Group stacks them (the manual path),
+  and so does recovery.
 Real state files are checksummed.
 """
 
@@ -218,6 +219,21 @@ def main():
             pins = {p["id"]: p for p in current["pins"]}
             if not pins[group_pin]["available"] or set(pins[group_pin]["window_ids"]) != {window("a")["id"], window("b")["id"]}:
                 raise RuntimeError(f"The Group pin did not reach the rejoined Group: {current['pins']}")
+
+            # Recovery does the same: the pinned Group's apps apart with an app already open after them.
+            tool("flow-recovery", "save")
+            niri("action", "consume-or-expel-window-right", "--id", window("b")["id"])
+            spaces("refresh")
+            expect(["n", "a", "b", "u"], "the Group's apps apart again, an open app after them")
+            for marker in runtime.glob("flow-recovery-*"):  # automatic recovery, as at the start of a session
+                marker.unlink()
+            recover()  # succeeds only when every window was restored in its saved order
+            current = spaces("refresh")
+            expect(["ab", "n", "u"], "the recovered pinned Group back in pin order")
+            if not {p["id"]: p for p in current["pins"]}[group_pin]["available"]:
+                raise RuntimeError(f"The Group pin did not reach the recovered Group: {current['pins']}")
+            steps.append("with the pinned Group's apps apart and an app already open after them, automatic recovery "
+                         "rebuilt the Group and succeeded, since the next refresh's pin order is the saved order")
             niri("action", "close-window", "--id", window("u")["id"])
             expect(["ab", "n"], "the unpinned app closed")
             steps.append("with the pinned Group's apps apart and an unpinned app after them, Rejoin Group was offered "
