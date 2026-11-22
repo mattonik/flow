@@ -7,7 +7,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "session"))
 spec = importlib.util.spec_from_file_location("spaces", Path(__file__).parents[1] / "session/spaces.py")
@@ -198,18 +198,32 @@ class SpacesTest(unittest.TestCase):
     @patch.object(spaces, "command")
     def test_rejoin_rejects_unsafe_layouts_before_compositor_action(self, command):
         group = {"id": "g", "label": "Work", "members": ["terminal", "files"]}
-        pinned = {"id": "pin", "group_id": "g", "members": group["members"], "app_id": "terminal"}
         cases = [([window(1, "terminal", 1)], [], "missing or ambiguous"),
                  (self.windows + [window(3, "terminal", 3)], [], "missing or ambiguous"),
                  ([window(1, "terminal", 1), window(2, "files", 3)], [], "adjacent"),
                  ([window(1, "terminal", 1), {**window(2, "files", 2), "is_floating": True}], [], "tiled"),
                  ([window(1, "terminal", 1), {**window(2, "files", 2), "workspace_id": 2}], [], "workspace"),
-                 (self.windows, [{"id": "other", "app_id": "terminal"}], "conflicting"),
-                 (self.windows + [window(3, "other", 3)], [pinned], "end")]
+                 (self.windows, [{"id": "other", "app_id": "terminal"}], "conflicting")]
         for windows, pins, message in cases:
             with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
                 spaces.run(pins, "rejoin-group", "g", self.ws, windows, "session", [group])
         command.assert_not_called()
+
+    @patch.object(spaces, "command")
+    def test_rejoin_stacks_a_pinned_group_with_columns_and_pins_after_it(self, command):
+        # As after reopening a pinned Group's apps: they come back in their own columns, with an app and another
+        # pinned app after them. Rejoining shifts those columns left, in the same order.
+        group = {"id": "g", "label": "Work", "members": ["terminal", "files"]}
+        pins = [{"id": "pin", "group_id": "g", "members": group["members"], "app_id": "terminal"},
+                {"id": "notes", "app_id": "notes"}]
+        windows = self.windows + [window(3, "editor", 3), window(4, "notes", 4)]
+        joined = [window(1, "terminal", 1), window(2, "files", 1), window(3, "editor", 2), window(4, "notes", 3)]
+        joined[1]["layout"]["pos_in_scrolling_layout"] = [1, 2]
+        self.assertTrue(spaces.incomplete_groups(self.ws, windows, [group], pins)[0]["can_rejoin"])
+        with patch.object(spaces, "snapshot", side_effect=[(self.ws, windows), (self.ws, joined)]):
+            spaces.run(pins, "rejoin-group", "g", self.ws, windows, "session", [group])
+        self.assertIn(call("action", "consume-or-expel-window-left", "--id", 2), command.call_args_list)
+        self.assertEqual(pins[0]["window_ids"], [1, 2])
 
     @patch.object(spaces, "command")
     def test_rejoin_rechecks_focus_and_preserves_group_if_action_fails(self, command):
