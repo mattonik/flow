@@ -3,8 +3,10 @@
 # its flow-appmenu wrapper names a Python with pyatspi and PyGObject. Holds the screen lock for the whole run,
 # since the run opens app windows. Arguments go to the script; see its docstring.
 # On the test guest:
-#   FLOW_NIX="sudo -n nix" FLOW_NIX_ARGS="--option ssl-cert-file /etc/floe-test/host-trust.pem" \
+#   FLOW_NIX="sudo -n nix" \
+#   FLOW_NIX_ARGS="--option ssl-cert-file /etc/floe-test/host-trust.pem --option flake-registry ''" \
 #     tests/run_appmenu_coverage.sh --json /tmp/appmenu-coverage.json
+# (flake-registry '' keeps nixpkgs at the system's pinned revision rather than the global registry's.)
 set -eu
 checkout=$(cd "$(dirname "$0")/.." && pwd)
 appmenu=$(command -v flow-appmenu) || { echo "flow-appmenu not found: install Flow" >&2; exit 1; }
@@ -20,6 +22,10 @@ export GI_TYPELIB_PATH
 # DISPLAY or NIXOS_OZONE_WL, and Qt 5 then falls back to X11).
 eval "$(systemctl --user show-environment \
     | grep -E '^(XDG_SESSION_TYPE|XDG_CURRENT_DESKTOP|DISPLAY|NIXOS_OZONE_WL|WAYLAND_DISPLAY)=' | sed 's/^/export /')"
+# Not NO_AT_BRIDGE or GTK_A11Y: a session started before the Flow module enabled at-spi2-core still exports them,
+# and they switch GTK's accessibility off. The table describes a session started with at-spi2-core enabled; the
+# mousepad-login-env row sets them on purpose.
+unset NO_AT_BRIDGE GTK_A11Y
 exec 9>"${FLOW_SCREEN_LOCK:-/tmp/floe-screen.lock}"
 flock -w 1800 9 || { echo "screen lock busy" >&2; exit 1; }
 "$python" "$checkout/tests/appmenu_coverage.py" "$@"
