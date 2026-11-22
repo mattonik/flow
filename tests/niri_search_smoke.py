@@ -17,6 +17,8 @@ Checked, through the shell's ``search_view`` and ``toast`` IPC calls and the sta
 - with the pointer (tests/pointer.py), the row under it is tinted, a click opens that row rather than
   the chosen one, and a click on the shade closes search;
 - a query that matches nothing says so, in its own space above the footer;
+- commands: Restart runs only when chosen twice within 5 s (its row says so), Lock screen at once through
+  ``flow-search --open command``, and Open Desk opens Desk;
 - typing three letters or more walks the user folders for files by name (``flow-search --files``); a found file
   is listed and opens; a slow walk for an older query is dropped; the row chosen with the arrow keys stays
   chosen when a walk's answer arrives;
@@ -38,7 +40,7 @@ import sys
 import tempfile
 import time
 
-from pointer import Pointer
+from pointer import Pointer, center
 
 # Enough ties that an unstable sort shows (the "Foot" query in the guest had six): every app twice.
 APPS = ["Notes Client", "Notes Server", "Notes", "Notes Viewer"]
@@ -321,6 +323,109 @@ def main():
                      lambda: f"the chosen row to open ({opened_lines()[-1:]})")
             steps.append("the row chosen with the arrow keys stayed chosen when a file found later ranked above it, "
                          "and Return opened it")
+
+            # Commands: a system one that ends the session runs only when chosen twice within 5 s; others at once.
+            commands = [{"title": "Open Desk", "detail": "Flow", "kind": "action", "value": "desk", "icon": ""},
+                        {"title": "Save session", "detail": "Flow", "kind": "action", "value": "save-session", "icon": ""},
+                        {"title": "Lock screen", "detail": "System", "kind": "command", "value": "lock", "icon": ""},
+                        {"title": "Restart", "detail": "System · asks first", "kind": "command", "value": "restart",
+                         "icon": "", "confirm": True}]
+            (tmp / "rows").write_text(json.dumps(ROWS + commands))
+            open_search()
+            wait_for(lambda: (v := view()) and v["rows"], "the results again")
+            type_keys("restart")
+            wait_for(lambda: (v := view()) and [r["title"] for r in v["rows"]] == ["Restart"], lambda: f"Restart ({view()})")
+            before = len(opened_lines())
+            type_keys("-k", "Return")
+            wait_for(lambda: (v := view()) and v["rows"][0]["armed"], lambda: f"Restart to ask first ({view()})")
+            time.sleep(1)
+            if len(opened_lines()) != before or ipc("search_state") != "open":
+                raise RuntimeError(f"Restart ran on the first Return: {opened_lines()[before:]}")
+            time.sleep(5)  # past the 5 s it stays armed
+            if view()["rows"][0]["armed"]:
+                raise RuntimeError("Restart stayed armed past 5 s")
+            type_keys("-k", "Return")  # arms it again, does not run it
+            wait_for(lambda: (v := view()) and v["rows"][0]["armed"], "Restart armed again")
+            if len(opened_lines()) != before:
+                raise RuntimeError("Restart ran when chosen after its arming had lapsed")
+            time.sleep(0.8)  # a deliberate second choice, not the second half of a double press
+            type_keys("-k", "Return")
+            wait_for(lambda: opened_lines()[before:] == ["command restart"], lambda: f"Restart to run ({opened_lines()[before:]})")
+            steps.append("Restart asked first: the first Return armed its row, the arming lapsed after 5 s, and only "
+                         "a second Return within them ran flow-search --open command restart")
+
+            def restart_shown():
+                open_search()
+                wait_for(lambda: (v := view()) and v["rows"], "the results again")
+                type_keys("restart")
+                return wait_for(lambda: (v := view()) and [r["title"] for r in v["rows"]] == ["Restart"],
+                                lambda: f"Restart ({view()})")
+
+            def not_run(label):
+                time.sleep(1)
+                if opened_lines()[before:] != ["command restart"]:
+                    raise RuntimeError(f"Restart ran after {label}: {opened_lines()[before:]}")
+
+            # Enter twice at once, and a double-click, are one choice: they arm Restart and do not run it.
+            restart_shown()
+            subprocess.run(["wtype", "-k", next(primer), "-k", "Return", "-s", "50", "-k", "Return"], env=typing_env,
+                           check=True, timeout=10)
+            wait_for(lambda: (v := view()) and v["rows"][0]["armed"], "Restart armed by the first of two Returns")
+            not_run("two Returns 50 ms apart")
+            type_keys("-k", "Escape")
+            restart_shown()
+            # The chosen row is not tinted under the pointer, so its place is taken, not its hover.
+            row = center(wait_for(lambda: target("search_row:0"), "the Restart row's place"))
+            pointer.run(("move", *row), ("wait", 50), ("click", "left"), ("wait", 120), ("click", "left"))
+            wait_for(lambda: (v := view()) and v["rows"][0]["armed"], "Restart armed by a double-click")
+            not_run("a double-click")
+            pointer.park()
+            # Choosing another row and coming back, or closing search, disarms it.
+            type_keys("-k", "Escape")
+            open_search()
+            wait_for(lambda: (v := view()) and v["rows"], "the results again")
+            type_keys("re")  # Restart and other rows
+            wait_for(lambda: (v := view()) and v["rows"] and v["rows"][0]["title"] == "Restart" and len(v["rows"]) > 1,
+                     lambda: f"Restart first among others ({view()})")
+            type_keys("-k", "Return")
+            wait_for(lambda: (v := view()) and v["rows"][0]["armed"], "Restart armed")
+            type_keys("-k", "Down")
+            type_keys("-k", "Up")
+            if view()["rows"][0]["armed"]:
+                raise RuntimeError("Restart stayed armed after another row was chosen")
+            type_keys("-k", "Return")
+            not_run("another row was chosen in between")
+            type_keys("-k", "Escape")
+            wait_for(lambda: ipc("search_state") == "closed", "Escape to close search")
+            restart_shown()
+            if view()["rows"][0]["armed"]:
+                raise RuntimeError("Restart was still armed when search opened again")
+            type_keys("-k", "Escape")
+            steps.append("two Returns 50 ms apart and a double-click only armed Restart; choosing another row and "
+                         "back, or closing search, disarmed it")
+            open_search()
+            wait_for(lambda: (v := view()) and v["rows"], "the results again")
+            type_keys("lock screen")
+            wait_for(lambda: (v := view()) and v["rows"] and v["rows"][0]["title"] == "Lock screen", "Lock screen")
+            type_keys("-k", "Return")
+            wait_for(lambda: opened_lines()[-1:] == ["command lock"], lambda: f"Lock to run ({opened_lines()[-1:]})")
+            open_search()
+            wait_for(lambda: (v := view()) and v["rows"], "the results again")
+            type_keys("open desk")
+            wait_for(lambda: (v := view()) and v["rows"] and v["rows"][0]["title"] == "Open Desk", "Open Desk")
+            type_keys("-k", "Return")
+            wait_for(lambda: ipc("desk_state") == "open", "Desk to open")
+            ipc("toggle")
+            wait_for(lambda: ipc("desk_state") == "closed", "Desk to close")
+            open_search()
+            wait_for(lambda: (v := view()) and v["rows"], "the results again")
+            type_keys("save session")
+            wait_for(lambda: (v := view()) and v["rows"] and v["rows"][0]["title"] == "Save session",
+                     lambda: f"Save session ({view()}, search {ipc('search_state')}, desk {ipc('desk_state')})")
+            type_keys("-k", "Return")
+            wait_for(lambda: ipc("toast"), "the Save session result as a toast", timeout=30)
+            (tmp / "rows").write_text(json.dumps(ROWS))
+            steps.append(f"Lock screen ran on one Return, Open Desk opened Desk, and Save session said {ipc('toast')!r}")
 
             (tmp / "open-exit").write_text("3")
             open_search()
