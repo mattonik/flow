@@ -343,8 +343,8 @@ def rejoin_plan(group, workspace, windows, pins):
         raise ValueError("Unpin conflicting apps before rejoining")
     # The user asks for a rejoin, so the columns after the Group may close up as its apps join one column: they
     # keep their order, and pinned ones go back in pin order at the next refresh, once no side-by-side Group or
-    # unfinished layout change pauses that (and only this display's pins). Dissolving and automatic recovery,
-    # which nobody asks to move other columns, keep their rules against it.
+    # unfinished layout change pauses that (and only this display's pins). Session recovery rebuilds a pinned
+    # Group the same way; dissolving, which nobody asks to move other columns, keeps its rule against it.
     return found, direction
 
 
