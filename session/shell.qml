@@ -429,6 +429,15 @@ ShellRoot {
     // flow-spaces on spaces.lock.
     readonly property bool spacesWorking: spacesProcess.running && !["refresh", "auto-layout"].includes(spacesProcess.command[1])
     readonly property bool recoveryWorking: recoveryProcess.running && !String(recoveryProcess.command[1]).startsWith("auto-")
+    // Desk's Save session button, and search's. From search, Desk is closed, so the result is a toast.
+    property bool recoveryToast: false
+    function startSaveSession(fromSearch) {
+        const busy = recoveryProcess.running ? "Wait for automatic recovery to finish" : spacesWorking ? "Wait for the current action" : ""
+        if (busy) { if (fromSearch) showToast(busy); else recoveryMessage = busy; return }
+        recoveryToast = fromSearch
+        recoveryProcess.command = ["flow-recovery", "save"]
+        recoveryProcess.running = true
+    }
     function renameGroup(id, label) {
         if (recoveryProcess.running || spacesWorking || pendingSpaceActions.length) { spacesError = "Wait for the current action"; return }
         recoveryProcess.command = ["flow-recovery", "rename-group", id, label]
@@ -510,6 +519,7 @@ ShellRoot {
                 try {
                     const result = JSON.parse(this.text)
                     root.recoveryMessage = result.error || result.message || "Recovery unavailable"
+                    if (recoveryProcess.command[1] === "save" && root.recoveryToast) { root.recoveryToast = false; root.showToast(root.recoveryMessage) }
                     if (recoveryProcess.command[1] === "auto-start" || recoveryProcess.command[1] === "auto-save" || recoveryProcess.command[1] === "auto-ready") {
                         root.autoRecoveryBlocked = !!result.error
                         if (result.error) { root.deskOpen = true; root.settingsOpen = true; Qt.callLater(function() { root.reveal(recoveryStatus) }) }
@@ -764,21 +774,43 @@ ShellRoot {
     property int searchIndex: 0
     readonly property var searchMatches: {
         const query = searchQuery.trim().toLowerCase()
-        const pool = searchAppsOnly ? searchResults.filter(r => r.kind === "app") : searchResults
+        // Files found by name while typing come after search.py's results, less the recent files among them.
+        const listed = new Set(searchResults.filter(r => r.kind === "file").map(r => r.value))
+        const pool = searchAppsOnly ? searchResults.filter(r => r.kind === "app")
+            : searchResults.concat(searchFileResults.filter(r => !listed.has(r.value)))
         if (!query) return pool.slice(0, 60)
         const scored = []
         pool.forEach((result, index) => {
             const title = result.title.toLowerCase(), detail = result.detail.toLowerCase()
             const words = title.split(/[\s·:/._-]+/)
             const score = title === query ? 0 : title.startsWith(query) ? 1 : words.some(w => w.startsWith(query)) ? 2
-                : title.includes(query) ? 3 : detail.includes(query) ? 4 : -1
+                : title.includes(query) ? 3 : detail.includes(query) ? 4
+                : query.split(/\s+/).every(w => title.includes(w)) ? 5 : -1
             if (score >= 0) scored.push({score: score, index: index, result: result})
         })
         // Ties keep search.py's order (an app before the same app as a Layer): V4's sort is not stable.
         scored.sort((a, b) => a.score - b.score || a.index - b.index)
         return scored.slice(0, 60).map(entry => entry.result)
     }
-    onSearchMatchesChanged: searchIndex = 0
+    // The chosen row stays chosen while results arrive for the same query (files come in as they are found);
+    // a new query chooses the first row again.
+    property string searchChosenKey: ""
+    property string searchChosenFor: ""
+    onSearchIndexChanged: {
+        const chosen = searchMatches[searchIndex]
+        // Choosing another row disarms a command armed to ask first; the same row moving down does not.
+        if (!(chosen && chosen.confirm && chosen.value === searchArmed)) searchArmed = ""
+        searchChosenKey = chosen ? chosen.kind + "\n" + chosen.value : ""
+        searchChosenFor = searchQuery
+    }
+    onSearchMatchesChanged: {
+        const kept = searchChosenFor === searchQuery
+            ? searchMatches.findIndex(r => r.kind + "\n" + r.value === searchChosenKey) : -1
+        if (kept >= 0) searchIndex = kept
+        else { searchIndex = 0; searchIndexChanged() }
+        // A new model scrolls the list back to its top; the chosen row stays in sight.
+        if (searchMatches.length) Qt.callLater(() => searchView.positionViewAtIndex(searchIndex, ListView.Contain))
+    }
     // One listing per opening of search. A listing still running when search opens again lists what was there
     // before (windows since closed): it is sent SIGTERM and its answer dropped, so only the newest one is shown.
     // That stops search.py, not the `flow-spaces refresh` it started, which finishes under spaces.lock.
@@ -806,6 +838,53 @@ ShellRoot {
             }
         }
     }
+    // Files by name, walked in the user folders while typing (flow-search --files): one walk per query. A walk for
+    // an older query is stopped as soon as the query changes, and an answer it still gives is dropped. Nothing is
+    // indexed or stored, and the query goes on stdin: a command line is readable by every user of the machine.
+    property var searchFileResults: []
+    property var searchWalk: null   // the walk for the current query; null once it has answered
+    Component {
+        id: searchWalker
+        Process {
+            id: walker
+            property string query: ""
+            command: ["flow-search", "--files"]
+            stdinEnabled: true
+            onStarted: write(query + "\n")
+            stdout: StdioCollector {
+                onStreamFinished: {
+                    if (root.searchWalk !== walker) return
+                    let rows = null
+                    try { rows = JSON.parse(this.text) } catch (error) {}
+                    root.searchFileResults = Array.isArray(rows) ? rows : []
+                }
+            }
+            onRunningChanged: if (!running) {
+                if (root.searchWalk === walker) root.searchWalk = null
+                destroy()
+            }
+        }
+    }
+    Timer { id: searchWalkTimer; interval: 150; onTriggered: root.walkSearchFiles() }
+    onSearchQueryChanged: {
+        searchArmed = ""
+        dropSearchWalk()
+        if (searchQuery.trim().length < 3) searchFileResults = []
+        searchWalkTimer.restart()
+    }
+    onSearchOpenChanged: if (!searchOpen) { searchArmed = ""; walkSearchFiles() }
+    function dropSearchWalk() {
+        const stale = searchWalk
+        searchWalk = null
+        if (stale) stale.running = false
+    }
+    function walkSearchFiles() {
+        const query = searchQuery.trim()
+        dropSearchWalk()
+        if (!searchOpen || searchAppsOnly || query.length < 3) { searchFileResults = []; return }
+        searchWalk = searchWalker.createObject(root, { query: query })
+        searchWalk.running = true
+    }
     function listSearchResults() {
         const stale = searchListing
         searchListing = searchLister.createObject(root)
@@ -817,13 +896,13 @@ ShellRoot {
     Component {
         id: searchOpener
         Process {
-            property string title: ""
+            property string failure: ""
             property bool began: false
             property bool done: false
             function finish(failed) {
                 if (done) return
                 done = true
-                if (failed) root.showToast("Couldn’t open " + title)
+                if (failed) root.showToast(failure)
                 destroy()
             }
             onStarted: began = true
@@ -832,7 +911,8 @@ ShellRoot {
         }
     }
     function openSearchResult(result) {
-        const opener = searchOpener.createObject(root, { title: result.title, command: ["flow-search", "--open", result.kind, result.value] })
+        const failure = result.kind === "command" ? "Couldn’t " + result.title.toLowerCase() : "Couldn’t open " + result.title
+        const opener = searchOpener.createObject(root, { failure: failure, command: ["flow-search", "--open", result.kind, result.value] })
         opener.running = true
     }
     function openSearchPanel(appsOnly) {
@@ -848,20 +928,42 @@ ShellRoot {
         searchQuery = ""
         searchIndex = 0
         searchResults = []   // never the last run's: its windows may have closed
+        searchFileResults = []
         searchFailed = true    // until flow-search prints its list: one that never starts never answers
         searchOpen = true
         openBegins("search")
         listSearchResults()
     }
     function closeSearch() { searchOpen = false }
+    // A command that ends the session or stops the computer runs only when chosen twice within 5 s: the first
+    // choice arms it and its row says so. Typing, choosing another row or closing search disarms it.
+    property string searchArmed: ""
+    property real searchArmedAt: 0
+    Timer { id: searchArmTimer; interval: 5000; onTriggered: root.searchArmed = "" }
     function runSearchResult(result) {
         if (!result) return
+        if (result.confirm && searchArmed !== result.value) {
+            searchArmed = result.value
+            searchArmedAt = Date.now()
+            searchArmTimer.restart()
+            return
+        }
+        // A double-click, or Enter pressed twice at once, is one choice, not a second one.
+        if (result.confirm && Date.now() - searchArmedAt < 500) return
+        searchArmed = ""
         searchOpen = false
-        if (result.kind !== "settings") deskOpen = false
-        if (result.kind === "app" || result.kind === "file") openSearchResult(result)
+        if (result.kind !== "settings" && !(result.kind === "action" && result.value === "desk")) deskOpen = false
+        if (result.kind === "app" || result.kind === "file" || result.kind === "command") openSearchResult(result)
         else if (result.kind === "pin") spaceAction("focus", result.value)
         else if (result.kind === "window") spaceAction("focus-window", result.value)
         else if (result.kind === "layer") spaceAction("open-layer", result.value)
+        else if (result.kind === "action") {
+            if (result.value === "desk") { if (!deskOpen) toggleDesk() }
+            else if (result.value === "overview") openSpacesOverview()
+            else if (result.value === "notifications") { if (!notificationsOpen) toggleNotifications() }
+            else if (result.value === "pin") spaceAction("pin")
+            else if (result.value === "save-session") startSaveSession(true)
+        }
         else if (result.kind === "settings") {
             if (result.value === "quick_open") { if (!quickSettingsOpen) toggleQuickSettings() }
             else {
@@ -908,6 +1010,7 @@ ShellRoot {
         "file": "M7.5 3.5h6l5 5v10.5a1.5 1.5 0 0 1 -1.5 1.5h-9.5a1.5 1.5 0 0 1 -1.5 -1.5v-14a1.5 1.5 0 0 1 1.5 -1.5z M13.5 3.5v5h5",
         "pin": "M9 4h6 M10 4l-1 6l-3 3h12l-3 -3l-1 -6 M12 13v7",
         "layer": "M12 4.5l7.5 4l-7.5 4l-7.5 -4z M4.5 12.5l7.5 4l7.5 -4 M4.5 16.5l7.5 4l7.5 -4",
+        "power": "M12 4v7.5 M7.8 6.8a7 7 0 1 0 8.4 0",
         // Desk's tools.
         "grid": "M5 5h5v5h-5z M14 5h5v5h-5z M5 14h5v5h-5z M14 14h5v5h-5z",
         "folder": "M4 7.5a2 2 0 0 1 2 -2h3.5l2 2h6.5a2 2 0 0 1 2 2v7a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z"
@@ -1491,7 +1594,9 @@ ShellRoot {
         function search_state(): string { return root.searchOpen ? (root.searchAppsOnly ? "apps" : "open") : "closed" }
         // What the search panel shows, for scripted checks: its rows, or the message in their place.
         function search_view(): string {
-            return JSON.stringify({ rows: root.searchMatches.map(r => ({ kind: r.kind, title: r.title, icon: r.icon })),
+            // armed: the row as drawn asks to be chosen again (a command that asks first).
+            return JSON.stringify({ rows: root.searchMatches.map((r, i) => ({ kind: r.kind, title: r.title, icon: r.icon,
+                                                                              armed: !!searchView.itemAtIndex(i)?.armed })),
                                     message: root.searchMatches.length ? "" : searchEmpty.text,
                                     // The message, as laid out, ends above the footer's rule.
                                     message_clear: searchEmpty.y + Math.max(searchEmpty.height, searchEmpty.contentHeight) <= searchFooter.y - 1 })
@@ -2110,7 +2215,7 @@ ShellRoot {
                         Text { text: "Save your documents, then save the current window list before restarting."; color: floeTheme.textMuted; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 14; font.family: floeTheme.interfaceFont }
                         Flow {
                             width: parent.width; spacing: 8
-                            FlowButton { id: saveSession; implicitHeight: 44; text: "Save session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: { if (recoveryProcess.running) { root.recoveryMessage = "Wait for automatic recovery to finish"; return } recoveryProcess.command = ["flow-recovery", "save"]; recoveryProcess.running = true } }
+                            FlowButton { id: saveSession; implicitHeight: 44; text: "Save session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: root.startSaveSession(false) }
                             FlowButton { id: restoreSession; implicitHeight: 44; variant: "quiet"; text: "Restore session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: { if (recoveryProcess.running) { root.recoveryMessage = "Wait for automatic recovery to finish"; return } root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
                         }
                         Text { id: recoveryStatus; visible: root.recoveryMessage !== ""; text: root.recoveryMessage; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
@@ -2563,8 +2668,9 @@ ShellRoot {
                     Accessible.name: root.searchAppsOnly ? "Search apps" : "Search apps, spaces, windows and files"
                     Keys.onDownPressed: root.searchIndex = Math.max(0, Math.min(root.searchMatches.length - 1, root.searchIndex + 1))
                     Keys.onUpPressed: root.searchIndex = Math.max(0, root.searchIndex - 1)
-                    Keys.onReturnPressed: root.runSearchResult(root.searchMatches[root.searchIndex])
-                    Keys.onEnterPressed: root.runSearchResult(root.searchMatches[root.searchIndex])
+                    // A held key repeats: only its first press chooses.
+                    Keys.onReturnPressed: event => { if (!event.isAutoRepeat) root.runSearchResult(root.searchMatches[root.searchIndex]) }
+                    Keys.onEnterPressed: event => { if (!event.isAutoRepeat) root.runSearchResult(root.searchMatches[root.searchIndex]) }
                 }
                 FlowButton {
                     anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
@@ -2587,6 +2693,7 @@ ShellRoot {
                     required property var modelData
                     required property int index
                     readonly property bool chosen: index === root.searchIndex
+                    readonly property bool armed: !!modelData.confirm && root.searchArmed === modelData.value
                     // Drawn as under the pointer: tinted without being the chosen row (pointer_target).
                     readonly property bool tinted: !chosen && Qt.colorEqual(color, floeTheme.surfaceSelected)
                     width: searchView.width; height: 58; radius: 10
@@ -2605,7 +2712,8 @@ ShellRoot {
                         }
                         FlowIcon {
                             visible: !appIcon.visible; anchors.centerIn: parent; size: 16; color: floeTheme.accent
-                            name: ({ "pin": "pin", "window": "window", "file": "file", "settings": "sliders", "layer": "layer", "app": "app" })[resultRow.modelData.kind] || "search"
+                            name: ({ "pin": "pin", "window": "window", "file": "file", "settings": "sliders", "layer": "layer", "app": "app",
+                                     "action": "grid", "command": "power" })[resultRow.modelData.kind] || "search"
                         }
                     }
                     Column {
@@ -2618,7 +2726,9 @@ ShellRoot {
                         }
                         Text {
                             width: parent.width; elide: Text.ElideRight; textFormat: Text.PlainText
-                            text: resultRow.modelData.detail; color: floeTheme.textMuted
+                            text: resultRow.armed ? "Press Enter or click again to " + resultRow.modelData.title.toLowerCase()
+                                : resultRow.modelData.detail
+                            color: resultRow.armed ? floeTheme.textPrimary : floeTheme.textMuted
                             font.pixelSize: 12; font.family: floeTheme.interfaceFont
                         }
                     }
@@ -2633,7 +2743,8 @@ ShellRoot {
                         onClicked: root.runSearchResult(resultRow.modelData)
                     }
                     Accessible.role: Accessible.Button
-                    Accessible.name: resultRow.modelData.title + ", " + resultRow.modelData.detail
+                    Accessible.name: resultRow.modelData.title + ", " + (resultRow.armed
+                        ? "press Enter or click again to " + resultRow.modelData.title.toLowerCase() : resultRow.modelData.detail)
                     Accessible.description: chosen ? "Current" : ""
                 }
             }
@@ -2644,7 +2755,7 @@ ShellRoot {
                 height: palette.resultsHeight
                 horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                 wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
-                text: root.searchListing ? "Looking…"
+                text: root.searchListing || root.searchWalk ? "Looking…"
                     : root.searchFailed ? "Search couldn’t list anything. Close it and try again."
                     : root.searchQuery.trim() ? "Nothing matches “" + root.searchQuery.trim() + "”"
                     : "Nothing to show"

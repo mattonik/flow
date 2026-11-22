@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "session"))
 spec = importlib.util.spec_from_file_location("restore", Path(__file__).parents[1] / "session/restore.py")
@@ -680,9 +680,9 @@ class RecoveryTest(unittest.TestCase):
                 self.assertEqual(any(call.args[1] == "consume-or-expel-window-left"
                                      for call in actions.call_args_list), expected)
 
-    def test_pinned_group_recovery_shifts_only_windows_it_opened(self):
+    def test_pinned_group_recovery_after_a_restart_shifts_the_windows_it_opened(self):
         # After a restart nothing is open: recovery opens the apps in saved order, so the pinned app's window
-        # follows the Group's members. Recovery opened it, so joining the Group's column may shift it.
+        # follows the Group's members, and joining the Group's column shifts it.
         saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two"]}],
                  "windows": [{"app_id": "one", "column": 1}, {"app_id": "two", "column": 1},
                              {"app_id": "other", "column": 2}]}
@@ -703,9 +703,9 @@ class RecoveryTest(unittest.TestCase):
         actions.assert_any_call("action", "consume-or-expel-window-left", "--id", 2)
         self.assertEqual([w["layout"]["pos_in_scrolling_layout"] for w in windows], [[1, 1], [1, 2], [2, 1]])
 
-    def test_pinned_group_recovery_still_keeps_a_window_that_was_open_after_it(self):
-        # Recovery opens the Group's apps and the pinned app after them, but a window the user had open
-        # already follows too: its column would shift, so the Group is left for manual recovery.
+    def test_pinned_group_recovery_shifts_a_window_that_maps_during_recovery(self):
+        # As Rejoin Group does: a window of the user's after the Group's apps closes up behind them too. It is not
+        # in the saved session, so the order cannot be confirmed and the report says so.
         saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two"]}],
                  "windows": [{"app_id": "one", "column": 1}, {"app_id": "two", "column": 1},
                              {"app_id": "other", "column": 2}]}
@@ -724,8 +724,10 @@ class RecoveryTest(unittest.TestCase):
             actions = Mock(side_effect=NiriActions(ws, windows))
             report, _ = restore.restore(saved, ws, [], [directory], launch, lambda: (ws, windows), actions,
                                         lambda _: None, pinned={"one", "two", "other"}, pinned_groups=pins)
-        self.assertIn("Pinned Group cannot be restored without shifting other spaces", report)
-        self.assertNotIn("consume-or-expel-window-left", [call.args[1] for call in actions.call_args_list])
+        self.assertEqual(report, ["Pinned spaces keep their positions; session order needs manual recovery"])
+        actions.assert_any_call("action", "consume-or-expel-window-left", "--id", 2)
+        self.assertEqual([w["layout"]["pos_in_scrolling_layout"] for w in windows],
+                         [[1, 1], [1, 2], [2, 1], [3, 1]])  # one and two joined; notes and other closed up
 
     def test_pinned_group_recovery_skips_nonadjacent_or_unmatched_identity(self):
         saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two"]}],
@@ -733,7 +735,6 @@ class RecoveryTest(unittest.TestCase):
         pin = {"app_id": "one", "members": ["one", "two"], "group_id": "group-id"}
         for windows, candidate in (
                 ([window(1, "one", 1), window(3, "other", 2), window(2, "two", 3)], pin),
-                ([window(1, "one", 1), window(2, "two", 2), window(3, "other", 3)], pin),
                 ([window(1, "one", 1), window(2, "two", 2)], {**pin, "group_id": "other-id"})):
             with self.subTest(windows=windows, pin=candidate):
                 ws = {"id": 1}
@@ -745,6 +746,95 @@ class RecoveryTest(unittest.TestCase):
                 self.assertEqual([w["layout"]["pos_in_scrolling_layout"] for w in windows], before)
                 self.assertNotIn("consume-or-expel-window-left", [call.args[1] for call in actions.call_args_list])
                 self.assertNotIn("move-column-to-index", [call.args[1] for call in actions.call_args_list])
+
+    def test_pinned_group_recovery_rebuilds_the_group_before_a_column_that_was_open(self):
+        saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two"]}],
+                 "windows": [{"app_id": "one", "column": 1}, {"app_id": "two", "column": 1}]}
+        pin = {"app_id": "one", "members": ["one", "two"], "group_id": "group-id"}
+        ws, windows = {"id": 1}, [window(1, "one", 1), window(2, "two", 2), window(3, "other", 3)]
+        actions = Mock(side_effect=NiriActions(ws, windows))
+        report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                        pinned={"one", "two"}, pinned_groups=[pin])
+        self.assertEqual((report, count), (["Pinned spaces keep their positions; session order needs manual recovery"], 2))
+        self.assertEqual([w["layout"]["pos_in_scrolling_layout"] for w in windows], [[1, 1], [1, 2], [2, 1]])
+
+    def test_pinned_group_recovery_accepts_the_order_pin_ordering_brings_back(self):
+        # Saved: the pinned Group, then a pinned app. A refresh moved the app ahead while the Group was apart; once
+        # rebuilt, the next refresh puts the Group first again, so the session is restored as saved.
+        saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two"]}],
+                 "windows": [{"app_id": "one", "column": 1}, {"app_id": "two", "column": 1},
+                             {"app_id": "notes", "column": 2}]}
+        pins = [{"app_id": "one", "members": ["one", "two"], "group_id": "group-id"}, {"app_id": "notes"}]
+        ws, windows = {"id": 1}, [window(3, "notes", 1), window(1, "one", 2), window(2, "two", 3)]
+        actions = Mock(side_effect=NiriActions(ws, windows))
+        report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                        pinned={"one", "two", "notes"}, pinned_groups=pins,
+                                        registered=[{"id": "group-id", "label": "Pair", "members": ["one", "two"]}])
+        self.assertEqual((report, count), ([], 3))
+        self.assertEqual([w["layout"]["pos_in_scrolling_layout"] for w in windows], [[1, 1], [2, 1], [2, 2]])
+
+    def test_pinned_group_recovery_checks_each_step_of_the_join(self):
+        # A step that does not land (Niri moved the window elsewhere) stops the join before the next one.
+        saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two", "three"]}],
+                 "windows": [{"app_id": app, "column": 1} for app in ("one", "two", "three")]}
+        pin = {"app_id": "one", "members": ["one", "two", "three"], "group_id": "group-id"}
+        ws, windows = {"id": 1}, [window(1, "one", 1), window(2, "two", 2), window(3, "three", 3)]
+        niri = NiriActions(ws, windows)
+        actions = Mock(side_effect=lambda kind, action, *args: None if args[-1:] == (2,) else niri(kind, action, *args))
+        report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                    pinned={"one", "two", "three"}, pinned_groups=[pin])
+        self.assertIn("Group members moved unexpectedly; group not restored", report)
+        self.assertNotIn(call("action", "consume-or-expel-window-left", "--id", 3), actions.call_args_list)
+
+    def test_pinned_group_recovery_counts_only_this_displays_pins(self):
+        # A pin of another display does not lead this display's strip at the next refresh, so its order is not
+        # the saved one here.
+        saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two"]}],
+                 "windows": [{"app_id": "notes", "column": 1}, {"app_id": "one", "column": 2},
+                             {"app_id": "two", "column": 2}]}
+        pins = [{"app_id": "notes", "display": "ext"},
+                {"app_id": "one", "members": ["one", "two"], "group_id": "group-id", "display": "main"}]
+        ws, windows = {"id": 1}, [window(1, "one", 1), window(2, "two", 2), window(3, "notes", 3)]
+        actions = Mock(side_effect=NiriActions(ws, windows))
+        report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                    pinned={"one", "two", "notes"}, pinned_groups=pins, display="main",
+                                    registered=[{"id": "group-id", "label": "Pair", "members": ["one", "two"]}])
+        self.assertEqual(report, ["Pinned spaces keep their positions; session order needs manual recovery"])
+
+    def test_pinned_group_recovery_stops_when_the_workspace_changes_during_the_join(self):
+        saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two", "three"]}],
+                 "windows": [{"app_id": app, "column": 1} for app in ("one", "two", "three")]}
+        pin = {"app_id": "one", "members": ["one", "two", "three"], "group_id": "group-id"}
+        ws, windows = {"id": 1}, [window(1, "one", 1), window(2, "two", 2), window(3, "three", 3)]
+        niri, moved = NiriActions(ws, windows), []
+
+        def act(kind, action, *args):
+            niri(kind, action, *args)
+            moved.append(args)  # the user switched workspaces right after the first step
+
+        actions = Mock(side_effect=act)
+        with self.assertRaisesRegex(ValueError, "Workspace changed"):
+            restore.restore(saved, ws, windows, [], Mock(), lambda: ({"id": 2} if moved else ws, windows), actions,
+                            pinned={"one", "two", "three"}, pinned_groups=[pin])
+        self.assertNotIn(call("action", "consume-or-expel-window-left", "--id", 3), actions.call_args_list)
+
+    def test_pinned_group_recovery_stops_when_a_later_app_is_no_longer_a_single_window(self):
+        saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two", "three"]}],
+                 "windows": [{"app_id": app, "column": 1} for app in ("one", "two", "three")]}
+        pin = {"app_id": "one", "members": ["one", "two", "three"], "group_id": "group-id"}
+        ws, windows = {"id": 1}, [window(1, "one", 1), window(2, "two", 2), window(3, "three", 3)]
+        niri = NiriActions(ws, windows)
+
+        def act(kind, action, *args):
+            niri(kind, action, *args)
+            if args[-1:] == (2,):
+                windows[2]["is_floating"] = True  # three became a floating window meanwhile
+
+        actions = Mock(side_effect=act)
+        report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                    pinned={"one", "two", "three"}, pinned_groups=[pin])
+        self.assertIn("Group members moved unexpectedly; group not restored", report)
+        self.assertNotIn(call("action", "consume-or-expel-window-left", "--id", 3), actions.call_args_list)
 
     def test_pinned_group_recovery_rejects_duplicate_saved_membership(self):
         saved = {"version": 1, "groups": [{"id": "first", "members": ["one", "two"]},

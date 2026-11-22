@@ -159,6 +159,8 @@ in {
     services.gnome.at-spi2-core.enable = true;
     environment.systemPackages = (with pkgs; [
       foot quickshell swaylock firefox nautilus gnome-control-center networkmanagerapplet spaces appmenu keyboard wvkbd wifiSettings niriAppearanceSync grim
+      # Search's Lock screen runs it as Super+L does.
+      flowLock
       xwayland-satellite mesa-demos wayland-utils recovery search wireplumber networkmanager flowCli
     ]) ++ lib.optionals config.services.desktopManager.plasma6.enable [ (lib.hiPrio kdeSettings) ];
     services.dbus.packages = [ flowApiActivation ];

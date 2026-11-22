@@ -289,7 +289,7 @@ def save(path, workspace, windows, session=None, pins=(), registered=None, displ
 
 
 def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=time.sleep, pinned=(), session=None,
-            pinned_groups=(), registered=None):
+            pinned_groups=(), registered=None, display=None):
     side_groups = [g for g in registered or [] if g.get("layout") == "side-by-side"]
     if (any(g.get("pending_layout") for g in registered or []) or
             any(not valid_side_pins(g, pinned_groups) or
@@ -326,7 +326,6 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
         raise ValueError("Mixed stacked and side-by-side Groups require manual recovery")
     group_ids = {id(entry) for group in groups for entry in group}
     report, restored = [], []
-    launched = set()  # windows this recovery opened: they have no place of their own to keep yet
     original = workspace.get("active_window_id")
     workspace_id = workspace["id"]
     workspace_changed = False
@@ -375,7 +374,6 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
             if not desktop:
                 report.append(f"{app_id}: no matching installed application")
                 continue
-            before = {w.get("id") for w in get_snapshot()[1]}
             try:
                 launch(desktop)
             except (OSError, subprocess.SubprocessError):
@@ -387,8 +385,6 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 matches = [w for w in windows if w.get("app_id") == app_id]
                 if matches:
                     break
-            if len(matches) == 1 and matches[0]["id"] not in before:
-                launched.add(matches[0]["id"])
         valid_group_window = (id(entry) in group_ids and len(matches) == 1
                               and matches[0].get("workspace_id") == workspace["id"]
                               and not matches[0].get("is_floating")
@@ -516,16 +512,21 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 if pinned_group:
                     forward = columns == list(range(columns[0], columns[0] + n))
                     backward = columns == list(range(columns[0], columns[0] - n, -1))
-                    # Joining the column shifts every column after it. Only windows this recovery opened may
-                    # be there, as after a restart, when it opens the apps in saved order.
-                    after = [w for w in live if w.get("workspace_id") == workspace_id and not w.get("is_floating")
-                             and (w.get("layout", {}).get("pos_in_scrolling_layout") or [0])[0] > max(columns)]
-                    if not (forward or backward) or any(w.get("id") not in launched for w in after):
-                        report.append("Pinned Group cannot be restored without shifting other spaces")
+                    # Joined as Rejoin Group joins one (spaces.stack_columns): the columns after the Group close up
+                    # as its apps join one column, in the same order, and pinned ones go back in pin order at the
+                    # next refresh.
+                    if not (forward or backward):
+                        report.append("Pinned Group apps are apart or out of order; group not restored")
                         groups_ok = False
                         continue
-                    for member in found[1:]:
-                        action("action", "consume-or-expel-window-" + ("left" if forward else "right"), "--id", member["id"])
+                    try:
+                        spaces.stack_columns(list(member_ids), "left" if forward else "right", workspace_id,
+                                             "Group members moved unexpectedly; group not restored",
+                                             act=action, look=checked_snapshot)
+                    except spaces.ColumnsMoved as exc:  # anything else, such as a changed workspace, stops recovery
+                        report.append(str(exc))
+                        groups_ok = False
+                        continue
                 else:
                     moved_ok = True
                     for index in range(1, n):
@@ -575,7 +576,11 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 if destinations:
                     workspace, live = checked_snapshot()
                     if any(w.get("workspace_id") == workspace_id and w.get("app_id") in pinned for w in live):
-                        if not saved_order_matches(entries, restored, workspace, live):
+                        # The next refresh puts pinned spaces first, in pin order: an order it will bring back is saved.
+                        if not (saved_order_matches(entries, restored, workspace, live) or saved_order_matches(
+                                entries, restored, workspace,
+                                spaces.pin_ordered(workspace, live, spaces.local_pins(pinned_groups, display),
+                                                   session or "", registered or ()))):
                             report.append("Pinned spaces keep their positions; session order needs manual recovery")
                         destinations = []
                     else:
@@ -690,7 +695,8 @@ def main():
                     raise ValueError("Workspace changed; session recovery stopped")
                 subprocess.run(app_command(["gio", "launch", str(desktop)]), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             report, count = restore(data, workspace, windows, dirs, launch, checked_state, spaces.command,
-                                    pinned=pinned_apps(pins), session=session, pinned_groups=pins, registered=registered)
+                                    pinned=pinned_apps(pins), session=session, pinned_groups=pins, registered=registered,
+                                    display=display)
             print(json.dumps({"message": f"Restored {count} windows." + (" " + "; ".join(report) if report else "")}))
         return
     raise ValueError("Unknown recovery action")

@@ -2,6 +2,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import unittest
 import sys
@@ -29,9 +30,10 @@ class SearchTest(unittest.TestCase):
                 "windows": [{"label": "My\nDocument", "id": 4, "app_id": "editor"}]}
         app.get_icon.return_value = None
         rows = search.results(data, [app, hidden])
-        self.assertEqual([r[2] for r in rows], ["settings", "settings", "pin", "pin", "window", "app", "layer"])
+        self.assertEqual([r[2] for r in rows], ["settings", "settings", "pin", "pin", "window", "app",
+                                                *["action"] * 5, *["command"] * 5, "layer"])
         # Each shown app can also open as a Layer over the current space; hidden apps cannot.
-        self.assertEqual(rows[6], ("Browser", "Open as Layer", "layer", "org.example.Browser.desktop", ""))
+        self.assertEqual(rows[-1], ("Browser", "Open as Layer", "layer", "org.example.Browser.desktop", ""))
         self.assertEqual(rows[4], ("My Document", "Open window · editor", "window", "4", ""))
         self.assertEqual(rows[3], ("Missing", "Pinned space · Open", "pin", "2", ""))
 
@@ -72,6 +74,105 @@ class SearchTest(unittest.TestCase):
             history.write_text("broken")
             self.assertEqual(search.recent_files(history, home), [])
 
+    def test_user_folders_are_the_xdg_ones_wherever_they_are(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            home, config, elsewhere = base / "home", base / "config", base / "elsewhere"
+            for folder in (home / "Documents", home / "Pictures", home / "Work/Papers", home / "Music",
+                           config, elsewhere):
+                folder.mkdir(parents=True)
+            (home / "Desktop").write_text("not a folder")
+            (home / "Videos").symlink_to(elsewhere)  # a user folder kept on another disk is walked there
+            self.assertEqual(search.user_folders(home, config),
+                             [(home / name).resolve() for name in ("Documents", "Pictures", "Music")] + [elsewhere.resolve()])
+            (config / "user-dirs.dirs").write_text(
+                '# xdg-user-dirs\n'
+                'XDG_DESKTOP_DIR="$HOME"\n'                       # turned off
+                'XDG_DOWNLOAD_DIR="/"\n'                          # holds the home folder: never walked
+                'XDG_DOCUMENTS_DIR="$HOME/Work/Papers"\n'
+                'XDG_PICTURES_DIR="$HOME/Work"\n'                 # holds Documents, which it then replaces
+                f'XDG_MUSIC_DIR="{elsewhere}"\n'                  # the same folder as Videos: walked once
+                'XDG_TEMPLATES_DIR="$HOME/Templates"\n')          # not a folder search walks
+            self.assertEqual(search.user_folders(home, config), [(home / "Work").resolve(), elsewhere.resolve()])
+
+    def test_find_files_matches_names_level_by_level_with_hidden_files_and_no_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            docs, outside = base / "Documents", base / "outside"
+            (docs / "deep/deeper").mkdir(parents=True)
+            (docs / ".notes").mkdir()
+            (docs / "mounted").mkdir()
+            outside.mkdir()
+            for path in (docs / "deep/deeper/Report draft.txt", docs / "report final.odt", docs / ".notes/report.md",
+                         docs / "annual report.pdf", docs / "Budget report.ods", docs / "summary.txt", docs / "mounted/report on a share.txt",
+                         outside / "report secret.txt", docs / "report locked.txt"):
+                path.write_text("x")
+            (docs / "report link.txt").symlink_to(outside / "report secret.txt")
+            (docs / "linked folder").symlink_to(outside)
+            if os.geteuid() != 0:  # root reads anything
+                (docs / "report locked.txt").chmod(0)
+            mounts = frozenset({str(docs / "mounted")})
+            found = search.find_files("REPORT", [docs], mounts=mounts)
+            readable = [docs / "report locked.txt"] if os.geteuid() == 0 else []
+            self.assertEqual(found, [docs / "annual report.pdf", docs / "Budget report.ods", docs / "report final.odt", *readable,
+                                     docs / ".notes/report.md", docs / "deep/deeper/Report draft.txt"])
+            self.assertIn(docs / "mounted/report on a share.txt", search.find_files("report", [docs]))
+            self.assertEqual(search.find_files("draft report", [docs]), [docs / "deep/deeper/Report draft.txt"])
+            self.assertEqual(search.find_files("deep", [docs]), [docs / "deep", docs / "deep/deeper"])
+            self.assertEqual(search.find_files("re", [docs]), [])  # too short to walk for
+            rows = json.loads(search.file_rows([docs / "deep", docs / "summary.txt"]))
+            self.assertEqual([(r["title"], r["detail"], r["kind"]) for r in rows],
+                             [("deep", f"Folder · {docs}", "file"), ("summary.txt", f"File · {docs}", "file")])
+            self.assertEqual(rows[1]["value"], (docs / "summary.txt").as_uri())
+
+    def test_find_files_stops_at_its_bounds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            docs = Path(directory)
+            for index in range(5):
+                (docs / f"note {index}.txt").write_text("x")
+            nested = docs / "a/b/c"
+            nested.mkdir(parents=True)
+            (nested / "note deep.txt").write_text("x")
+            bounds = dict(search.WALK)
+            self.assertEqual(len(search.find_files("note", [docs], dict(bounds, results=3))), 3)
+            self.assertNotIn(nested / "note deep.txt", search.find_files("note", [docs], dict(bounds, depth=3)))
+            self.assertIn(nested / "note deep.txt", search.find_files("note", [docs], dict(bounds, depth=4)))
+            ticks = iter(range(100))
+            self.assertEqual(search.find_files("note", [docs], dict(bounds, seconds=2.5), clock=lambda: next(ticks)),
+                             [docs / "note 0.txt"])
+
+    def test_find_files_checks_the_clock_while_it_reads_a_folder(self):
+        pulled = []
+
+        class Huge:
+            def __enter__(self):
+                def entries():
+                    for index in range(100000):
+                        pulled.append(index)
+                        yield SimpleNamespace(name=f"x{index}", path=f"/huge/x{index}", is_dir=lambda **_: False,
+                                              is_file=lambda **_: True)
+                return entries()
+
+            def __exit__(self, *_):
+                return False
+
+        times = iter([0] + [10] * 100)  # the walk starts at 0 s; every later look at the clock says 10 s
+        with patch.object(search.os, "scandir", return_value=Huge()):
+            self.assertEqual(search.find_files("report", [Path("/huge")], clock=lambda: next(times)), [])
+        self.assertEqual(len(pulled), 256)
+
+    def test_files_mode_walks_the_users_folders(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            (home / "Documents").mkdir()
+            (home / "Documents/Quarterly report.txt").write_text("x")
+            (home / "report outside the user folders.txt").write_text("x")
+            out = io.StringIO()
+            with patch.dict("os.environ", {"HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config")}), \
+                    patch.object(search.sys, "stdin", io.StringIO("report\n")), contextlib.redirect_stdout(out):
+                self.assertEqual(search.main(["--files"]), 0)
+            self.assertEqual([r["title"] for r in json.loads(out.getvalue())], ["Quarterly report.txt"])
+
     def test_json_lists_the_results_and_names_apps_by_their_desktop_file(self):
         app = Mock()
         app.get_display_name.return_value = "Browser"
@@ -90,8 +191,11 @@ class SearchTest(unittest.TestCase):
         rows = json.loads(out.getvalue())
         self.assertEqual([(r["kind"], r["value"]) for r in rows],
                          [("settings", "settings"), ("settings", "quick_open"), ("pin", "p"),
-                          ("app", "/usr/share/applications/browser.desktop"), ("layer", "browser.desktop")])
+                          ("app", "/usr/share/applications/browser.desktop"),
+                          *[(kind, value) for _, _, kind, value in search.COMMANDS], ("layer", "browser.desktop")])
         self.assertEqual(rows[3]["icon"], "browser")
+        # Ending the session or stopping the computer asks first; nothing else does.
+        self.assertEqual({r["value"] for r in rows if r.get("confirm")}, {"logout", "restart", "poweroff"})
 
     def test_open_launches_apps_and_files_through_gio_in_an_app_scope(self):
         for kind, value, command in (("app", "/a/browser.desktop", ["gio", "launch", "/a/browser.desktop"]),
@@ -103,6 +207,22 @@ class SearchTest(unittest.TestCase):
                 # None of the app's streams may be the shell's pipe.
                 for stream in ("stdin", "stdout", "stderr"):
                     self.assertIs(run.call_args.kwargs[stream], search.subprocess.DEVNULL)
+
+    def test_open_runs_system_commands_outside_any_app_scope(self):
+        expected = {"lock": ["flow-lock", "-f"], "suspend": ["systemctl", "suspend"],
+                    "logout": ["niri", "msg", "action", "quit", "--skip-confirmation"],
+                    "restart": ["systemctl", "reboot"], "poweroff": ["systemctl", "poweroff"]}
+        self.assertEqual({value for _, _, kind, value in search.COMMANDS if kind == "command"}, set(expected))
+        for value, command in expected.items():
+            with self.subTest(command=value), patch.dict(search.os.environ, {"FLOW_APP_SCOPES": "1"}), \
+                 patch.object(search.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
+                self.assertEqual(search.main(["--open", "command", value]), 0)
+                self.assertEqual(run.call_args.args[0], command)
+                for stream in ("stdin", "stdout", "stderr"):
+                    self.assertIs(run.call_args.kwargs[stream], search.subprocess.DEVNULL)
+        with patch.object(search.subprocess, "run") as run, contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(search.main(["--open", "command", "rm -rf"]), 2)
+            run.assert_not_called()
 
     def test_open_reports_failure_and_refuses_other_kinds(self):
         with patch.object(search.subprocess, "run", return_value=SimpleNamespace(returncode=4)):
