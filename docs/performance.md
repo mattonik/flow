@@ -204,3 +204,13 @@ The performance smoke runs the real reader now, on its own session bus, adds the
 Every other check passed too (31 of 31). The probes were 2–7 ms but one: Nautilus's first, as its window opened, took 348 ms, while it chose the frame and looked for a menu bar in an app still starting up. A window's first probe is paid once; the median is the cost of a focus change. Probes of apps with a menu, measured separately in a fresh reader: a window's first probe 20–40 ms (LibreOffice's first 170 ms), later ones 4–13 ms; reading the whole menu 108 ms (Mousepad, 230 items) to 352 ms (LibreOffice, 683 items).
 
 The shell now runs on the smoke's own session bus, so no figure in this run includes the session bus's traffic; runs before this change are not like for like in that respect. The helpers were the installed ones for `flow-spaces` and `flow-search` (unchanged here) and this checkout's `flow-appmenu`. A first run with wrappers that ran `spaces.py` by path, without bytecode, read 36 ms for refresh and observe, as the bytecode row above predicts, and timed out waiting for the 0.05 s storm's final title; with the installed helpers neither happened.
+
+Each change neutralised in turn, keeping its symbols (idle 20 s):
+
+| Neutralised | How | Failing check (limit) |
+|---|---|---|
+| A resident reader | each probe also starts a Python that reads the bus, as a process per call would | probe median 91 ms (< 50) |
+| The reader blocks until a request comes | a 1 ms GLib timer keeps its loop awake | idle helpers CPU 2.35% (< 1), and 3.62% under focus changes every 0.25 s (< 2.5) |
+| No process per focus change | main's `shell.qml`, which starts `flow-appmenu identity` after each focus change | 41 `flow-appmenu` processes (1); no probe timings |
+
+No variant failed any other check but main's shell, whose Desk read 151 ms (< 150) once among its processes.
