@@ -162,8 +162,13 @@ from the file you download yourself, because its licence does not allow redistri
 2. Copy it into the guest and add it to the Nix store under the name nixpkgs expects:
 
    ```bash
-   scp -i /Users/mpuskac/Experiments/.floe-test/ssh-key -P 41222 ~/Downloads/"DisplayLink USB Graphics Software for Ubuntu6.3-EXE.zip" floe@127.0.0.1:/tmp/displaylink-630.zip
+   scp -i /Users/mpuskac/Experiments/.floe-test/ssh-key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P 41222 ~/Downloads/"DisplayLink USB Graphics Software for Ubuntu6.3-EXE.zip" floe@127.0.0.1:/tmp/displaylink-630.zip
    ```
+
+   The two `-o` options are the ones the test sessions use. They keep the guest out of
+   `~/.ssh/known_hosts`, where a key from an earlier install on the same port makes `scp` refuse with
+   *REMOTE HOST IDENTIFICATION HAS CHANGED*. The port is UTM's forward to the VM on this Mac, not a remote
+   host.
 
    ```bash
    nix-prefetch-url --type sha256 file:///tmp/displaylink-630.zip
