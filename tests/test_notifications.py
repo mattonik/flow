@@ -29,7 +29,8 @@ class NotificationShellTest(unittest.TestCase):
 
     def test_newest_first_with_dismiss_clear_all_and_touch_sized_actions(self):
         panel = notification_panel()
-        self.assertIn("model: [...notificationServer.trackedNotifications.values].reverse()", panel)
+        # Newest first, and built only while the panel shows (docs/performance.md, hidden surfaces).
+        self.assertIn("model: notificationPanel.visible ? [...notificationServer.trackedNotifications.values].reverse() : []", panel)
         self.assertIn('Accessible.name: "Dismiss notification"; onClicked: modelData.dismiss()', panel)
         self.assertIn("onClicked: [...notificationServer.trackedNotifications.values].forEach(n => n.dismiss())", panel)
         actions = panel[panel.index("model: modelData.actions"):]

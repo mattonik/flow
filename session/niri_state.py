@@ -86,6 +86,12 @@ class NiriState:
             workspace = self.workspaces.get(ident)
             if workspace is not None:
                 workspace["active_window_id"] = data["active_window_id"]
+        elif name == "WindowFocusTimestampChanged":
+            ident = data.get("id")
+            if not _valid_id(ident) or "focus_timestamp" not in data:
+                return False
+            if ident in self.windows:
+                self.windows[ident]["focus_timestamp"] = deepcopy(data["focus_timestamp"])
         elif name == "WindowLayoutsChanged":
             changes = data.get("changes")
             if not isinstance(changes, list) or not all(

@@ -167,54 +167,105 @@ ShellRoot {
             }
         }
     }
+    // The focused app's identity is asked for when focus moves (Niri's events), when the menu is turned on and
+    // when Desk, Niri's overview or the menu closes; never again for the same focus. It reads only Niri, not the
+    // accessibility bus (session/appmenu.py), so asking again would answer the same.
+    function requestAppIdentity() { appIdentityTimer.restart() }
+    readonly property bool appIdentityBlocked: appMenuOpen || deskOpen || overviewOpen
+    onAppIdentityBlockedChanged: if (!appIdentityBlocked) requestAppIdentity()   // it asks only if no menu is held then
+    Connections {
+        target: menuPreferences
+        function onAppMenuEnabledChanged() { root.requestAppIdentity() }
+    }
     Timer {
-        interval: 1500; running: menuPreferences.appMenuEnabled; repeat: true; triggeredOnStart: true
-        onTriggered: if (!appMenuProcess.running && !root.appMenu && !root.appMenuOpen && !root.deskOpen && !root.overviewOpen) {
+        id: appIdentityTimer; interval: 300
+        Component.onCompleted: root.requestAppIdentity()
+        onTriggered: {
+            if (!menuPreferences.appMenuEnabled || root.appMenu || root.appIdentityBlocked) return
+            if (appMenuProcess.running) { restart(); return }
             appMenuProcess.command = ["flow-appmenu", "identity"]
             appMenuProcess.running = true
         }
     }
+    // Flow's resident controller (session/flow_controller.py) reads Niri's events, refreshes Flow's state
+    // in-process when they ask for it, and sends that state here, with the few Niri events the shell reacts to.
+    // The shell starts it, and starts it again if it stops: 2 s later, then twice as long each time it stops
+    // again (at most a minute), until it has served for 30 s. While another controller serves this runtime
+    // folder and Flow state (a shell restarting), a new one waits for it to go.
     Process {
-        id: niriEvents
-        // The kernel stops the stream when the shell dies, even by SIGKILL, so restarts never leak one.
-        // Without setpriv the stream still runs, only without that guarantee.
-        command: ["sh", "-c", "command -v setpriv >/dev/null && exec setpriv --pdeathsig TERM niri msg -j event-stream; exec niri msg -j event-stream"]
+        id: controllerProcess
+        // The kernel stops the controller when the shell dies, even by SIGKILL, so restarts never leak one.
+        // Without setpriv it still runs, only without that guarantee.
+        command: ["sh", "-c", "command -v setpriv >/dev/null && exec setpriv --pdeathsig TERM flow-controller; exec flow-controller"]
         running: true
-        onExited: eventReconnect.restart()
-        stdout: SplitParser {
+        onExited: {
+            controllerRestart.interval = Math.min(2000 * Math.pow(2, root.controllerExits), 60000)
+            root.controllerExits += 1
+            controllerRestart.restart()
+        }
+        stderr: SplitParser { onRead: line => console.warn("flow-controller: " + line) }
+    }
+    property int controllerExits: 0   // since one last served for 30 s
+    Timer { id: controllerRestart; onTriggered: if (!controllerProcess.running) controllerProcess.running = true }
+    Timer { id: controllerHealthy; interval: 30000; onTriggered: if (controller.connected) root.controllerExits = 0 }
+    // session/flow_controller.py, socket_path(): one controller per runtime folder and Flow state.
+    readonly property string stateHome: Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state"
+    Socket {
+        id: controller
+        path: Quickshell.env("XDG_RUNTIME_DIR")
+            ? Quickshell.env("XDG_RUNTIME_DIR") + "/flow-controller-" + Qt.md5(root.stateHome).slice(0, 12) + ".sock" : ""
+        onConnectionStateChanged: {
+            if (connected) { write('{"watch": true}\n'); flush(); controllerHealthy.restart() }
+            else { controllerHealthy.stop(); controllerConnect.restart() }
+        }
+        parser: SplitParser {
             onRead: data => {
-                try {
-                    const event = JSON.parse(data)
-                    if (event.WorkspacesChanged || event.WorkspaceActivated || event.WorkspaceActiveWindowChanged ||
-                        event.WindowsChanged || event.WindowOpenedOrChanged || event.WindowClosed ||
-                        event.WindowFocusChanged || event.WindowLayoutsChanged) refreshAfterEvent.restart()
-                    if (event.WindowFocusChanged && event.WindowFocusChanged.id !== null && root.appMenu && root.appMenu.id !== event.WindowFocusChanged.id) {
-                        if (root.appMenuOpen) root.appMenuFocusChanged = true
-                        else root.appMenu = null
-                        root.openMenuWhenReady = false
-                    }
-                    if (event.WorkspaceActiveWindowChanged && root.appMenu &&
-                            event.WorkspaceActiveWindowChanged.workspace_id === root.appMenu.workspace_id &&
-                            event.WorkspaceActiveWindowChanged.active_window_id !== null &&
-                            event.WorkspaceActiveWindowChanged.active_window_id !== root.appMenu.id) {
-                        if (root.appMenuOpen) root.appMenuFocusChanged = true
-                        else root.appMenu = null
-                        root.openMenuWhenReady = false
-                    }
-                    if (event.WindowClosed && root.appMenu && root.appMenu.id === event.WindowClosed.id) {
-                        if (root.appMenuOpen) root.appMenuFocusChanged = true
-                        else root.appMenu = null
-                        root.openMenuWhenReady = false
-                    }
-                    if (event.OverviewOpenedOrClosed) {
-                        root.overviewOpen = event.OverviewOpenedOrClosed.is_open
-                        if (root.overviewOpen) { root.deskOpen = false; root.spacesOverviewOpen = false; root.overviewPending = false; root.searchOpen = false; root.notificationsOpen = false; root.appMenuOpen = false; root.openMenuWhenReady = false; root.switcherOpen = false; root.quickSettingsOpen = false }
-                    }
-                } catch (e) {}
+                let message = null
+                try { message = JSON.parse(data) } catch (e) { return }
+                if (message.state) {
+                    root.applySpaces(message.state)
+                    if (message.refreshed !== undefined && message.refreshed >= root.deskRefresh && root.deskOpen) root.openEnds("desk")
+                } else if (message.event) root.niriEvent(message.event)
             }
         }
     }
-    Timer { id: eventReconnect; interval: 5000; onTriggered: if (!niriEvents.running) niriEvents.running = true }
+    // Until the controller listens (it starts with the shell) and after it stops, the shell tries again.
+    Timer { id: controllerConnect; interval: 250; running: true; repeat: true; onTriggered: if (controller.connected) stop(); else controller.connected = true }
+    property int refreshAsked: 0
+    property int deskRefresh: 0
+    // A refresh now, answered even if nothing changed: Desk opening, an action that finished, a display resized.
+    function requestRefresh() {
+        if (!controller.connected) return 0
+        refreshAsked += 1
+        controller.write(JSON.stringify({ refresh: refreshAsked }) + "\n")
+        controller.flush()
+        return refreshAsked
+    }
+    function niriEvent(event) {
+        if (event.WindowsChanged || event.WindowFocusChanged || event.WorkspaceActiveWindowChanged) requestAppIdentity()
+        if (event.WindowFocusChanged && event.WindowFocusChanged.id !== null && appMenu && appMenu.id !== event.WindowFocusChanged.id) {
+            if (appMenuOpen) appMenuFocusChanged = true
+            else appMenu = null
+            openMenuWhenReady = false
+        }
+        if (event.WorkspaceActiveWindowChanged && appMenu &&
+                event.WorkspaceActiveWindowChanged.workspace_id === appMenu.workspace_id &&
+                event.WorkspaceActiveWindowChanged.active_window_id !== null &&
+                event.WorkspaceActiveWindowChanged.active_window_id !== appMenu.id) {
+            if (appMenuOpen) appMenuFocusChanged = true
+            else appMenu = null
+            openMenuWhenReady = false
+        }
+        if (event.WindowClosed && appMenu && appMenu.id === event.WindowClosed.id) {
+            if (appMenuOpen) appMenuFocusChanged = true
+            else appMenu = null
+            openMenuWhenReady = false
+        }
+        if (event.OverviewOpenedOrClosed) {
+            overviewOpen = event.OverviewOpenedOrClosed.is_open
+            if (overviewOpen) { deskOpen = false; spacesOverviewOpen = false; overviewPending = false; searchOpen = false; notificationsOpen = false; appMenuOpen = false; openMenuWhenReady = false; switcherOpen = false; quickSettingsOpen = false }
+        }
+    }
     property string recoveryMessage: ""
     property bool autoRecoveryBlocked: true
     property string renameGroupId: ""
@@ -297,19 +348,29 @@ ShellRoot {
     }
     property string spacesError: ""
     property var pendingSpaceActions: []
-    // Actions of the user's, not background jobs. Controls stay enabled through the periodic refresh (every
-    // 30 s), automatic layout (every 2 s while a Group asks for it) and automatic recovery: a control that
+    // Actions of the user's, not background jobs. Controls stay enabled through refreshes, automatic layout
+    // (when a Group asks for it and its display turned) and automatic recovery: a control that
     // turned disabled would drop keyboard focus. Space actions queue behind them, and flow-recovery waits for
     // flow-spaces on spaces.lock.
     readonly property bool spacesWorking: spacesProcess.running && !["refresh", "auto-layout"].includes(spacesProcess.command[1])
     readonly property bool recoveryWorking: recoveryProcess.running && !String(recoveryProcess.command[1]).startsWith("auto-")
+    // Desk's Save session button, and search's. From search, Desk is closed, so the result is a toast.
+    property bool recoveryToast: false
+    function startSaveSession(fromSearch) {
+        const busy = recoveryProcess.running ? "Wait for automatic recovery to finish" : spacesWorking ? "Wait for the current action" : ""
+        if (busy) { if (fromSearch) showToast(busy); else recoveryMessage = busy; return }
+        recoveryToast = fromSearch
+        recoveryProcess.command = ["flow-recovery", "save"]
+        recoveryProcess.running = true
+    }
     function renameGroup(id, label) {
         if (recoveryProcess.running || spacesWorking || pendingSpaceActions.length) { spacesError = "Wait for the current action"; return }
         recoveryProcess.command = ["flow-recovery", "rename-group", id, label]
         recoveryProcess.running = true
     }
     function spaceAction(action, id) {
-        // A recovery the user started refuses; an automatic one (every 30 s) is waited for, like a refresh.
+        if (action === "refresh") { requestRefresh(); return }
+        // A recovery the user started refuses; an automatic one (every 30 s) is waited for.
         if (recoveryWorking) { if (action !== "refresh") spacesError = "Wait for session recovery to finish"; return }
         if (recoveryProcess.running || spacesProcess.running || pendingSpaceActions.length) {
             if (action !== "refresh") {
@@ -318,19 +379,37 @@ ShellRoot {
             }
             return
         }
-        spacesProcess.command = id ? ["flow-spaces", action, id] : ["flow-spaces", action]
-        spacesProcess.running = true
+        runSpaces(action, id)
     }
     function drainSpaceActions() {
         if (spacesProcess.running || recoveryProcess.running || !pendingSpaceActions.length) return
         const next = pendingSpaceActions[0]
         pendingSpaceActions = pendingSpaceActions.slice(1)
-        spacesProcess.command = next.id ? ["flow-spaces", next.action, next.id] : ["flow-spaces", next.action]
+        runSpaces(next.action, next.id)
+    }
+    function runSpaces(action, id) {
+        spacesProcess.command = id ? ["flow-spaces", action, id] : ["flow-spaces", action]
         spacesProcess.running = true
+    }
+    // Flow's state as flow-spaces or the controller reported it.
+    function applySpaces(result) {
+        if (result.error) { spacesError = result.error; return }
+        if (JSON.stringify(windows) !== JSON.stringify(result.windows)) windows = result.windows
+        if (JSON.stringify(displaySpaces) !== JSON.stringify(result.spaces)) displaySpaces = result.spaces
+        if (JSON.stringify(layers) !== JSON.stringify(result.layers || [])) layers = result.layers || []
+        if (JSON.stringify(incompleteGroups) !== JSON.stringify(result.incomplete_groups || [])) incompleteGroups = result.incomplete_groups || []
+        if (JSON.stringify(pins) !== JSON.stringify(result.pins)) pins = result.pins
+        if (JSON.stringify(otherPins) !== JSON.stringify(result.other_pins || [])) otherPins = result.other_pins || []
+        displayLabel = result.display ? result.display.label : ""
+        displayName = result.display ? result.display.name || "" : ""
+        displayCount = result.display_count || 1
+        if (JSON.stringify(displays) !== JSON.stringify(result.displays || [])) displays = result.displays || []
+        displayOrientation = result.orientation || ""
     }
     Process {
         id: spacesProcess
-        onRunningChanged: if (!running && root.pendingSpaceActions.length) Qt.callLater(root.drainSpaceActions)
+        // The controller reads what the action changed, which Niri may not have sent an event for (a pin).
+        onRunningChanged: if (!running) { root.requestRefresh(); if (root.pendingSpaceActions.length) Qt.callLater(root.drainSpaceActions) }
         stdout: StdioCollector {
             onStreamFinished: {
                 try {
@@ -343,16 +422,7 @@ ShellRoot {
                             else root.deskOpen = true
                         }
                     } else {
-                        if (JSON.stringify(root.windows) !== JSON.stringify(result.windows)) root.windows = result.windows
-                        if (JSON.stringify(root.displaySpaces) !== JSON.stringify(result.spaces)) root.displaySpaces = result.spaces
-                        if (JSON.stringify(root.layers) !== JSON.stringify(result.layers || [])) root.layers = result.layers || []
-                        if (JSON.stringify(root.incompleteGroups) !== JSON.stringify(result.incomplete_groups || [])) root.incompleteGroups = result.incomplete_groups || []
-                        if (JSON.stringify(root.pins) !== JSON.stringify(result.pins)) root.pins = result.pins
-                        if (JSON.stringify(root.otherPins) !== JSON.stringify(result.other_pins || [])) root.otherPins = result.other_pins || []
-                        root.displayLabel = result.display ? result.display.label : ""
-                        root.displayName = result.display ? result.display.name || "" : ""
-                        root.displayCount = result.display_count || 1
-                        if (JSON.stringify(root.displays) !== JSON.stringify(result.displays || [])) root.displays = result.displays || []
+                        root.applySpaces(result)
                         if (result.action !== "refresh") root.spacesError = ""
                         if (result.notice) root.showToast(result.notice)
                         if (["focus", "focus-number", "focus-window", "move-to-display"].includes(result.action)) { root.deskOpen = false; root.switcherOpen = false }
@@ -370,6 +440,7 @@ ShellRoot {
                 try {
                     const result = JSON.parse(this.text)
                     root.recoveryMessage = result.error || result.message || "Recovery unavailable"
+                    if (recoveryProcess.command[1] === "save" && root.recoveryToast) { root.recoveryToast = false; root.showToast(root.recoveryMessage) }
                     if (recoveryProcess.command[1] === "auto-start" || recoveryProcess.command[1] === "auto-save" || recoveryProcess.command[1] === "auto-ready") {
                         root.autoRecoveryBlocked = !!result.error
                         if (result.error) { root.deskOpen = true; root.settingsOpen = true; Qt.callLater(function() { root.reveal(recoveryStatus) }) }
@@ -379,7 +450,7 @@ ShellRoot {
                         root.spacesError = result.error || ""
                         if (!result.error) root.renameGroupId = ""
                     }
-                    if (!result.error) refreshAfterEvent.restart()
+                    if (!result.error) root.requestRefresh()
                 } catch (e) { root.recoveryMessage = "Could not read recovery result" }
             }
         }
@@ -408,19 +479,44 @@ ShellRoot {
             recoveryProcess.command = ["flow-recovery", "auto-save"]; recoveryProcess.running = true
         }
     }
+    // A display that changes size (a rotation) reshapes the Layers Flow shaped on the next refresh, and Niri
+    // may send no window event for a workspace with only floating windows.
+    readonly property string screenSizes: Quickshell.screens.map(screen => screen.name + " " + screen.width + "x" + screen.height).join(",")
+    onScreenSizesChanged: requestRefresh()
+    // Automatic layout runs when a Group that asks for it does not suit its display's orientation: after a
+    // rotation, a move to another display or the toggle. It waits while a shell surface is open or another
+    // action runs, and a pass that leaves the same Groups unsuited is not repeated until something changes.
+    property string displayOrientation: ""
+    readonly property string autoLayoutDue: {
+        if (!displayOrientation) return ""
+        const target = displayOrientation === "portrait" ? "stack" : "side-by-side"
+        const unsuited = displaySpaces.filter(space => space.auto_layout && space.group_layout !== target)
+        return unsuited.length ? displayOrientation + " " + unsuited.map(space => space.group_id + ":" + space.group_layout).join(",") : ""
+    }
+    readonly property bool autoLayoutIdle: !deskOpen && !switcherOpen && !overviewOpen && !spacesOverviewOpen && !searchOpen
+        && !appMenuOpen && !quickSettingsOpen && !notificationsOpen && !spacesProcess.running && !recoveryProcess.running
+        && !pendingSpaceActions.length
+    property string autoLayoutTried: ""
+    onAutoLayoutDueChanged: { if (!autoLayoutDue) autoLayoutTried = ""; autoLayoutCheck.restart() }
+    onAutoLayoutIdleChanged: if (autoLayoutIdle) autoLayoutCheck.restart()
     Timer {
-        id: refreshAfterEvent
-        interval: 150
-        onTriggered: {
-            if (spacesProcess.running || recoveryProcess.running || root.pendingSpaceActions.length) restart()
-            else root.spaceAction("refresh")
+        id: autoLayoutCheck; interval: 300
+        onTriggered: if (root.autoLayoutDue && root.autoLayoutDue !== root.autoLayoutTried && root.autoLayoutIdle) {
+            root.autoLayoutTried = root.autoLayoutDue
+            root.spaceAction("auto-layout")
         }
     }
-    Timer { interval: niriEvents.running ? 30000 : 3000; running: true; repeat: true; triggeredOnStart: true; onTriggered: root.spaceAction("refresh") }
-    Timer {
-        interval: 2000; repeat: true
-        running: root.displaySpaces.some(space => space.auto_layout) || root.layers.some(layer => layer.shaped)
-        onTriggered: if (!root.deskOpen && !root.switcherOpen && !root.overviewOpen && !root.spacesOverviewOpen && !root.searchOpen && !root.appMenuOpen && !root.quickSettingsOpen && !root.notificationsOpen && !spacesProcess.running && !recoveryProcess.running && !root.pendingSpaceActions.length) root.spaceAction("auto-layout")
+    // For tests/niri_performance_smoke.py: how long the last opening of each surface took inside the shell, from
+    // the request to its content. Desk: until it shows the refresh it asked the controller for. Overview:
+    // until its first frame with every card, after its snapshot. Search: until it shows a listing. Each entry
+    // is {ms, count}.
+    property var openStarted: ({})
+    property var openTook: ({})
+    function openBegins(name) { openStarted[name] = Date.now() }
+    function openEnds(name) {
+        if (!openStarted[name]) return
+        openTook[name] = { ms: Date.now() - openStarted[name], count: ((openTook[name] || {}).count || 0) + 1 }
+        delete openStarted[name]
     }
     function toggleDesk() {
         overviewPending = false
@@ -430,9 +526,9 @@ ShellRoot {
         switcherOpen = false
         appMenuOpen = false
         openMenuWhenReady = false
-        if (!deskOpen) Quickshell.execDetached(["niri", "msg", "action", "close-overview"])
+        if (!deskOpen) { Quickshell.execDetached(["niri", "msg", "action", "close-overview"]); openBegins("desk") }
         deskOpen = !deskOpen
-        if (deskOpen) spaceAction("refresh")
+        if (deskOpen) deskRefresh = requestRefresh()
     }
 
     // The search panel is the launcher; closeLauncher remains the name its callers know.
@@ -512,13 +608,15 @@ ShellRoot {
         if (overviewOpen) Quickshell.execDetached(["niri", "msg", "action", "close-overview"])
         deskOpen = false
         overviewPending = true
+        openBegins("overview")
         const show = () => {
             // Desk, search or another panel opened meanwhile: they win, Overview does not stack on them.
             if (!overviewPending || deskOpen || searchOpen || switcherOpen || quickSettingsOpen
                 || notificationsOpen || appMenuOpen || overviewOpen) { overviewPending = false; return }
-            overviewPending = false
+            // Open first, then no longer pending: the cards built during the snapshot stay.
             overviewSpaceId = activeSpace ? String(activeSpace.id) : ""
             spacesOverviewOpen = true
+            overviewPending = false
         }
         // The space on screen now is the freshest: snapshot it, then show the row. Not while a move is
         // still settling, which would catch the scroll halfway under the old space's name.
@@ -596,21 +694,43 @@ ShellRoot {
     property int searchIndex: 0
     readonly property var searchMatches: {
         const query = searchQuery.trim().toLowerCase()
-        const pool = searchAppsOnly ? searchResults.filter(r => r.kind === "app") : searchResults
+        // Files found by name while typing come after search.py's results, less the recent files among them.
+        const listed = new Set(searchResults.filter(r => r.kind === "file").map(r => r.value))
+        const pool = searchAppsOnly ? searchResults.filter(r => r.kind === "app")
+            : searchResults.concat(searchFileResults.filter(r => !listed.has(r.value)))
         if (!query) return pool.slice(0, 60)
         const scored = []
         pool.forEach((result, index) => {
             const title = result.title.toLowerCase(), detail = result.detail.toLowerCase()
             const words = title.split(/[\s·:/._-]+/)
             const score = title === query ? 0 : title.startsWith(query) ? 1 : words.some(w => w.startsWith(query)) ? 2
-                : title.includes(query) ? 3 : detail.includes(query) ? 4 : -1
+                : title.includes(query) ? 3 : detail.includes(query) ? 4
+                : query.split(/\s+/).every(w => title.includes(w)) ? 5 : -1
             if (score >= 0) scored.push({score: score, index: index, result: result})
         })
         // Ties keep search.py's order (an app before the same app as a Layer): V4's sort is not stable.
         scored.sort((a, b) => a.score - b.score || a.index - b.index)
         return scored.slice(0, 60).map(entry => entry.result)
     }
-    onSearchMatchesChanged: searchIndex = 0
+    // The chosen row stays chosen while results arrive for the same query (files come in as they are found);
+    // a new query chooses the first row again.
+    property string searchChosenKey: ""
+    property string searchChosenFor: ""
+    onSearchIndexChanged: {
+        const chosen = searchMatches[searchIndex]
+        // Choosing another row disarms a command armed to ask first; the same row moving down does not.
+        if (!(chosen && chosen.confirm && chosen.value === searchArmed)) searchArmed = ""
+        searchChosenKey = chosen ? chosen.kind + "\n" + chosen.value : ""
+        searchChosenFor = searchQuery
+    }
+    onSearchMatchesChanged: {
+        const kept = searchChosenFor === searchQuery
+            ? searchMatches.findIndex(r => r.kind + "\n" + r.value === searchChosenKey) : -1
+        if (kept >= 0) searchIndex = kept
+        else { searchIndex = 0; searchIndexChanged() }
+        // A new model scrolls the list back to its top; the chosen row stays in sight.
+        if (searchMatches.length) Qt.callLater(() => searchView.positionViewAtIndex(searchIndex, ListView.Contain))
+    }
     // One listing per opening of search. A listing still running when search opens again lists what was there
     // before (windows since closed): it is sent SIGTERM and its answer dropped, so only the newest one is shown.
     // That stops search.py, not the `flow-spaces refresh` it started, which finishes under spaces.lock.
@@ -629,6 +749,7 @@ ShellRoot {
                     try { rows = JSON.parse(this.text) } catch (error) {}
                     root.searchFailed = !Array.isArray(rows)
                     root.searchResults = Array.isArray(rows) ? rows : []
+                    if (root.searchResults.length) root.openEnds("search")
                 }
             }
             onRunningChanged: if (!running) {
@@ -636,6 +757,53 @@ ShellRoot {
                 destroy()
             }
         }
+    }
+    // Files by name, walked in the user folders while typing (flow-search --files): one walk per query. A walk for
+    // an older query is stopped as soon as the query changes, and an answer it still gives is dropped. Nothing is
+    // indexed or stored, and the query goes on stdin: a command line is readable by every user of the machine.
+    property var searchFileResults: []
+    property var searchWalk: null   // the walk for the current query; null once it has answered
+    Component {
+        id: searchWalker
+        Process {
+            id: walker
+            property string query: ""
+            command: ["flow-search", "--files"]
+            stdinEnabled: true
+            onStarted: write(query + "\n")
+            stdout: StdioCollector {
+                onStreamFinished: {
+                    if (root.searchWalk !== walker) return
+                    let rows = null
+                    try { rows = JSON.parse(this.text) } catch (error) {}
+                    root.searchFileResults = Array.isArray(rows) ? rows : []
+                }
+            }
+            onRunningChanged: if (!running) {
+                if (root.searchWalk === walker) root.searchWalk = null
+                destroy()
+            }
+        }
+    }
+    Timer { id: searchWalkTimer; interval: 150; onTriggered: root.walkSearchFiles() }
+    onSearchQueryChanged: {
+        searchArmed = ""
+        dropSearchWalk()
+        if (searchQuery.trim().length < 3) searchFileResults = []
+        searchWalkTimer.restart()
+    }
+    onSearchOpenChanged: if (!searchOpen) { searchArmed = ""; walkSearchFiles() }
+    function dropSearchWalk() {
+        const stale = searchWalk
+        searchWalk = null
+        if (stale) stale.running = false
+    }
+    function walkSearchFiles() {
+        const query = searchQuery.trim()
+        dropSearchWalk()
+        if (!searchOpen || searchAppsOnly || query.length < 3) { searchFileResults = []; return }
+        searchWalk = searchWalker.createObject(root, { query: query })
+        searchWalk.running = true
     }
     function listSearchResults() {
         const stale = searchListing
@@ -648,13 +816,13 @@ ShellRoot {
     Component {
         id: searchOpener
         Process {
-            property string title: ""
+            property string failure: ""
             property bool began: false
             property bool done: false
             function finish(failed) {
                 if (done) return
                 done = true
-                if (failed) root.showToast("Couldn’t open " + title)
+                if (failed) root.showToast(failure)
                 destroy()
             }
             onStarted: began = true
@@ -663,7 +831,8 @@ ShellRoot {
         }
     }
     function openSearchResult(result) {
-        const opener = searchOpener.createObject(root, { title: result.title, command: ["flow-search", "--open", result.kind, result.value] })
+        const failure = result.kind === "command" ? "Couldn’t " + result.title.toLowerCase() : "Couldn’t open " + result.title
+        const opener = searchOpener.createObject(root, { failure: failure, command: ["flow-search", "--open", result.kind, result.value] })
         opener.running = true
     }
     function openSearchPanel(appsOnly) {
@@ -679,19 +848,42 @@ ShellRoot {
         searchQuery = ""
         searchIndex = 0
         searchResults = []   // never the last run's: its windows may have closed
+        searchFileResults = []
         searchFailed = true    // until flow-search prints its list: one that never starts never answers
         searchOpen = true
+        openBegins("search")
         listSearchResults()
     }
     function closeSearch() { searchOpen = false }
+    // A command that ends the session or stops the computer runs only when chosen twice within 5 s: the first
+    // choice arms it and its row says so. Typing, choosing another row or closing search disarms it.
+    property string searchArmed: ""
+    property real searchArmedAt: 0
+    Timer { id: searchArmTimer; interval: 5000; onTriggered: root.searchArmed = "" }
     function runSearchResult(result) {
         if (!result) return
+        if (result.confirm && searchArmed !== result.value) {
+            searchArmed = result.value
+            searchArmedAt = Date.now()
+            searchArmTimer.restart()
+            return
+        }
+        // A double-click, or Enter pressed twice at once, is one choice, not a second one.
+        if (result.confirm && Date.now() - searchArmedAt < 500) return
+        searchArmed = ""
         searchOpen = false
-        if (result.kind !== "settings") deskOpen = false
-        if (result.kind === "app" || result.kind === "file") openSearchResult(result)
+        if (result.kind !== "settings" && !(result.kind === "action" && result.value === "desk")) deskOpen = false
+        if (result.kind === "app" || result.kind === "file" || result.kind === "command") openSearchResult(result)
         else if (result.kind === "pin") spaceAction("focus", result.value)
         else if (result.kind === "window") spaceAction("focus-window", result.value)
         else if (result.kind === "layer") spaceAction("open-layer", result.value)
+        else if (result.kind === "action") {
+            if (result.value === "desk") { if (!deskOpen) toggleDesk() }
+            else if (result.value === "overview") openSpacesOverview()
+            else if (result.value === "notifications") { if (!notificationsOpen) toggleNotifications() }
+            else if (result.value === "pin") spaceAction("pin")
+            else if (result.value === "save-session") startSaveSession(true)
+        }
         else if (result.kind === "settings") {
             if (result.value === "quick_open") { if (!quickSettingsOpen) toggleQuickSettings() }
             else {
@@ -717,12 +909,26 @@ ShellRoot {
     // The brand's standard curve, cubic-bezier(.22, 1, .36, 1).
     readonly property var standardCurve: [0.22, 1, 0.36, 1, 1, 1]
     // One clock for every "busy, amount unknown" indicator, so a card rebuilt by an activity update
-    // picks up where the last one was instead of starting its sweep again. 0–1, looping.
+    // picks up where the last one was instead of starting its sweep again. 0–1, looping every 1.6 s, by
+    // elapsed time. It runs only while an indicator is on screen, since each step repaints the surface showing
+    // it: a breathing dot in the island, Overview's or Desk's (each island says whether its dot breathes), or a
+    // sweeping bar on Desk. Dots step 12.5 times a second; a sweeping bar needs 60. docs/performance.md has
+    // the measurements.
     property real busyPhase: 0
-    NumberAnimation on busyPhase {
-        from: 0; to: 1; duration: 1600; loops: Animation.Infinite
-        running: root.motionQuick > 0 && (root.deskOpen ? root.activities.some(a => !(a.progress >= 0))
-            : root.activities.length > 0 && !(root.activities[0].progress >= 0))
+    readonly property bool busySweeping: deskWindow.visible && root.motionQuick > 0 && root.activities.some(a => !(a.progress >= 0))
+    readonly property bool busyBreathing: (workIsland.visible && workIslandContent.breathing)
+        || (spacesOverview.visible && overviewIsland.breathing) || (deskWindow.visible && deskIsland.breathing)
+    property real busyLast: 0
+    Timer {
+        id: busyClock
+        interval: root.busySweeping ? 16 : 80; repeat: true
+        running: root.busySweeping || root.busyBreathing
+        onRunningChanged: root.busyLast = Date.now()
+        onTriggered: {
+            const now = Date.now()
+            root.busyPhase = (root.busyPhase + Math.max(0, Math.min(now - root.busyLast, 200)) / 1600) % 1
+            root.busyLast = now
+        }
     }
     // Line icons on a 24-unit grid, drawn by the shell so no icon font is needed.
     readonly property var iconPaths: ({
@@ -738,6 +944,7 @@ ShellRoot {
         "file": "M7.5 3.5h6l5 5v10.5a1.5 1.5 0 0 1 -1.5 1.5h-9.5a1.5 1.5 0 0 1 -1.5 -1.5v-14a1.5 1.5 0 0 1 1.5 -1.5z M13.5 3.5v5h5",
         "pin": "M9 4h6 M10 4l-1 6l-3 3h12l-3 -3l-1 -6 M12 13v7",
         "layer": "M12 4.5l7.5 4l-7.5 4l-7.5 -4z M4.5 12.5l7.5 4l7.5 -4 M4.5 16.5l7.5 4l7.5 -4",
+        "power": "M12 4v7.5 M7.8 6.8a7 7 0 1 0 8.4 0",
         // Desk's tools.
         "grid": "M5 5h5v5h-5z M14 5h5v5h-5z M5 14h5v5h-5z M14 14h5v5h-5z",
         "folder": "M4 7.5a2 2 0 0 1 2 -2h3.5l2 2h6.5a2 2 0 0 1 2 2v7a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z"
@@ -1123,6 +1330,9 @@ ShellRoot {
     component SystemIsland: Rectangle {
         // The width of the screen the island is on; an activity chip only takes what is left.
         property real room: 1280
+        // Its chip shows a breathing dot (the shared busy clock moves it), with motion on.
+        readonly property bool breathing: activityChip.visible && !activityChip.determinate && !activityChip.compact
+            && root.motionQuick > 0
         implicitWidth: islandControls.implicitWidth + 12; implicitHeight: 44
         color: floeTheme.canvas
         topLeftRadius: 0; topRightRadius: 0; bottomLeftRadius: 14; bottomRightRadius: 14
@@ -1303,6 +1513,14 @@ ShellRoot {
                                     spaces: root.displaySpaces.map(s => ({ id: s.id, group_id: s.group_id || "", group_layout: s.group_layout || "" })),
                                     layers: root.layers.map(l => l.id) })
         }
+        // Each window of the workspace with the label the shell shows for it, for tests/niri_performance_smoke.py.
+        // The shared busy clock, for tests/niri_performance_smoke.py.
+        function busy_clock(): string {
+            return JSON.stringify({ running: busyClock.running, interval: busyClock.interval, phase: root.busyPhase,
+                                    breathing: root.busyBreathing, sweeping: root.busySweeping })
+        }
+        function open_took(name: string): string { return JSON.stringify(root.openTook[name] || { ms: -1, count: 0 }) }
+        function window_labels(): string { return JSON.stringify(root.windows.map(w => [w.id, w.label])) }
         function desk_state(): string { return root.deskOpen ? "open" : "closed" }
         function overview_state(): string { return root.spacesOverviewOpen ? "open" : "closed" }
         // Back to work without choosing, as Escape does.
@@ -1318,7 +1536,9 @@ ShellRoot {
         function search_state(): string { return root.searchOpen ? (root.searchAppsOnly ? "apps" : "open") : "closed" }
         // What the search panel shows, for scripted checks: its rows, or the message in their place.
         function search_view(): string {
-            return JSON.stringify({ rows: root.searchMatches.map(r => ({ kind: r.kind, title: r.title, icon: r.icon })),
+            // armed: the row as drawn asks to be chosen again (a command that asks first).
+            return JSON.stringify({ rows: root.searchMatches.map((r, i) => ({ kind: r.kind, title: r.title, icon: r.icon,
+                                                                              armed: !!searchView.itemAtIndex(i)?.armed })),
                                     message: root.searchMatches.length ? "" : searchEmpty.text,
                                     // The message, as laid out, ends above the footer's rule.
                                     message_clear: searchEmpty.y + Math.max(searchEmpty.height, searchEmpty.contentHeight) <= searchFooter.y - 1 })
@@ -1562,6 +1782,7 @@ ShellRoot {
             focus: true
             Keys.onEscapePressed: root.deskOpen = false
             SystemIsland {
+                id: deskIsland
                 room: parent.width
                 anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter
             }
@@ -1680,7 +1901,7 @@ ShellRoot {
                                 width: parent.width
                                 spacing: 8
                                 Repeater {
-                                    model: root.pins
+                                    model: deskWindow.visible ? root.pins : []  // hidden, it rebuilds nothing
                                     Flow {
                                         required property var modelData
                                         required property int index
@@ -1725,7 +1946,7 @@ ShellRoot {
                                 width: parent.width
                                 spacing: 8
                                 Repeater {
-                                    model: root.otherPins
+                                    model: deskWindow.visible ? root.otherPins : []  // hidden, it rebuilds nothing
                                     Flow {
                                         required property var modelData
                                         width: parent.width; spacing: 3
@@ -1837,7 +2058,7 @@ ShellRoot {
                         visible: root.activities.length > 0
                         width: parent.width; spacing: 8
                         Repeater {
-                            model: root.activities
+                            model: deskWindow.visible ? root.activities : []  // hidden, it rebuilds nothing
                             Rectangle {
                                 id: activityCard
                                 required property var modelData
@@ -1937,7 +2158,7 @@ ShellRoot {
                         Text { text: "Save your documents, then save the current window list before restarting."; color: floeTheme.textMuted; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 14; font.family: floeTheme.interfaceFont }
                         Flow {
                             width: parent.width; spacing: 8
-                            FlowButton { id: saveSession; implicitHeight: 44; text: "Save session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: { if (recoveryProcess.running) { root.recoveryMessage = "Wait for automatic recovery to finish"; return } recoveryProcess.command = ["flow-recovery", "save"]; recoveryProcess.running = true } }
+                            FlowButton { id: saveSession; implicitHeight: 44; text: "Save session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: root.startSaveSession(false) }
                             FlowButton { id: restoreSession; implicitHeight: 44; variant: "quiet"; text: "Restore session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: { if (recoveryProcess.running) { root.recoveryMessage = "Wait for automatic recovery to finish"; return } root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
                         }
                         Text { id: recoveryStatus; visible: root.recoveryMessage !== ""; text: root.recoveryMessage; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
@@ -2057,7 +2278,7 @@ ShellRoot {
                     spacing: 2
                     SectionLabel { anchors.verticalCenter: parent.verticalCenter; leftPadding: 14; rightPadding: 6; text: "GROUP" }
                     Repeater {
-                        model: root.activeSpace && root.activeSpace.group_id ? root.activeSpace.members : []
+                        model: workIndicatorWindow.visible && root.activeSpace && root.activeSpace.group_id ? root.activeSpace.members : []
                         IslandButton {
                             id: groupFocusButton
                             required property var modelData
@@ -2120,6 +2341,14 @@ ShellRoot {
         FocusScope {
             id: overviewFocus
             anchors.fill: parent; focus: true
+            // For open_took: the first frame shown with every card.
+            Connections {
+                target: overviewFocus.Window.window
+                function onFrameSwapped() {
+                    if (root.openStarted.overview && spacesOverview.visible && overviewRow.count === root.displaySpaces.length)
+                        root.openEnds("overview")
+                }
+            }
             Keys.onEscapePressed: root.closeSpacesOverview()
             Keys.onLeftPressed: root.moveOverview(-1)
             Keys.onRightPressed: root.moveOverview(1)
@@ -2131,6 +2360,7 @@ ShellRoot {
                 else if (event.key === Qt.Key_End) { root.overviewIndex = Math.max(0, root.displaySpaces.length - 1); event.accepted = true }
             }
             SystemIsland {
+                id: overviewIsland
                 room: parent.width; z: 3
                 anchors { top: parent.top; horizontalCenter: parent.horizontalCenter }
             }
@@ -2161,12 +2391,13 @@ ShellRoot {
                 height: spacesOverview.cardHeight + 52
                 orientation: ListView.Horizontal
                 spacing: 32
-                model: root.displaySpaces
+                // Hidden, it rebuilds nothing; the cards are built while Overview takes its snapshot.
+                model: spacesOverview.visible || root.overviewPending ? root.displaySpaces : []
                 // Assigning a new model resets currentIndex to 0, so it is set from the selection, which is
                 // a space id (root.overviewIndex), whenever either changes; only a drag writes it back.
                 function follow() { if (currentIndex !== root.overviewIndex) currentIndex = root.overviewIndex }
                 Connections { target: root; function onOverviewIndexChanged() { overviewRow.follow() } }
-                onCountChanged: Qt.callLater(follow)
+                onCountChanged: { follow(); if (count) positionViewAtIndex(currentIndex, ListView.Center) }
                 onModelChanged: Qt.callLater(follow)
                 onCurrentIndexChanged: if (moving && currentIndex >= 0) root.selectOverview(currentIndex)
                 highlightRangeMode: ListView.StrictlyEnforceRange
@@ -2390,8 +2621,9 @@ ShellRoot {
                     Accessible.name: root.searchAppsOnly ? "Search apps" : "Search apps, spaces, windows and files"
                     Keys.onDownPressed: root.searchIndex = Math.max(0, Math.min(root.searchMatches.length - 1, root.searchIndex + 1))
                     Keys.onUpPressed: root.searchIndex = Math.max(0, root.searchIndex - 1)
-                    Keys.onReturnPressed: root.runSearchResult(root.searchMatches[root.searchIndex])
-                    Keys.onEnterPressed: root.runSearchResult(root.searchMatches[root.searchIndex])
+                    // A held key repeats: only its first press chooses.
+                    Keys.onReturnPressed: event => { if (!event.isAutoRepeat) root.runSearchResult(root.searchMatches[root.searchIndex]) }
+                    Keys.onEnterPressed: event => { if (!event.isAutoRepeat) root.runSearchResult(root.searchMatches[root.searchIndex]) }
                 }
                 FlowButton {
                     anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
@@ -2414,6 +2646,7 @@ ShellRoot {
                     required property var modelData
                     required property int index
                     readonly property bool chosen: index === root.searchIndex
+                    readonly property bool armed: !!modelData.confirm && root.searchArmed === modelData.value
                     // Drawn as under the pointer: tinted without being the chosen row (pointer_target).
                     readonly property bool tinted: !chosen && Qt.colorEqual(color, floeTheme.surfaceSelected)
                     width: searchView.width; height: 58; radius: 10
@@ -2432,7 +2665,8 @@ ShellRoot {
                         }
                         FlowIcon {
                             visible: !appIcon.visible; anchors.centerIn: parent; size: 16; color: floeTheme.accent
-                            name: ({ "pin": "pin", "window": "window", "file": "file", "settings": "sliders", "layer": "layer", "app": "app" })[resultRow.modelData.kind] || "search"
+                            name: ({ "pin": "pin", "window": "window", "file": "file", "settings": "sliders", "layer": "layer", "app": "app",
+                                     "action": "grid", "command": "power" })[resultRow.modelData.kind] || "search"
                         }
                     }
                     Column {
@@ -2445,7 +2679,9 @@ ShellRoot {
                         }
                         Text {
                             width: parent.width; elide: Text.ElideRight; textFormat: Text.PlainText
-                            text: resultRow.modelData.detail; color: floeTheme.textMuted
+                            text: resultRow.armed ? "Press Enter or click again to " + resultRow.modelData.title.toLowerCase()
+                                : resultRow.modelData.detail
+                            color: resultRow.armed ? floeTheme.textPrimary : floeTheme.textMuted
                             font.pixelSize: 12; font.family: floeTheme.interfaceFont
                         }
                     }
@@ -2460,7 +2696,8 @@ ShellRoot {
                         onClicked: root.runSearchResult(resultRow.modelData)
                     }
                     Accessible.role: Accessible.Button
-                    Accessible.name: resultRow.modelData.title + ", " + resultRow.modelData.detail
+                    Accessible.name: resultRow.modelData.title + ", " + (resultRow.armed
+                        ? "press Enter or click again to " + resultRow.modelData.title.toLowerCase() : resultRow.modelData.detail)
                     Accessible.description: chosen ? "Current" : ""
                 }
             }
@@ -2471,7 +2708,7 @@ ShellRoot {
                 height: palette.resultsHeight
                 horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                 wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
-                text: root.searchListing ? "Looking…"
+                text: root.searchListing || root.searchWalk ? "Looking…"
                     : root.searchFailed ? "Search couldn’t list anything. Close it and try again."
                     : root.searchQuery.trim() ? "Nothing matches “" + root.searchQuery.trim() + "”"
                     : "Nothing to show"
@@ -2586,7 +2823,7 @@ ShellRoot {
                     width: parent.width; spacing: 8
                     SectionLabel { width: 72; height: 44; verticalAlignment: Text.AlignVCenter; text: "LAYERS" }
                     Repeater {
-                        model: root.layers
+                        model: switcherWindow.visible ? root.layers : []  // hidden, it rebuilds nothing
                         Flow {
                             required property var modelData
                             // Room for one Layer's four controls; narrower screens wrap them.
@@ -2631,7 +2868,7 @@ ShellRoot {
                     Row {
                         id: windowRow; spacing: 12
                         Repeater {
-                            model: root.displaySpaces
+                            model: switcherWindow.visible ? root.displaySpaces : []  // hidden, it rebuilds nothing
                             Rectangle {
                                 id: spaceCard
                                 required property var modelData
@@ -2878,7 +3115,7 @@ ShellRoot {
                     width: parent.width; spacing: 8
                     SectionLabel { text: "GROUPS NEEDING ATTENTION"; topPadding: 4 }
                     Repeater {
-                        model: root.incompleteGroups
+                        model: switcherWindow.visible ? root.incompleteGroups : []  // hidden, it rebuilds nothing
                         Rectangle {
                             id: attentionCard
                             required property var modelData
@@ -3144,7 +3381,7 @@ ShellRoot {
             // Newest first, so reading and Tab order match what is on screen. The reversed copy rebuilds the
             // list on each change (at most 20 items, by the trim above), so focus inside it does not survive
             // a notification arriving or going.
-            model: [...notificationServer.trackedNotifications.values].reverse()
+            model: notificationPanel.visible ? [...notificationServer.trackedNotifications.values].reverse() : []  // hidden, it rebuilds nothing
             delegate: Item {
                 required property var modelData
                 required property int index

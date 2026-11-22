@@ -8,14 +8,18 @@ each with a desktop entry in an isolated data folder so recovery can open them a
 
 A reboot closes every app and starts a new Niri session. Both are simulated without ending the guest's
 session: the windows are closed, the saved session, the Groups' window bindings and the pins are marked as
-coming from an earlier Niri session, and recovery runs as the shell runs it at the start of a session
-(``flow-recovery auto-start``, which reports success only when every window was restored). Checked, for a pinned, renamed stacked Group beside a pinned app and
+coming from an earlier Niri session, an app is opened as at login (once), and recovery runs as the shell runs
+it at the start of a session (``flow-recovery auto-start``, which reports success only when every saved window
+was restored and, with a pinned app or a side-by-side Group on the workspace, confirmed in its saved order). Checked, for a pinned, renamed stacked Group beside a pinned app and
 then for a side-by-side Group with a saved split:
 - recovery opens every app again and rebuilds the Group: one column in saved member order, or its
   columns at the saved proportions;
 - the Group keeps its ID and name, its pin and the neighbouring pin reach the new windows, and the Group
   is bound to them in this Niri session;
-- the recovered Group goes on working: its layout changes both ways, and it dissolves with its apps open.
+- the recovered Group goes on working: its layout changes both ways, and it dissolves with its apps open;
+- with the pinned Group's apps apart and an unpinned app after them, Rejoin Group stacks them (the manual path),
+  and so does recovery; Rejoin Group does too with a pinned app still after them, another display's, or this
+  display's while a side-by-side Group pauses pin ordering.
 Real state files are checksummed.
 """
 
@@ -65,7 +69,7 @@ def main():
     if any(w.get("workspace_id") == workspace["id"] for w in read("windows")):
         raise RuntimeError("The focused output's active workspace must be empty")
     token = uuid.uuid4().hex[:8]
-    apps = {s: f"flow-recovery-{token}-{s}" for s in "abn"}
+    apps = {s: f"flow-recovery-{token}-{s}" for s in "abnulv"}
     steps, result = [], None
     with IsolatedState("flow-group-recovery-") as tmp:
         data = Path(tmp) / "data"
@@ -148,6 +152,17 @@ def main():
             for marker in runtime.glob("flow-recovery-*"):
                 marker.unlink()
 
+        def move_pin(pin_id, display):
+            """Give a pin to another display, as when its monitor is unplugged, or back; returns its display before."""
+            saved = json.loads((state / "spaces.json").read_text())
+            saved["displays"].setdefault("flow-test:elsewhere", {"connector": "HDMI-A-9", "label": "Elsewhere"})
+            pin = next(p for p in saved["pins"] if p["id"] == pin_id)
+            before, pin["display"] = pin["display"], display
+            if not any(p.get("display") == "flow-test:elsewhere" for p in saved["pins"]):
+                del saved["displays"]["flow-test:elsewhere"]  # back home: the made-up display goes too
+            (state / "spaces.json").write_text(json.dumps(saved))
+            return before
+
         def recover():
             """What the shell runs when it starts in a new Niri session with automatic recovery on."""
             answer = tool("flow-recovery", "auto-start")
@@ -178,9 +193,13 @@ def main():
             expect(["ab", "n"], "the stacked Group and its neighbour")
             tool("flow-recovery", "save")
             reboot()
-            recover()
-            expect(["ab", "n"], "the recovered stacked Group")
+            open_app("l")  # an app opened at login, before recovery runs: not in the saved session
+            recover()  # succeeds only when every saved window is back in its saved order
+            expect(["l", "ab", "n"], "the recovered stacked Group after the app opened at login")
             _, current, bound = bound_here(group_id, "ab")
+            expect(["ab", "n", "l"], "the pins first again")
+            niri("action", "close-window", "--id", window("l")["id"])
+            expect(["ab", "n"], "the app opened at login closed")
             pins = {p["id"]: p for p in current["pins"]}
             if group(group_id)["label"] != "Recovery Desk" or group(group_id)["members"] != [apps["a"], apps["b"]]:
                 raise RuntimeError(f"The recovered Group lost its name or member order: {group(group_id)}")
@@ -191,23 +210,121 @@ def main():
                 raise RuntimeError(f"A pin reached the wrong windows: {current['pins']}")
             if not bound:
                 raise RuntimeError(f"The recovered Group is not bound to its new windows: {group(group_id)}")
-            steps.append("with every app closed and state from an earlier Niri session, automatic recovery opened all "
-                         "three again and rebuilt the pinned, renamed stacked Group in saved order, bound to the new "
-                         "windows; both pins reached them")
+            steps.append("with every app closed, state from an earlier Niri session and an app opened at login, "
+                         "automatic recovery opened all three again, rebuilt the pinned, renamed stacked Group in saved "
+                         "order, bound to the new windows, and succeeded; both pins reached them")
 
             niri("action", "focus-window", "--id", window("a")["id"])
             spaces("group-layout", group_id)
             expect(["a", "b", "n"], "the recovered Group side by side")
             spaces("group-layout", group_id)
             expect(["ab", "n"], "the recovered Group stacked again")
+
+            # The manual path: the pinned Group's apps in columns of their own with an unpinned app after them, as
+            # when the user opens them again with recovery off. Rejoin Group stacks them all the same.
+            niri("action", "focus-window", "--id", window("n")["id"])
+            open_app("u")
+            expect(["ab", "n", "u"], "an unpinned app after the pinned app")
+            niri("action", "consume-or-expel-window-right", "--id", window("b")["id"])
+            entry = next(e for e in spaces("refresh")["incomplete_groups"] if e["id"] == group_id)
+            expect(["n", "a", "b", "u"], "the Group's apps apart, the app pin first")  # pins lead the strip
+            if not entry["can_rejoin"]:
+                raise RuntimeError(f"Rejoin Group was not offered: {entry}")
+            spaces("rejoin-group", group_id)
+            current = spaces("refresh")
+            expect(["ab", "n", "u"], "the rejoined pinned Group back in pin order")
+            pins = {p["id"]: p for p in current["pins"]}
+            if not pins[group_pin]["available"] or set(pins[group_pin]["window_ids"]) != {window("a")["id"], window("b")["id"]}:
+                raise RuntimeError(f"The Group pin did not reach the rejoined Group: {current['pins']}")
+            steps.append("with the pinned Group's apps apart and an unpinned app after them, Rejoin Group was offered "
+                         "and stacked them; the pins went back in order and the Group pin reached the Group")
+
+            # And with a pinned app still after the Group's apps: this display's pin ordering would move it ahead
+            # first, so the app's pin belongs to another display for now and stays where it is.
+            home_display = move_pin(app_pin, "flow-test:elsewhere")
+            niri("action", "consume-or-expel-window-right", "--id", window("b")["id"])
+            entry = next(e for e in spaces("refresh")["incomplete_groups"] if e["id"] == group_id)
+            expect(["a", "b", "n", "u"], "the Group's apps apart with a pinned app still after them")
+            if not entry["can_rejoin"]:
+                raise RuntimeError(f"Rejoin Group was not offered with a pinned app after the Group: {entry}")
+            spaces("rejoin-group", group_id)
+            expect(["ab", "n", "u"], "the pinned Group rejoined before the pinned app")
+            move_pin(app_pin, home_display)
+            current = spaces("refresh")
+            expect(["ab", "n", "u"], "both pins in pin order")
+            pins = {p["id"]: p for p in current["pins"]}
+            if set(pins[group_pin]["window_ids"]) != {window("a")["id"], window("b")["id"]}:
+                raise RuntimeError(f"The Group pin did not reach the rejoined Group: {current['pins']}")
+            steps.append("with another display's pinned app still after the pinned Group's apps, Rejoin Group was "
+                         "offered and stacked them; the columns after closed up in order and the Group pin reached it")
+
+            # And with this display's own pinned app after them: possible only while pin ordering is paused, as it
+            # is while a side-by-side Group is on the workspace. A second Group of u and a new app v gives one.
+            niri("action", "focus-window", "--id", window("u")["id"])
+            open_app("v")
+            expect(["ab", "n", "u", "v"], "another app after u")
+            niri("action", "focus-window", "--id", window("u")["id"])
+            spaces("stack")
+            other_id = next(sp["group_id"] for sp in spaces("create-group")["spaces"] if sp["active"])
+            spaces("group-layout", other_id)
+            expect(["ab", "n", "u", "v"], "a side-by-side Group after the pinned app")
+            niri("action", "consume-or-expel-window-right", "--id", window("b")["id"])
+            apart = spaces("refresh")
+            entry = next(e for e in apart["incomplete_groups"] if e["id"] == group_id)
+            expect(["a", "b", "n", "u", "v"], "this display's pinned app after the Group's apps, pin ordering paused")
+            if app_pin not in {p["id"] for p in apart["pins"]}:  # the refresh lists this display's pins only
+                raise RuntimeError(f"The pinned app's pin is not this display's: {apart['pins']}")
+            if not entry["can_rejoin"]:
+                raise RuntimeError(f"Rejoin Group was not offered with this display's pinned app after it: {entry}")
+            spaces("rejoin-group", group_id)
+            current = spaces("refresh")
+            expect(["ab", "n", "u", "v"], "the pinned Group rejoined, the side-by-side Group intact after it")
+            pins = {p["id"]: p for p in current["pins"]}
+            if (set(pins[group_pin]["window_ids"]) != {window("a")["id"], window("b")["id"]}
+                    or group(other_id).get("layout") != "side-by-side"
+                    or not any(sp.get("group_id") == other_id and sp.get("group_layout") == "side-by-side"
+                               for sp in current["spaces"])):
+                raise RuntimeError(f"The rejoin left a Group or pin behind: {current['pins']}, {group(other_id)}")
+            niri("action", "focus-window", "--id", window("u")["id"])
+            spaces("group-layout", other_id)
+            spaces("dissolve-group", other_id)
+            niri("action", "close-window", "--id", window("v")["id"])
+            expect(["ab", "n", "u"], "the second Group dissolved and v closed")
+            steps.append("with this display's pinned app after the pinned Group's apps, while a side-by-side Group "
+                         "paused pin ordering, Rejoin Group was offered and stacked them; the side-by-side Group "
+                         "stayed whole after them and the Group pin reached the Group")
+
+            # Recovery does the same: the pinned Group's apps apart with an app already open after them.
+            tool("flow-recovery", "save")
+            niri("action", "consume-or-expel-window-right", "--id", window("b")["id"])
+            spaces("refresh")
+            expect(["n", "a", "b", "u"], "the Group's apps apart again, an open app after them")
+            for marker in runtime.glob("flow-recovery-*"):  # automatic recovery, as at the start of a session
+                marker.unlink()
+            recover()  # succeeds only when every window was restored in its saved order
+            current = spaces("refresh")
+            expect(["ab", "n", "u"], "the recovered pinned Group back in pin order")
+            if not {p["id"]: p for p in current["pins"]}[group_pin]["available"]:
+                raise RuntimeError(f"The Group pin did not reach the recovered Group: {current['pins']}")
+            steps.append("with the pinned Group's apps apart and an app already open after them, automatic recovery "
+                         "rebuilt the Group and succeeded, since the next refresh's pin order is the saved order")
+            niri("action", "close-window", "--id", window("u")["id"])
+            expect(["ab", "n"], "the unpinned app closed")
+            # Dissolving with a pinned space after the Group: the app's pin belongs to another display for now (as
+            # when its monitor was unplugged), so this display's pin ordering leaves it after the Group.
+            home_display = move_pin(app_pin, "flow-test:elsewhere")
             spaces("unpin", group_pin)
-            expect(["n", "ab"], "the app pin first once the Group is unpinned")  # pinned spaces lead the strip
+            expect(["ab", "n"], "another display's pin after the unpinned Group")
             niri("action", "focus-window", "--id", window("a")["id"])
             spaces("dissolve-group", group_id)
-            expect(["n", "a", "b"], "the recovered Group dissolved")
+            expect(["a", "b", "n"], "the recovered Group dissolved, the pinned space moved right")
+            move_pin(app_pin, home_display)
+            spaces("refresh")
+            expect(["n", "a", "b"], "the app pin first once it is this display's again")  # pinned spaces lead
             if any(g["id"] == group_id for g in groups()):
                 raise RuntimeError("The dissolved Group is still saved")
-            steps.append("the recovered Group changed to side by side and back, and dissolved with its apps open")
+            steps.append("the recovered Group changed to side by side and back, and dissolved with its apps open, "
+                         "with another display's pinned space after it moving right in order")
 
             # A side-by-side Group with a saved split.
             spaces("unpin", app_pin)

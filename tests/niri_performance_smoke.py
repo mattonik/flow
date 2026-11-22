@@ -1,0 +1,489 @@
+#!/usr/bin/env python3
+"""What a development Flow shell costs at idle and under a stream of Niri events, and how fast its helpers answer.
+
+Run inside a Niri session from the Flow checkout with the installed shell stopped (``systemctl --user stop
+flow-shell``: it would react to the same events), ``FLOW_SHELL`` naming the development ``shell.qml`` and the
+``flow-spaces`` and ``flow-search`` to measure first on PATH, with ``foot``. The shell gets its own runtime
+directory, state and configuration, with the opt-in app menu turned on. The work happens on the focused
+display's empty workspace, which must be free: three terminals open there, one of them shaped as a Layer
+(``flow-spaces make-layer``), and are closed afterwards.
+
+Every ``flow-spaces``, ``flow-search`` and ``flow-appmenu`` the shell starts goes through a recorder first on its
+PATH, which logs the time and arguments and runs the real one. ``flow-appmenu`` is a stand-in that answers
+``null``, as the real one does while the focused workspace has no window: the shell, holding no menu, must not
+keep asking. A refresh is one the shell's resident controller ran (ADR-0011; it reports them on its socket) or
+a ``flow-spaces`` the shell started (before the controller, every refresh was one). Helper timings are medians of
+11 runs after 3 that warm the guest up. CPU time comes from /proc: the shell's own, and its helpers': those it
+has reaped, and its running controller. Surface timings are the shell's own (its ``open_took`` IPC call): from
+the request to the surface's content, so IPC does not count.
+
+Checked (the limits are the PRs': docs/performance.md):
+- idle 60 s: the shell and its helpers each under 1% of a core, at most 3 refreshes and at most 3 flow-appmenu
+  runs;
+- a title changing every 0.3 s for 10 s: at most 12 refreshes, the helpers under 10% of a core and the shell
+  under 5%;
+- a title changing every 0.05 s for 7.5 s: the shell's label for that window never unchanged for 1.5 s, and the
+  shell under 10% of a core;
+- focus moving every 0.05 s for 6 s: never 1.5 s without a refresh (a maximum wait);
+- focus moving every 0.25 s for 6 s: at most 16 refreshes (a minimum interval), the helpers under 2.5% of a core;
+- ``flow-spaces refresh`` and ``observe`` medians under 30 ms (actions, and the Platform API without a shell,
+  still run it); the controller's own refreshes under 10 ms on average; ``flow-search --json`` under 200 ms,
+  and it asks flow-spaces only to observe;
+- Overview's first frame with every card (after the snapshot of the active space it takes first) under 200 ms, Desk showing a fresh
+  refresh under 150 ms and search showing its rows under 300 ms (medians of 5);
+- focus moving every 0.25 s across five spaces: the shell under 2.5% of a core (hidden surfaces rebuild nothing);
+- an activity without a known amount: the shell under 5% of a core while the island or Overview's island shows
+  it, its dot breathing on a clock stepping every 80 ms, and on Desk its bar sweeping at 16 ms; the clock stops
+  once the activity has a known amount, and with no activity.
+
+``FLOW_PERF_IDLE`` shortens the idle phase (seconds) while developing; the limits stay those of 60 s.
+Prints one JSON line per check and a final ``{"result": ...}``; exits 1 if any check failed.
+"""
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import socket
+import statistics
+import subprocess
+import sys
+import time
+
+from isolated_state import IsolatedState
+
+TICK = os.sysconf("SC_CLK_TCK")
+RECORDER = """#!{bash}
+printf '%s %s %s %s\\n' "$EPOCHREALTIME" "$PPID" "$$" "$*" >> {log}
+exec {real} "$@"
+"""
+APPMENU = """#!{bash}
+printf '%s %s %s %s\\n' "$EPOCHREALTIME" "$PPID" "$$" "$*" >> {log}
+echo null
+"""
+# The storm terminal waits for "PERIOD COUNT" in its go file, then retitles itself COUNT times, PERIOD s apart.
+STORM = r"""d={dir}; while :; do
+  if [ -e "$d/go" ]; then read p n < "$d/go"; rm -f "$d/go"; i=1
+    while [ "$i" -le "$n" ]; do printf '\033]2;storm %d\007' "$i"; sleep "$p"; i=$((i+1)); done
+    echo "$n" > "$d/done"; fi
+  sleep 0.1; done"""
+
+
+def niri(*args):
+    return subprocess.check_output(["niri", "msg", *map(str, args)], text=True, timeout=10)
+
+
+def read(kind):
+    return json.loads(niri("-j", kind))
+
+
+class NiriSocket:
+    """Actions sent on one connection, so a storm of them costs no processes."""
+
+    def __init__(self):
+        self.connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.connection.connect(os.environ["NIRI_SOCKET"])
+        self.stream = self.connection.makefile("rwb")
+
+    def focus(self, ident):
+        self.stream.write(json.dumps({"Action": {"FocusWindow": {"id": ident}}}).encode() + b"\n")
+        self.stream.flush()
+        if "Ok" not in json.loads(self.stream.readline()):
+            raise RuntimeError(f"Niri refused to focus {ident}")
+
+    def close(self):
+        self.stream.close()
+        self.connection.close()
+
+
+def controller_stats(runtime, state_home):
+    """The development shell's controller's counters (ADR-0011), or None: main's shell has none. Its socket is
+    named as session/flow_controller.py's socket_path() names it."""
+    name = f"flow-controller-{hashlib.md5(str(state_home).encode()).hexdigest()[:12]}.sock"
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(5)
+            connection.connect(str(runtime / name))
+            connection.sendall(b'{"get": "stats"}\n')
+            with connection.makefile("rb") as answers:
+                for line in answers:
+                    message = json.loads(line)
+                    if "reply" in message:
+                        return message["reply"]
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def cpu(pid):
+    """(own, reaped children's) CPU seconds of a process."""
+    fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    return (int(fields[11]) + int(fields[12])) / TICK, (int(fields[13]) + int(fields[14])) / TICK
+
+
+def runs(log, start, end, parents=None):
+    """(time, pid, arguments) of the runs a recorder logged between two times, optionally only those started by
+    one of ``parents``."""
+    found = []
+    for line in log.read_text().splitlines() if log.exists() else []:
+        stamp, parent, pid, args = (line.split(" ", 3) + [""])[:4]
+        if start <= float(stamp) <= end and (parents is None or int(parent) in parents):
+            found.append((float(stamp), int(pid), args))
+    return found
+
+
+def wait_for(test, label, timeout=15):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        value = test()
+        if value:
+            return value
+        time.sleep(0.1)
+    raise RuntimeError(f"Timed out waiting for {label}")
+
+
+def timed(command, env, repeat=11, warm_up=3):
+    """The median wall time of a command, in ms, and every sample.
+
+    The first runs are not counted: in the UTM guest a run after the system was idle takes several times as
+    long, as the virtual CPUs wake up.
+
+    No timeout is passed: Python waits for a child with a timeout by polling, at intervals that double (a 20 ms
+    run is seen at about 32 ms). The smoke as a whole runs under one.
+    """
+    took = []
+    for index in range(warm_up + repeat):
+        start = time.perf_counter()
+        subprocess.run(command, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        if index >= warm_up:
+            took.append(round((time.perf_counter() - start) * 1000))
+    return statistics.median(took), took
+
+
+def main():
+    shell = os.environ.get("FLOW_SHELL")
+    if not shell or not shutil.which("foot"):
+        raise RuntimeError("Run with FLOW_SHELL set and foot on PATH")
+    if subprocess.run(["systemctl", "--user", "is-active", "--quiet", "flow-shell"]).returncode == 0:
+        raise RuntimeError("Stop the installed shell first: it reacts to the same events")
+    real = {name: shutil.which(name) for name in ("flow-spaces", "flow-search")}
+    if not all(real.values()):
+        raise RuntimeError("flow-spaces and flow-search must be on PATH")
+    bash = shutil.which("bash")
+    idle_seconds = float(os.environ.get("FLOW_PERF_IDLE", 60))
+    start_workspace = next(w for w in read("workspaces") if w["is_focused"])
+    output = start_workspace["output"]
+    empty = max((w for w in read("workspaces") if w["output"] == output), key=lambda w: w["idx"])
+    if any(w["workspace_id"] == empty["id"] for w in read("windows")):
+        raise RuntimeError("The focused display has no empty workspace")
+    results, terminals, shell_process, sock = [], [], None, None
+
+    def check(name, value, limit, ok, unit="", samples=None):
+        results.append(ok)
+        print(json.dumps({"check": name, "value": round(value, 2) if isinstance(value, float) else value,
+                          "limit": limit, "unit": unit, "ok": ok, **({"samples": samples} if samples else {})}), flush=True)
+
+    with IsolatedState("flow-perf-") as tmp:
+        tmp = Path(tmp)
+        runtime, bin_dir, config, storm_dir = tmp / "runtime", tmp / "bin", tmp / "config", tmp / "storm"
+        runtime.mkdir(mode=0o700)
+        for folder in (bin_dir, config, storm_dir):
+            folder.mkdir()
+        (config / "flow-settings.ini").write_text("[General]\nappMenuEnabled=true\n")
+        logs = {name: tmp / f"{name}.log" for name in ("flow-spaces", "flow-search", "flow-appmenu")}
+        for name in ("flow-spaces", "flow-search"):
+            (bin_dir / name).write_text(RECORDER.format(bash=bash, log=logs[name], real=real[name]))
+        (bin_dir / "flow-appmenu").write_text(APPMENU.format(bash=bash, log=logs["flow-appmenu"]))
+        for path in bin_dir.iterdir():
+            path.chmod(0o755)
+        wayland = os.environ.get("WAYLAND_DISPLAY", "wayland-1")
+        real_runtime = Path(os.environ["XDG_RUNTIME_DIR"])
+        env = dict(os.environ, XDG_STATE_HOME=str(tmp), XDG_CONFIG_HOME=str(config), XDG_RUNTIME_DIR=str(runtime),
+                   WAYLAND_DISPLAY=wayland if wayland.startswith("/") else str(real_runtime / wayland),
+                   PATH=f"{bin_dir}:{os.environ['PATH']}")
+        app_env = dict(os.environ)  # terminals open in the real session, outside Flow's state
+
+        def ipc(*call):
+            start = time.perf_counter()
+            answer = subprocess.run(["quickshell", "ipc", "-p", shell, "call", "desk", *call], env=env, text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10).stdout.strip()
+            return answer, (time.perf_counter() - start) * 1000
+
+        def refreshes(start, end):
+            """When Flow's state was refreshed: by the shell's controller (ADR-0011) if it has one, and by the
+            flow-spaces the shell started itself (main's refreshes; actions and automatic layout passes)."""
+            stats = controller_stats(runtime, tmp) or {"recent": []}
+            started = [stamp for stamp, _, _ in runs(logs["flow-spaces"], start, end, {pid})]
+            return sorted(started + [stamp for stamp in stats["recent"] if start <= stamp <= end])
+
+        def helpers_cpu():
+            """CPU seconds of the shell's helpers: those it reaped, and its running controller."""
+            total = cpu(pid)[1]
+            stats = controller_stats(runtime, tmp)
+            if stats:
+                total += sum(cpu(stats["pid"]))
+            return total
+
+        def quiet(seconds=1.5, timeout=20):
+            """Wait until nothing has refreshed Flow's state for this long."""
+            end = time.monotonic() + timeout
+            while time.monotonic() < end:
+                if not refreshes(time.time() - seconds, time.time() + 1):
+                    return
+                time.sleep(0.2)
+            raise RuntimeError("The shell did not settle")
+
+        def terminal(title, *command):
+            process = subprocess.Popen(["foot", "-T", title, *command], env=app_env,
+                                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            terminals.append(process)
+            return wait_for(lambda: next((w["id"] for w in read("windows") if w.get("pid") == process.pid), None),
+                            f"terminal {title}")
+
+        try:
+            niri("action", "focus-workspace", empty["idx"])
+            tile_a = terminal("perf tile a", "sh", "-c", "sleep 3600")
+            tile_b = terminal("perf tile b", "sh", "-c", "sleep 3600")
+            layer = terminal("perf layer", "sh", "-c", "sleep 3600")
+            subprocess.run([real["flow-spaces"], "make-layer", str(layer)], env=env, check=True,
+                           stdout=subprocess.DEVNULL, timeout=30)
+            shell_process = subprocess.Popen(["quickshell", "-p", shell], env=env, stdin=subprocess.DEVNULL,
+                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            pid = shell_process.pid
+            wait_for(lambda: ipc("desk_state")[0] == "closed", "the development shell")
+            observed = json.loads(subprocess.check_output([real["flow-spaces"], "observe"], env=env, text=True))
+            if not any(item.get("shaped") for item in observed.get("layers", [])):
+                raise RuntimeError(f"The Layer was not shaped: {observed.get('layers')}")
+            time.sleep(8)  # the app menu's first answers and their retries
+            quiet()
+
+            # Idle.
+            own, helpers = cpu(pid)[0], helpers_cpu()
+            start = time.time()
+            time.sleep(idle_seconds)
+            end = time.time()
+            own_after, helpers_after = cpu(pid)[0], helpers_cpu()
+            check("idle: shell CPU", 100 * (own_after - own) / (end - start), "< 1", 100 * (own_after - own) / (end - start) < 1, "% of a core")
+            share = 100 * (helpers_after - helpers) / (end - start)
+            check("idle: helpers CPU", share, "< 1", share < 1, "% of a core")
+            spaces_runs = refreshes(start, end)
+            check("idle: refreshes", len(spaces_runs), "<= 3", len(spaces_runs) <= 3)
+            menu_runs = runs(logs["flow-appmenu"], start, end)
+            check("idle: flow-appmenu runs", len(menu_runs), "<= 3", len(menu_runs) <= 3)
+
+            # Helpers, run here as the shell runs them.
+            for action in ("refresh", "observe"):
+                took, samples = timed([real["flow-spaces"], action], env)
+                check(f"flow-spaces {action} median", took, "< 30", took < 30, "ms", samples)
+            searched = time.time()
+            took, samples = timed(["flow-search", "--json"], env)
+            check("flow-search --json median", took, "< 200", took < 200, "ms", samples)
+            listings = {pid for _, pid, _ in runs(logs["flow-search"], searched, time.time())}
+            asked = sorted({args for _, _, args in runs(logs["flow-spaces"], searched, time.time(), listings)})
+            check("flow-search asks flow-spaces", asked, "observe only", asked == ["observe"])
+            quiet()
+
+            # Shell surfaces, timed by the shell, with a tiled space active: Overview snapshots it before it shows.
+            niri("action", "focus-window", "--id", tile_a)
+            time.sleep(2)
+            quiet()
+            def took(key):
+                try:
+                    return json.loads(ipc("open_took", key)[0])
+                except ValueError:
+                    return {"ms": -1, "count": 0}
+
+            def surface(name, key, open_call, close, limit):
+                samples = []
+                for _ in range(5):
+                    before = took(key)["count"]
+                    ipc(*open_call)
+                    samples.append(wait_for(lambda: (now := took(key))["count"] > before and now, name, timeout=5)["ms"])
+                    time.sleep(0.4)
+                    close()
+                    time.sleep(0.8)
+                value = statistics.median(samples)
+                check(name, value, f"< {limit}", value < limit, "ms", samples)
+
+            def closed(state_call):
+                return lambda: wait_for(lambda: ipc(state_call)[0] == "closed", state_call, timeout=5)
+
+            surface("Overview's first frame", "overview", ["overview_open"], lambda: (ipc("overview_close"), closed("overview_state")()), 200)
+            surface("Desk with a fresh answer", "desk", ["desk_open"], lambda: (ipc("leave"), closed("desk_state")()), 150)
+            surface("search rows shown", "search", ["search"], lambda: (ipc("search"), closed("search_state")()), 300)
+            time.sleep(1)
+            quiet()
+
+            # Title storms, from a terminal that retitles itself.
+            storm = terminal("storm 0", "sh", "-c", STORM.format(dir=storm_dir))
+            time.sleep(1)
+            quiet()
+
+            def retitle(period, count):
+                (storm_dir / "done").unlink(missing_ok=True)
+                (storm_dir / "go").write_text(f"{period} {count}\n")
+                wait_for(lambda: not (storm_dir / "go").exists(), "the storm to start", timeout=3)
+                return time.time()
+
+            own, children = cpu(pid)[0], helpers_cpu()
+            start = retitle(0.3, 33)
+            wait_for(lambda: (storm_dir / "done").exists(), "the 0.3 s storm", timeout=30)
+            end = time.time()
+            time.sleep(0.5)
+            own_after, children_after = cpu(pid)[0], helpers_cpu()
+            storm_runs = refreshes(start, end + 0.5)
+            check("title every 0.3 s: refreshes", len(storm_runs), "<= 12", len(storm_runs) <= 12)
+            share = 100 * (children_after - children) / (time.time() - start)
+            check("title every 0.3 s: helpers CPU", share, "< 10", share < 10, "% of a core")
+            share = 100 * (own_after - own) / (time.time() - start)
+            check("title every 0.3 s: shell CPU", share, "< 5", share < 5, "% of a core")
+            quiet()
+
+            def label():
+                answer = ipc("window_labels")[0]
+                try:
+                    return dict((ident, text) for ident, text in json.loads(answer)).get(storm)
+                except ValueError:
+                    return None
+
+            own, _ = cpu(pid)
+            start = retitle(0.05, 150)
+            seen, changes = label(), [time.time()]
+            while not (storm_dir / "done").exists() and time.time() - start < 30:
+                now = label()
+                if now != seen:
+                    seen = now
+                    changes.append(time.time())
+                time.sleep(0.05)
+            end = time.time()
+            own_after, _ = cpu(pid)
+            final = wait_for(lambda: label() == "storm 150", "the final title", timeout=5) and time.time()
+            changes.append(min(end, final))
+            gap = max(b - a for a, b in zip(changes, changes[1:]))
+            check("title every 0.05 s: longest stale label", gap, "< 1.5", gap < 1.5, "s")
+            share = 100 * (own_after - own) / (end - start)
+            check("title every 0.05 s: shell CPU", share, "< 10", share < 10, "% of a core")
+            subprocess.run(["kill", str(terminals[-1].pid)])
+            wait_for(lambda: all(w["id"] != storm for w in read("windows")), "the storm terminal to close")
+            time.sleep(1)
+            quiet()
+
+            # Focus storms between the two tiles.
+            sock = NiriSocket()
+
+            tiles = [tile_a, tile_b]
+
+            def flip(period, seconds):
+                begin, step = time.time(), 0
+                while time.time() - begin < seconds:
+                    step += 1
+                    sock.focus(tiles[step % len(tiles)])
+                    time.sleep(period)
+                return begin, time.time()
+
+            start, end = flip(0.05, 6)
+            starts = [start] + refreshes(start, end) + [end]
+            gap = max(b - a for a, b in zip(starts, starts[1:]))
+            check("focus every 0.05 s: longest gap between refreshes", gap, "< 1.5", gap < 1.5, "s")
+            time.sleep(1)
+            quiet()
+            # Five spaces, so what a state push costs the shell shows (each surface lists every space).
+            tiles += [terminal(f"perf tile {name}", "sh", "-c", "sleep 3600") for name in "cde"]
+            time.sleep(1)
+            quiet()
+            helpers, own = helpers_cpu(), cpu(pid)[0]
+            start, end = flip(0.25, 6)
+            time.sleep(0.5)
+            share = 100 * (helpers_cpu() - helpers) / (time.time() - start)
+            own_share = 100 * (cpu(pid)[0] - own) / (time.time() - start)
+            check("focus every 0.25 s: shell CPU", own_share, "< 2.5", own_share < 2.5, "% of a core")
+            count = len(refreshes(start, end))
+            check("focus every 0.25 s: refreshes", count, "<= 16", count <= 16)
+            check("focus every 0.25 s: helpers CPU", share, "< 2.5", share < 2.5, "% of a core")
+            stats = controller_stats(runtime, tmp)
+            if stats and stats["refreshes"]:
+                mean = stats["refresh_ms"] / stats["refreshes"]
+                check("controller refresh mean", mean, "< 10", mean < 10, "ms")
+
+            # An activity without a known amount (ADR-0010): the shell reads what the Platform API publishes.
+            def publish(activities):
+                staged = runtime / "flow-activities.json.tmp"
+                staged.write_text(json.dumps({"version": 1, "activities": activities}))
+                os.replace(staged, runtime / "flow-activities.json")
+
+            def shell_cpu(seconds):
+                own, begin = cpu(pid)[0], time.time()
+                time.sleep(seconds)
+                return 100 * (cpu(pid)[0] - own) / (time.time() - begin)
+
+            def clock():
+                try:
+                    return json.loads(ipc("busy_clock")[0])
+                except ValueError:
+                    return None  # a shell without the call: main before 2026-11-22
+
+            def ticking(seconds=1.0):
+                """The busy clock's interval if its phase moved over ``seconds``, else None."""
+                before = clock()
+                time.sleep(seconds)
+                after = clock()
+                return after["interval"] if before and after and after["running"] and after["phase"] != before["phase"] else None
+
+            busy = [{"id": "busy", "owner": "Smoke", "title": "Working", "progress": -1}]
+            publish(busy)
+            wait_for(lambda: "Working" in ipc("activity_list")[0], "the busy activity in the island")
+            time.sleep(1)
+            share = shell_cpu(10)
+            check("busy activity, island showing: shell CPU", share, "< 5", share < 5, "% of a core")
+            moved = ticking()
+            check("busy activity, island showing: the dot breathes", moved, "every 80 ms", moved == 80)
+            ipc("overview_open")
+            wait_for(lambda: ipc("overview_state")[0] == "open", "Overview, with its own island")
+            time.sleep(1)
+            share = shell_cpu(10)
+            check("busy activity in Overview: shell CPU", share, "< 5", share < 5, "% of a core")
+            moved = ticking()
+            check("busy activity in Overview: the dot breathes", moved, "every 80 ms", moved == 80)
+            ipc("overview_close")
+            wait_for(lambda: ipc("overview_state")[0] == "closed", "Overview to close")
+            ipc("desk_open")
+            wait_for(lambda: ipc("desk_state")[0] == "open", "Desk, with the activity's sweeping bar")
+            moved = ticking()
+            check("busy activity on Desk: the bar sweeps", moved, "every 16 ms", moved == 16)
+            ipc("leave")
+            wait_for(lambda: ipc("desk_state")[0] == "closed", "Desk to close")
+            publish([{**busy[0], "progress": 0.5}])
+            time.sleep(1)
+            stopped = clock()
+            check("an activity with a known amount: the clock stops", stopped and stopped["running"], "stopped",
+                  stopped is not None and not stopped["running"])
+            publish([])
+            time.sleep(1)
+            stopped = clock()
+            check("no activity: the clock stops", stopped and stopped["running"], "stopped",
+                  stopped is not None and not stopped["running"])
+        finally:
+            if sock:
+                sock.close()
+            if shell_process:
+                shell_process.terminate()
+                try:
+                    shell_process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    shell_process.kill()
+            for process in terminals:
+                process.terminate()
+            for process in terminals:
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+            niri("action", "focus-workspace", start_workspace["idx"])
+    passed = all(results)
+    print(json.dumps({"result": "pass" if passed else "fail"}))
+    return 0 if passed else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -2,7 +2,6 @@
 """Persistent Group identities, separate from explicit session snapshots."""
 import json
 import os
-import tempfile
 
 
 def sync_directory(directory):
@@ -101,6 +100,7 @@ def validate(data):
 
 
 def write(path, groups):
+    import tempfile  # here, not above: flow-spaces runs after every burst of Niri events and mostly only reads
     data = {"version": 1, "groups": groups}
     validate(data)
     with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as tmp:

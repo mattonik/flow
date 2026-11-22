@@ -199,8 +199,46 @@ def main():
                 raise RuntimeError("Unpinning b failed, or unpinning twice was not NotFound")
             steps.append("Control pinned b with focus kept on a, moved its pin before a, and unpinned it")
 
+            def streams():
+                """The service's own Niri event streams: it runs one only while no controller serves it."""
+                return [line for line in subprocess.run(["ps", "-o", "cmd=", "--ppid", str(service.pid)], text=True,
+                                                        stdout=subprocess.PIPE).stdout.splitlines() if "event-stream" in line]
+
+            if len(streams()) != 1:
+                raise RuntimeError(f"Without a shell the service did not follow Niri itself: {streams()}")
+            steps.append("without a shell, the service read flow-spaces observe and ran its own event stream")
             shell_process = subprocess.Popen(["quickshell", "-p", shell], env=env, stdin=subprocess.DEVNULL,
                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # The shell's controller (ADR-0011) serves this state; the service finds it within 5 s, and its own
+            # stream, once stopped, is not started again (that would happen 5 s later).
+            wait_for(lambda: not streams(), "the service to leave Niri's stream to the shell's controller", timeout=15)
+            time.sleep(6)
+            if streams():
+                raise RuntimeError(f"The service started its own event stream again beside the controller: {streams()}")
+            controller = subprocess.run([sys.executable, "-c", "import flow_controller; print(flow_controller.socket_path())"],
+                                        env=env, text=True, stdout=subprocess.PIPE, check=True).stdout.strip()
+
+            def served():
+                stats = subprocess.run([sys.executable, "-c", "import flow_controller, json; "
+                                        "print(json.dumps(flow_controller.ask({'get': 'stats'})))"],
+                                       env=env, text=True, stdout=subprocess.PIPE, check=True).stdout
+                return json.loads(stats)["observes"]
+
+            before = served()
+            if apps["a"] not in {(s["apps"] or ["?"])[0] for s in json.loads(flow("spaces", "list").stdout)}:
+                raise RuntimeError("Listing through the shell's controller lost a space")
+            if served() <= before:
+                raise RuntimeError(f"The service did not read Flow's state from the controller at {controller}")
+            watcher = subprocess.Popen([python, str(CODE / "flow_cli.py"), "events", "watch"], env=env, text=True,
+                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            processes.append(watcher)
+            time.sleep(1)
+            niri("action", "focus-window", "--id", window("b")["id"])
+            line = watcher.stdout.readline()
+            if json.loads(line) != {"event": "spaces-changed"}:
+                raise RuntimeError(f"No spaces-changed event from the controller after a focus change: {line!r}")
+            steps.append("with the development shell running, the service left Niri's stream to the shell's controller, "
+                         "listed spaces through it, and reported a spaces-changed event from it")
 
             def desk():
                 try:
@@ -278,9 +316,11 @@ def main():
             service.wait(timeout=10)
             time.sleep(0.5)
             left = [pid for pid in children if Path(f"/proc/{pid}").exists()]
-            if not children or left:
-                raise RuntimeError(f"Stopping the service left its children running: {left} of {children}")
-            steps.append(f"SIGTERM stopped the service and its {len(children)} child process(es)")
+            if children or left:
+                raise RuntimeError(f"While the shell's controller served it, the service had children: {children} "
+                                   f"({left} still running after SIGTERM)")
+            steps.append(f"SIGTERM stopped the service and its {len(children)} child process(es) "
+                         "(none while the shell's controller served it)")
             result = {"result": "pass", "niri": niri("version").strip(), "steps": steps}
         finally:
             if service and service.poll() is None:

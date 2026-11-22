@@ -5,6 +5,7 @@ import functools
 import json
 import os
 from pathlib import Path
+import socket as unix_socket
 import subprocess
 import sys
 import time
@@ -26,18 +27,50 @@ def command(*args):
     return subprocess.check_output(["niri", "msg", *map(str, args)], text=True, stderr=subprocess.PIPE)
 
 
-def snapshot():
-    workspaces = json.loads(command("-j", "workspaces"))
-    windows = json.loads(command("-j", "windows"))
+def query(*names):
+    """Niri's answers to read-only requests ("Windows", "Workspaces", "Outputs"), over one connection to its socket.
+
+    ``niri msg`` would cost a process per request (docs/performance.md).
+    """
+    path = os.environ.get("NIRI_SOCKET")
+    if not path:
+        raise ValueError("NIRI_SOCKET is not set")
+    with unix_socket.socket(unix_socket.AF_UNIX, unix_socket.SOCK_STREAM) as connection:
+        connection.settimeout(10)
+        connection.connect(path)
+        with connection.makefile("rwb") as stream:
+            answers = []
+            for name in names:
+                stream.write(json.dumps(name).encode() + b"\n")
+                stream.flush()
+                reply = json.loads(stream.readline() or b"null")
+                if not isinstance(reply, dict) or not isinstance(reply.get("Ok"), dict) or name not in reply["Ok"]:
+                    raise ValueError(f"Niri did not answer {name}: {reply.get('Err') if isinstance(reply, dict) else reply}")
+                answers.append(reply["Ok"][name])
+    return answers
+
+
+def focused(workspaces):
     workspace = next((w for w in workspaces if w["is_focused"]), None)
     if workspace is None:
         raise ValueError("No active workspace")
-    return workspace, windows
+    return workspace
+
+
+def snapshot():
+    workspaces, windows = query("Workspaces", "Windows")
+    return focused(workspaces), windows
 
 
 def display_state():
     """Return Niri's outputs and every workspace, for display ownership."""
-    return json.loads(command("-j", "outputs")), json.loads(command("-j", "workspaces"))
+    return tuple(query("Outputs", "Workspaces"))
+
+
+def full_state():
+    """The focused workspace, the windows, the outputs and every workspace, as one consistent reading."""
+    outputs, workspaces, windows = query("Outputs", "Workspaces", "Windows")
+    return focused(workspaces), windows, outputs, workspaces
 
 
 def session_id():
@@ -337,19 +370,70 @@ def rejoin_plan(group, workspace, windows, pins):
         direction = "right"
     else:
         raise ValueError("Place the Group apps in adjacent columns, in saved order, before rejoining")
-    right_col = max(columns)
     claims = [pin for pin in pins if set(group["members"]) & set(pin.get("members", [pin.get("app_id")]))]
     if len(claims) > 1 or any(pin.get("group_id") != group["id"] or
                               set(pin.get("members", [])) != set(group["members"]) for pin in claims):
         raise ValueError("Unpin conflicting apps before rejoining")
-    if claims and any(w.get("workspace_id") == workspace["id"] and not w.get("is_floating")
-                      and (position(w) or [0])[0] > right_col for w in windows):
-        raise ValueError("Move the pinned Group apps to the end before rejoining")
-    others = pinned_apps([pin for pin in pins if pin not in claims])
-    if any(w.get("workspace_id") == workspace["id"] and w.get("app_id") in others
-           and (position(w) or [0])[0] > right_col for w in windows):
-        raise ValueError("Move other pinned spaces left before rejoining")
+    # The user asks for a rejoin, so the columns after the Group may close up as its apps join one column: they
+    # keep their order, and pinned ones go back in pin order at the next refresh, once no side-by-side Group or
+    # unfinished layout change pauses that (and only this display's pins). Session recovery rebuilds a pinned
+    # Group the same way.
     return found, direction
+
+
+class ColumnsMoved(ValueError):
+    """A step of stack_columns did not land: the windows are not where joining them needs them."""
+
+
+def stack_columns(ids, direction, workspace_id, failure, act=None, look=None):
+    """Stack the single-window columns ``ids`` (adjacent, in Group order, ``direction`` "left" or "right" towards
+    the first) into one column, one at a time. Rejoin Group and session recovery both join a Group this way.
+    After each step but the last, which the caller confirms, the column must hold exactly the windows joined
+    so far and the rest must still be single windows, or ``failure`` is raised. Columns after them close up."""
+    act, look = act or command, look or snapshot
+    for count, ident in enumerate(ids[1:], 2):
+        # shortcut: Niri's targeted action can consume a neighbor after a race; use consume-only by ID when available.
+        act("action", "consume-or-expel-window-" + direction, "--id", ident)
+        if count == len(ids):
+            return
+        ws, live = look()
+        first = next((w for w in live if w.get("id") == ids[0]), None)
+        rest = [next((w for w in live if w.get("id") == other), None) for other in ids[count:]]
+        if (ws["id"] != workspace_id or not first
+                or [w["id"] for w in column_windows(ws, live, position(first)[0])] != ids[:count]
+                or not all(eligible(w, ws, live) for w in rest)):
+            raise ColumnsMoved(failure)
+
+
+def pin_ordered(workspace, windows, pins, socket, groups=()):
+    """``windows`` as the next refresh's pin ordering (``reconcile``) will leave them: the columns of pinned spaces
+    first, in pin order, then the others in their order. Unchanged while that ordering is paused. ``pins`` are the
+    display's own, as reconcile gets them; Groups are told by their bindings in this Niri session (``socket``), as
+    a refresh tells them."""
+    global SESSION
+    previous, SESSION = SESSION, socket
+    try:
+        return _pin_ordered(workspace, windows, pins, socket, groups)
+    finally:
+        SESSION = previous
+
+
+def _pin_ordered(workspace, windows, pins, socket, groups):
+    if has_side_layout(workspace, windows, groups):
+        return windows
+    tiled = sorted((w for w in windows if w.get("workspace_id") == workspace["id"] and position(w)),
+                   key=lambda w: position(w))
+    columns = []
+    for w in tiled:
+        if not columns or position(columns[-1][-1])[0] != position(w)[0]:
+            columns.append([])
+        columns[-1].append(w)
+    pinned = [pin_window(pin, workspace, windows, socket, groups) for pin in pins]
+    lead = [next(c for c in columns if w in c) for w in pinned if w]
+    order = lead + [c for c in columns if c not in lead]
+    moved = {w["id"]: [index, row] for index, column in enumerate(order, 1) for row, w in enumerate(column, 1)}
+    return [{**w, "layout": {**w.get("layout", {}), "pos_in_scrolling_layout": moved[w["id"]]}} if w["id"] in moved
+            else w for w in windows]
 
 
 def find_group(groups, group_id):
@@ -491,18 +575,8 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
                 or [(w["id"], position(w)) for w in current] != [(w["id"], position(w)) for w in found]):
             raise ValueError("Group or focus changed; try again")
         ids = [w["id"] for w in current]
-        for count, member in enumerate(current[1:], 2):
-            # shortcut: Niri's targeted action can consume a neighbor after a race; use consume-only by ID when available.
-            command("action", "consume-or-expel-window-" + direction, "--id", member["id"])
-            if count == len(ids):
-                break  # The final check below confirms the last step.
-            ws, live = snapshot()
-            first = next((w for w in live if w.get("id") == ids[0]), None)
-            rest = [next((w for w in live if w.get("id") == ident), None) for ident in ids[count:]]
-            if (ws["id"] != workspace["id"] or not first
-                    or [w["id"] for w in column_windows(ws, live, position(first)[0])] != ids[:count]
-                    or not all(eligible(w, ws, live) for w in rest)):
-                raise ValueError("Could not confirm Group rejoin; saved Group remains. Check the windows before retrying")
+        stack_columns(ids, direction, workspace["id"],
+                      "Could not confirm Group rejoin; saved Group remains. Check the windows before retrying")
         workspace, windows = snapshot()
         check = {"group_id": group["id"], "members": group["members"], "session": ""}
         joined = group_windows(check, workspace, windows, socket, groups)
@@ -582,20 +656,28 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
             if has_side_layout(current_workspace, current_windows, groups):
                 raise ValueError("Return side-by-side Groups to a stack before changing Groups")
             stacked = [next(w for w in current_windows if w["id"] == member["id"]) for member in current["members"]]
-            column = position(stacked[0])[0]
-            if any(w.get("workspace_id") == workspace["id"] and not w.get("is_floating") and w.get("app_id") in pinned_apps(pins)
-                   and (position(w) or [0])[0] > column for w in current_windows):
-                raise ValueError("Move pinned spaces left before dissolving this Group")
+            # The columns after the Group move right as its apps get columns of their own, in the same order, and
+            # this display's pinned spaces go back in pin order at the next refresh, as for Rejoin Group.
             stacked.sort(key=lambda w: position(w)[1])
             # Expel from the bottom so the separated windows keep the stack's top-to-bottom order.
             for member in reversed(stacked[1:]):
+                # Only a window that shares a column is expelled: alone, the same action would join it to the next
+                # column, which may be a pinned space. Checked right before each step, as Rejoin Group checks.
                 # shortcut: Niri's targeted action can consume a neighbor after a race; use expel-only by ID when available.
+                ws, live = snapshot()
+                first = next((w for w in live if w.get("id") == stacked[0]["id"]), None)
+                me = next((w for w in live if w.get("id") == member["id"]), None)
+                if (ws["id"] != workspace["id"] or not first or not me or not position(first) or not position(me)
+                        or position(me)[0] != position(first)[0]):
+                    raise ValueError("Could not confirm separation; Group remains saved. Check its apps and retry")
                 command("action", "consume-or-expel-window-right", "--id", member["id"])
             changed_workspace, changed_windows = snapshot()
             separated = [next((w for w in changed_windows if w.get("id") == member["id"]), None) for member in stacked]
             if (changed_workspace["id"] != workspace["id"]
                     or not all(eligible(w, changed_workspace, changed_windows) for w in separated)
-                    or {w.get("app_id") for w in separated} != set(apps)):
+                    or {w.get("app_id") for w in separated} != set(apps)
+                    or [position(w)[0] for w in separated]
+                    != list(range(position(separated[0])[0], position(separated[0])[0] + len(separated)))):
                 raise ValueError("Could not confirm separation; Group remains saved. Stack its apps and retry")
             groups.remove(next(g for g in groups if g["id"] == arg))
     elif op == "add-to-group":
@@ -1108,19 +1190,30 @@ def follow_rotation(outputs, workspaces, windows):
     if not data["layers"]:
         save_layer_memory(path, data, before)
         return False
-    where = {ws["id"]: ws.get("output") for ws in workspaces}
     changed = False
-    for key, shaped in list(data["layers"].items()):
-        logical = ((outputs or {}).get(where.get(floating[key].get("workspace_id"))) or {}).get("logical") or {}
-        if not logical.get("width") or not logical.get("height"):
-            continue
-        size = (logical["width"], logical["height"])
-        if orientation_of(size) != shaped:
-            shape_layer(int(key), size)
-            data["layers"][key] = orientation_of(size)
-            changed = True
+    for key, size in layers_to_reshape(data["layers"], outputs, workspaces, windows):
+        shape_layer(int(key), size)
+        data["layers"][key] = orientation_of(size)
+        changed = True
     save_layer_memory(path, data, before)
     return changed
+
+
+def layers_to_reshape(shaped, outputs, workspaces, windows):
+    """The Layers Flow shaped (``shaped``: window ID → orientation) whose output now has another orientation,
+    with that output's logical size. Only reads."""
+    floating = {str(w["id"]): w for w in windows if w.get("is_floating")}
+    where = {ws["id"]: ws.get("output") for ws in workspaces}
+    found = []
+    for key, orientation in shaped.items():
+        if key not in floating:
+            continue
+        logical = ((outputs or {}).get(where.get(floating[key].get("workspace_id"))) or {}).get("logical") or {}
+        if logical.get("width") and logical.get("height"):
+            size = (logical["width"], logical["height"])
+            if orientation_of(size) != orientation:
+                found.append((key, size))
+    return found
 
 
 def float_as_layer(window_id, size=None):
@@ -1642,23 +1735,34 @@ def other_pins(pins, display, displays, connected, ambiguous, workspaces, window
     return result
 
 
-def run_locked(state):
-    """Run one action; Group bindings apply only while it runs, in this Niri session."""
+def run_locked(state, op=None, arg=None, emit=True, reshape=True):
+    """Run one action and return Flow's state after it; Group bindings apply only while it runs, in this Niri
+    session. The action and its argument default to the command line's, and the state is printed unless
+    ``emit`` is false. Without ``reshape``, Layers whose display turned are not reshaped (that runs Niri
+    actions and waits for them); the state then says ``"reshape_due": true`` when one is
+    (session/flow_controller.py leaves it to a ``flow-spaces refresh`` of its own)."""
     global SESSION, STATE
+    if op is None:
+        op = sys.argv[1] if len(sys.argv) > 1 else "refresh"
+        arg = sys.argv[2] if len(sys.argv) > 2 else None
     try:
-        return _run_locked(state)
+        result = _run_locked(state, op, arg, reshape)
     finally:
         SESSION = STATE = None
+    if emit:
+        print(json.dumps(result))
+    return result
 
 
-def _run_locked(state):
+def _run_locked(state, op, arg, reshape=True):
+    requested = op
+    reshape_due = False
     path = state / "spaces.json"
     with (state / "spaces.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         pins, displays, version = pin_store.read(path)
         before = json.dumps([pins, displays, version], sort_keys=True)
-        workspace, windows = snapshot()
-        outputs, workspaces = display_state()
+        workspace, windows, outputs, workspaces = full_state()
         connected, ambiguous = pin_store.identities(outputs, pin_store.shared_serials(displays))
         socket = session_id()
         global SESSION, STATE
@@ -1681,9 +1785,9 @@ def _run_locked(state):
             return record["key"] if record else None
 
         display = here(workspace)
-        op = sys.argv[1] if len(sys.argv) > 1 else "refresh"
-        arg = sys.argv[2] if len(sys.argv) > 2 else None
-        if op != "observe" and follow_rotation(outputs, workspaces, windows):
+        if op != "observe" and not reshape:
+            reshape_due = bool(layers_to_reshape(layer_memory()[1]["layers"], outputs, workspaces, windows))
+        elif op != "observe" and follow_rotation(outputs, workspaces, windows):
             # A Layer took its rotated output's shape; focus stays where it was.
             if workspace.get("active_window_id"):
                 command("action", "focus-window", "--id", workspace["active_window_id"])
@@ -1823,26 +1927,30 @@ def _run_locked(state):
                     "app_id": w.get("app_id") or "", "active": w["id"] == workspace.get("active_window_id")}
                    for w in ordered]
         record = connected.get(workspace.get("output"))
-        print(json.dumps({"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows, groups, pins),
-                          "layers": layers(workspace, windows, layer_memory()[1]["layers"]),
-                          "incomplete_groups": incomplete_groups(workspace, windows, groups, pins),
-                          "other_pins": other_pins(pins, display, displays, connected, ambiguous, workspaces, windows, socket, groups),
-                          "display": {"key": display, "label": record["label"] if record else workspace.get("output") or "",
-                                      "name": pin_store.display_name(displays.get(display)),
-                                      "number": (displays.get(display) or {}).get("number")},
-                          "display_count": len(connected),
-                          "displays": [{"key": key, "label": displays[key].get("label", ""),
-                                        "name": pin_store.display_name(displays[key]),
-                                        "number": displays[key].get("number"), "current": key == display}
-                                       for key in screen_order],
-                          "notice": notice,
-                          "all_windows": [{"id": w["id"], "app_id": w.get("app_id") or "", "pid": w.get("pid"),
-                                           "title": w.get("title") or "", "workspace_id": w.get("workspace_id"),
-                                           # Niri's keyboard focus: false while Desk, a launcher or the overview
-                                           # holds the keyboard, though the window stays the workspace's active one.
-                                           "focused": w.get("is_focused") is True}
-                                          for w in windows],
-                          "action": sys.argv[1] if len(sys.argv) > 1 else "refresh"}))
+        logical = (outputs.get(workspace.get("output")) or {}).get("logical") or {}
+        return {"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows, groups, pins),
+               "layers": layers(workspace, windows, layer_memory()[1]["layers"]),
+               "incomplete_groups": incomplete_groups(workspace, windows, groups, pins),
+               "other_pins": other_pins(pins, display, displays, connected, ambiguous, workspaces, windows, socket, groups),
+               "display": {"key": display, "label": record["label"] if record else workspace.get("output") or "",
+                           "name": pin_store.display_name(displays.get(display)),
+                           "number": (displays.get(display) or {}).get("number")},
+               "display_count": len(connected),
+               # The shell runs automatic Group layout when a Group does not suit this.
+               "orientation": orientation_of((logical["width"], logical["height"]))
+                              if logical.get("width") and logical.get("height") else "",
+               "displays": [{"key": key, "label": displays[key].get("label", ""),
+                             "name": pin_store.display_name(displays[key]),
+                             "number": displays[key].get("number"), "current": key == display}
+                            for key in screen_order],
+               "notice": notice,
+               "all_windows": [{"id": w["id"], "app_id": w.get("app_id") or "", "pid": w.get("pid"),
+                                "title": w.get("title") or "", "workspace_id": w.get("workspace_id"),
+                                # Niri's keyboard focus: false while Desk, a launcher or the overview
+                                # holds the keyboard, though the window stays the workspace's active one.
+                                "focused": w.get("is_focused") is True}
+                               for w in windows],
+               "action": requested, **({"reshape_due": True} if reshape_due else {})}
 
 
 def main():

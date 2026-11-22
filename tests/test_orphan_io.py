@@ -9,16 +9,16 @@ import tempfile
 import textwrap
 import unittest
 
+from test_niri_query import FakeNiri
+
 SESSION = Path(__file__).resolve().parents[1] / "session"
-FAKE_NIRI = """#!/bin/sh
-# Niri, standing in: one focused, empty workspace on one output.
-case "$*" in
-  "msg -j workspaces") echo '[{"id": 1, "idx": 1, "output": "Virtual-1", "is_active": true, "is_focused": true, "active_window_id": null}]' ;;
-  "msg -j windows") echo '[]' ;;
-  "msg -j outputs") echo '{"Virtual-1": {"name": "Virtual-1", "make": "Flow", "model": "Test", "serial": null, "logical": {"width": 1280, "height": 800, "transform": "Normal"}}}' ;;
-  *) exit 1 ;;
-esac
-"""
+# Niri, standing in on its socket: one focused, empty workspace on one output.
+NIRI_ANSWERS = {
+    "Workspaces": [{"id": 1, "idx": 1, "output": "Virtual-1", "is_active": True, "is_focused": True, "active_window_id": None}],
+    "Windows": [],
+    "Outputs": {"Virtual-1": {"name": "Virtual-1", "make": "Flow", "model": "Test", "serial": None,
+                              "logical": {"width": 1280, "height": 800, "transform": "Normal"}}},
+}
 
 
 def orphaned(command, env=None):
@@ -63,12 +63,10 @@ class OrphanIoTest(unittest.TestCase):
     def test_spaces_finishes_with_its_reader_gone(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
-            (tmp / "bin").mkdir()
-            (tmp / "bin" / "niri").write_text(FAKE_NIRI)
-            (tmp / "bin" / "niri").chmod(0o755)
-            (tmp / "niri.sock").touch()
+            niri = FakeNiri(str(tmp / "niri.sock"), NIRI_ANSWERS)
+            self.addCleanup(niri.close)
             env = dict(os.environ, XDG_STATE_HOME=str(tmp / "state"), PYTHONPATH=str(SESSION),
-                       PATH=f"{tmp / 'bin'}:{os.environ['PATH']}", NIRI_SOCKET=str(tmp / "niri.sock"))
+                       NIRI_SOCKET=str(tmp / "niri.sock"))
             answer = subprocess.run([sys.executable, str(SESSION / "spaces.py"), "refresh"], env=env, text=True,
                                     stdout=subprocess.PIPE, timeout=30)
             self.assertEqual((answer.returncode, json.loads(answer.stdout).get("error")), (0, None))
