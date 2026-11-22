@@ -200,6 +200,17 @@ class LargerGroupTest(unittest.TestCase):
         self.assertFalse(entry["can_rejoin"])
         self.assertIn("saved order", entry["status"])
 
+    def test_rejoin_stacks_a_pinned_three_app_group_with_columns_after_it(self):
+        # Each step of the rejoin is checked with the columns after the Group closing up behind it.
+        registry = [three()]
+        pins = [{"id": "pin", "group_id": "g", "members": ["a", "b", "c"], "app_id": "a"}]
+        niri = self.niri([[1], [2], [3], [9], [4]])
+        ws, windows = niri.snapshot()
+        self.assertTrue(spaces.incomplete_groups(ws, windows, registry, pins)[0]["can_rejoin"])
+        _, pins = self.run_op(niri, "rejoin-group", "g", registry, pins)
+        self.assertEqual(niri.layout(), [["a", "b", "c"], ["other"], ["d"]])
+        self.assertEqual(pins[0]["window_ids"], [1, 2, 3])
+
     def test_three_app_side_repair_moves_each_member_into_place(self):
         group = three("side-by-side")
         niri = self.niri([[1], [9], [2], [3]], active=9)
