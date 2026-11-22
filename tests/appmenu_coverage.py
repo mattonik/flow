@@ -640,7 +640,7 @@ def reader_main(args):
         switch.set(True)
     import pyatspi
     Atspi.set_timeout(*appmenu.METHOD_TIMEOUT_MS)
-    r = appmenu.Reader(pyatspi, set_timeout=Atspi.set_timeout)
+    r = appmenu.Reader(pyatspi)
 
     def ask(**request):
         return json.loads(r.answer(json.dumps({"id": 1, **request})))

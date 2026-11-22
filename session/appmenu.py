@@ -35,9 +35,10 @@ IGNORED_APPS = ("quickshell", "niri")
 NODE_CAP, DEPTH_CAP = 2000, 12  # a read's walk under one menu bar
 # Where a probe looks for a menu bar: this deep under the frame, this many nodes, and never inside content.
 BAR_DEPTH, BAR_NODES = 8, 400
-ACTION_TIMEOUT_MS = 1000  # a command's reply; a modal dialog replies only when it closes
-# Every other call: libatspi's (val, startup_time), its defaults 800 and 15000 ms; the second applies to an app that
-# registered moments ago, as a newly opened window's has.
+# Every call's wait for a reply, as libatspi's set_timeout(val, startup_time) takes them; its defaults are 800 and
+# 15000 ms, and the second applies to an app that registered moments ago, as a newly opened window's has: DB
+# Browser's modal About, which replies only when it closes, held the call for 15 s (coverage report, finding 3).
+# A command whose reply does not come in time was sent (activate).
 METHOD_TIMEOUT_MS = (1000, 2000)
 A11Y = ("org.a11y.Bus", "/org/a11y/bus", "org.a11y.Status")
 PRUNED = ("DOCUMENT_FRAME", "DOCUMENT_TEXT", "DOCUMENT_WEB", "DOCUMENT_SPREADSHEET", "DOCUMENT_PRESENTATION", "TEXT",
@@ -114,11 +115,10 @@ def timed_out(exc):
 class Reader:
     """What ``serve`` answers. ``at`` is pyatspi (a fake in the tests), ``niri`` a function like ``niri()``."""
 
-    def __init__(self, at, niri_request=niri, proc="/proc", set_timeout=None):
+    def __init__(self, at, niri_request=niri, proc="/proc"):
         self.at = at
         self.niri = niri_request
         self.proc = proc
-        self.set_timeout = set_timeout or (lambda *_: None)
         self.frames = {}  # window id → (frame, name, has_menu): the frame chosen while the window had the keyboard
         # Content, where no menu bar lives and most of a window's nodes do (LibreOffice's document, Kate's view).
         self.prune = {getattr(at, "ROLE_" + name) for name in PRUNED if hasattr(at, "ROLE_" + name)}
@@ -343,7 +343,6 @@ class Reader:
         except Exception:  # the frame is gone: chosen again at the next probe
             self.frames.pop(window, None)
             raise
-        self.set_timeout(ACTION_TIMEOUT_MS, ACTION_TIMEOUT_MS)
         try:
             if not node.queryAction().doAction(0):
                 raise ValueError("Application declined the command")
@@ -351,8 +350,6 @@ class Reader:
             if timed_out(exc):  # sent; the app answers only when, say, its modal dialog closes
                 return {"window": window, "done": True, "unknown": True}
             raise
-        finally:
-            self.set_timeout(*METHOD_TIMEOUT_MS)
         return {"window": window, "done": True}
 
 
@@ -414,7 +411,7 @@ def serve():
     from gi.repository import Atspi, GLib
     import pyatspi
     Atspi.set_timeout(*METHOD_TIMEOUT_MS)
-    reader = Reader(pyatspi, set_timeout=Atspi.set_timeout)
+    reader = Reader(pyatspi)
     # A GLib main loop, so the accessibility bus's signals are handled as they come rather than queued
     # forever; libatspi caches nothing outside its own event loop, so every read is fresh.
     loop, pending = GLib.MainLoop(), [b""]

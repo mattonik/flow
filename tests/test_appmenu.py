@@ -365,24 +365,21 @@ class ActivateTest(unittest.TestCase):
     def setUp(self):
         self.new = Mock(return_value=True)
         self.app = Node("APPLICATION", "kate", [kate_frame("A", True, new=self.new)], pid=5)
-        self.timeouts = []
         pyatspi = types.SimpleNamespace(**vars(at), **vars(desktop(self.app)))
         self.active = [7]
-        self.r = appmenu.Reader(pyatspi, lambda what: niri_with([window(7, 5, "A")], self.active[0])(what),
-                                set_timeout=lambda *a: self.timeouts.append(a))
+        self.r = appmenu.Reader(pyatspi, lambda what: niri_with([window(7, 5, "A")], self.active[0])(what))
         ask(self.r, op="probe", window=7)
         self.path = ask(self.r, op="read", window=7)["menus"][0]["children"][0]["path"]
 
-    def test_runs_the_item_with_a_short_timeout(self):
-        self.assertEqual(ask(self.r, op="activate", window=7, path=self.path, label="New")["done"], True)
-        self.assertEqual(self.timeouts, [(appmenu.ACTION_TIMEOUT_MS,) * 2, appmenu.METHOD_TIMEOUT_MS])
+    def test_runs_the_item(self):
+        self.assertEqual(ask(self.r, op="activate", window=7, path=self.path, label="New"), {"id": 9, "window": 7, "done": True})
+        self.new.assert_called_once_with(0)
 
     def test_a_reply_timeout_means_sent(self):
         # DB Browser's modal About answers only when it closes (finding 3).
         self.new.side_effect = Exception("atspi_error: Did not receive a reply. Possible causes include: ...")
         self.assertEqual(ask(self.r, op="activate", window=7, path=self.path, label="New"),
                          {"id": 9, "window": 7, "done": True, "unknown": True})
-        self.assertEqual(self.timeouts[-1], appmenu.METHOD_TIMEOUT_MS)
 
     def test_other_failures_are_errors(self):
         self.new.side_effect = Exception("The application no longer exists")
