@@ -8,12 +8,12 @@ talks to it in JSON lines, one request on stdin, one answer on stdout, matched b
   ``{"id": 1, "window": 7, "name": "Kate", "has_menu": true, "final": true}``. The first probe of a window finds
   its accessible app (by PID; by ``app_id`` and title for an X11 window), chooses the window's frame by its title
   and ``active`` state, which only works while the window itself has the keyboard, and remembers the frame and
-  ``has_menu`` for the window until it closes; later probes answer from memory. ``has_menu`` stops at the first
-  showing menu bar with an item. ``final`` is false when nothing was remembered (the app is not on the bus, or
-  not yet, or no frame could be chosen), so the next probe looks again. With ``"window": 7``, a probe answers
-  ``{"moved": true}`` if window 7 is no longer the focused one; with no window focused, ``{"window": null, ...}``.
-- ``{"id": 2, "op": "read", "window": 7}``: the menu of the remembered frame, ``{"menus": [...], ...}``.
-  Paths in it lead from the frame to an item.
+  ``has_menu`` for the window until it closes; later probes answer from memory, re-choosing the frame if it is no
+  longer ``active``. ``has_menu`` stops at the first showing menu bar with an item. ``final`` is false when
+  nothing was remembered (the app is not on the bus, or not yet, or no frame could be chosen), so the next probe
+  looks again. ``"fresh": true`` forgets the window first. With no window focused: ``{"window": null}``.
+- ``{"id": 2, "op": "read", "window": 7}``: the menu of the remembered frame, ``{"menus": [...], "workspace": 3,
+  ...}``. Paths in it lead from the frame to an item. A read that fails forgets the window's frame.
 - ``{"id": 3, "op": "activate", "window": 7, "path": [...], "label": "New"}``: runs the item, if window 7 is
   still its workspace's active window and the item is still there, enabled and named so. ``{"done": true}``, with
   ``"unknown": true`` when the app did not answer in time (a modal dialog answers only when it closes): the
@@ -36,7 +36,9 @@ NODE_CAP, DEPTH_CAP = 2000, 12  # a read's walk under one menu bar
 # Where a probe looks for a menu bar: this deep under the frame, this many nodes, and never inside content.
 BAR_DEPTH, BAR_NODES = 8, 400
 ACTION_TIMEOUT_MS = 1000  # a command's reply; a modal dialog replies only when it closes
-METHOD_TIMEOUT_MS = (1000, 2000)  # every other call, and every call to an app that registered in the last 15 s
+# Every other call: libatspi's (val, startup_time), its defaults 800 and 15000 ms; the second applies to an app that
+# registered moments ago, as a newly opened window's has.
+METHOD_TIMEOUT_MS = (1000, 2000)
 A11Y = ("org.a11y.Bus", "/org/a11y/bus", "org.a11y.Status")
 PRUNED = ("DOCUMENT_FRAME", "DOCUMENT_TEXT", "DOCUMENT_WEB", "DOCUMENT_SPREADSHEET", "DOCUMENT_PRESENTATION", "TEXT",
           "TABLE", "TREE", "TREE_TABLE", "LIST", "LIST_BOX", "TERMINAL", "CANVAS")
@@ -141,11 +143,16 @@ class Reader:
 
     # --- Finding the window's frame -----------------------------------------------------------------------
     def apps(self):
+        """(app, PID) for each app on the bus. The PID comes from the bus daemon, not the app, so an app that
+        hangs costs nothing here; one whose PID cannot be had is skipped."""
         desktop = self.at.Registry.getDesktop(0)
         for i in range(desktop.childCount):
-            app = desktop.getChildAtIndex(i)
-            if app is not None and (app.name or "").lower() not in IGNORED_APPS:
-                yield app
+            try:
+                app = desktop.getChildAtIndex(i)
+                if app is not None:
+                    yield app, app.get_process_id()
+            except Exception:  # gone, or its connection is
+                continue
 
     def frames_of(self, app):
         kinds = (self.at.ROLE_FRAME, self.at.ROLE_WINDOW, self.at.ROLE_DIALOG)
@@ -163,15 +170,27 @@ class Reader:
         """The focused window's frame, or None: by PID, or for an X11 window by ``app_id`` and title."""
         title, pid = window.get("title") or "", window.get("pid")
         if pid and not is_x11(pid, self.proc):
-            app = next((a for a in self.apps() if a.get_process_id() == pid), None)
+            app = next((a for a, app_pid in self.apps() if app_pid == pid), None)
             if app is None:
                 return None
             frames = self.frames_of(app)
             index = choose_frame(self.described(frames), title, sum(w.get("pid") == pid for w in windows) == 1)
             return None if index is None else frames[index]
-        # X11 (xwayland-satellite's PID): the frames named as the window, preferring apps named as its app_id.
-        candidates = [(app, frame) for app in self.apps() for frame in self.frames_of(app)]
-        fitting = [(a, f) for a, f in candidates if same_app(a.name, window.get("app_id"))]
+        # X11 (xwayland-satellite's PID): only apps that own no Niri window, so never a Wayland app's frame. Among
+        # them, the frames named as the window, preferring apps named as its app_id. An app that fails to answer
+        # is left out, so one hung app costs its timeout, not the probe.
+        wayland = {w.get("pid") for w in windows}
+        candidates = []
+        for app, app_pid in self.apps():
+            if app_pid in wayland:
+                continue
+            try:
+                name = app.name or ""
+                if name.lower() not in IGNORED_APPS:
+                    candidates += [(name, frame) for frame in self.frames_of(app)]
+            except Exception:
+                continue
+        fitting = [(a, f) for a, f in candidates if same_app(a, window.get("app_id"))]
         named = [(a, f) for a, f in (fitting or candidates) if (f.name or "") == title]
         pool = named or fitting
         single = sum(w.get("app_id") == window.get("app_id") for w in windows) == 1
@@ -186,6 +205,8 @@ class Reader:
         while queue and seen < BAR_NODES:
             node, path = queue.pop(0)
             for i in range(node.childCount):
+                if seen >= BAR_NODES:  # one node with thousands of children stops here too
+                    return found
                 child = node.getChildAtIndex(i)
                 seen += 1
                 if child is None:
@@ -248,26 +269,34 @@ class Reader:
 
     # --- Requests ----------------------------------------------------------------------------------------
     def probe(self, request):
-        """The focused window's answer. A window seen before answers from memory, with no accessibility call,
-        so a probe on every focus change costs one request on Niri's socket."""
+        """The focused window's answer. A window seen before answers from memory, after one check that its frame
+        is still the ``active`` one (re-chosen if not), so a probe on a focus change costs a request on Niri's
+        socket and one accessibility call. ``"fresh": true`` (Super+M on a window without a menu) chooses again."""
         windows = self.niri("Windows")["Windows"]
         live = {w["id"] for w in windows}
         for gone in [k for k in self.frames if k not in live]:
             del self.frames[gone]
         focused = next((w for w in windows if w.get("is_focused")), None)
-        wanted = request.get("window")
         if focused is None:
             return {"window": None}
-        if wanted is not None and focused["id"] != wanted:
-            return {"window": wanted, "moved": True}
         ident = focused["id"]
+        if request.get("fresh"):
+            self.frames.pop(ident, None)
+        if ident in self.frames:
+            try:
+                still = self.frames[ident][0].getState().contains(self.at.STATE_ACTIVE)
+            except Exception:  # the frame is gone
+                still = False
+            if not still:
+                frame = self.find_frame(focused, windows)
+                if frame is not None and frame != self.frames[ident][0]:
+                    del self.frames[ident]
         if ident not in self.frames:
             frame = self.find_frame(focused, windows)
+            name = app_name(focused.get("app_id"), focused.get("title"))
             if frame is None:
-                return {"window": ident, "name": app_name(focused.get("app_id"), focused.get("title")),
-                        "has_menu": False, "final": False}
-            self.frames[ident] = (frame, app_name(focused.get("app_id"), focused.get("title")),
-                                  bool(self.bars(frame, first=True)))
+                return {"window": ident, "name": name, "has_menu": False, "final": False}
+            self.frames[ident] = (frame, name, bool(self.bars(frame, first=True)))
         _, name, has_menu = self.frames[ident]
         return {"window": ident, "name": name, "has_menu": has_menu, "final": True}
 
@@ -279,15 +308,19 @@ class Reader:
     def read(self, request):
         window = request.get("window")
         frame, name, _ = self.remembered(window)
-        bar = self.seen_bar(self.bars(frame))
-        if bar is None:
-            del self.frames[window]  # chosen again at the next probe
-            raise ValueError("The app shows no menu now")
-        node, path = bar
-        state = {"seen": 0}
-        menus = [entry for i in range(node.childCount)
-                 for entry in self.walk(node.getChildAtIndex(i), path + [i], 1, state)]
-        return {"window": window, "name": name, "menus": menus}
+        try:
+            bar = self.seen_bar(self.bars(frame))
+            if bar is None:
+                raise ValueError("The app shows no menu now")
+            node, path = bar
+            state = {"seen": 0}
+            menus = [entry for i in range(node.childCount)
+                     for entry in self.walk(node.getChildAtIndex(i), path + [i], 1, state)]
+        except Exception:  # chosen again at the next probe, whatever went wrong with this frame
+            self.frames.pop(window, None)
+            raise
+        workspace = next((w.get("workspace_id") for w in self.niri("Windows")["Windows"] if w["id"] == window), None)
+        return {"window": window, "workspace": workspace, "name": name, "menus": menus}
 
     def activate(self, request):
         window, path, label = request.get("window"), request.get("path"), request.get("label")
@@ -297,13 +330,19 @@ class Reader:
         workspace = next((w for w in self.niri("Workspaces")["Workspaces"] if w.get("is_focused")), None)
         if not workspace or workspace.get("active_window_id") != window:
             raise ValueError("Application focus changed")
-        node = frame
-        for index in path:
-            node = node.getChildAtIndex(index) if node is not None and 0 <= index < node.childCount else None
-            if node is None or (node.getRole() in self.menus and not node.getState().contains(self.at.STATE_ENABLED)):
+        try:
+            node = frame
+            for index in path:
+                node = node.getChildAtIndex(index) if node is not None and 0 <= index < node.childCount else None
+                if node is None or (node.getRole() in self.menus and not node.getState().contains(self.at.STATE_ENABLED)):
+                    raise ValueError("Command is no longer available")
+            if node.getRole() not in self.menus or (node.name or "") != label:
                 raise ValueError("Command is no longer available")
-        if node.getRole() not in self.menus or (node.name or "") != label:
-            raise ValueError("Command is no longer available")
+        except ValueError:
+            raise
+        except Exception:  # the frame is gone: chosen again at the next probe
+            self.frames.pop(window, None)
+            raise
         self.set_timeout(ACTION_TIMEOUT_MS, ACTION_TIMEOUT_MS)
         try:
             if not node.queryAction().doAction(0):

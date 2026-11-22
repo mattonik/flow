@@ -6,13 +6,13 @@ flow-shell``: it would react to the same events), ``FLOW_SHELL`` naming the deve
 ``flow-spaces`` and ``flow-search`` to measure first on PATH, with ``foot``. The shell gets its own runtime
 directory, state and configuration, with the opt-in app menu turned on. The work happens on the focused
 display's empty workspace, which must be free: three terminals open there, one of them shaped as a Layer
-(``flow-spaces make-layer``), and are closed afterwards.
+(``flow-spaces make-layer``), and later more terminals and a Nautilus window; all are closed afterwards.
 
 Every ``flow-spaces``, ``flow-search`` and ``flow-appmenu`` the shell starts goes through a recorder first on its
 PATH, which logs the time and arguments and runs the real one (``flow-appmenu`` too, which must be one with
 ``serve``). The shell runs on a private session bus of the smoke's own, with GSettings in a key file, so the
 app-menu reader switches on that bus's accessibility, never the session's. The terminals are on no accessibility
-bus, so for the reader they are apps without a menu. A refresh is one the shell's resident controller ran
+bus, so for the reader they are apps without a menu; so is a Nautilus window the smoke opens on the shell's bus. A refresh is one the shell's resident controller ran
 (ADR-0011; it reports them on its socket) or
 a ``flow-spaces`` the shell started (before the controller, every refresh was one). Helper timings are medians of
 11 runs after 3 that warm the guest up. CPU time comes from /proc: the shell's own, and its helpers': those it
@@ -21,9 +21,10 @@ the request to the surface's content, so IPC does not count.
 
 Checked (the limits are the PRs': docs/performance.md):
 - idle 60 s: the shell and its helpers each under 1% of a core, at most 3 refreshes and no flow-appmenu run;
-- the app menu: one ``flow-appmenu serve`` started for the whole run, so none per focus change; and a probe of a
-  terminal (an app without a menu), as the shell times it from its request to the answer, under 50 ms (median of
-  the probes while focus moves every 0.5 s for 5 s);
+- the app menu: one ``flow-appmenu serve`` started for the whole run, so none per focus change; and a probe of an
+  app without a menu, as the shell times it from its request to the answer, under 50 ms: the median of the probes
+  while Nautilus (GTK 4, on the shell's accessibility bus, no menu bar) opens and focus then moves between it and a
+  terminal (on no accessibility bus) every 0.5 s for 5 s;
 - a title changing every 0.3 s for 10 s: at most 12 refreshes, the helpers under 10% of a core and the shell
   under 5%;
 - a title changing every 0.05 s for 7.5 s: the shell's label for that window never unchanged for 1.5 s, and the
@@ -166,8 +167,8 @@ def timed(command, env, repeat=11, warm_up=3):
 
 def main():
     shell = os.environ.get("FLOW_SHELL")
-    if not shell or not shutil.which("foot"):
-        raise RuntimeError("Run with FLOW_SHELL set and foot on PATH")
+    if not shell or not shutil.which("foot") or not shutil.which("nautilus"):
+        raise RuntimeError("Run with FLOW_SHELL set and foot and nautilus on PATH")
     if subprocess.run(["systemctl", "--user", "is-active", "--quiet", "flow-shell"]).returncode == 0:
         raise RuntimeError("Stop the installed shell first: it reacts to the same events")
     real = {name: shutil.which(name) for name in ("flow-spaces", "flow-search", "flow-appmenu")}
@@ -215,6 +216,12 @@ def main():
                    WAYLAND_DISPLAY=wayland if wayland.startswith("/") else str(real_runtime / wayland),
                    PATH=f"{bin_dir}:{os.environ['PATH']}")
         app_env = dict(os.environ)  # terminals open in the real session, outside Flow's state
+        # Nautilus on the shell's bus, so on its accessibility bus, in folders of its own; a session started before
+        # at-spi2-core was enabled would switch GTK's accessibility off through these two.
+        files_env = {k: v for k, v in env.items() if k not in ("NO_AT_BRIDGE", "GTK_A11Y", "GI_TYPELIB_PATH", "PYTHONPATH")}
+        for name in ("HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"):
+            (tmp / name.lower()).mkdir()
+            files_env[name] = str(tmp / name.lower())
 
         def ipc(*call):
             start = time.perf_counter()
@@ -437,14 +444,26 @@ def main():
                 mean = stats["refresh_ms"] / stats["refreshes"]
                 check("controller refresh mean", mean, "< 10", mean < 10, "ms")
 
-            # The app menu: its probes, while focus moves slowly enough for each to settle, and its processes.
+            # The app menu: its probes, while focus moves slowly enough for each to settle, between a terminal (on no
+            # accessibility bus) and Nautilus (GTK 4: on the shell's accessibility bus, with no menu bar), from
+            # before Nautilus opens, so its first probe, which chooses its frame and looks for a menu bar, counts.
             time.sleep(1)
-            before = len(app_menu().get("probe_ms", []))
+            before = app_menu().get("probes", 0)
+            files = subprocess.Popen(["nautilus", "--new-window", str(tmp)], env=files_env, stdin=subprocess.DEVNULL,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            terminals.append(files)
+            browser = wait_for(lambda: next((w["id"] for w in read("windows") if w.get("pid") == files.pid), None),
+                               "Nautilus", timeout=30)
+            time.sleep(2)
+            tiles[:] = [tile_a, browser]
             flip(0.5, 5)
             time.sleep(0.6)
-            probes = app_menu().get("probe_ms", [])[before - 20 if before >= 20 else before:]
+            state = app_menu()
+            fresh = min(state.get("probes", 0) - before, 20)
+            probes = state.get("probe_ms", [])[-fresh:] if fresh > 0 else []
             took = statistics.median(probes) if probes else -1
-            check("app menu: probe of an app without a menu, median", took, "< 50", 0 <= took < 50, "ms", probes)
+            check("app menu: probe of an app without a menu (a terminal, Nautilus), median", took, "< 50",
+                  0 <= took < 50, "ms", probes)
             started = runs(logs["flow-appmenu"], shell_started, time.time())
             check("app menu: flow-appmenu processes started", len(started), "1 (serve)",
                   [args for _, _, args in started] == ["serve"])

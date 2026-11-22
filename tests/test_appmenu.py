@@ -54,6 +54,18 @@ class Node:
         return types.SimpleNamespace(doAction=self.action)
 
 
+class Hung(Node):
+    """An app that is registered but does not answer: every call to it times out."""
+
+    @property
+    def name(self):
+        raise Exception("atspi_error: Did not receive a reply")
+
+    @name.setter
+    def name(self, value):
+        pass
+
+
 def item(name, **kw):
     return Node("MENU_ITEM", name, **kw)
 
@@ -169,10 +181,51 @@ class FrameChoiceTest(unittest.TestCase):
         self.assertEqual(ask(r, op="probe", window=8), {"id": 9, "window": 8, "name": "org.kde.kate", "has_menu": False, "final": False})
         self.assertIn("error", ask(r, op="read", window=8))
 
-    def test_probe_for_a_window_that_lost_focus_answers_moved(self):
-        r = reader([], [window(7, 5, "a", focused=False), window(8, 6, "b")])
-        self.assertEqual(ask(r, op="probe", window=7), {"id": 9, "window": 7, "moved": True})
-        self.assertEqual(ask(r, op="probe")["window"], 8)  # no window: whichever is focused
+    def test_with_no_window_focused(self):
+        r = reader([], [window(7, 5, "a", focused=False)])
+        self.assertEqual(ask(r, op="probe"), {"id": 9, "window": None})
+
+    def test_a_first_choice_that_is_no_longer_active_is_made_again(self):
+        # AT-SPI's active state lagged Niri's focus at the first probe: the sibling's frame was taken.
+        first, second = kate_frame("Welcome — Kate", True), kate_frame("Welcome — Kate", False)
+        app = Node("APPLICATION", "kate", [first, second], pid=5)
+        r = reader([app], [window(7, 5, "Welcome — Kate", focused=False), window(8, 5, "Welcome — Kate")])
+        ask(r, op="probe")
+        self.assertIs(r.frames[8][0], first)
+        first.states.discard("active")
+        second.states.add("active")
+        ask(r, op="probe")
+        self.assertIs(r.frames[8][0], second)
+
+    def test_two_windows_of_one_app_and_a_frame_named_as_neither(self):
+        # The one frame could be either window's: not remembered unless it is the active one.
+        app = Node("APPLICATION", "kate", [kate_frame("Kate", False)], pid=5)
+        windows = [window(7, 5, "a — Kate", focused=False), window(8, 5, "b — Kate")]
+        self.assertFalse(ask(reader([app], windows), op="probe")["final"])
+        self.assertTrue(ask(reader([app], windows[1:]), op="probe")["final"])  # one window: its frame
+
+    def test_a_fresh_probe_chooses_again(self):
+        # Kate's menu bar hidden at the first probe, shown later (Ctrl+M): Super+M asks afresh.
+        app = Node("APPLICATION", "kate", [kate_frame("A", True)], pid=5)
+        r = reader([app], [window(7, 5, "A")])
+        app.children[0].children[0].states.discard("showing")
+        self.assertFalse(ask(r, op="probe")["has_menu"])
+        app.children[0].children[0].states.add("showing")
+        self.assertFalse(ask(r, op="probe")["has_menu"])
+        self.assertTrue(ask(r, op="probe", fresh=True)["has_menu"])
+
+    def test_a_failed_read_forgets_the_frame(self):
+        app = Node("APPLICATION", "kate", [kate_frame("A", True)], pid=5)
+        r = reader([app], [window(7, 5, "A")])
+        ask(r, op="probe")
+        bar = app.children[0].children[0]
+        bar.getChildAtIndex = Mock(side_effect=Exception("The application no longer exists"))
+        self.assertEqual(ask(r, op="read", window=7)["error"], "The application no longer exists")
+        self.assertNotIn(7, r.frames)
+
+    def test_a_hung_app_does_not_stop_the_probe(self):
+        app = Node("APPLICATION", "kate", [kate_frame("A", True)], pid=5)
+        self.assertTrue(ask(reader([Hung("APPLICATION", "", [], pid=4), app], [window(7, 5, "A")]), op="probe")["has_menu"])
 
     def test_a_known_window_answers_from_memory(self):
         app = Node("APPLICATION", "kate", [kate_frame("A", True)], pid=5)
@@ -180,7 +233,7 @@ class FrameChoiceTest(unittest.TestCase):
         self.assertTrue(ask(r, op="probe")["has_menu"])
         Node.calls = 0
         self.assertEqual(ask(r, op="probe"), {"id": 9, "window": 7, "name": "org.kde.kate", "has_menu": True, "final": True})
-        self.assertEqual(Node.calls, 0)
+        self.assertEqual(Node.calls, 1)  # is its frame still the active one
 
     def test_a_window_whose_menu_went_is_chosen_again(self):
         app = Node("APPLICATION", "kate", [kate_frame("A", True)], pid=5)
@@ -227,6 +280,19 @@ class X11Test(unittest.TestCase):
         ask(r, op="probe", window=3)
         self.assertIs(r.frames[3][0], vlc.children[1])
 
+    def test_never_a_wayland_apps_frame(self):
+        # An X11 window whose WM_CLASS fits no accessible app, titled as a Wayland app's window.
+        kate = Node("APPLICATION", "kate", [kate_frame("Preferences", True)], pid=5)
+        windows = [window(3, 1022, "Preferences", "jetbrains-idea"), window(7, 5, "Preferences", focused=False)]
+        r = reader([kate], windows, proc=self.proc.name)
+        self.assertEqual(ask(r, op="probe")["final"], False)
+        self.assertNotIn(3, r.frames)
+
+    def test_a_hung_app_is_left_out(self):
+        vlc = Node("APPLICATION", "vlc", [frame("VLC media player", bar(menu("Media", item("Quit"))))], pid=534556)
+        r = reader([Hung("APPLICATION", "", [], pid=600), vlc], [window(3, 1022, "VLC media player", "vlc")], proc=self.proc.name)
+        self.assertTrue(ask(r, op="probe")["has_menu"])
+
     def test_a_wayland_window_is_still_matched_by_pid(self):
         kate = Node("APPLICATION", "kate", [kate_frame("A", True)], pid=5)
         imposter = Node("APPLICATION", "kate", [kate_frame("A", True)], pid=6)
@@ -253,6 +319,14 @@ class MenuBarTest(unittest.TestCase):
         menus = ask(r, op="read", window=7)["menus"]
         self.assertEqual(menus, [{"label": "File", "enabled": True, "children": [
             {"label": "New", "path": [0, 0, 0, 0], "enabled": True}, {"label": "Quit", "path": [0, 0, 0, 1], "enabled": True}]}])
+
+    def test_the_node_budget_holds_inside_one_wide_node(self):
+        wide = Node("FILLER", "", [Node("PUSH_BUTTON", str(i)) for i in range(5000)] + [bar(menu("File", item("New")))])
+        app = Node("APPLICATION", "x", [frame("A", wide, active=True)], pid=5)
+        r = reader([app], [window(7, 5, "A")])
+        Node.calls = 0
+        self.assertFalse(ask(r, op="probe")["has_menu"])
+        self.assertLess(Node.calls, 3 * appmenu.BAR_NODES)
 
     def test_closed_menus_and_hidden_bars_are_no_menu(self):
         # Firefox: a bar that is not showing, and menus with no items until opened (finding 7).
