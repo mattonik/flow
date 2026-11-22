@@ -37,7 +37,7 @@ There are also two deployment facts. The session must start with at-spi2-core al
 
 ## Table
 
-The tables below were generated with `tests/appmenu_coverage.py --table docs/engineering/appmenu-coverage-2026-11/run.json` from the one run committed there. The run took place on 2026-11-22 in the UTM ARM64 guest, on one 1280×800 output: NixOS 26.11.20261107, Niri 26.04 and at-spi2-core 2.62.0 (`env.versions` in the JSON), with Qt 6.12.0 and 5.15.19 and GTK 3.24.52 and 4.24.0. The apps' store paths are in `env.roots` and `env.system`: Kate 26.08.3, DB Browser for SQLite 3.13.1, VLC 3.0.24, LibreOffice 26.8.0.3, Mousepad 0.7.0, Nautilus 51.0.1, GNOME Text Editor 51.0, Firefox 159.0.1, Chromium 157.0.8103.38, VSCodium 1.143.17183, foot 1.28.0.
+The tables below were generated with `tests/appmenu_coverage.py --table docs/engineering/appmenu-coverage-2026-11/run.json` from the one run committed there. That run used the script as of commit f3cf54c; later commits only hardened its isolation and added tests, and changed nothing it measures. The run took place on 2026-11-22 in the UTM ARM64 guest, on one 1280×800 output: NixOS 26.11.20261107, Niri 26.04 and at-spi2-core 2.62.0 (`env.versions` in the JSON), with Qt 6.12.0 and 5.15.19 and GTK 3.24.52 and 4.24.0 (from the guest's store, not recorded in the JSON). The apps' store paths are in `env.roots` and `env.system`: Kate 26.08.3, DB Browser for SQLite 3.13.1, VLC 3.0.24, LibreOffice 26.8.0.3, Mousepad 0.7.0, Nautilus 51.0.1, GNOME Text Editor 51.0, Firefox 159.0.1, Chromium 157.0.8103.38, VSCodium 1.143.17183, foot 1.28.0.
 
 Every row is one window, opened on an empty workspace and focused. Each launch had its own session bus, accessibility bus, runtime directory and home (see *Method*).
 
@@ -226,22 +226,33 @@ Recommended answer, for the spec and D-012:
     - VSCodium created `~/.vscode-oss` and `~/.vscode-oss-shared`, which were moved out of the home directory.
     - The switch was written to the user's dconf, which now holds an explicit `toolkit-accessibility=false`. If the key was unset before, `dconf reset /org/gnome/desktop/interface/toolkit-accessibility` would restore it exactly.
 
+    - Some of the 35 stale `at-spi2-*` directories in the user's runtime directory likely come from those runs as well.
+
     Finding 9's dconf claim rests on those runs and on the launcher's code, since this run, by design, cannot show it.
 - **Measurements:**
   - The reader runs as a subprocess, exactly as the shell starts it.
   - The probe runs in a separate fresh process (no stale pyatspi cache). Its `menu_walk` is the reader's walk, state reads included, with counters. Unit tests run both walks on one tree, including trees at the depth and node caps, and count both walks' state reads.
   - Commands go through the reader's own `activate` path, with only the `app_name` exception caught.
   - The layer surface is a 48-pixel Quickshell overlay with exclusive keyboard focus. Before measuring, the run confirms through `niri msg layers` that the surface is up.
-  - Every number comes from a single run in a VM shared with other sessions. Timings vary by about 20% between runs.
+  - Every number comes from a single run in a VM shared with other sessions. Timings vary by up to about 30% between runs.
 - **Unit tests:** [`tests/test_appmenu_coverage.py`](../../tests/test_appmenu_coverage.py) covers:
   - the shortcut parsing, the command lookup, the narrowing rule and the ground truth's changed-window rule;
   - that the probe's walk matches the reader's, at the caps and in state reads;
   - that only the run's own processes and windows are taken, closed at a phase's end and stopped by `--cleanup`, detached processes and descendants included, never the run itself and never another user's;
   - that SIGTERM survivors get SIGKILL;
-  - that the reader, the probe and `busctl` refuse to run without the private bus and use it when it is up;
-  - that the private bus starts without the session's bus address, in its own runtime and settings, and that a bus that fails to start stops the run;
+  - that the reader, the probe, `busctl` and every app the run starts refuse to run without the private bus and use it when it is up, apps in their own home and runtime directory;
+  - that no variable naming a bus directly (`AT_SPI_BUS_ADDRESS`, `DBUS_STARTER_ADDRESS`) is passed on;
+  - that the private bus starts without the session's bus address, in its own runtime and settings, and that a bus that fails to start, or hangs, stops the run;
   - that its clients are found by their environment, and that a phase's end and `restore()` stop the bus and the processes;
+  - the ground truth in both modes: correct only when the expected window changed, and the negative control expecting the other window;
   - that a signal restores;
   - that the state file names the phase's directory before anything starts in it.
 
-  Each of these was checked by neutralising the mechanism and watching its test fail. Three things have no unit test: the check that the reader read the measured window, installing the signal handlers, and the before-and-after snapshot of the session.
+  Each of these was checked by neutralising the mechanism and watching its test fail. These have no unit test:
+  - the check that the reader read the measured window;
+  - installing the signal handlers;
+  - the before-and-after snapshot of the session;
+  - the check that the layer surface is up;
+  - saving the state file when a window appears;
+  - `--cleanup` removing the temporary directories;
+  - `restore()` removing the state file and focusing the original workspace again.

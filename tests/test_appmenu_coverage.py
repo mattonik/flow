@@ -220,7 +220,7 @@ class SessionIsolationTest(unittest.TestCase):
                 patch.object(coverage, "close_window") as close, \
                 patch.object(coverage, "start_private_bus"), patch.object(coverage, "stop_private_bus"), \
                 patch.object(coverage, "stop_own_processes") as stop_own, patch.object(coverage.time, "sleep"):
-            with patch.object(coverage, "stop_private_bus") as stop_bus:
+            with patch.object(coverage, "stop_private_bus") as stop_bus:  # the outer patch is only a default
                 with coverage.phase({"key": "kate"}) as tmp:
                     saved = coverage.state_file().read_text()
         self.assertIn(tmp, saved)  # --cleanup knows the directory before anything starts in it
@@ -261,10 +261,20 @@ class SessionIsolationTest(unittest.TestCase):
         daemon.terminate.assert_called_once()
         self.assertIsNone(coverage.STATE["bus"])
 
+    def test_a_hung_private_bus_times_out(self):
+        hung = MagicMock(pid=1)
+        with patch.object(coverage.subprocess, "Popen", return_value=hung), \
+                patch.object(coverage.select, "select", return_value=([], [], [])), \
+                patch.dict(coverage.os.environ, {"XDG_RUNTIME_DIR": self.tmp.name}):
+            with self.assertRaises(RuntimeError):
+                coverage.start_private_bus(self.tmp.name)
+        hung.stdout.readline.assert_not_called()
+
     def test_private_bus_that_does_not_start_stops_the_run(self):
         dead = MagicMock(pid=1)
         dead.stdout.readline.return_value = ""
         with patch.object(coverage.subprocess, "Popen", return_value=dead), \
+                patch.object(coverage.select, "select", return_value=([dead.stdout], [], [])), \
                 patch.dict(coverage.os.environ, {"XDG_RUNTIME_DIR": self.tmp.name}):
             with self.assertRaises(RuntimeError):
                 coverage.start_private_bus(self.tmp.name)
@@ -308,10 +318,65 @@ class SessionIsolationTest(unittest.TestCase):
         for call in run.call_args_list:
             self.assertEqual(call.args[1]["DBUS_SESSION_BUS_ADDRESS"], "unix:path=/tmp/dbus-mine")
 
+    def test_no_bus_named_directly_is_inherited(self):
+        coverage.STATE["bus"] = "unix:path=/tmp/dbus-mine"
+        inherited = {"AT_SPI_BUS_ADDRESS": "unix:path=/run/user/1000/at-spi/bus_0",
+                     "DBUS_STARTER_ADDRESS": "unix:path=/run/user/1000/bus", "DBUS_STARTER_BUS_TYPE": "session",
+                     "XDG_RUNTIME_DIR": "/run/user/1000"}
+        with patch.dict(coverage.os.environ, inherited):
+            for env in (coverage.bus_env(), coverage.launch_env(self.tmp.name), coverage.app_env(self.tmp.name)):
+                for name in ("AT_SPI_BUS_ADDRESS", "DBUS_STARTER_ADDRESS", "DBUS_STARTER_BUS_TYPE"):
+                    self.assertNotIn(name, env)
+
+    def test_apps_are_spawned_on_the_private_bus_in_their_own_home(self):
+        with patch.object(coverage.subprocess, "Popen") as popen:
+            with self.assertRaises(RuntimeError):
+                coverage.spawn(["app"], self.tmp.name)
+            popen.assert_not_called()
+            coverage.STATE["bus"] = "unix:path=/tmp/dbus-mine"
+            with patch.dict(coverage.os.environ, {"XDG_RUNTIME_DIR": "/run/user/1000", "HOME": "/home/someone"}):
+                coverage.spawn(["app"], self.tmp.name)
+        env = popen.call_args.kwargs["env"]
+        self.assertEqual(env["DBUS_SESSION_BUS_ADDRESS"], "unix:path=/tmp/dbus-mine")
+        for name in ("HOME", "XDG_RUNTIME_DIR"):
+            self.assertTrue(env[name].startswith(self.tmp.name), name)
+        self.assertEqual(env[coverage.MARKER], "run-1")
+        coverage.STATE["procs"].clear()
+
+    def truth(self, mode, changed_to):
+        """truth_case for window 0 of a same-titled pair (ids 10, 11; frames 0, 1), the title of
+        ``changed_to`` changing after the invocation."""
+        titles = {10: "Welcome", 11: "Welcome"}
+        invoked = []
+
+        def probe(pid, *args):
+            invoked.append(args[1])
+            titles[changed_to] = "Untitled"
+            return {"invoked": True}
+        case = {"title": "Welcome", "same_title_windows": 2, "resolved": True, "by_title": [0, 1], "both": [0]}
+        pair = [{"id": 10}, {"id": 11}]
+        with patch.object(coverage, "set_a11y"), patch.object(coverage, "open_windows", return_value=(42, pair)), \
+                patch.object(coverage, "focus"), patch.object(coverage, "narrow_case", return_value=case), \
+                patch.object(coverage, "probe", side_effect=probe), patch.object(coverage, "close_all"), \
+                patch.object(coverage, "windows", side_effect=lambda: {k: {"title": v} for k, v in titles.items()}), \
+                patch.object(coverage.time, "sleep"):
+            return coverage.truth_case({"key": "kate"}, "", self.tmp.name, 0, mode), invoked
+
+    def test_ground_truth_and_its_negative_control(self):
+        result, invoked = self.truth("focused", changed_to=10)
+        self.assertEqual((invoked, result["expected"], result["correct"]), ([0], 10, True))
+        result, _ = self.truth("focused", changed_to=11)  # the command reached the other window
+        self.assertFalse(result["correct"])
+        result, invoked = self.truth("other window's frame", changed_to=11)
+        self.assertEqual((invoked, result["expected"], result["correct"]), ([1], 11, True))
+        result, _ = self.truth("other window's frame", changed_to=10)  # it went to the focused one regardless
+        self.assertFalse(result["correct"])
+
     def test_private_bus_starts_with_its_own_runtime_settings_and_no_session_bus(self):
         daemon = MagicMock(pid=1)
         daemon.stdout.readline.return_value = "unix:path=/tmp/dbus-new,guid=1\n"
         with patch.object(coverage.subprocess, "Popen", return_value=daemon) as popen, \
+                patch.object(coverage.select, "select", return_value=([daemon.stdout], [], [])), \
                 patch.dict(coverage.os.environ, {"XDG_RUNTIME_DIR": "/run/user/1000",
                                                  "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus"}):
             coverage.start_private_bus(self.tmp.name)

@@ -26,6 +26,8 @@ eval "$(systemctl --user show-environment \
 # and they switch GTK's accessibility off. The table describes a session started with at-spi2-core enabled; the
 # mousepad-login-env row sets them on purpose.
 unset NO_AT_BRIDGE GTK_A11Y
+# A bus named directly would bypass the run's private buses.
+unset AT_SPI_BUS_ADDRESS DBUS_STARTER_ADDRESS DBUS_STARTER_BUS_TYPE
 exec 9>"${FLOW_SCREEN_LOCK:-/tmp/floe-screen.lock}"
 flock -w 1800 9 || { echo "screen lock busy" >&2; exit 1; }
 "$python" "$checkout/tests/appmenu_coverage.py" "$@"

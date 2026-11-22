@@ -62,6 +62,7 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import shlex
 import shutil
 import signal
@@ -76,6 +77,8 @@ READER = Path(__file__).resolve().parents[1] / "session" / "appmenu.py"
 CAP_NODES, CAP_DEPTH = 2000, 12  # session/appmenu.py's walk limits
 PROC = Path("/proc")
 MARKER = "FLOW_APPMENU_COVERAGE_RUN"
+# Variables that name a bus directly, before any session-bus lookup: never inherited by what the run starts.
+BUS_VARIABLES = ("DBUS_SESSION_BUS_ADDRESS", "AT_SPI_BUS_ADDRESS", "DBUS_STARTER_ADDRESS", "DBUS_STARTER_BUS_TYPE")
 
 FIREFOX_PREFS = """user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("browser.aboutwelcome.enabled", false);
@@ -235,7 +238,7 @@ def bus_env(env=None):
     (the reader, which switches accessibility on, the probe, busctl, an app) must never reach the session's bus."""
     if not STATE["bus"]:
         raise RuntimeError("no private session bus: refusing to run on the session's bus")
-    env = dict(os.environ if env is None else env)
+    env = {k: v for k, v in (os.environ if env is None else env).items() if k not in BUS_VARIABLES}
     env["DBUS_SESSION_BUS_ADDRESS"] = STATE["bus"]
     return env
 
@@ -250,9 +253,8 @@ def set_a11y(on):
 
 
 def session_a11y():
-    """The session's own switch, read only (for the record). The read may start the session's accessibility bus
-    if it is not running; it does not change the switch."""
-    out = subprocess.run(["busctl", "--user", "get-property", *A11Y], capture_output=True, text=True)
+    """The session's own switch, read only (for the record), without starting its accessibility bus."""
+    out = subprocess.run(["busctl", "--user", "--auto-start=no", "get-property", *A11Y], capture_output=True, text=True)
     return out.stdout.strip() or out.stderr.strip()
 
 
@@ -263,7 +265,8 @@ def start_private_bus(tmp):
     proc = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1"], env=env,
                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True, start_new_session=True)
     STATE["bus_proc"] = proc
-    address = proc.stdout.readline().strip()
+    ready, _, _ = select.select([proc.stdout], [], [], 15)  # a daemon that hangs must not hold the screen lock
+    address = proc.stdout.readline().strip() if ready else ""
     if not address.startswith("unix:"):
         end(proc)
         STATE["bus_proc"] = None
@@ -472,7 +475,7 @@ def launch_env(tmp, extra=None):
     and GSettings in a key file under that configuration directory. The private bus and its accessibility bus are
     started with it, so the launcher's switch (which at-spi persists through GSettings) lands in that key file,
     where the launch's apps read it as they would dconf, and never in the user's dconf."""
-    env = {k: v for k, v in os.environ.items() if k != "DBUS_SESSION_BUS_ADDRESS"}
+    env = {k: v for k, v in os.environ.items() if k not in BUS_VARIABLES}
     real_runtime = os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
     display = env.get("WAYLAND_DISPLAY", "wayland-0")
     env["WAYLAND_DISPLAY"] = display if display.startswith("/") else str(Path(real_runtime) / display)
