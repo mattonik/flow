@@ -779,7 +779,7 @@ ShellRoot {
             return
         }
         // A double-click, or Enter pressed twice at once, is one choice, not a second one.
-        if (result.confirm && Date.now() - searchArmedAt < 600) return
+        if (result.confirm && Date.now() - searchArmedAt < 500) return
         searchArmed = ""
         searchOpen = false
         if (result.kind !== "settings" && !(result.kind === "action" && result.value === "desk")) deskOpen = false

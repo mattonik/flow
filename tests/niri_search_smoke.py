@@ -348,6 +348,7 @@ def main():
             wait_for(lambda: (v := view()) and v["rows"][0]["armed"], "Restart armed again")
             if len(opened_lines()) != before:
                 raise RuntimeError("Restart ran when chosen after its arming had lapsed")
+            time.sleep(0.8)  # a deliberate second choice, not the second half of a double press
             type_keys("-k", "Return")
             wait_for(lambda: opened_lines()[before:] == ["command restart"], lambda: f"Restart to run ({opened_lines()[before:]})")
             steps.append("Restart asked first: the first Return armed its row, the arming lapsed after 5 s, and only "
