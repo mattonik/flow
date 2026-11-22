@@ -1,32 +1,43 @@
 { config, lib, pkgs, ... }:
 let
   cfg = config.services.flow;
+  # Flow's Python, compiled once into the store. Each helper runs its module with `python3 -P -m`, which loads
+  # the compiled bytecode (a script named by its path is compiled again on every run, and the shell runs
+  # flow-spaces after Niri events) and, with -P, never imports from the caller's working directory.
+  # flow-spaces and flow-recovery need only the standard library, so -S skips the site module.
+  # docs/performance.md has the measurements.
+  sessionPython = pkgs.runCommand "flow-session-python" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+    mkdir $out
+    cp ${../session}/*.py $out/
+    python3 -m compileall -q --invalidation-mode unchecked-hash $out
+  '';
   spaces = pkgs.writeShellScriptBin "flow-spaces" ''
-    export PYTHONPATH="${../session}"
-    user_name="$(${pkgs.coreutils}/bin/id -un)"
+    export PYTHONPATH="${sessionPython}"
+    user_name="''${USER:-$(${pkgs.coreutils}/bin/id -un)}"
     export XDG_DATA_DIRS="''${XDG_DATA_DIRS:+$XDG_DATA_DIRS:}$HOME/.nix-profile/share:$HOME/.local/state/nix/profile/share:/etc/profiles/per-user/$user_name/share:/nix/var/nix/profiles/default/share:/run/current-system/sw/share:/usr/local/share:/usr/share"
     export PATH="${pkgs.glib}/bin:$PATH"
-    exec ${pkgs.python3}/bin/python3 ${../session/spaces.py} "$@"
+    exec ${pkgs.python3}/bin/python3 -S -P -m spaces "$@"
   '';
   recovery = pkgs.writeShellScriptBin "flow-recovery" ''
-    export PYTHONPATH="${../session}"
+    export PYTHONPATH="${sessionPython}"
     export PATH="${pkgs.glib}/bin:$PATH"
-    exec ${pkgs.python3}/bin/python3 ${../session/restore.py} "$@"
+    exec ${pkgs.python3}/bin/python3 -S -P -m restore "$@"
   '';
   appmenu = pkgs.writeShellScriptBin "flow-appmenu" ''
-    user_name="$(${pkgs.coreutils}/bin/id -un)"
+    export PYTHONPATH="${sessionPython}"
+    user_name="''${USER:-$(${pkgs.coreutils}/bin/id -un)}"
     export XDG_DATA_DIRS="''${XDG_DATA_DIRS:+$XDG_DATA_DIRS:}$HOME/.nix-profile/share:$HOME/.local/state/nix/profile/share:/etc/profiles/per-user/$user_name/share:/nix/var/nix/profiles/default/share:/run/current-system/sw/share:/usr/local/share:/usr/share"
     export GI_TYPELIB_PATH="${pkgs.at-spi2-core}/lib/girepository-1.0:${pkgs.glib}/lib/girepository-1.0:${pkgs.gobject-introspection}/lib/girepository-1.0''${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
-    exec ${pkgs.python3.withPackages (p: [ p.pyatspi p.pygobject3 ])}/bin/python3 ${../session/appmenu.py} "$@"
+    exec ${pkgs.python3.withPackages (p: [ p.pyatspi p.pygobject3 ])}/bin/python3 -P -m appmenu "$@"
   '';
   search = pkgs.writeShellScriptBin "flow-search" ''
-    user_name="$(${pkgs.coreutils}/bin/id -un)"
+    user_name="''${USER:-$(${pkgs.coreutils}/bin/id -un)}"
     export XDG_DATA_DIRS="''${XDG_DATA_DIRS:+$XDG_DATA_DIRS:}$HOME/.nix-profile/share:$HOME/.local/state/nix/profile/share:/etc/profiles/per-user/$user_name/share:/nix/var/nix/profiles/default/share:/run/current-system/sw/share:/usr/local/share:/usr/share"
     export GI_TYPELIB_PATH="${pkgs.glib}/lib/girepository-1.0:${pkgs.gobject-introspection}/lib/girepository-1.0''${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
-    export PYTHONPATH="${../session}"
+    export PYTHONPATH="${sessionPython}"
     # gio opens the chosen app or file (--open): the shell's own PATH, the session's, has no gio.
     export PATH="${pkgs.glib}/bin:$PATH"
-    exec ${pkgs.python3.withPackages (p: [ p.pygobject3 ])}/bin/python3 ${../session/search.py} "$@"
+    exec ${pkgs.python3.withPackages (p: [ p.pygobject3 ])}/bin/python3 -P -m search "$@"
   '';
   # The shell's files, as one store directory: /etc/flow, and the restart trigger of the shell's unit.
   # Niri's appearance files are here because the shell copies the active one for Niri to include.
@@ -68,16 +79,16 @@ let
   apiPython = pkgs.python3.withPackages (p: [ p.pygobject3 ]);
   apiTypelibs = "${pkgs.glib}/lib/girepository-1.0:${pkgs.gobject-introspection}/lib/girepository-1.0";
   flowApi = pkgs.writeShellScriptBin "flow-api" ''
-    export PYTHONPATH="${../session}"
+    export PYTHONPATH="${sessionPython}"
     export GI_TYPELIB_PATH="${apiTypelibs}"
     export PATH="${spaces}/bin:${config.programs.niri.package}/bin:${pkgs.quickshell}/bin:${pkgs.util-linux}/bin:$PATH"
     export FLOW_SHELL_CONFIG=/etc/flow/shell.qml
-    exec ${apiPython}/bin/python3 ${../session/flow_api.py}
+    exec ${apiPython}/bin/python3 -P -m flow_api
   '';
   flowCli = pkgs.writeShellScriptBin "flow" ''
-    export PYTHONPATH="${../session}"
+    export PYTHONPATH="${sessionPython}"
     export GI_TYPELIB_PATH="${apiTypelibs}"
-    exec ${apiPython}/bin/python3 ${../session/flow_cli.py} "$@"
+    exec ${apiPython}/bin/python3 -P -m flow_cli "$@"
   '';
   flowApiActivation = pkgs.writeTextDir "share/dbus-1/services/io.github.mattonik.Flow1.service" ''
     [D-BUS Service]

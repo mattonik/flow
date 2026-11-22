@@ -5,6 +5,7 @@ import functools
 import json
 import os
 from pathlib import Path
+import socket as unix_socket
 import subprocess
 import sys
 import time
@@ -26,18 +27,50 @@ def command(*args):
     return subprocess.check_output(["niri", "msg", *map(str, args)], text=True, stderr=subprocess.PIPE)
 
 
-def snapshot():
-    workspaces = json.loads(command("-j", "workspaces"))
-    windows = json.loads(command("-j", "windows"))
+def query(*names):
+    """Niri's answers to read-only requests ("Windows", "Workspaces", "Outputs"), over one connection to its socket.
+
+    ``niri msg`` would cost a process per request (docs/performance.md).
+    """
+    path = os.environ.get("NIRI_SOCKET")
+    if not path:
+        raise ValueError("NIRI_SOCKET is not set")
+    with unix_socket.socket(unix_socket.AF_UNIX, unix_socket.SOCK_STREAM) as connection:
+        connection.settimeout(10)
+        connection.connect(path)
+        with connection.makefile("rwb") as stream:
+            answers = []
+            for name in names:
+                stream.write(json.dumps(name).encode() + b"\n")
+                stream.flush()
+                reply = json.loads(stream.readline() or b"null")
+                if not isinstance(reply, dict) or not isinstance(reply.get("Ok"), dict) or name not in reply["Ok"]:
+                    raise ValueError(f"Niri did not answer {name}: {reply.get('Err') if isinstance(reply, dict) else reply}")
+                answers.append(reply["Ok"][name])
+    return answers
+
+
+def focused(workspaces):
     workspace = next((w for w in workspaces if w["is_focused"]), None)
     if workspace is None:
         raise ValueError("No active workspace")
-    return workspace, windows
+    return workspace
+
+
+def snapshot():
+    workspaces, windows = query("Workspaces", "Windows")
+    return focused(workspaces), windows
 
 
 def display_state():
     """Return Niri's outputs and every workspace, for display ownership."""
-    return json.loads(command("-j", "outputs")), json.loads(command("-j", "workspaces"))
+    return tuple(query("Outputs", "Workspaces"))
+
+
+def full_state():
+    """The focused workspace, the windows, the outputs and every workspace, as one consistent reading."""
+    outputs, workspaces, windows = query("Outputs", "Workspaces", "Windows")
+    return focused(workspaces), windows, outputs, workspaces
 
 
 def session_id():
@@ -85,6 +118,12 @@ def resolve(pin, windows, socket):
             return match
     matches = [w for w in windows if w["app_id"] == pin["app_id"]]
     return matches[0] if len(matches) == 1 else None
+
+
+def titled(window, untitled):
+    """A window's label: its title, else ``untitled``. ``untitled`` goes with it, so the shell can relabel the
+    window from Niri's events when only its title changes (session/shell.qml, applyTitles)."""
+    return {"label": window.get("title") or untitled, "untitled": untitled}
 
 
 def position(window):
@@ -1043,7 +1082,7 @@ def layers(workspace, windows, shaped=()):
 
     ``shaped`` marks the ones Flow shaped, which follow rotation; other floating windows keep their size.
     """
-    return [{"id": w["id"], "label": w.get("title") or w.get("app_id") or "Application",
+    return [{"id": w["id"], **titled(w, w.get("app_id") or "Application"),
              "app_id": w.get("app_id") or "", "app_name": app_name(w.get("app_id")),
              "active": w["id"] == workspace.get("active_window_id"), "shaped": str(w["id"]) in shaped}
             for w in windows if w.get("workspace_id") == workspace["id"] and w.get("is_floating")]
@@ -1179,7 +1218,7 @@ def display_spaces(workspace, windows, groups=(), pins=()):
         key = ("column", pos[0])
         if not columns or columns[-1][0] != key:
             columns.append((key, []))
-        columns[-1][1].append({"id": w["id"], "label": w.get("title") or w.get("app_id") or "Application",
+        columns[-1][1].append({"id": w["id"], **titled(w, w.get("app_id") or "Application"),
                               "app_id": w.get("app_id") or "", "app_name": app_name(w.get("app_id")),
                               "active": w["id"] == workspace.get("active_window_id")})
     result = []
@@ -1225,6 +1264,8 @@ def display_spaces(workspace, windows, groups=(), pins=()):
             last = pin.get("last_focused_app") or group.get("last_focused_app")
             selected = next((w for w in members if w["app_id"] == last), selected)
         space = {"id": selected["id"], "label": group["label"] if group else " + ".join(w["label"] for w in members),
+                 # A space of its own windows is named by them: the shell joins their labels again.
+                 **({} if group else {"label_join": " + "}),
                  "group_id": group["id"] if group else None, "group_layout": "stack" if group else None,
                  "auto_layout": group.get("auto_layout", False) if group else False,
                  "active": any(w["active"] for w in members), "members": members}
@@ -1238,6 +1279,8 @@ def display_spaces(workspace, windows, groups=(), pins=()):
             neighbor, _ = neighbor_to_add(group, found, workspace, windows, groups, pins)
             space["can_add"] = bool(neighbor)
             space["add_label"] = (neighbor.get("title") or neighbor.get("app_id")) if neighbor else ""
+            space["add_id"] = neighbor["id"] if neighbor else None
+            space["add_untitled"] = neighbor.get("app_id") if neighbor else ""
             space["can_remove"] = len(space["members"]) > 2 and not (
                 space["group_layout"] == "side-by-side" and any(p.get("group_id") == group["id"] for p in pins))
     return result
@@ -1297,7 +1340,7 @@ def incomplete_groups(workspace, windows, groups, pins):
                        (found and found[0].get("workspace_id") != workspace["id"]) for found in candidates)
         # Several windows of a member app: the user says which one, never Flow.
         choices = [{"app": app, "app_name": app_name(app) or app,
-                    "windows": [{"id": w["id"], "label": w.get("title") or app} for w in found
+                    "windows": [{"id": w["id"], **titled(w, app)} for w in found
                                 if w.get("workspace_id") == workspace["id"] and not w.get("is_floating")
                                 and position(w)]}
                    for app, found in zip(group["members"], candidates) if len(found) > 1]
@@ -1657,8 +1700,7 @@ def _run_locked(state):
         fcntl.flock(lock, fcntl.LOCK_EX)
         pins, displays, version = pin_store.read(path)
         before = json.dumps([pins, displays, version], sort_keys=True)
-        workspace, windows = snapshot()
-        outputs, workspaces = display_state()
+        workspace, windows, outputs, workspaces = full_state()
         connected, ambiguous = pin_store.identities(outputs, pin_store.shared_serials(displays))
         socket = session_id()
         global SESSION, STATE
@@ -1819,10 +1861,11 @@ def _run_locked(state):
             pin_store.write(path, pins, displays, version)
         ordered = sorted((w for w in windows if w.get("workspace_id") == workspace["id"]),
                          key=lambda w: (position(w) or [99999, 0]))
-        visible = [{"id": w["id"], "label": w.get("title") or w.get("app_id") or "Application",
+        visible = [{"id": w["id"], **titled(w, w.get("app_id") or "Application"),
                     "app_id": w.get("app_id") or "", "active": w["id"] == workspace.get("active_window_id")}
                    for w in ordered]
         record = connected.get(workspace.get("output"))
+        logical = (outputs.get(workspace.get("output")) or {}).get("logical") or {}
         print(json.dumps({"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows, groups, pins),
                           "layers": layers(workspace, windows, layer_memory()[1]["layers"]),
                           "incomplete_groups": incomplete_groups(workspace, windows, groups, pins),
@@ -1831,6 +1874,9 @@ def _run_locked(state):
                                       "name": pin_store.display_name(displays.get(display)),
                                       "number": (displays.get(display) or {}).get("number")},
                           "display_count": len(connected),
+                          # The shell runs automatic Group layout when a Group does not suit this.
+                          "orientation": orientation_of((logical["width"], logical["height"]))
+                                         if logical.get("width") and logical.get("height") else "",
                           "displays": [{"key": key, "label": displays[key].get("label", ""),
                                         "name": pin_store.display_name(displays[key]),
                                         "number": displays[key].get("number"), "current": key == display}

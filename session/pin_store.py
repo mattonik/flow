@@ -14,8 +14,6 @@ that connector is seen. Version 1 files are copied to ``spaces.v1.json`` before 
 """
 import json
 import os
-import shutil
-import tempfile
 
 
 def _text(value):
@@ -76,6 +74,7 @@ def read(path):
 
 
 def write(path, pins, displays, version):
+    import shutil, tempfile  # here, not above: flow-spaces runs after every burst of Niri events and mostly only reads
     if version == 1 and path.exists() and not (path.parent / "spaces.v1.json").exists():
         # Keep the original single-display list for rollback before the first conversion.
         shutil.copy2(path, path.parent / "spaces.v1.json")

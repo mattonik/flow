@@ -105,7 +105,9 @@ def main(args):
         return 2
     from gi.repository import Gio
     try:
-        snapshot = json.loads(subprocess.check_output(["flow-spaces", "refresh"], text=True))
+        # Observing reads the pins and windows without reconciling or writing Flow's state: listing search
+        # results must never move a window or rewrite a pin.
+        snapshot = json.loads(subprocess.check_output(["flow-spaces", "observe"], text=True))
     except (OSError, ValueError, subprocess.SubprocessError):
         snapshot = {}
     home = Path.home()

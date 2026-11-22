@@ -115,6 +115,20 @@ class SearchTest(unittest.TestCase):
             self.assertEqual(search.main([]), 2)   # no fuzzel fallback: the shell is the only caller
             run.assert_not_called()
 
+    def test_listing_only_observes_flow_state(self):
+        """Listing results reads pins and windows with ``flow-spaces observe``: a refresh could reconcile pins,
+        move windows and write Flow's state."""
+        snapshot = {"pins": [{"label": "Work", "id": "1", "available": True}], "windows": []}
+        gio = SimpleNamespace(AppInfo=SimpleNamespace(get_all=lambda: []))
+        repository = SimpleNamespace(Gio=gio)
+        with patch.dict(sys.modules, {"gi": SimpleNamespace(repository=repository), "gi.repository": repository}), \
+             patch.object(search.subprocess, "check_output", return_value=json.dumps(snapshot)) as read, \
+             tempfile.TemporaryDirectory() as home, patch.dict("os.environ", {"HOME": home, "XDG_DATA_HOME": home}), \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(search.main(["--json"]), 0)
+        read.assert_called_once_with(["flow-spaces", "observe"], text=True)
+        self.assertIn("Work", [row["title"] for row in json.loads(out.getvalue())])
+
 
 if __name__ == "__main__":
     unittest.main()
