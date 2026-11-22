@@ -15,6 +15,14 @@ What is checked, through the shell's IPC calls:
 - Pinning from Overview keeps Overview, and does not open Desk under it.
 - Search opens over Desk, and the Platform API's busy rules count a pending Overview.
 - A snapshot of a space is taken once it has settled in the work view, and none of Desk.
+
+With the pointer (tests/pointer.py, so ``flow-pointer`` on PATH and the installed shell stopped):
+- the home indicator shows the pointer on it; a tap opens Overview, a tap on Overview's goes on to Desk,
+  and a tap on Desk's returns to work;
+- one wheel notch over Overview's row moves the selection one space, down to the next and up to the
+  previous;
+- a swipe up from the home indicator opens Overview, and only Overview: releasing after the swipe is not
+  also a tap.
 """
 
 import hashlib
@@ -28,6 +36,7 @@ import time
 import uuid
 
 from isolated_state import IsolatedState
+from pointer import Pointer, center
 
 
 def niri(*args):
@@ -96,6 +105,12 @@ def main():
             state = surfaces()
             return sorted(name for name, is_open in state.items() if is_open and name != "pending")
 
+        def target(name):
+            try:
+                return json.loads(ipc("pointer_target", name) or "null")
+            except ValueError:
+                return None
+
         def never_two(label):
             shown = open_surfaces()
             if len(shown) > 1:
@@ -118,6 +133,7 @@ def main():
                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
             return wait_for(lambda: next((w for w in read("windows") if w["app_id"] == app), None), app)
 
+        pointer = Pointer()
         try:
             first, second, third = (open_app(s) for s in "abc")
             subprocess.Popen(["quickshell", "-p", shell], env=env, stdin=subprocess.DEVNULL,
@@ -192,6 +208,59 @@ def main():
             wait_for(lambda: open_surfaces() == [], "Desk closed")
             steps.append("Desk while Overview was opening won, ShowDesk then was busy, and Desk over an open "
                          "Overview replaced it: never two at once")
+
+            # The pointer.
+            pointer.park()
+            home = wait_for(lambda: target("home"), "the home indicator")
+            pointer.move(center(home))
+            wait_for(lambda: (t := target("home")) and t["hovered"], "the home indicator to notice the pointer")
+            pointer.click(center(home))
+            wait_for(lambda: open_surfaces() == ["overview"], lambda: f"a tap on the home indicator to open Overview ({open_surfaces()})")
+            steps.append("the home indicator showed the pointer on it, and a tap opened Overview")
+
+            # From the row's start, whose next space overview_move names: a notch that moved two would land past it.
+            row = wait_for(lambda: target("overview_row"), "Overview's row")
+
+            def step(move):
+                before = ipc("overview_selected")
+                ipc("overview_move", move)
+                time.sleep(0.4)
+                return ipc("overview_selected") != before
+
+            while step(-1):
+                pass
+            start, next_space = ipc("overview_selected"), (step(1), ipc("overview_selected"))[1]
+            step(-1)
+            if ipc("overview_selected") != start or next_space == start:
+                raise RuntimeError(f"Overview's row has fewer than two spaces, or moving did not return ({start}, {next_space})")
+            pointer.scroll(center(row), 1)
+            wait_for(lambda: ipc("overview_selected") == next_space,
+                     lambda: f"a notch down to select the next space {next_space} ({ipc('overview_selected')})")
+            time.sleep(0.5)
+            if ipc("overview_selected") != next_space:
+                raise RuntimeError(f"One notch down went past the next space: {ipc('overview_selected')}")
+            pointer.scroll(center(row), -1)
+            wait_for(lambda: ipc("overview_selected") == start,
+                     lambda: f"a notch up to select the first space {start} again ({ipc('overview_selected')})")
+            steps.append("one wheel notch over Overview's row moved the selection one space down, and one back up")
+
+            pointer.click(center(wait_for(lambda: target("overview_home"), "Overview's home indicator")))
+            wait_for(lambda: open_surfaces() == ["desk"], lambda: f"a tap on Overview's home indicator to open Desk ({open_surfaces()})")
+            pointer.click(center(wait_for(lambda: target("desk_home"), "Desk's home indicator")))
+            wait_for(lambda: open_surfaces() == [], lambda: f"a tap on Desk's home indicator to return to work ({open_surfaces()})")
+            steps.append("a tap on Overview's home indicator went on to Desk, and one on Desk's returned to work")
+
+            pointer.park()
+            start = center(wait_for(lambda: target("home"), "the home indicator again"))
+            pointer.drag(start, (start[0], start[1] - 60))
+            wait_for(lambda: open_surfaces() == ["overview"], lambda: f"a swipe up to open Overview ({open_surfaces()})")
+            time.sleep(1)
+            if open_surfaces() != ["overview"]:
+                raise RuntimeError(f"After a swipe up and release, {open_surfaces()} were open, not Overview alone")
+            ipc("overview_close")
+            wait_for(lambda: open_surfaces() == [], "Overview to close")
+            steps.append("a swipe up from the home indicator opened Overview, and releasing did not go on to Desk")
+            pointer.park()
             result = {"result": "pass", "steps": steps}
         finally:
             for pid in mine():
