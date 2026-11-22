@@ -21,7 +21,7 @@ then for a side-by-side Group with a saved split:
   and so does recovery; Rejoin Group does too with a pinned app still after them, another display's, or this
   display's while a side-by-side Group pauses pin ordering, and once that Group is stacked or dissolved, the
   pins go back in pin order (at once, or at the next refresh); an unfinished layout change (simulated) pauses
-  pin ordering too, until it is finished, and one to a stack puts the pins back when finished.
+  pin ordering too: one to side by side stays paused once finished, one back to a stack puts the pins back.
 Real state files are checksummed.
 """
 
@@ -334,10 +334,13 @@ def main():
             entry = next((e for e in paused["incomplete_groups"] if e["id"] == other_id), None)
             if not entry or not entry.get("can_resume_layout"):
                 raise RuntimeError(f"Finish layout change was not offered: {paused['incomplete_groups']}")
-            spaces("resume-group-layout", other_id)  # Finish layout change: side by side, so still paused
+            finished = spaces("resume-group-layout", other_id)  # Finish layout change: side by side, still paused
             expect(["n", "u", "v", "ab"], "the layout change finished, the second Group side by side")
             if group(other_id).get("pending_layout") or group(other_id).get("layout") != "side-by-side":
                 raise RuntimeError(f"The finished layout change left a pending layout: {group(other_id)}")
+            if not any(sp.get("group_id") == other_id and sp.get("group_layout") == "side-by-side"
+                       for sp in finished["spaces"]):
+                raise RuntimeError(f"The finished Group is not recognised side by side: {finished['spaces']}")
             steps.append("with the pinned Group moved behind the second Group while its change to side by side was "
                          "unfinished, its apps split (simulated), a refresh left the pins out of order and offered "
                          "Finish layout change, which put the Group side by side with the pins still paused")
@@ -345,10 +348,11 @@ def main():
             # And an unfinished change back to a stack: paused until finished, and the finishing puts the pins back,
             # since the Group is then neither side by side nor mid-change. Simulated as an interruption right after its
             # first Niri action leaves it: the measured split and the pending stack saved first, then the apps joined.
+            # The pause holds by the stored layout, still side by side, as after a real interruption; the pending
+            # layout alone is what holds it in the step above.
             sizes = [window(s)["layout"]["tile_size"][0] for s in "uv"]
             saved = json.loads((state / "groups.json").read_text())
             entry = next(g for g in saved["groups"] if g["id"] == other_id)
-            entry.pop("side_ratios", None)
             entry.update(side_ratio=round(sizes[0] / sum(sizes), 4), pending_layout="stack")
             (state / "groups.json").write_text(json.dumps(saved))
             niri("action", "consume-or-expel-window-left", "--id", window("v")["id"])
@@ -359,11 +363,14 @@ def main():
             entry = next((e for e in paused["incomplete_groups"] if e["id"] == other_id), None)
             if not entry or not entry.get("can_resume_layout"):
                 raise RuntimeError(f"Finish layout change was not offered: {paused['incomplete_groups']}")
-            niri("action", "focus-window", "--id", window("u")["id"])
             spaces("resume-group-layout", other_id)  # ends with a refresh, like a layout change
             expect(["ab", "n", "uv"], "the pins back in pin order once the change to a stack was finished")
             if group(other_id).get("pending_layout") or group(other_id).get("layout", "stack") != "stack":
                 raise RuntimeError(f"The finished change to a stack left a pending layout: {group(other_id)}")
+            # Finishing also gave the stack its full width, the change's last Niri action.
+            full = json.loads(niri("--json", "focused-output"))["logical"]["width"]
+            if window("u")["layout"]["tile_size"][0] < 0.9 * full:
+                raise RuntimeError(f"The finished stack is not full width: {window('u')['layout']}, output {full}")
             pins_reached(spaces("refresh"))
             expect(["ab", "n", "uv"], "the pins still in pin order at the next refresh")
             steps.append("with the second Group's change back to a stack unfinished, its apps joined (simulated), a "
