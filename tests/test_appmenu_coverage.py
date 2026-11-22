@@ -162,23 +162,29 @@ class SharedSessionSafetyTest(unittest.TestCase):
     def test_only_the_runs_own_windows_are_taken(self):
         proc = Path(self.tmp.name) / "proc"
         proc.mkdir()
-        fake_proc(proc, {100: (100, {}), 101: (100, {}), 200: (200, {})})  # 100/101 the run's, 200 someone else's
+        coverage.STATE["run"] = "run-1"
+        fake_proc(proc, {100: (100, {}), 101: (100, {}), 200: (200, {}),  # 100/101 in the run's session
+                         300: (300, {coverage.MARKER: "run-1"}),  # detached into a session of its own
+                         400: (400, {coverage.MARKER: "another-run"})})  # someone else's
         coverage.STATE["sids"] = {100}
         current = {1: {"id": 1, "pid": 200, "title": "old"},
                    2: {"id": 2, "pid": 101, "title": "mine"},
                    3: {"id": 3, "pid": 200, "title": "another session's"},
-                   4: {"id": 4, "pid": 1022, "app_id": "vlc", "title": "X11"}}
+                   4: {"id": 4, "pid": 1022, "app_id": "vlc", "title": "X11"},
+                   5: {"id": 5, "pid": 300, "title": "detached, mine"},
+                   6: {"id": 6, "pid": 400, "title": "another run's"}}
         with patch.object(coverage, "PROC", proc), patch.object(coverage, "windows", return_value=current), \
                 patch.object(coverage.time, "sleep"):
-            self.assertEqual([w["id"] for w in coverage.wait_new_window({1}, settle=0)], [2])
-            self.assertEqual(coverage.STATE["windows"], {2})
-            self.assertEqual([w["id"] for w in coverage.wait_new_window({1, 2}, x11_app_id="vlc", settle=0)], [4])
+            self.assertEqual([w["id"] for w in coverage.wait_new_window({1}, settle=0)], [2, 5])
+            self.assertEqual(coverage.STATE["windows"], {2, 5})
+            self.assertEqual(coverage.own_processes(proc), [300])
+            self.assertEqual([w["id"] for w in coverage.wait_new_window({1, 2, 5}, x11_app_id="vlc", settle=0)], [4])
 
     def test_restore_closes_only_own_windows_and_returns_the_switch_only_if_untouched(self):
         coverage.STATE.update(windows={2}, a11y=False, a11y_set=True, workspace=None)
         for current, expect_set in ((True, True), (False, False)):  # untouched: put back; changed: left alone
             coverage.STATE.update(windows={2}, a11y_set=True)
-            with patch.object(coverage, "close_window") as close, \
+            with patch.object(coverage, "close_window") as close, patch.object(coverage, "stop_own_processes"), \
                     patch.object(coverage, "a11y_enabled", return_value=current), \
                     patch.object(coverage.subprocess, "run") as run:
                 coverage.restore()

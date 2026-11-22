@@ -66,10 +66,14 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 
 READER = Path(__file__).resolve().parents[1] / "session" / "appmenu.py"
 CAP_NODES, CAP_DEPTH = 2000, 12  # session/appmenu.py's walk limits
 PROC = Path("/proc")
+# Every process the run starts carries this in its environment, also one that detaches into a session of its
+# own (VSCodium's launcher does): that is how the run knows its own processes and windows.
+MARKER = "FLOW_APPMENU_COVERAGE_RUN"
 
 FIREFOX_PREFS = """user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("browser.aboutwelcome.enabled", false);
@@ -199,7 +203,7 @@ MULTI = {
 # A window-scoped command invoked through the chosen frame's own menu bar: its window's title changes.
 GROUND_TRUTH = {"kate": ("^File$", "^New$")}
 
-STATE = {"a11y": None, "a11y_set": None, "procs": [], "sids": set(), "app_pids": set(), "windows": set(),
+STATE = {"run": uuid.uuid4().hex, "a11y": None, "a11y_set": None, "procs": [], "sids": set(), "app_pids": set(), "windows": set(),
          "workspace": None, "run_workspace": None, "roots": [], "bus": None, "bus_proc": None, "notes": []}
 
 
@@ -274,21 +278,40 @@ def start_private_bus(tmp):
     save_state()
 
 
+def environ_of(pid, proc_root=None):
+    try:
+        return set(((proc_root or PROC) / str(pid) / "environ").read_bytes().split(b"\0"))
+    except OSError:  # gone, or another user's
+        return set()
+
+
+def processes_with(entries, proc_root=None):
+    """PIDs of this user's processes whose environment holds one of ``entries`` ("NAME=value")."""
+    wanted = {e.encode() for e in entries}
+    return [int(e.name) for e in (proc_root or PROC).iterdir()
+            if e.name.isdigit() and environ_of(e.name, proc_root) & wanted]
+
+
 def bus_clients(address, proc_root=None):
     """PIDs of this user's processes whose environment names ``address`` as their session or starter bus."""
-    wanted = {f"DBUS_SESSION_BUS_ADDRESS={address}".encode(), f"DBUS_STARTER_ADDRESS={address}".encode()}
-    root = proc_root or PROC
-    found = []
-    for entry in root.iterdir():
-        if not entry.name.isdigit():
-            continue
-        try:
-            environ = set((entry / "environ").read_bytes().split(b"\0"))
-        except OSError:  # gone, or another user's
-            continue
-        if environ & wanted:
-            found.append(int(entry.name))
-    return found
+    return processes_with([f"DBUS_SESSION_BUS_ADDRESS={address}", f"DBUS_STARTER_ADDRESS={address}"], proc_root)
+
+
+def own_processes(proc_root=None):
+    return processes_with([f"{MARKER}={STATE['run']}"], proc_root)
+
+
+def stop_own_processes():
+    """Every process the run started that is still alive, detached ones too: SIGTERM, then SIGKILL."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        pids = [p for p in own_processes() if p != os.getpid()]
+        for pid in pids:
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                pass
+        if pids and sig == signal.SIGTERM:
+            time.sleep(3)
 
 
 def end(proc):
@@ -325,7 +348,7 @@ def state_file():
 def save_state():
     proc = STATE["bus_proc"]
     state_file().write_text(json.dumps({
-        "a11y": STATE["a11y"], "a11y_set": STATE["a11y_set"], "sids": sorted(STATE["sids"]),
+        "run": STATE["run"], "a11y": STATE["a11y"], "a11y_set": STATE["a11y_set"], "sids": sorted(STATE["sids"]),
         "windows": sorted(STATE["windows"]), "bus_pid": proc.pid if proc else None, "bus": STATE["bus"]}))
 
 
@@ -337,16 +360,12 @@ def cleanup():
     except FileNotFoundError:
         print("no state file: nothing to clean up")
         return
-    STATE["sids"] = set(saved["sids"])
+    STATE["sids"], STATE["run"] = set(saved["sids"]), saved["run"]
     current = windows()
-    for wid in saved["windows"]:  # Niri never reuses a window id, so these are still the run's own
-        if wid in current:
+    for wid, w in current.items():  # Niri never reuses a window id, so saved ones are still the run's own
+        if wid in saved["windows"] or owned(w.get("pid")):
             close_window(wid, wait=3)
-    for pid in own_processes():
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
+    stop_own_processes()
     if saved["bus"]:
         for pid in bus_clients(saved["bus"]):
             os.kill(pid, signal.SIGTERM)
@@ -367,6 +386,7 @@ def restore():
     for proc in STATE["procs"]:
         stop(proc)
     stop_private_bus()
+    stop_own_processes()
     if STATE["a11y"] is not None and STATE["a11y_set"] is not None:
         if a11y_enabled() == STATE["a11y_set"]:
             subprocess.run(["busctl", "--user", "set-property", *A11Y, "b", "true" if STATE["a11y"] else "false"],
@@ -410,6 +430,7 @@ def app_env(tmp, extra=None):
     if not env.get("WAYLAND_DISPLAY", "wayland-0").startswith("/"):  # still found beside a private runtime dir
         env["WAYLAND_DISPLAY"] = str(Path(os.environ["XDG_RUNTIME_DIR"]) / env.get("WAYLAND_DISPLAY", "wayland-0"))
     env.pop("GI_TYPELIB_PATH", None)  # the runner's, for pyatspi; an app's own wrapper sets its own
+    env[MARKER] = STATE["run"]
     env.update(extra or {})
     return env
 
@@ -445,12 +466,10 @@ def session_of(pid, proc_root=None):
 
 
 def owned(pid):
-    """Whether ``pid`` is a process the run started (in one of its sessions), or an app process its windows joined."""
-    return bool(pid) and (pid in STATE["app_pids"] or session_of(pid) in STATE["sids"])
-
-
-def own_processes():
-    return [int(e.name) for e in PROC.iterdir() if e.name.isdigit() and session_of(e.name) in STATE["sids"]]
+    """Whether ``pid`` is a process the run started (it carries the run's marker, or is in one of its sessions),
+    or an app process its windows joined."""
+    return bool(pid) and (pid in STATE["app_pids"] or session_of(pid) in STATE["sids"]
+                          or f"{MARKER}={STATE['run']}".encode() in environ_of(pid))
 
 
 def is_own_window(window, x11_app_id=None):
@@ -503,6 +522,9 @@ def phase(app):
                 start_private_bus(tmp)
             yield tmp
         finally:
+            for wid, w in windows().items():  # also any the waiting missed
+                if wid in STATE["windows"] or (not app.get("x11") and owned(w.get("pid"))):
+                    close_window(wid, wait=5)
             for wid in list(STATE["windows"]):
                 close_window(wid, wait=5)
             for proc in STATE["procs"]:
@@ -510,6 +532,7 @@ def phase(app):
             STATE["procs"].clear()
             STATE["app_pids"].clear()
             stop_private_bus()
+            stop_own_processes()
             time.sleep(1)  # before the directory goes: processes that were writing to it have exited
 
 
