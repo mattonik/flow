@@ -4,13 +4,14 @@
 ``flow-appmenu serve`` runs while the setting is on. The shell starts it (and starts it again if it stops) and
 talks to it in JSON lines, one request on stdin, one answer on stdout, matched by ``id``:
 
-- ``{"id": 1, "op": "probe", "window": 7}`` when focus has settled on window 7 (``null``: whichever is focused).
-  Answers ``{"id": 1, "window": 7, "name": "Kate", "has_menu": true, "final": true}``. The reader finds the
-  window's accessible app (by PID; by ``app_id`` and title for an X11 window), chooses the window's frame by its
-  title and ``active`` state, which only works while the window itself has the keyboard, and remembers that frame
-  for the window. ``has_menu`` stops at the first showing menu bar with an item. ``final`` is false when the
-  answer may change without the window changing (its app is not on the bus yet, or no frame could be chosen);
-  the shell asks again then. ``{"moved": true}`` means focus is no longer on that window.
+- ``{"id": 1, "op": "probe"}`` when focus has settled: answers for the focused window,
+  ``{"id": 1, "window": 7, "name": "Kate", "has_menu": true, "final": true}``. The first probe of a window finds
+  its accessible app (by PID; by ``app_id`` and title for an X11 window), chooses the window's frame by its title
+  and ``active`` state, which only works while the window itself has the keyboard, and remembers the frame and
+  ``has_menu`` for the window until it closes; later probes answer from memory. ``has_menu`` stops at the first
+  showing menu bar with an item. ``final`` is false when nothing was remembered (the app is not on the bus, or
+  not yet, or no frame could be chosen), so the next probe looks again. With ``"window": 7``, a probe answers
+  ``{"moved": true}`` if window 7 is no longer the focused one; with no window focused, ``{"window": null, ...}``.
 - ``{"id": 2, "op": "read", "window": 7}``: the menu of the remembered frame, ``{"menus": [...], ...}``.
   Paths in it lead from the frame to an item.
 - ``{"id": 3, "op": "activate", "window": 7, "path": [...], "label": "New"}``: runs the item, if window 7 is
@@ -116,7 +117,7 @@ class Reader:
         self.niri = niri_request
         self.proc = proc
         self.set_timeout = set_timeout or (lambda *_: None)
-        self.frames = {}  # window id → (frame, name): chosen while the window had the keyboard
+        self.frames = {}  # window id → (frame, name, has_menu): the frame chosen while the window had the keyboard
         # Content, where no menu bar lives and most of a window's nodes do (LibreOffice's document, Kate's view).
         self.prune = {getattr(at, "ROLE_" + name) for name in PRUNED if hasattr(at, "ROLE_" + name)}
         self.menus = {at.ROLE_MENU, at.ROLE_MENU_ITEM, at.ROLE_CHECK_MENU_ITEM, at.ROLE_RADIO_MENU_ITEM}
@@ -247,21 +248,28 @@ class Reader:
 
     # --- Requests ----------------------------------------------------------------------------------------
     def probe(self, request):
+        """The focused window's answer. A window seen before answers from memory, with no accessibility call,
+        so a probe on every focus change costs one request on Niri's socket."""
         windows = self.niri("Windows")["Windows"]
         live = {w["id"] for w in windows}
         for gone in [k for k in self.frames if k not in live]:
             del self.frames[gone]
         focused = next((w for w in windows if w.get("is_focused")), None)
         wanted = request.get("window")
-        if focused is None or (wanted is not None and focused["id"] != wanted):
+        if focused is None:
+            return {"window": None}
+        if wanted is not None and focused["id"] != wanted:
             return {"window": wanted, "moved": True}
-        name = app_name(focused.get("app_id"), focused.get("title"))
-        frame = self.find_frame(focused, windows)
-        if frame is None:
-            self.frames.pop(focused["id"], None)
-            return {"window": focused["id"], "name": name, "has_menu": False, "final": False}
-        self.frames[focused["id"]] = (frame, name)
-        return {"window": focused["id"], "name": name, "has_menu": bool(self.bars(frame, first=True)), "final": True}
+        ident = focused["id"]
+        if ident not in self.frames:
+            frame = self.find_frame(focused, windows)
+            if frame is None:
+                return {"window": ident, "name": app_name(focused.get("app_id"), focused.get("title")),
+                        "has_menu": False, "final": False}
+            self.frames[ident] = (frame, app_name(focused.get("app_id"), focused.get("title")),
+                                  bool(self.bars(frame, first=True)))
+        _, name, has_menu = self.frames[ident]
+        return {"window": ident, "name": name, "has_menu": has_menu, "final": True}
 
     def remembered(self, window):
         if window not in self.frames:
@@ -269,19 +277,21 @@ class Reader:
         return self.frames[window]
 
     def read(self, request):
-        frame, name = self.remembered(request.get("window"))
+        window = request.get("window")
+        frame, name, _ = self.remembered(window)
         bar = self.seen_bar(self.bars(frame))
         if bar is None:
+            del self.frames[window]  # chosen again at the next probe
             raise ValueError("The app shows no menu now")
         node, path = bar
         state = {"seen": 0}
         menus = [entry for i in range(node.childCount)
                  for entry in self.walk(node.getChildAtIndex(i), path + [i], 1, state)]
-        return {"window": request["window"], "name": name, "menus": menus}
+        return {"window": window, "name": name, "menus": menus}
 
     def activate(self, request):
         window, path, label = request.get("window"), request.get("path"), request.get("label")
-        frame, _ = self.remembered(window)
+        frame = self.remembered(window)[0]
         if not isinstance(path, list) or not all(isinstance(i, int) for i in path):
             raise ValueError("Bad command path")
         workspace = next((w for w in self.niri("Workspaces")["Workspaces"] if w.get("is_focused")), None)
@@ -356,6 +366,8 @@ def release(switch, mark):
 
 def serve():
     switch_on(Switch(), marker())
+    import gi
+    gi.require_version("Atspi", "2.0")
     from gi.repository import Atspi, GLib
     import pyatspi
     Atspi.set_timeout(*METHOD_TIMEOUT_MS)
@@ -377,8 +389,13 @@ def serve():
                 sys.stdout.flush()
         return True
 
-    GLib.unix_fd_add_full(GLib.PRIORITY_DEFAULT, sys.stdin.fileno(),
-                          GLib.IOCondition.IN | GLib.IOCondition.HUP | GLib.IOCondition.ERR, readable)
+    try:
+        from gi.repository import GLibUnix
+        add_watch = GLibUnix.fd_add_full
+    except ImportError:  # GLib before 2.80
+        add_watch = GLib.unix_fd_add_full
+    add_watch(GLib.PRIORITY_DEFAULT, sys.stdin.fileno(), GLib.IOCondition.IN | GLib.IOCondition.HUP | GLib.IOCondition.ERR,
+              readable)
     loop.run()
 
 

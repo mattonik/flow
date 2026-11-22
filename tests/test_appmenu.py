@@ -153,6 +153,7 @@ class FrameChoiceTest(unittest.TestCase):
         r = reader([app], windows, active=8)
         self.assertEqual(ask(r, op="probe", window=8)["has_menu"], True)
         self.assertIs(r.frames[8][0], second)
+        self.assertEqual(ask(r, op="probe")["window"], 8)  # no window named: the focused one
         second.states.discard("active")  # Flow's menu surface took the keyboard
         menus = ask(r, op="read", window=8)["menus"]
         self.assertEqual([m["label"] for m in menus], ["File", "Help"])
@@ -172,6 +173,22 @@ class FrameChoiceTest(unittest.TestCase):
         r = reader([], [window(7, 5, "a", focused=False), window(8, 6, "b")])
         self.assertEqual(ask(r, op="probe", window=7), {"id": 9, "window": 7, "moved": True})
         self.assertEqual(ask(r, op="probe")["window"], 8)  # no window: whichever is focused
+
+    def test_a_known_window_answers_from_memory(self):
+        app = Node("APPLICATION", "kate", [kate_frame("A", True)], pid=5)
+        r = reader([app], [window(7, 5, "A")])
+        self.assertTrue(ask(r, op="probe")["has_menu"])
+        Node.calls = 0
+        self.assertEqual(ask(r, op="probe"), {"id": 9, "window": 7, "name": "org.kde.kate", "has_menu": True, "final": True})
+        self.assertEqual(Node.calls, 0)
+
+    def test_a_window_whose_menu_went_is_chosen_again(self):
+        app = Node("APPLICATION", "kate", [kate_frame("A", True)], pid=5)
+        r = reader([app], [window(7, 5, "A")])
+        ask(r, op="probe")
+        app.children[0].children[0].states.discard("showing")
+        self.assertEqual(ask(r, op="read", window=7)["error"], "The app shows no menu now")
+        self.assertFalse(ask(r, op="probe")["has_menu"])
 
     def test_closed_windows_are_forgotten(self):
         app = Node("APPLICATION", "kate", [kate_frame("A", True)], pid=5)
