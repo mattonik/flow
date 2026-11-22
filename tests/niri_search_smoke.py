@@ -9,8 +9,8 @@ no app starts. Keys are typed with wtype into the panel, which has the keyboard 
 
 Checked, through the shell's ``search_view`` and ``toast`` IPC calls and the stand-in's log:
 - the panel lists what ``flow-search --json`` answers;
-- search opened again while a slow listing still runs shows the new listing, never the old one's answer
-  (what was there before: windows since closed);
+- search opened again while a slow listing still runs says it is looking, then shows the new listing,
+  never the old one's answer (what was there before: windows since closed), and the old listing is stopped;
 - typing ranks an exact title first and keeps ties in flow-search's order, so Return on "Notes" opens
   the Notes app, not "Notes Server" or Notes as a Layer, through ``flow-search --open app <desktop file>``;
 - with the pointer (tests/pointer.py), the row under it is tinted, a click opens that row rather than
@@ -45,12 +45,13 @@ ROWS = ([{"title": "Flow Settings", "detail": "Settings", "kind": "settings", "v
 STALE_ROWS = [{"title": "Closed Window", "detail": "Open window · foot", "kind": "window", "value": "7", "icon": ""}]
 STAND_IN = """#!/bin/sh
 # Flow search, standing in: --json answers with the rows in $DIR/rows as they were when it started, after
-# the seconds in $DIR/slow if that exists (or fails when $DIR/fail-list exists); --open records its arguments
-# and exits with the code in $DIR/open-exit.
+# the seconds in $DIR/slow if that exists, and counts the listings it finished in $DIR/listed (or fails when
+# $DIR/fail-list exists); --open records its arguments and exits with the code in $DIR/open-exit.
 DIR={dir}
 case "$1" in
   --json) [ -e "$DIR/fail-list" ] && {{ echo "usage: flow-search" >&2; exit 2; }}
-          rows=$(cat "$DIR/rows"); [ -e "$DIR/slow" ] && sleep "$(cat "$DIR/slow")"; printf '%s\n' "$rows" ;;
+          rows=$(cat "$DIR/rows"); [ -e "$DIR/slow" ] && sleep "$(cat "$DIR/slow")"; printf '%s\n' "$rows"
+          echo listed >> "$DIR/listed" ;;
   --open) echo "$2 $3" >> "$DIR/opened"; exit "$(cat "$DIR/open-exit" 2>/dev/null || echo 0)" ;;
   *) exit 2 ;;
 esac
@@ -176,7 +177,11 @@ def main():
                     raise RuntimeError(f"Search opened again showed something other than looking or the new listing: {shown}")
             if not seen[-1]["rows"]:
                 raise RuntimeError(f"The new listing never showed: {seen[-1]}")
-            steps.append("search opened again during a slow listing showed the new listing, not the old one's answer")
+            listed = (tmp / "listed").read_text().split()
+            if len(listed) != 2:  # the first opening's and the new one's: the slow one was stopped, not waited out
+                raise RuntimeError(f"{len(listed)} listings finished, expected 2: the slow one was not stopped")
+            steps.append("search opened again during a slow listing said it was looking, then showed the new listing, "
+                         "not the old one's answer, and the old listing was stopped")
 
             type_keys("Notes")
             ranked = wait_for(lambda: (v := view()) and len(v["rows"]) == 8 and v, lambda: f"Notes results ({view()})")
