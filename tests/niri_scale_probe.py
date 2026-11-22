@@ -46,7 +46,7 @@ import threading
 import time
 
 from isolated_state import IsolatedState
-from niri_performance_smoke import NiriSocket, controller_stats, cpu, niri, read, wait_for
+from niri_performance_smoke import NiriSocket, controller_socket, controller_stats, cpu, niri, read, wait_for
 
 FRAME = re.compile(r"\[window (0x[0-9a-f]+)\]\[render thread [^\]]*\] syncAndRender: frame rendered in (\d+)ms, "
                    r"sync=(\d+), render=(\d+), swap=(\d+)")
@@ -83,9 +83,11 @@ class RenderLog:
 
 def frames_of(entries, period, known):
     """What one opening or closing drew, across every shell window: how many windows were new (Quickshell builds a
-    layer-shell window afresh each time it is shown), the frames drawn, the render threads' work over them (ms:
-    syncing and rendering, not the swap, which mostly waits for the display), the longest such frame, and, for the window that drew the most, the longest gap between two of its frames
-    and how many gaps exceeded 1.5 refresh periods. ``known`` collects the windows seen so far."""
+    layer-shell window afresh each time it is shown; a lower bound, as a new window can take a freed one's
+    address), the frames drawn, the render threads' work over them (ms: syncing and rendering, not the swap,
+    which mostly waits for the display), the longest such frame, and, for the window that drew the most, the
+    longest gap between two of its frames and how many such gaps exceeded 1.5 refresh periods (waits, such as
+    for its first frame, included). ``known`` collects the windows seen so far."""
     by_window = {}
     for _, window, kind, numbers in entries:
         by_window.setdefault(window, []).append((kind, numbers))
@@ -124,19 +126,17 @@ def rss_mb(pid):
 
 def state_bytes(runtime, state_home):
     """The size of the state the controller sends a watching shell, or 0 without a controller."""
-    stats = controller_stats(runtime, state_home)
-    if not stats:
-        return 0
-    import hashlib
-    name = f"flow-controller-{hashlib.md5(str(state_home).encode()).hexdigest()[:12]}.sock"
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-        connection.settimeout(5)
-        connection.connect(str(runtime / name))
-        connection.sendall(b'{"watch": true}\n')
-        with connection.makefile("rb") as answers:
-            for line in answers:
-                if line.startswith(b'{"state"'):
-                    return len(line)
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(5)
+            connection.connect(str(controller_socket(runtime, state_home)))
+            connection.sendall(b'{"watch": true}\n')
+            with connection.makefile("rb") as answers:
+                for line in answers:
+                    if line.startswith(b'{"state"'):
+                        return len(line)
+    except OSError:
+        pass
     return 0
 
 
@@ -333,6 +333,13 @@ def main():
                 surface("Overview's first frame", "overview", ["overview_open"], "overview_state", ["overview_close"], 200)
                 surface("Desk with a fresh answer", "desk", ["desk_open"], "desk_state", ["leave"], 150)
                 surface("search rows shown", "search", ["search"], "search_state", ["search"], 300)
+                # Overview's cards decode their snapshots: the shell's memory with them, Overview open again.
+                ipc("overview_open")
+                wait_for(lambda: ipc("overview_state") == "open", "Overview", timeout=5)
+                time.sleep(1)
+                report(f"{label}: memory with Overview open", rss_mb(pid), "MB")
+                ipc("overview_close")
+                wait_for(lambda: ipc("overview_state") == "closed", "Overview to close", timeout=5)
 
             # Overview's snapshot, as the shell takes it (at the display's resolution), and as it took it before
             # 2026-11-22 (scaled by grim to 640 px wide).

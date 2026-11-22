@@ -136,7 +136,8 @@ class Controller:
         self.last_refresh = float("-inf")  # so the safety refresh, the first state, is due at once
         self.recent = collections.deque(maxlen=1000)  # when the last refreshes ran (wall clock), for the smoke
         self.stats = {"refreshes": 0, "observes": 0, "events": 0, "title_only": 0, "pushes": 0, "busy": 0,
-                      "reshapes": 0, "failures": 0, "refresh_ms": 0.0}
+                      "reshapes": 0, "failures": 0, "refresh_ms": 0.0, "first_client_ms": None}
+        self.started = time.monotonic()  # it listens from now: how soon the first client came, for the smoke
 
     # Niri's event stream -------------------------------------------------------------------------------------
 
@@ -283,6 +284,8 @@ class Controller:
         except OSError:
             return
         connection.setblocking(False)
+        if self.stats["first_client_ms"] is None:
+            self.stats["first_client_ms"] = round((time.monotonic() - self.started) * 1000)
         client = Client(connection)
         self.clients.append(client)
         self.selector.register(connection, selectors.EVENT_READ, client)

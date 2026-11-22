@@ -26,6 +26,8 @@ Checked (the limits are the PRs': docs/performance.md):
   shell under 10% of a core;
 - focus moving every 0.05 s for 6 s: never 1.5 s without a refresh (a maximum wait);
 - focus moving every 0.25 s for 6 s: at most 16 refreshes (a minimum interval), the helpers under 2.5% of a core;
+- the shell connecting to its controller under 100 ms after the controller listens (it says so on stdout;
+  the shell's fallback retries every 250 ms);
 - ``flow-spaces refresh`` and ``observe`` medians under 30 ms (actions, and the Platform API without a shell,
   still run it); the controller's own refreshes under 10 ms on average; ``flow-search --json`` under 200 ms,
   and it asks flow-spaces only to observe;
@@ -98,14 +100,17 @@ class NiriSocket:
         self.connection.close()
 
 
+def controller_socket(runtime, state_home):
+    """The controller's socket, named as session/flow_controller.py's socket_path() names it."""
+    return runtime / f"flow-controller-{hashlib.md5(str(state_home).encode()).hexdigest()[:12]}.sock"
+
+
 def controller_stats(runtime, state_home):
-    """The development shell's controller's counters (ADR-0011), or None: main's shell has none. Its socket is
-    named as session/flow_controller.py's socket_path() names it."""
-    name = f"flow-controller-{hashlib.md5(str(state_home).encode()).hexdigest()[:12]}.sock"
+    """The development shell's controller's counters (ADR-0011), or None: main's shell has none."""
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
             connection.settimeout(5)
-            connection.connect(str(runtime / name))
+            connection.connect(str(controller_socket(runtime, state_home)))
             connection.sendall(b'{"get": "stats"}\n')
             with connection.makefile("rb") as answers:
                 for line in answers:
@@ -256,6 +261,11 @@ def main():
             observed = json.loads(subprocess.check_output([real["flow-spaces"], "observe"], env=env, text=True))
             if not any(item.get("shaped") for item in observed.get("layers", [])):
                 raise RuntimeError(f"The Layer was not shaped: {observed.get('layers')}")
+            stats = controller_stats(runtime, tmp)
+            if stats and "first_client_ms" in stats:  # a shell from before 2026-11-22 has no such count
+                came = stats["first_client_ms"]
+                check("the shell connects as its controller listens", came, "< 100",
+                      came is not None and came < 100, "ms")
             time.sleep(8)  # the app menu's first answers and their retries
             quiet()
 

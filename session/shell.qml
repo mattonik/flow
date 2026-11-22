@@ -662,8 +662,8 @@ ShellRoot {
         snapshotProcess.key = String(space.id)
         snapshotProcess.done = done
         // At the display's own resolution: asking grim for a smaller picture costs more than the whole capture
-        // (178 against 55 ms on a 3840 × 2160 display at scale 2), and Overview waits for it. Its card decodes
-        // it at 640 px wide. Written whole, then renamed, so a card never shows half.
+        // (docs/performance.md), and Overview waits for it. Its card decodes it at its own size. Written
+        // whole, then renamed, so a card never shows half.
         snapshotProcess.command = ["sh", "-c", 'mkdir -p -m 700 "$1" && grim -o "$2" -t jpeg -q 72 "$1/$3.tmp" && mv -f "$1/$3.tmp" "$1/$3.jpg"',
             "sh", root.snapshotDir, screen.name, snapshotProcess.key]
         snapshotProcess.running = true
@@ -2445,17 +2445,26 @@ ShellRoot {
                         color: floeTheme.surfaceRaised; clip: true
                         border.width: 1; border.color: spaceCard.selected ? floeTheme.borderStrong : Qt.alpha(floeTheme.border, 0.6)
                         Item {
-                            // The whole display, scaled to the card, with the bands above and below cut off.
+                            // The snapshot, below the Island's band and above the home indicator's, covering the
+                            // card and centred in it, in the picture's own proportions (a space can have been
+                            // snapshot on another display).
+                            id: snapshotFrame
                             anchors.fill: parent; anchors.margins: 1; clip: true
                             visible: !!spaceCard.snapshot
+                            readonly property real shotWidth: spacesOverview.width
+                            readonly property real shotHeight: snapshotImage.implicitWidth > 0
+                                ? shotWidth * snapshotImage.implicitHeight / snapshotImage.implicitWidth : spacesOverview.height
+                            readonly property real shown: Math.max(1, shotHeight - spacesOverview.bandTop - spacesOverview.bandBottom)
+                            readonly property real zoom: Math.max(width / Math.max(1, shotWidth), height / shown)
                             Image {
                                 id: snapshotImage
-                                readonly property real ratio: width / Math.max(1, spacesOverview.width)
-                                width: parent.width; height: spacesOverview.height * ratio; y: -spacesOverview.bandTop * ratio
+                                width: snapshotFrame.shotWidth * snapshotFrame.zoom; height: snapshotFrame.shotHeight * snapshotFrame.zoom
+                                x: (snapshotFrame.width - width) / 2
+                                y: snapshotFrame.height / 2 - (spacesOverview.bandTop + snapshotFrame.shown / 2) * snapshotFrame.zoom
                                 source: spaceCard.snapshot
-                                // The snapshot has the display's resolution (snapshotActiveSpace); decoded about
-                                // 640 px wide, which JPEG does while decoding, so a card holds no more than before.
-                                sourceSize.width: 640
+                                // The snapshot has the display's resolution (snapshotActiveSpace); decoded at the
+                                // card's width (Qt adds the display's scale), which JPEG does while decoding.
+                                sourceSize.width: Math.ceil(card.width)
                                 // Each new snapshot is a new URL (its version), so caching never shows a stale one.
                                 fillMode: Image.Stretch; smooth: true; asynchronous: true
                             }

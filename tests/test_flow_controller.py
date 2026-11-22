@@ -381,6 +381,16 @@ class ControllerTest(unittest.TestCase):
             self.messages(0.3)
         self.assertEqual(self.controller.clients, [])
 
+    def test_it_counts_how_soon_its_first_client_came(self):
+        self.messages(0.1)  # this test's client, connected in setUp, is accepted
+        self.assertIsInstance(self.controller.stats["first_client_ms"], int)
+        first = self.controller.stats["first_client_ms"]
+        late = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(late.close)
+        late.connect(str(fc.socket_path()))
+        self.messages(0.1)
+        self.assertEqual(self.controller.stats["first_client_ms"], first)  # only the first counts
+
     def test_a_second_controller_waits_until_the_first_has_gone(self):
         taken = []
         with patch("sys.stderr", new_callable=lambda: open(os.devnull, "w")):
@@ -412,7 +422,12 @@ class MainTest(unittest.TestCase):
         self.addCleanup(folder.cleanup)
         tmp = Path(folder.name)
         (tmp / "runtime").mkdir()
-        said = []
+        said, before_listening = [], []
+        listen = fc.listen
+
+        def listening(*args, **kwargs):
+            before_listening.append(output.getvalue())  # nothing said while it waits for the socket
+            return listen(*args, **kwargs)
 
         class Serving:
             def __init__(self, *args):
@@ -425,8 +440,10 @@ class MainTest(unittest.TestCase):
 
         with patch.dict(os.environ, {"NIRI_SOCKET": str(tmp / "niri.sock"), "XDG_RUNTIME_DIR": str(tmp / "runtime"),
                                      "XDG_STATE_HOME": str(tmp / "state-home")}), \
-                patch.object(fc, "Controller", Serving), patch("sys.stdout", new_callable=io.StringIO) as output:
+                patch.object(fc, "Controller", Serving), patch.object(fc, "listen", listening), \
+                patch.object(fc.signal, "signal"), patch("sys.stdout", new_callable=io.StringIO) as output:
             self.assertEqual(fc.main(), 0)
+        self.assertEqual(before_listening, [""])
         self.assertEqual(said, ["listening\n"])
 
 
