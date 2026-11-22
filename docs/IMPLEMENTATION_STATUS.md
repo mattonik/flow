@@ -477,14 +477,14 @@ Now a window that is not in the saved session is a space of its own:
 - **Its own column is left out.** The saved windows must be in their saved columns and rows counted without it, so before, between or after the saved columns, it does not stop the order from being confirmed. A column that mixes it with saved windows is not the saved column, and a tiled window with no place in the strip confirms nothing.
 - **Wherever the order is confirmed:** with a pinned app on the workspace, with a side-by-side Group, and with pin order modelled. A pinned app that maps while recovery works, as one opened at login can, is judged the same way rather than always failing.
 - **Between a side-by-side Group's apps** it parts the Group: the report now says *Side-by-side Group order needs manual recovery: another window is between its apps; choose Repair Group layout*, not that the Group is unavailable.
-- **A judgement made here:** a window between saved columns is accepted where order is confirmed (with a pin or a side-by-side Group), while without a pin recovery packs the saved windows to the front. Nothing is lost either way; automatic saving resumes with what is on screen.
+- **Between saved columns, by the user's choice (2026-11-22):** a window between saved columns is accepted where order is confirmed (with a pin or a side-by-side Group), while without a pin recovery packs the saved windows to the front. Nothing is lost either way; automatic saving resumes with what is on screen. Accepting such windows only before or after the saved columns was offered; the user kept this.
 
 Tests:
 - **`test_restore.py`:** the order is confirmed with a column of an unsaved window before, between or after the saved columns, and not with one stacked into a saved column or one with no place. A side-by-side Group with a window opened at login before it gets its saved split; with one between its apps, the report points to the repair and nothing is resized. A pinned app mapping during recovery in a column of its own leaves the order confirmed; stacked into the saved window's column, it does not. Six older tests that expected the order note for a window not in the session were updated to the rule.
 - **Neutralised, each fails tests:** the strict check (nine tests), the note between the halves, judging a late pin by the order check, and the check for a window with no place (two each).
 - **`niri_group_recovery_smoke.py` (guest):** in the simulated restart, an app is opened before recovery runs, as at login. Automatic recovery opens the saved apps after it, rebuilds the pinned Group and succeeds; the next refresh puts the pins first. With the strict check put back, automatic recovery fails there with the order note.
 
-A NEMESIS review found the wrong note between a side-by-side Group's apps, the side-by-side path untested, a late pin still failing outright, and doc claims that did not hold. All are fixed as above; the judgement on windows between saved columns is left to the user.
+A NEMESIS review found the wrong note between a side-by-side Group's apps, the side-by-side path untested, a late pin still failing outright, and doc claims that did not hold. All are fixed as above.
 
 ### Recovery rebuilds a pinned Group as Rejoin Group does (2026-11-22)
 
