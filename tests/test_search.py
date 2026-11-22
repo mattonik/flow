@@ -209,7 +209,7 @@ class SearchTest(unittest.TestCase):
                     self.assertIs(run.call_args.kwargs[stream], search.subprocess.DEVNULL)
 
     def test_open_runs_system_commands_outside_any_app_scope(self):
-        expected = {"lock": ["loginctl", "lock-session"], "suspend": ["systemctl", "suspend"],
+        expected = {"lock": ["flow-lock", "-f"], "suspend": ["systemctl", "suspend"],
                     "logout": ["niri", "msg", "action", "quit", "--skip-confirmation"],
                     "restart": ["systemctl", "reboot"], "poweroff": ["systemctl", "poweroff"]}
         self.assertEqual({value for _, _, kind, value in search.COMMANDS if kind == "command"}, set(expected))

@@ -303,6 +303,15 @@ ShellRoot {
     // flow-spaces on spaces.lock.
     readonly property bool spacesWorking: spacesProcess.running && !["refresh", "auto-layout"].includes(spacesProcess.command[1])
     readonly property bool recoveryWorking: recoveryProcess.running && !String(recoveryProcess.command[1]).startsWith("auto-")
+    // Desk's Save session button, and search's. From search, Desk is closed, so the result is a toast.
+    property bool recoveryToast: false
+    function saveSession(fromSearch) {
+        const busy = recoveryProcess.running ? "Wait for automatic recovery to finish" : spacesWorking ? "Wait for the current action" : ""
+        if (busy) { if (fromSearch) showToast(busy); else recoveryMessage = busy; return }
+        recoveryToast = fromSearch
+        recoveryProcess.command = ["flow-recovery", "save"]
+        recoveryProcess.running = true
+    }
     function renameGroup(id, label) {
         if (recoveryProcess.running || spacesWorking || pendingSpaceActions.length) { spacesError = "Wait for the current action"; return }
         recoveryProcess.command = ["flow-recovery", "rename-group", id, label]
@@ -370,6 +379,7 @@ ShellRoot {
                 try {
                     const result = JSON.parse(this.text)
                     root.recoveryMessage = result.error || result.message || "Recovery unavailable"
+                    if (recoveryProcess.command[1] === "save" && root.recoveryToast) { root.recoveryToast = false; root.showToast(root.recoveryMessage) }
                     if (recoveryProcess.command[1] === "auto-start" || recoveryProcess.command[1] === "auto-save" || recoveryProcess.command[1] === "auto-ready") {
                         root.autoRecoveryBlocked = !!result.error
                         if (result.error) { root.deskOpen = true; root.settingsOpen = true; Qt.callLater(function() { root.reveal(recoveryStatus) }) }
@@ -619,8 +629,9 @@ ShellRoot {
     property string searchChosenKey: ""
     property string searchChosenFor: ""
     onSearchIndexChanged: {
-        searchArmed = ""   // a command armed for asking first is disarmed by choosing another row
         const chosen = searchMatches[searchIndex]
+        // Choosing another row disarms a command armed to ask first; the same row moving down does not.
+        if (!(chosen && chosen.confirm && chosen.value === searchArmed)) searchArmed = ""
         searchChosenKey = chosen ? chosen.kind + "\n" + chosen.value : ""
         searchChosenFor = searchQuery
     }
@@ -716,13 +727,13 @@ ShellRoot {
     Component {
         id: searchOpener
         Process {
-            property string title: ""
+            property string failure: ""
             property bool began: false
             property bool done: false
             function finish(failed) {
                 if (done) return
                 done = true
-                if (failed) root.showToast("Couldn’t open " + title)
+                if (failed) root.showToast(failure)
                 destroy()
             }
             onStarted: began = true
@@ -731,7 +742,8 @@ ShellRoot {
         }
     }
     function openSearchResult(result) {
-        const opener = searchOpener.createObject(root, { title: result.title, command: ["flow-search", "--open", result.kind, result.value] })
+        const failure = result.kind === "command" ? "Couldn’t " + result.title.toLowerCase() : "Couldn’t open " + result.title
+        const opener = searchOpener.createObject(root, { failure: failure, command: ["flow-search", "--open", result.kind, result.value] })
         opener.running = true
     }
     function openSearchPanel(appsOnly) {
@@ -756,14 +768,18 @@ ShellRoot {
     // A command that ends the session or stops the computer runs only when chosen twice within 5 s: the first
     // choice arms it and its row says so. Typing, choosing another row or closing search disarms it.
     property string searchArmed: ""
+    property real searchArmedAt: 0
     Timer { id: searchArmTimer; interval: 5000; onTriggered: root.searchArmed = "" }
     function runSearchResult(result) {
         if (!result) return
         if (result.confirm && searchArmed !== result.value) {
             searchArmed = result.value
+            searchArmedAt = Date.now()
             searchArmTimer.restart()
             return
         }
+        // A double-click, or Enter pressed twice at once, is one choice, not a second one.
+        if (result.confirm && Date.now() - searchArmedAt < 600) return
         searchArmed = ""
         searchOpen = false
         if (result.kind !== "settings" && !(result.kind === "action" && result.value === "desk")) deskOpen = false
@@ -776,10 +792,7 @@ ShellRoot {
             else if (result.value === "overview") openSpacesOverview()
             else if (result.value === "notifications") { if (!notificationsOpen) toggleNotifications() }
             else if (result.value === "pin") spaceAction("pin")
-            else if (result.value === "save-session") {
-                if (recoveryProcess.running) showToast("Wait for automatic recovery to finish")
-                else { recoveryProcess.command = ["flow-recovery", "save"]; recoveryProcess.running = true }
-            }
+            else if (result.value === "save-session") saveSession(true)
         }
         else if (result.kind === "settings") {
             if (result.value === "quick_open") { if (!quickSettingsOpen) toggleQuickSettings() }
@@ -2029,7 +2042,7 @@ ShellRoot {
                         Text { text: "Save your documents, then save the current window list before restarting."; color: floeTheme.textMuted; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 14; font.family: floeTheme.interfaceFont }
                         Flow {
                             width: parent.width; spacing: 8
-                            FlowButton { id: saveSession; implicitHeight: 44; text: "Save session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: { if (recoveryProcess.running) { root.recoveryMessage = "Wait for automatic recovery to finish"; return } recoveryProcess.command = ["flow-recovery", "save"]; recoveryProcess.running = true } }
+                            FlowButton { id: saveSession; implicitHeight: 44; text: "Save session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: root.saveSession(false) }
                             FlowButton { id: restoreSession; implicitHeight: 44; variant: "quiet"; text: "Restore session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: { if (recoveryProcess.running) { root.recoveryMessage = "Wait for automatic recovery to finish"; return } root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
                         }
                         Text { id: recoveryStatus; visible: root.recoveryMessage !== ""; text: root.recoveryMessage; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
@@ -2482,8 +2495,9 @@ ShellRoot {
                     Accessible.name: root.searchAppsOnly ? "Search apps" : "Search apps, spaces, windows and files"
                     Keys.onDownPressed: root.searchIndex = Math.max(0, Math.min(root.searchMatches.length - 1, root.searchIndex + 1))
                     Keys.onUpPressed: root.searchIndex = Math.max(0, root.searchIndex - 1)
-                    Keys.onReturnPressed: root.runSearchResult(root.searchMatches[root.searchIndex])
-                    Keys.onEnterPressed: root.runSearchResult(root.searchMatches[root.searchIndex])
+                    // A held key repeats: only its first press chooses.
+                    Keys.onReturnPressed: event => { if (!event.isAutoRepeat) root.runSearchResult(root.searchMatches[root.searchIndex]) }
+                    Keys.onEnterPressed: event => { if (!event.isAutoRepeat) root.runSearchResult(root.searchMatches[root.searchIndex]) }
                 }
                 FlowButton {
                     anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }

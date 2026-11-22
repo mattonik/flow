@@ -164,8 +164,8 @@ COMMANDS = [("Open Desk", "Flow", "action", "desk"), ("Overview", "Flow", "actio
             ("Restart", "System · asks first", "command", "restart"),
             ("Power off", "System · asks first", "command", "poweroff")]
 ASKS_FIRST = {"logout", "restart", "poweroff"}
-# Locking goes through logind, so the session's idle daemon starts Flow's lock screen as it does for Super+L.
-SYSTEM_COMMANDS = {"lock": ["loginctl", "lock-session"], "suspend": ["systemctl", "suspend"],
+# Flow's lock screen, as Super+L starts it; -f returns once the screen is locked.
+SYSTEM_COMMANDS = {"lock": ["flow-lock", "-f"], "suspend": ["systemctl", "suspend"],
                    "logout": ["niri", "msg", "action", "quit", "--skip-confirmation"],
                    "restart": ["systemctl", "reboot"], "poweroff": ["systemctl", "poweroff"]}
 
