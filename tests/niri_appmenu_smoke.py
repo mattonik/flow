@@ -278,11 +278,16 @@ def main():
                 wait_for(lambda: state().get("button"), "the App button for Kate")
                 titles = {i: windows()[i]["title"] for i in (kate_a, kate_b)}
                 run_command("^File$", "^New$")
-                changed = wait_for(lambda: [i for i in titles if windows()[i]["title"] != titles[i]], "a Kate title to change", timeout=5)
+                try:
+                    wait_for(lambda: [i for i in titles if windows()[i]["title"] != titles[i]], "a Kate title to change", timeout=5)
+                except RuntimeError:  # the command went nowhere: the check below fails with what the menu says
+                    pass
                 time.sleep(1)
                 changed = [i for i in titles if windows()[i]["title"] != titles[i]]
+                if state().get("open"):  # still open with an error: close it for the next step
+                    ipc("menu")
                 check(f"File > New in Kate window {'A' if chosen == kate_a else 'B'} changes only that window",
-                      changed == [chosen], changed=changed, chosen=chosen, before=titles,
+                      changed == [chosen], changed=changed, chosen=chosen, error=state().get("error"), before=titles,
                       after={i: windows()[i]["title"] for i in titles})
 
             # DB Browser's modal About.
