@@ -3,7 +3,7 @@
 
 Run inside a Niri session from the Flow checkout with the installed shell stopped (``systemctl --user stop
 flow-shell``: it would react to the same events), ``FLOW_SHELL`` naming the development ``shell.qml`` and the
-``flow-spaces`` and ``flow-search`` to measure first on PATH, with ``foot``. The shell gets its own runtime
+``flow-spaces`` and ``flow-search`` to measure first on PATH, with ``foot`` and ``nautilus``. The shell gets its own runtime
 directory, state and configuration, with the opt-in app menu turned on. The work happens on the focused
 display's empty workspace, which must be free: three terminals open there, one of them shaped as a Layer
 (``flow-spaces make-layer``), and later more terminals and a Nautilus window; all are closed afterwards.

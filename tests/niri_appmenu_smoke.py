@@ -90,6 +90,9 @@ def set_a11y(on):
 
 def kate_menu_ends(pid):
     """The right edges of the top-level items in Kate's own menu bar, in its window (x 0 is the window's left)."""
+    import gi
+    gi.require_version("Atspi", "2.0")
+    from gi.repository import Atspi
     import pyatspi
     desktop = pyatspi.Registry.getDesktop(0)
     for app in (desktop.getChildAtIndex(i) for i in range(desktop.childCount)):
@@ -102,9 +105,13 @@ def kate_menu_ends(pid):
                 if child is None:
                     continue
                 if child.getRole() == pyatspi.ROLE_MENU_BAR and child.getState().contains(pyatspi.STATE_SHOWING):
-                    boxes = [item.queryComponent().getExtents(pyatspi.WINDOW_COORDS)
-                             for item in (child.getChildAtIndex(i) for i in range(child.childCount)) if item is not None]
-                    return [box.x + box.width for box in boxes if box.width > 0]
+                    ends = []
+                    for item in (child.getChildAtIndex(i) for i in range(child.childCount)):
+                        # Asked directly: pyatspi's queryComponent() refuses Qt's menu items (NotImplementedError).
+                        box = Atspi.Component.get_extents(item, Atspi.CoordType.WINDOW) if item is not None else None
+                        if box is not None and box.width > 0:
+                            ends.append(box.x + box.width)
+                    return ends
                 if len(queue) < 200:
                     queue.append(child)
     return []
