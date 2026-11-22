@@ -430,19 +430,21 @@ Reopening search while a slow listing was still running showed that listing's re
 ### Commands in search (2026-11-22)
 
 Search lists commands after the apps, before the same apps as Layers, so they come up by typing:
-- **Flow's actions**, run by the shell: *Open Desk*, *Overview*, *Notifications*, *Pin current space* and *Save session* (what Desk's button does, waiting for automatic recovery the same way).
-- **The system's**, run by `flow-search --open command ID`: *Lock screen* (`loginctl lock-session`, so the session's idle daemon starts Flow's lock screen as Super+L does), *Suspend*, *Log out* (Niri's quit), *Restart* and *Power off*. Each runs on its own, as apps and files open, so a failure shows a toast. The IDs map to fixed commands; any other is refused.
-- **Asking first:** *Log out*, *Restart* and *Power off* lose unsaved work, so they run only when chosen twice within 5 s. The first Enter or click arms the row, which then says "Press Enter or click again to restart". Typing, choosing another row or closing search disarms it.
+- **Flow's actions**, run by the shell: *Open Desk*, *Overview*, *Notifications*, *Pin current space* and *Save session*. Save session shares one function with Desk's button and waits for automatic recovery or the current action the same way; from search, Desk is closed, so its result is a toast.
+- **The system's**, run by `flow-search --open command ID`: *Lock screen* (`flow-lock -f`, Flow's lock screen as Super+L starts it, now also on PATH), *Suspend*, *Log out* (Niri's quit), *Restart* and *Power off*. Each runs on its own, as apps and files open, and a failure shows a toast such as "Couldn’t restart". The IDs map to fixed commands; any other is refused.
+- **Asking first:** *Log out*, *Restart* and *Power off* lose unsaved work, so they run only when chosen twice within 5 s. The first Enter or click arms the row, which then says "Press Enter or click again to restart". A second choice within 500 ms of arming (a double-click, or Enter pressed twice at once) counts as the same choice, and a held key's repeats are ignored. Typing, choosing another row or closing search disarms it; the armed row moving down as results arrive does not.
 
 The focused app's menu commands are not listed. That menu is opt-in, off by default, slow on its first walk (about 0.9 s) and turns on accessibility for the whole session, so search does not depend on it; a separate plan for the menu is under way.
 
 Tests:
 - **`test_search.py`:** every command is listed, only the three that end the session or stop the computer ask first, each system command runs its fixed command outside any app scope with no stream of the shell's, and an unknown ID runs nothing.
-- **`niri_search_smoke.py` (guest):** the first Return on *Restart* arms its row and runs nothing; after 5 s it is disarmed, so the next Return only arms it again; a second Return within them runs `flow-search --open command restart` (the stand-in only records it). *Lock screen* runs on one Return, and *Open Desk* opens Desk. Two mutations fail it: no asking first (Restart ran at once) and an arming that never lapses.
+- **`niri_search_smoke.py` (guest):** the first Return on *Restart* arms its row and runs nothing; after 5 s it is disarmed, so the next Return only arms it again; a second Return within them runs `flow-search --open command restart` (the stand-in only records it). Two Returns 50 ms apart, and a double-click with the pointer, only arm it. Choosing another row and back, or closing search, disarms it. *Lock screen* runs on one Return, *Open Desk* opens Desk, and *Save session* shows its result as a toast. Four mutations each fail it at their step: no asking first, an arming that never lapses, no 500 ms guard (Restart ran on the second of two quick Returns) and no disarming on another row. The Save session step found a real bug on its first run: the new function shared its name with Desk's button, whose id won, so search's Save session did nothing.
+
+A NEMESIS review found the double-click and double-Enter hole, the disarm left untested, *Lock screen* depending on the idle daemon (`loginctl lock-session` exits 0 even when nothing catches it), the "Couldn’t open Restart" wording, Save session's silent result, and a disarm when the armed row merely moved. All are fixed as above.
 
 Screenshots: `docs/screenshots/2026-11-22-search-commands`.
 
-Not covered: the system commands themselves in the guest (it would lock, suspend or restart the test machine), and touch.
+Not covered: the system commands themselves in the guest (they would lock, suspend or restart the test machine, and the lock needs a password to leave), a held Enter's repeats (wtype cannot hold a key), why a command failed (its error output is not kept), and touch.
 
 ### Files found by name (2026-11-22)
 
