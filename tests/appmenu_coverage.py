@@ -6,15 +6,16 @@ For each app in APPS it opens one window on the focused output's empty workspace
 - whether the app is on the accessibility bus (an AT-SPI application with the window's PID; for a window whose
   PID is another process's, such as an X11 window's, also the PID the run started) and has a menu bar, with each
   bar's frame, showing state, children and item count;
-- what this checkout's reader (session/appmenu.py, run as ``flow-appmenu`` runs it: a fresh process, as the
-  shell starts it) returns for the window: menu items, or its error, and its wall time (median of three runs).
-  The reader's app_name() raises for an app_id with no matching desktop file (LibreOffice), and the reader then
-  returns only that error; so the reader is also run with only that exception caught ("fixed"), to show what the
-  walk itself reaches. The commands and the late column use the fixed reader;
-- the walk itself (``menu_walk``: the reader's walk, state reads included, with counters; a unit test runs both
-  on one tree), in a fresh process: AT-SPI nodes visited, menu items, menu nodes dropped for having no items
-  (unpopulated submenus look like that), time, and the same walk without the reader's caps (2000 nodes, depth
-  12), so a cap that cuts the menu shows;
+- what this checkout's reader (session/appmenu.py's ``Reader``, driven as ``flow-appmenu serve`` is but in a fresh
+  process for each call: a probe of the focused window, then its menu) returns for the window: menu items, or its
+  error, and its wall time (median of three runs). The committed table was made with the reader before it was
+  resident (commit f3cf54c), whose app_name() raised for an app_id with no matching desktop file (LibreOffice);
+  that run also ran it with only that exception caught ("fixed"). The resident reader catches it, so both
+  columns now run the same reader;
+- the walk itself (``menu_walk``: the walk of that earlier reader over the whole app, state reads included, with
+  counters; a unit test checks it lists what the resident reader lists), in a fresh process: AT-SPI nodes visited,
+  menu items, menu nodes dropped for having no items (unpopulated submenus look like that), time, and the same walk
+  without that reader's caps (2000 nodes, depth 12), so a cap that cuts the menu shows;
 - how many of the items carry a shortcut label (``Action.getKeyBinding``);
 - whether a harmless command (an About dialog) runs through the reader's ``activate`` path, AT-SPI
   ``doAction``, and whether its effect shows (a new window of the app's process, closed again);
@@ -609,14 +610,13 @@ def run(argv, env, timeout=120):
 
 
 def reader(*args, fixed=False):
-    """session/appmenu.py with ``args``, on the private bus, the test apps' desktop files and programs findable
-    as an installed app's are (GIO finds no desktop file whose Exec program is not on PATH). ``fixed``: with
-    app_name()'s TypeError caught."""
+    """The reader (``reader_main``) with ``args``, on the private bus, the test apps' desktop files and programs
+    findable as an installed app's are (GIO finds no desktop file whose Exec program is not on PATH). ``fixed``
+    named the earlier reader with app_name()'s TypeError caught; the resident reader catches it itself."""
     env = bus_env()
     for var, sub in (("XDG_DATA_DIRS", "share"), ("PATH", "bin")):
         env[var] = ":".join(filter(None, [*(f"{r}/{sub}" for r in STATE["roots"]), env.get(var, "")]))
-    argv = [sys.executable, __file__, "reader-fixed", *args] if fixed else [sys.executable, str(READER), *args]
-    return run(argv, env, timeout=60)
+    return run([sys.executable, __file__, "reader", *args], env, timeout=60)
 
 
 def load_reader():
@@ -626,22 +626,40 @@ def load_reader():
     return appmenu
 
 
-def reader_fixed_main(args):
+def reader_main(args):
+    """session/appmenu.py's Reader, as ``flow-appmenu serve`` drives it, in this fresh process: a probe of the
+    focused window, then its menu (no ``args``) or a command (``activate WINDOW PATH LABEL``). Prints the result in
+    the earlier reader's shape, ``{"id", "name", "menus"}``, or ``{"error"}`` with exit status 1. Like ``serve``,
+    it switches accessibility on first: only ever on the run's private bus (``bus_env``), so without a mark."""
     appmenu = load_reader()
-    original = appmenu.app_name
+    import gi
+    gi.require_version("Atspi", "2.0")
+    from gi.repository import Atspi
+    switch = appmenu.Switch()
+    if not switch.get("IsEnabled"):
+        switch.set(True)
+    import pyatspi
+    Atspi.set_timeout(*appmenu.METHOD_TIMEOUT_MS)
+    r = appmenu.Reader(pyatspi, set_timeout=Atspi.set_timeout)
 
-    def app_name(app_id, title):
-        try:
-            return original(app_id, title)
-        except TypeError:  # GioUnix.DesktopAppInfo.new: "constructor returned NULL"
-            return app_id or title or "Application"
-    appmenu.app_name = app_name
-    sys.argv = ["flow-appmenu", *args]
-    try:
-        appmenu.main()
-    except Exception as exc:
-        print(json.dumps({"error": str(exc)}))
+    def ask(**request):
+        return json.loads(r.answer(json.dumps({"id": 1, **request})))
+    probe = ask(op="probe")
+    if probe.get("error"):
+        print(json.dumps({"error": probe["error"]}))
         sys.exit(1)
+    if probe.get("window") is None:
+        print("null")
+        return
+    if args and args[0] == "activate":
+        if str(probe["window"]) != args[1]:
+            print(json.dumps({"error": "Application focus changed"}))
+            sys.exit(1)
+        done = ask(op="activate", window=probe["window"], path=json.loads(args[2]), label=args[3])
+        print(json.dumps(done))
+        sys.exit(1 if done.get("error") else 0)
+    menus = ask(op="read", window=probe["window"]).get("menus", []) if probe.get("has_menu") else []
+    print(json.dumps({"id": probe["window"], "name": probe.get("name"), "menus": menus}))
 
 
 def probe(*args):
@@ -876,7 +894,8 @@ MENU_ROLES = ("ROLE_MENU", "ROLE_MENU_ITEM", "ROLE_CHECK_MENU_ITEM", "ROLE_RADIO
 
 
 def menu_walk(node, depth, menu, st, capped, found_leaves, at):
-    """session/appmenu.py's walk (active_window's ``walk``), state reads included, with counters in ``st``: nodes
+    """The walk of session/appmenu.py before it was resident (``active_window``'s ``walk``, over the whole app),
+    state reads included, with counters in ``st``: nodes
     visited, deepest level, menu bars, and menu nodes dropped for yielding no items. ``capped`` applies its
     limits; ``at`` is pyatspi."""
     st["nodes"] += 1
@@ -1212,7 +1231,7 @@ def main():
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "probe":
         print(json.dumps(probe_main(int(sys.argv[2]), sys.argv[3:])))
-    elif len(sys.argv) > 1 and sys.argv[1] == "reader-fixed":
-        reader_fixed_main(sys.argv[2:])
+    elif len(sys.argv) > 1 and sys.argv[1] == "reader":
+        reader_main(sys.argv[2:])
     else:
         main()
