@@ -214,3 +214,41 @@ Each change neutralised in turn, keeping its symbols (idle 20 s):
 | No process per focus change | main's `shell.qml`, which starts `flow-appmenu identity` after each focus change | 41 `flow-appmenu` processes (1); no probe timings |
 
 No variant failed any other check but main's shell, whose Desk read 151 ms (< 150) once among its processes.
+
+## Startup, many spaces, frames and HiDPI (2026-11-22)
+
+Phase 3 of the plan was meant for real hardware: frame pacing, the cost of the icons' multisampled layers, battery, snapshots on a HiDPI display, startup time and realistic numbers of apps. No physical machine runs Flow yet, so `tests/niri_scale_probe.py` measures all of it on whatever it runs on and reports the display it ran on. It ran in the UTM guest (ARM64, virgl, 1280 × 800 at 120 Hz, and 3840 × 2160 at 60 Hz and scale 2 for the HiDPI rows); the same command on a laptop gives that laptop's numbers. Frame times come from Qt itself: the probe runs the shell with `qt.scenegraph.time.renderloop` logging on and reads, for every frame of every shell window, the time to sync, render and swap, and the time since the window's previous frame. The guest's GPU timings are virgl's, which says nothing about an Intel, AMD or Arm GPU; what follows separates what holds anywhere from what is the guest's.
+
+**What main measured** (scale 1; empty terminals as spaces, two runs):
+
+| | 5 spaces | 24 spaces |
+|---|---|---|
+| Startup: IPC answering / first frame / every space shown | 323 / 326 / 708 ms | 364 / 370 / 744 ms |
+| Shell memory (RSS) / controller | 175 / 23 MB | 175 / 23 MB |
+| Idle, 20 s: frames drawn | 0 | 0 |
+| Idle wakeups per second: shell / controller / Niri | 0–0.9 / 0 / 3.4–4.2 | 0–0.8 / 0 / 6.8–7.3 |
+| Focus every 0.25 s: shell / helpers CPU | 1.5–2.3% / 0.8–1.1% | 1.7–3.3% / 0.8–1.1% |
+| The controller's refresh | 4.0–4.6 ms | 5.0–5.7 ms |
+| The state the controller sends the shell | 2.8 KB | 10.6 KB |
+| Overview / Desk / search, shell's own timing (medians of 5) | 90–121 / 52–61 / 156–164 ms | 101–123 / 44–52 / 125–190 ms |
+
+Idle holds up: the shell draws nothing, the clock's minute aside, and wakes less than once a second. Its controller does not wake at all. Twenty-four spaces cost the shell no memory at start (before Overview has shown a card; see below for with it) and the controller about a millisecond per refresh; every surface stays within its budget.
+
+**Every surface's window is built afresh each time it shows.** Quickshell 0.3.2 deletes a layer-shell window whenever it is hidden (`WlrLayershell::deleteOnInvisible()` always returns true, to avoid a Wayland protocol error) and builds a new one, with its own OpenGL context and scene graph, when it shows again. So each opening of Desk, Overview or search builds that surface's window, and each closing builds the island, the home indicator and the work indicator again, which hide while Desk or Overview is open. The frame log shows it: an opening draws at least one new window, a closing at least two (counted by window address, which a new window can reuse). What that costs the render threads (sync and render, not the swap's wait for the display) is small: 10–23 ms an opening and 13–21 ms a closing, at either size. The long gaps the log shows, 150–310 ms, are the first frame of a new window waiting on virgl, mostly in its swap. Keeping the three small windows mapped with their content hidden was tried: closing then built nothing, but Overview's opening slowed from 149 to 296 ms, because the small windows now redrew in the same moment as Overview's first frame. Keeping Desk or Overview mapped while hidden is no better a trade: Niri would blend an invisible full-screen layer into every frame it draws. Nothing was changed.
+
+**The icons' multisampled layers.** Each `FlowIcon` draws into a layer with 4× multisampling, because the curve renderer's strokes break up under virgl. With the layers off, the guest showed no difference in any opening or closing, so they stay. Whether they cost anything on a real GPU is for the probe to show there.
+
+**HiDPI: Overview waited for a slow snapshot.** Overview takes a snapshot of the space on screen before it shows. At 3840 × 2160 and scale 2, Overview's first frame took 347–414 ms against its 200 ms budget. Most of it was `grim` scaling the picture down to 640 px wide: on a screen of text that took 172 ms, where the capture at the display's own resolution took 87 ms (16 against 27 ms at 1280 × 800). The scaling costs the same at any size asked for, 164–187 ms from 960 down to 640 px. So the shell now takes the snapshot at the display's resolution, and Overview's card decodes it at the card's own size (Qt adds the display's scale; JPEG scales while it decodes), in the picture's own proportions, so a snapshot taken on another display is not stretched. With 24 spaces at 4K and Overview open, the shell held 180.4 MB against main's 180.7. It shows the same crop: [before and after, at scale 1 and at 4K](screenshots/2026-11-22-native-snapshots). The cost is the files: about 0.9 MB per space at 4K with a screen of text, against 33 KB, in the session's runtime folder, which is memory. With 24 spaces on a 4K display that is about 20 MB; a space's file goes when the space does. Snapshots are also taken whenever a space settles, so this halves their CPU there too.
+
+Overview's opening time (`open_took`) now also waits until every card on screen shows its snapshot, so decoding a larger file cannot hide behind it.
+
+| At 3840 × 2160, scale 2 (8 spaces, medians of 5) | Main | This change | Neutralised (grim scaling again) |
+|---|---|---|---|
+| Overview's first frame, every card showing its snapshot | 347 and 414 ms ✗ | 179 and 218 ms | 443 ms ✗ |
+| Startup to every space shown | 707 and 734 ms | 580 and 599 ms | |
+
+Main's figures end at its first frame with every card, before the cards' pictures were decoded; this change's wait for them. The 218 ms run misses the 200 ms budget: what is left is the new window's first frame at 4K under virgl, about 150 ms.
+
+**Startup waited for a timer.** The shell starts its controller and connects to it on a 250 ms timer, but the controller listens about 30 ms after it starts. It now prints `listening` when it does, and the shell connects on that line. The timer stays as a fallback, should the line not come or the connection drop, and now tries every second: the controller prints the line after every restart as well. The shell shows every space 110–150 ms sooner: 565 against 708 ms with five spaces, 690 against 744 with 24, and the 4K figures above. `tests/test_flow_controller.py` checks that the line comes once the socket takes connections, and not before; printed before, or not at all, the test fails. The controller counts how soon its first watcher (the shell) came, and the performance smoke checks that it was within 100 ms of the controller listening: 8 and 49 ms in two runs. With the shell's side of the line removed it was 964 ms, and the check fails. (With the timer still at 250 ms, a shell without the line came 143–225 ms after the controller listened, and could have come within the limit; that, too, is why the timer is now a second.)
+
+**Not measured:** battery itself (the guest has none; wakeups stand in for it), and frame times on a real GPU. On a laptop: stop `flow-shell` and run `tests/niri_scale_probe.py` as `tests/niri_performance_smoke.py` is run, with `FLOW_SHELL` set.

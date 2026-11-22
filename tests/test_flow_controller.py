@@ -1,5 +1,6 @@
 """The resident controller: when it refreshes, what it pushes, and that it never waits on an action."""
 import fcntl
+import io
 import json
 import os
 from pathlib import Path
@@ -418,6 +419,20 @@ class ControllerTest(unittest.TestCase):
             self.messages(0.3)
         self.assertEqual(self.controller.clients, [])
 
+    def test_it_counts_how_soon_its_first_watcher_came_not_other_clients(self):
+        self.messages(0.1)  # this test's client, connected in setUp, only connected
+        self.assertIsNone(self.controller.stats["first_watcher_ms"])
+        self.ask({"get": "stats"})
+        self.messages(0.1)
+        self.assertIsNone(self.controller.stats["first_watcher_ms"])  # asking for stats is not watching
+        self.ask({"watch": True})
+        self.messages(0.1)
+        first = self.controller.stats["first_watcher_ms"]
+        self.assertIsInstance(first, int)
+        self.ask({"watch": True})
+        self.messages(0.1)
+        self.assertEqual(self.controller.stats["first_watcher_ms"], first)  # only the first counts
+
     def test_a_second_controller_waits_until_the_first_has_gone(self):
         taken = []
         with patch("sys.stderr", new_callable=lambda: open(os.devnull, "w")):
@@ -440,6 +455,38 @@ class ControllerTest(unittest.TestCase):
             self.assertIsNotNone(server)
             server.close()
             lock.close()
+
+
+class MainTest(unittest.TestCase):
+    def test_it_says_listening_once_its_socket_takes_connections(self):
+        """The shell connects when it reads the line, instead of at its next try a quarter of a second on."""
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        tmp = Path(folder.name)
+        (tmp / "runtime").mkdir()
+        said, before_listening = [], []
+        listen = fc.listen
+
+        def listening(*args, **kwargs):
+            before_listening.append(output.getvalue())  # nothing said while it waits for the socket
+            return listen(*args, **kwargs)
+
+        class Serving:
+            def __init__(self, *args):
+                pass
+
+            def serve(self):
+                said.append(output.getvalue())
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as shell:
+                    shell.connect(str(fc.socket_path()))  # as the shell would on reading it
+
+        with patch.dict(os.environ, {"NIRI_SOCKET": str(tmp / "niri.sock"), "XDG_RUNTIME_DIR": str(tmp / "runtime"),
+                                     "XDG_STATE_HOME": str(tmp / "state-home")}), \
+                patch.object(fc, "Controller", Serving), patch.object(fc, "listen", listening), \
+                patch.object(fc.signal, "signal"), patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(fc.main(), 0)
+        self.assertEqual(before_listening, [""])
+        self.assertEqual(said, ["listening\n"])
 
 
 class NiriStateFocusTimestampTest(unittest.TestCase):
