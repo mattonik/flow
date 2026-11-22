@@ -291,7 +291,8 @@ def main():
                          "stayed whole after them and the Group pin reached the Group")
 
             # Pins out of order stay so while the pause lasts, and the first refresh after it puts them back: the
-            # pinned Group moved to the end, after the unpinned side-by-side Group, until that Group is stacked.
+            # pinned Group moved to the end, after the unpinned side-by-side Group, until that Group is stacked (a
+            # layout change ends with a refresh).
             niri("action", "focus-window", "--id", window("a")["id"])
             niri("action", "move-column-to-index", 4)
             expect(["n", "u", "v", "ab"], "the pinned Group moved to the end")
@@ -301,9 +302,9 @@ def main():
                 raise RuntimeError(f"A pin is not this display's or not available while paused: {paused['pins']}")
             niri("action", "focus-window", "--id", window("u")["id"])
             spaces("group-layout", other_id)
-            expect(["n", "uv", "ab"], "the second Group stacked, ending the pause")
+            expect(["ab", "n", "uv"], "the pins back in pin order once the second Group, stacked, ended the pause")
             current = spaces("refresh")
-            expect(["ab", "n", "uv"], "the pins back in pin order once the pause ended")
+            expect(["ab", "n", "uv"], "the pins still in pin order at the next refresh")
             pins = {p["id"]: p for p in current["pins"]}
             if (set(pins[group_pin]["window_ids"]) != {window("a")["id"], window("b")["id"]}
                     or pins[app_pin]["window_ids"] != [window("n")["id"]]):
@@ -314,7 +315,7 @@ def main():
             expect(["ab", "n", "u"], "the second Group dissolved and v closed")
             steps.append("with the pinned Group moved after the unpinned side-by-side Group, a refresh left the pins "
                          "out of order while that Group paused pin ordering; once it was stacked, the next refresh "
-                         "put the pinned Group and the pinned app back first, in pin order")
+                         "put the pinned Group and the pinned app back first, in pin order, and the next kept them so")
 
             # Recovery does the same: the pinned Group's apps apart with an app already open after them.
             tool("flow-recovery", "save")
