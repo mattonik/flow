@@ -1,0 +1,418 @@
+"""The resident controller: when it refreshes, what it pushes, and that it never waits on an action."""
+import fcntl
+import json
+import os
+from pathlib import Path
+import socket
+import sys
+import tempfile
+import threading
+import time
+import unittest
+import unittest.mock
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).parents[1] / "session"))
+import flow_controller as fc  # noqa: E402
+import spaces  # noqa: E402  the module the controller runs, so patches reach it
+
+
+class CoalescerTest(unittest.TestCase):
+    def test_a_refresh_waits_for_a_quiet_moment(self):
+        c = fc.Coalescer()
+        self.assertIsNone(c.due())
+        c.event(10.0)
+        c.event(10.1)
+        self.assertAlmostEqual(c.due(), 10.1 + fc.QUIET)
+
+    def test_a_steady_stream_still_refreshes_after_the_maximum_wait(self):
+        c = fc.Coalescer()
+        for step in range(40):
+            c.event(10.0 + step * 0.05)
+        self.assertAlmostEqual(c.due(), 10.0 + fc.MAX_WAIT)
+
+    def test_refreshes_keep_the_minimum_interval(self):
+        c = fc.Coalescer()
+        c.ran(10.0)
+        c.event(10.05)
+        self.assertAlmostEqual(c.due(), 10.0 + fc.MIN_INTERVAL)
+
+    def test_a_title_shows_at_once_then_at_most_once_a_second(self):
+        c = fc.Coalescer()
+        c.event(10.0, title_only=True)
+        self.assertAlmostEqual(c.due(), 10.0)
+        c.ran(10.0)
+        c.event(10.05, title_only=True)
+        self.assertAlmostEqual(c.due(), 10.0 + fc.TITLE_INTERVAL)
+        c.event(10.6, title_only=True)
+        self.assertAlmostEqual(c.due(), 10.0 + fc.TITLE_INTERVAL)
+
+    def test_a_requested_refresh_runs_at_once(self):
+        c = fc.Coalescer()
+        c.ran(10.0)
+        c.now()
+        self.assertLess(c.due(), 10.0)
+        c.ran(10.01)
+        self.assertIsNone(c.due())
+
+
+class TitleOnlyTest(unittest.TestCase):
+    def test_only_a_title_change_is_title_only(self):
+        window = {"id": 1, "title": "a", "app_id": "foot", "is_focused": True, "layout": {"tile_size": [1, 2]}}
+        self.assertTrue(fc.title_only(window, {**window, "title": "b"}))
+        self.assertFalse(fc.title_only(window, {**window, "title": "b", "is_focused": False}))
+        self.assertFalse(fc.title_only(window, dict(window)))
+        self.assertFalse(fc.title_only(None, window))
+
+
+WORKSPACE = {"id": 1, "idx": 1, "output": "Virtual-1", "is_active": True, "is_focused": True, "active_window_id": 7}
+OUTPUTS = {"Virtual-1": {"name": "Virtual-1", "make": "Flow", "model": "Test", "serial": None,
+                         "logical": {"width": 1280, "height": 800, "transform": "Normal"}}}
+
+
+def window(ident, title, column):
+    return {"id": ident, "title": title, "app_id": "foot", "pid": 100 + ident, "workspace_id": 1,
+            "is_focused": ident == 7, "is_floating": False, "is_urgent": False,
+            "layout": {"pos_in_scrolling_layout": [column, 1], "tile_size": [600.0, 800.0]}}
+
+
+class FakeNiri:
+    """Niri's socket: queries answered from ``self.windows``; an event stream the test writes to."""
+
+    def __init__(self, path):
+        self.windows = [window(7, "one", 1), window(8, "two", 2)]
+        self.streams = []
+        self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.server.bind(path)
+        self.server.listen()
+        threading.Thread(target=self.serve, daemon=True).start()
+
+    def serve(self):
+        while True:
+            try:
+                connection, _ = self.server.accept()
+            except OSError:
+                return
+            threading.Thread(target=self.handle, args=(connection,), daemon=True).start()
+
+    def handle(self, connection):
+        stream = connection.makefile("rwb")
+        connection.close()  # the stream keeps the socket open until it is closed
+        for line in stream:
+            request = json.loads(line)
+            if request == "EventStream":
+                stream.write(b'{"Ok":"Handled"}\n')
+                stream.flush()
+                self.streams.append(stream)
+                self.send({"WorkspacesChanged": {"workspaces": [WORKSPACE]}})
+                self.send({"WindowsChanged": {"windows": self.windows}})
+                return
+            answer = {"Workspaces": [WORKSPACE], "Windows": self.windows, "Outputs": OUTPUTS}[request]
+            stream.write(json.dumps({"Ok": {request: answer}}).encode() + b"\n")
+            stream.flush()
+        stream.close()
+
+    def send(self, event):
+        for stream in list(self.streams):
+            try:
+                stream.write(json.dumps(event).encode() + b"\n")
+                stream.flush()
+            except OSError:
+                self.streams.remove(stream)
+
+    def end_streams(self):
+        for stream in self.streams:
+            stream.close()
+        self.streams = []
+
+    def close(self):
+        self.end_streams()
+        self.server.close()
+
+
+class ControllerTest(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.tmp = Path(folder.name)
+        self.niri = FakeNiri(str(self.tmp / "niri.sock"))
+        self.addCleanup(self.niri.close)
+        for name, value in (("RECONNECT", 0.2), ("TITLE_INTERVAL", 0.3)):
+            patcher = patch.object(fc, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        for patcher in (patch.dict(os.environ, {"NIRI_SOCKET": str(self.tmp / "niri.sock"),
+                                                "XDG_RUNTIME_DIR": str(self.tmp / "runtime"),
+                                                "XDG_STATE_HOME": str(self.tmp / "state-home")}),
+                        patch.object(spaces, "session_id", return_value="session")):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        (self.tmp / "runtime").mkdir()
+        server, lock = fc.listen(self.tmp / "runtime", wait=False)
+        self.first_lock = lock
+        self.addCleanup(lock.close)
+        self.addCleanup(server.close)
+        self.controller = fc.Controller(self.tmp / "state", str(self.tmp / "niri.sock"), server)
+        self.addCleanup(lambda: self.controller.stream and self.controller.stream.close())
+        self.client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.client.connect(str(fc.socket_path()))
+        self.addCleanup(self.client.close)
+        self.client.settimeout(0)
+        self.received = b""
+
+    def ask(self, request):
+        self.client.sendall(json.dumps(request).encode() + b"\n")
+
+    def messages(self, seconds):
+        """Run the controller for ``seconds`` and return what this client received meanwhile."""
+        end, timeout = time.monotonic() + seconds, 0.0
+        while time.monotonic() < end:
+            timeout = self.controller.turn(min(timeout, 0.02))
+            try:
+                self.received += self.client.recv(1 << 20)
+            except BlockingIOError:
+                pass
+        *lines, self.received = self.received.split(b"\n")
+        return [json.loads(line) for line in lines]
+
+    def states(self, seconds):
+        return [m["state"] for m in self.messages(seconds) if "state" in m]
+
+    def labels(self, state):
+        return [w["label"] for w in state["windows"]]
+
+    def test_a_watcher_gets_the_state_then_each_change(self):
+        self.ask({"watch": True})
+        [state] = self.states(0.4)
+        self.assertEqual((self.labels(state), state["action"]), (["one", "two"], "refresh"))
+        self.niri.windows = [window(7, "one", 1), window(8, "two", 2), window(9, "three", 3)]
+        self.niri.send({"WindowOpenedOrChanged": {"window": self.niri.windows[-1]}})
+        [state] = self.states(fc.QUIET + 0.3)
+        self.assertEqual(self.labels(state), ["one", "two", "three"])
+        self.assertEqual(self.controller.stats["pushes"], 2)
+
+    def test_a_title_change_shows_at_once_then_at_most_once_an_interval(self):
+        self.ask({"watch": True})
+        self.states(fc.TITLE_INTERVAL + 0.1)  # the first state, and long enough after it
+        refreshes, seen, started = self.controller.stats["refreshes"], [], time.monotonic()
+        for index in range(12):  # a title every 0.05 s for 0.6 s
+            self.niri.windows[0] = {**self.niri.windows[0], "title": f"title {index}"}
+            self.niri.send({"WindowOpenedOrChanged": {"window": self.niri.windows[0]}})
+            seen += [(time.monotonic() - started, self.labels(s)[0]) for s in self.states(0.05)]
+        seen += [(time.monotonic() - started, self.labels(s)[0]) for s in self.states(fc.TITLE_INTERVAL + 0.1)]
+        self.assertEqual(self.controller.stats["title_only"], 12)
+        self.assertLess(seen[0][0], 0.1)  # the first title at once
+        self.assertEqual(seen[-1][1], "title 11")  # the last one within an interval of the stream's end
+        self.assertLessEqual(self.controller.stats["refreshes"] - refreshes, 4)  # 0.6 s / 0.3 s, plus the first and last
+
+    def test_a_refresh_asked_for_is_answered_even_unchanged(self):
+        self.ask({"watch": True})
+        self.states(0.4)
+        self.ask({"refresh": 7})
+        [message] = [m for m in self.messages(0.3) if "state" in m]
+        self.assertEqual((message["refreshed"], self.labels(message["state"])), (7, ["one", "two"]))
+
+    def test_forwarded_events_reach_watchers(self):
+        self.ask({"watch": True})
+        self.states(0.4)
+        self.niri.send({"WindowFocusChanged": {"id": 8}})
+        self.niri.send({"OverviewOpenedOrClosed": {"is_open": True}})
+        self.niri.send({"KeyboardLayoutSwitched": {"idx": 1}})
+        events = [m["event"] for m in self.messages(0.3) if "event" in m]
+        self.assertEqual([next(iter(e)) for e in events], ["WindowFocusChanged", "OverviewOpenedOrClosed"])
+
+    def test_an_action_holding_the_lock_is_waited_for_never_blocked_on_nor_spun_on(self):
+        self.ask({"watch": True})
+        self.states(0.4)
+        refreshes = self.controller.stats["refreshes"]
+        with (self.tmp / "state" / "session.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            self.ask({"refresh": 1})
+            self.ask({"get": "observe"})
+            end, timeout = time.monotonic() + 0.5, 0.0
+            while time.monotonic() < end:  # the loop as it runs: each turn waits as long as the last one said
+                timeout = self.controller.turn(timeout)
+            self.assertEqual(self.controller.stats["refreshes"], refreshes)
+            self.assertTrue(1 <= self.controller.stats["busy"] <= 2 * (0.5 / fc.BUSY_RETRY + 1),
+                            self.controller.stats["busy"])
+        self.messages(0.3)
+        self.assertEqual(self.controller.stats["refreshes"], refreshes + 1)
+
+    def test_a_refresh_asked_for_skips_the_minimum_interval(self):
+        self.ask({"watch": True})
+        self.states(0.4)
+        self.niri.send({"WindowLayoutsChanged": {"changes": []}})
+        self.states(fc.QUIET + 0.05)  # a refresh for the event has just run
+        self.ask({"refresh": 3})
+        started = time.monotonic()
+        while not [m for m in self.messages(0.02) if m.get("refreshed") == 3]:
+            self.assertLess(time.monotonic() - started, fc.MIN_INTERVAL / 2)
+
+    def test_desktop_names_are_read_afresh_for_each_refresh(self):
+        with patch.object(spaces.app_name, "cache_clear") as clear:
+            self.states(0.3)
+        self.assertGreaterEqual(clear.call_count, 1)
+
+    def test_a_focus_timestamp_does_not_make_the_next_title_change_structural(self):
+        self.ask({"watch": True})
+        self.states(fc.TITLE_INTERVAL + 0.1)
+        stamp = {"secs": 9, "nanos": 1}
+        self.niri.send({"WindowFocusTimestampChanged": {"id": 7, "focus_timestamp": stamp}})
+        self.niri.windows[0] = {**self.niri.windows[0], "title": "renamed", "focus_timestamp": stamp}
+        self.niri.send({"WindowOpenedOrChanged": {"window": self.niri.windows[0]}})
+        self.messages(0.1)
+        self.assertEqual(self.controller.stats["title_only"], 1)
+
+    def test_a_client_that_floods_is_dropped(self):
+        flood = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        flood.connect(str(fc.socket_path()))
+        self.addCleanup(flood.close)
+
+        def send():
+            try:
+                flood.sendall(b"x" * (fc.INBOX_LIMIT + 65536))
+            except OSError:
+                pass  # dropped part-way: the point
+
+        sender = threading.Thread(target=send)
+        sender.start()
+        self.messages(0.5)
+        sender.join(timeout=5)
+        self.assertEqual(len(self.controller.clients), 1)  # only this test's quiet client is left
+        flood.settimeout(1)
+        try:
+            self.assertEqual(flood.recv(10), b"")
+        except ConnectionResetError:
+            pass
+
+    def test_layers_to_reshape_go_to_a_process_of_their_own_once(self):
+        state = {"pins": [], "windows": [], "action": "refresh", "reshape_due": True}
+        process = unittest.mock.Mock()
+        process.poll.return_value = None
+        with patch.object(spaces, "run_locked", return_value=state) as run, \
+             patch.object(fc.subprocess, "Popen", return_value=process) as popen:
+            self.controller.refresh(time.monotonic())
+            self.controller.refresh(time.monotonic())
+        self.assertEqual(run.call_args.kwargs["reshape"], False)
+        popen.assert_called_once()
+        self.assertEqual(popen.call_args.args[0], ["flow-spaces", "refresh"])
+        process.poll.return_value = 0  # it finished: the next display turn reshapes again
+        with patch.object(spaces, "run_locked", return_value=state), \
+             patch.object(fc.subprocess, "Popen", return_value=process) as popen:
+            self.controller.step(time.monotonic())
+            self.controller.refresh(time.monotonic())
+        popen.assert_called_once()
+
+    def test_a_failing_refresh_is_an_error_state_and_the_loop_goes_on(self):
+        self.ask({"watch": True})
+        with patch.object(spaces, "run_locked", side_effect=TypeError("a bug")), \
+             patch("sys.stderr", new_callable=lambda: open(os.devnull, "w")):
+            [state] = self.states(0.3)
+        self.assertIn("TypeError", state["error"])
+        self.assertEqual(self.controller.stats["failures"], 1)
+        self.niri.send({"WindowLayoutsChanged": {"changes": []}})
+        self.assertEqual(self.labels(self.states(fc.MIN_INTERVAL + 0.3)[-1]), ["one", "two"])
+
+    def test_observe_is_answered_fresh_and_writes_nothing(self):
+        self.ask({"get": "observe"})
+        [reply] = [m["reply"] for m in self.messages(0.3) if "reply" in m]
+        self.assertEqual((self.labels(reply), reply["action"]), (["one", "two"], "observe"))
+
+    def test_ask_answers_one_request_for_the_platform_api(self):
+        answer = {}
+        with patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(self.tmp / "runtime")}):
+            asking = threading.Thread(target=lambda: answer.update(fc.ask({"get": "observe"})))
+            asking.start()
+            self.messages(0.3)
+            asking.join(timeout=5)
+        self.assertEqual((self.labels(answer), answer["action"]), (["one", "two"], "observe"))
+        with patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(self.tmp / "nowhere")}), self.assertRaises(OSError):
+            fc.ask({"get": "observe"})
+
+    def test_the_stream_is_reconnected_and_refreshed_after(self):
+        self.ask({"watch": True})
+        self.states(0.4)
+        self.niri.end_streams()
+        self.messages(0.1)
+        self.assertIsNone(self.controller.stream)
+        self.niri.windows = [window(7, "renamed", 1), window(8, "two", 2)]
+        [state] = self.states(fc.RECONNECT + 0.4)[-1:]
+        self.assertIsNotNone(self.controller.stream)
+        self.assertEqual(self.labels(state), ["renamed", "two"])
+
+    def test_a_malformed_niri_event_is_logged_and_the_loop_goes_on(self):
+        self.ask({"watch": True})
+        self.states(0.4)
+        with patch("sys.stderr", new_callable=lambda: open(os.devnull, "w")):
+            self.niri.send({"WindowOpenedOrChanged": {"window": 5}})
+            self.niri.windows = [window(7, "one", 1), window(8, "two", 2), window(9, "three", 3)]
+            self.niri.send({"WindowOpenedOrChanged": {"window": self.niri.windows[-1]}})
+            states = self.states(fc.MAX_WAIT + 0.3)
+        self.assertEqual(self.controller.stats["failures"], 1)
+        self.assertEqual(self.labels(states[-1]), ["one", "two", "three"])
+
+    def test_every_observer_is_answered_when_one_has_gone(self):
+        class Gone:
+            """A client connection whose reader has gone: every send fails."""
+            def __init__(self, connection):
+                self.connection = connection
+            def fileno(self):
+                return self.connection.fileno()
+            def send(self, data):
+                raise BrokenPipeError
+            def close(self):
+                self.connection.close()
+
+        ours, theirs = socket.socketpair()
+        self.addCleanup(theirs.close)
+        gone = fc.Client(Gone(ours))
+        self.controller.clients.append(gone)
+        self.controller.selector.register(gone.connection, fc.selectors.EVENT_READ, gone)
+        self.controller.observers.append(gone)
+        self.ask({"get": "observe"})
+        replies = [m for m in self.messages(0.3) if "reply" in m]
+        self.assertEqual(len(replies), 1)
+        self.assertNotIn(gone, self.controller.clients)
+
+    def test_a_client_that_stops_reading_is_dropped(self):
+        self.ask({"watch": True})
+        with patch.object(fc, "OUTBOX_LIMIT", 64):
+            self.messages(0.3)
+        self.assertEqual(self.controller.clients, [])
+
+    def test_a_second_controller_waits_until_the_first_has_gone(self):
+        taken = []
+        with patch("sys.stderr", new_callable=lambda: open(os.devnull, "w")):
+            waiting = threading.Thread(target=lambda: taken.append(fc.listen(self.tmp / "runtime")))
+            waiting.start()
+            time.sleep(0.3)
+            self.assertEqual(taken, [])  # it waits while this controller holds the lock
+            self.controller.server.close()
+            self.first_lock.close()
+            waiting.join(timeout=5)
+        server, lock = taken[0]
+        self.addCleanup(lock.close)
+        self.addCleanup(server.close)
+        self.assertTrue(fc.socket_path().exists())
+
+    def test_one_controller_per_runtime_folder_and_flow_state(self):
+        self.assertEqual(fc.listen(self.tmp / "runtime", wait=False), (None, None))
+        with patch.dict(os.environ, {"XDG_STATE_HOME": str(self.tmp / "other-state")}):
+            server, lock = fc.listen(self.tmp / "runtime", wait=False)  # a development shell's own state
+            self.assertIsNotNone(server)
+            server.close()
+            lock.close()
+
+
+class NiriStateFocusTimestampTest(unittest.TestCase):
+    def test_a_focus_timestamp_updates_the_known_window(self):
+        from niri_state import NiriState
+        state = NiriState()
+        state.apply({"WindowsChanged": {"windows": [{"id": 1, "title": "a", "focus_timestamp": None}]}})
+        self.assertTrue(state.apply({"WindowFocusTimestampChanged": {"id": 1, "focus_timestamp": {"secs": 5, "nanos": 1}}}))
+        self.assertEqual(state.windows[1]["focus_timestamp"], {"secs": 5, "nanos": 1})
+        self.assertFalse(state.apply({"WindowFocusTimestampChanged": {"id": -1, "focus_timestamp": None}}))
+
+
+if __name__ == "__main__":
+    unittest.main()

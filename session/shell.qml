@@ -187,160 +187,85 @@ ShellRoot {
             appMenuProcess.running = true
         }
     }
+    // Flow's resident controller (session/flow_controller.py) reads Niri's events, refreshes Flow's state
+    // in-process when they ask for it, and sends that state here, with the few Niri events the shell reacts to.
+    // The shell starts it, and starts it again if it stops: 2 s later, then twice as long each time it stops
+    // again (at most a minute), until it has served for 30 s. While another controller serves this runtime
+    // folder and Flow state (a shell restarting), a new one waits for it to go.
     Process {
-        id: niriEvents
-        // The kernel stops the stream when the shell dies, even by SIGKILL, so restarts never leak one.
-        // Without setpriv the stream still runs, only without that guarantee.
-        command: ["sh", "-c", "command -v setpriv >/dev/null && exec setpriv --pdeathsig TERM niri msg -j event-stream; exec niri msg -j event-stream"]
+        id: controllerProcess
+        // The kernel stops the controller when the shell dies, even by SIGKILL, so restarts never leak one.
+        // Without setpriv it still runs, only without that guarantee.
+        command: ["sh", "-c", "command -v setpriv >/dev/null && exec setpriv --pdeathsig TERM flow-controller; exec flow-controller"]
         running: true
-        // Its windows are forgotten with it: the fallback refreshes' labels must stand until a new stream starts.
-        onExited: { root.streamWindows = ({}); eventReconnect.restart() }
-        stdout: SplitParser {
+        onExited: {
+            controllerRestart.interval = Math.min(2000 * Math.pow(2, root.controllerExits), 60000)
+            root.controllerExits += 1
+            controllerRestart.restart()
+        }
+        stderr: SplitParser { onRead: line => console.warn("flow-controller: " + line) }
+    }
+    property int controllerExits: 0   // since one last served for 30 s
+    Timer { id: controllerRestart; onTriggered: if (!controllerProcess.running) controllerProcess.running = true }
+    Timer { id: controllerHealthy; interval: 30000; onTriggered: if (controller.connected) root.controllerExits = 0 }
+    // session/flow_controller.py, socket_path(): one controller per runtime folder and Flow state.
+    readonly property string stateHome: Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state"
+    Socket {
+        id: controller
+        path: Quickshell.env("XDG_RUNTIME_DIR")
+            ? Quickshell.env("XDG_RUNTIME_DIR") + "/flow-controller-" + Qt.md5(root.stateHome).slice(0, 12) + ".sock" : ""
+        onConnectionStateChanged: {
+            if (connected) { write('{"watch": true}\n'); flush(); controllerHealthy.restart() }
+            else { controllerHealthy.stop(); controllerConnect.restart() }
+        }
+        parser: SplitParser {
             onRead: data => {
-                try {
-                    const event = JSON.parse(data)
-                    if (event.WindowOpenedOrChanged) root.windowChanged(event.WindowOpenedOrChanged.window)
-                    else if (event.WindowFocusTimestampChanged) root.trackWindows(event)
-                    else if (event.WorkspacesChanged || event.WorkspaceActivated || event.WorkspaceActiveWindowChanged ||
-                        event.WindowsChanged || event.WindowClosed || event.WindowFocusChanged || event.WindowLayoutsChanged) {
-                        root.trackWindows(event)
-                        root.scheduleRefresh()
-                    }
-                    if (event.WindowsChanged || event.WindowFocusChanged || event.WorkspaceActiveWindowChanged) root.requestAppIdentity()
-                    if (event.WindowFocusChanged && event.WindowFocusChanged.id !== null && root.appMenu && root.appMenu.id !== event.WindowFocusChanged.id) {
-                        if (root.appMenuOpen) root.appMenuFocusChanged = true
-                        else root.appMenu = null
-                        root.openMenuWhenReady = false
-                    }
-                    if (event.WorkspaceActiveWindowChanged && root.appMenu &&
-                            event.WorkspaceActiveWindowChanged.workspace_id === root.appMenu.workspace_id &&
-                            event.WorkspaceActiveWindowChanged.active_window_id !== null &&
-                            event.WorkspaceActiveWindowChanged.active_window_id !== root.appMenu.id) {
-                        if (root.appMenuOpen) root.appMenuFocusChanged = true
-                        else root.appMenu = null
-                        root.openMenuWhenReady = false
-                    }
-                    if (event.WindowClosed && root.appMenu && root.appMenu.id === event.WindowClosed.id) {
-                        if (root.appMenuOpen) root.appMenuFocusChanged = true
-                        else root.appMenu = null
-                        root.openMenuWhenReady = false
-                    }
-                    if (event.OverviewOpenedOrClosed) {
-                        root.overviewOpen = event.OverviewOpenedOrClosed.is_open
-                        if (root.overviewOpen) { root.deskOpen = false; root.spacesOverviewOpen = false; root.overviewPending = false; root.searchOpen = false; root.notificationsOpen = false; root.appMenuOpen = false; root.openMenuWhenReady = false; root.switcherOpen = false; root.quickSettingsOpen = false }
-                    }
-                } catch (e) {}
+                let message = null
+                try { message = JSON.parse(data) } catch (e) { return }
+                if (message.state) {
+                    root.applySpaces(message.state)
+                    if (message.refreshed !== undefined && message.refreshed >= root.deskRefresh && root.deskOpen) root.openEnds("desk")
+                } else if (message.event) root.niriEvent(message.event)
             }
         }
     }
-    Timer { id: eventReconnect; interval: 5000; onTriggered: if (!niriEvents.running) niriEvents.running = true }
-    // Niri's windows as its event stream last described them, by id: a window whose only change is its title
-    // (a terminal or browser retitles itself many times a second) is relabelled here, from the event, rather
-    // than by running flow-spaces. Any other change, or a window not known yet, asks for a refresh.
-    property var streamWindows: ({})
-    function trackWindows(event) {
-        if (event.WindowsChanged) {
-            const known = {}
-            for (const window of event.WindowsChanged.windows) known[window.id] = window
-            streamWindows = known
-        } else if (event.WindowClosed) delete streamWindows[event.WindowClosed.id]
-        else if (event.WindowFocusChanged) {
-            for (const id in streamWindows) streamWindows[id].is_focused = streamWindows[id].id === event.WindowFocusChanged.id
-        } else if (event.WindowLayoutsChanged) {
-            for (const [id, layout] of event.WindowLayoutsChanged.changes) if (streamWindows[id]) streamWindows[id].layout = layout
-        } else if (event.WindowFocusTimestampChanged) {
-            const window = streamWindows[event.WindowFocusTimestampChanged.id]
-            if (window) window.focus_timestamp = event.WindowFocusTimestampChanged.focus_timestamp
+    // Until the controller listens (it starts with the shell) and after it stops, the shell tries again.
+    Timer { id: controllerConnect; interval: 250; running: true; repeat: true; onTriggered: if (controller.connected) stop(); else controller.connected = true }
+    property int refreshAsked: 0
+    property int deskRefresh: 0
+    // A refresh now, answered even if nothing changed: Desk opening, an action that finished, a display resized.
+    function requestRefresh() {
+        if (!controller.connected) return 0
+        refreshAsked += 1
+        controller.write(JSON.stringify({ refresh: refreshAsked }) + "\n")
+        controller.flush()
+        return refreshAsked
+    }
+    function niriEvent(event) {
+        if (event.WindowsChanged || event.WindowFocusChanged || event.WorkspaceActiveWindowChanged) requestAppIdentity()
+        if (event.WindowFocusChanged && event.WindowFocusChanged.id !== null && appMenu && appMenu.id !== event.WindowFocusChanged.id) {
+            if (appMenuOpen) appMenuFocusChanged = true
+            else appMenu = null
+            openMenuWhenReady = false
+        }
+        if (event.WorkspaceActiveWindowChanged && appMenu &&
+                event.WorkspaceActiveWindowChanged.workspace_id === appMenu.workspace_id &&
+                event.WorkspaceActiveWindowChanged.active_window_id !== null &&
+                event.WorkspaceActiveWindowChanged.active_window_id !== appMenu.id) {
+            if (appMenuOpen) appMenuFocusChanged = true
+            else appMenu = null
+            openMenuWhenReady = false
+        }
+        if (event.WindowClosed && appMenu && appMenu.id === event.WindowClosed.id) {
+            if (appMenuOpen) appMenuFocusChanged = true
+            else appMenu = null
+            openMenuWhenReady = false
+        }
+        if (event.OverviewOpenedOrClosed) {
+            overviewOpen = event.OverviewOpenedOrClosed.is_open
+            if (overviewOpen) { deskOpen = false; spacesOverviewOpen = false; overviewPending = false; searchOpen = false; notificationsOpen = false; appMenuOpen = false; openMenuWhenReady = false; switcherOpen = false; quickSettingsOpen = false }
         }
     }
-    function untitled(window) {
-        const copy = Object.assign({}, window)
-        delete copy.title
-        return JSON.stringify(copy)
-    }
-    function windowChanged(window) {
-        const before = streamWindows[window.id]
-        streamWindows[window.id] = window
-        if (window.is_focused) for (const id in streamWindows) if (streamWindows[id].id !== window.id) streamWindows[id].is_focused = false
-        if (!before || untitled(before) !== untitled(window)) scheduleRefresh()
-        else if (before.title !== window.title) titleChanged()
-    }
-    // A new title shows at once, then at most once a second: each relabelling hands every surface new lists to
-    // rebuild, which costs more than a title changing many times a second is worth.
-    property bool titlesPending: false
-    function titleChanged() {
-        if (titleThrottle.running) { titlesPending = true; return }
-        applyTitles()
-        titleThrottle.start()
-    }
-    Timer {
-        id: titleThrottle; interval: 1000
-        onTriggered: if (root.titlesPending) { root.titlesPending = false; root.applyTitles(); start() }
-    }
-    // Labels follow the titles the event stream last reported: after a title-only change, and after each
-    // flow-spaces answer, which may have read Niri before the latest title change and would otherwise bring
-    // back the older title with no refresh to follow. flow-spaces sends, with each label taken from a window's
-    // title, what the label is without one (`untitled`); a space named by its windows says how to join them
-    // (`label_join`). Labels without these, a Group's name for one, are never touched.
-    function applyTitles() {
-        const known = streamWindows
-        const relabel = list => {
-            let changed = false
-            const next = list.map(item => {
-                if (item.untitled === undefined || !known[item.id]) return item
-                const label = known[item.id].title || item.untitled
-                if (item.label === label) return item
-                changed = true
-                return Object.assign({}, item, { label: label })
-            })
-            return changed ? next : list
-        }
-        const windowsNow = relabel(windows)
-        if (windowsNow !== windows) windows = windowsNow
-        const layersNow = relabel(layers)
-        if (layersNow !== layers) layers = layersNow
-        let spacesChanged = false
-        const spacesNow = displaySpaces.map(space => {
-            const members = relabel(space.members)
-            const label = space.label_join !== undefined ? members.map(member => member.label).join(space.label_join) : space.label
-            const addLabel = space.add_untitled !== undefined && known[space.add_id] ? known[space.add_id].title || space.add_untitled : space.add_label
-            if (members === space.members && label === space.label && addLabel === space.add_label) return space
-            spacesChanged = true
-            return Object.assign({}, space, { members: members, label: label, add_label: addLabel })
-        })
-        if (spacesChanged) displaySpaces = spacesNow
-        let groupsChanged = false
-        const groupsNow = incompleteGroups.map(group => {
-            const choices = group.choices.map(choice => {
-                const windowsNow = relabel(choice.windows)
-                return windowsNow === choice.windows ? choice : Object.assign({}, choice, { windows: windowsNow })
-            })
-            if (choices.every((choice, index) => choice === group.choices[index])) return group
-            groupsChanged = true
-            return Object.assign({}, group, { choices: choices })
-        })
-        if (groupsChanged) incompleteGroups = groupsNow
-    }
-    // A refresh 150 ms after the last Niri event (refreshQuiet), but never more than 1 s after the first
-    // unanswered one (refreshMaxWait: a steady stream would otherwise hold the state stale) and never sooner
-    // than 0.5 s after the previous refresh began (refreshMinInterval: events just slower than the quiet period
-    // would otherwise each run one). Timers, not the clock, so a clock that jumps cannot hold refreshes back.
-    property bool refreshWanted: false
-    property bool refreshDue: false
-    function scheduleRefresh() {
-        refreshWanted = true
-        refreshQuiet.restart()
-        if (!refreshMaxWait.running) refreshMaxWait.start()
-    }
-    function refreshIfDue() {
-        if (!refreshWanted || !refreshDue || refreshMinInterval.running) return
-        if (spacesProcess.running || recoveryProcess.running || pendingSpaceActions.length) { refreshBusy.restart(); return }
-        spaceAction("refresh")
-    }
-    Timer { id: refreshQuiet; interval: 150; onTriggered: { root.refreshDue = true; root.refreshIfDue() } }
-    Timer { id: refreshMaxWait; interval: 1000; onTriggered: { root.refreshDue = true; root.refreshIfDue() } }
-    Timer { id: refreshMinInterval; interval: 500; onTriggered: root.refreshIfDue() }
-    Timer { id: refreshBusy; interval: 100; onTriggered: root.refreshIfDue() }
     property string recoveryMessage: ""
     property bool autoRecoveryBlocked: true
     property string renameGroupId: ""
@@ -444,7 +369,8 @@ ShellRoot {
         recoveryProcess.running = true
     }
     function spaceAction(action, id) {
-        // A recovery the user started refuses; an automatic one (every 30 s) is waited for, like a refresh.
+        if (action === "refresh") { requestRefresh(); return }
+        // A recovery the user started refuses; an automatic one (every 30 s) is waited for.
         if (recoveryWorking) { if (action !== "refresh") spacesError = "Wait for session recovery to finish"; return }
         if (recoveryProcess.running || spacesProcess.running || pendingSpaceActions.length) {
             if (action !== "refresh") {
@@ -462,21 +388,28 @@ ShellRoot {
         runSpaces(next.action, next.id)
     }
     function runSpaces(action, id) {
-        // A refresh, or an automatic layout pass, reads Niri after every event that came before it.
-        if (action === "refresh" || action === "auto-layout") {
-            refreshWanted = refreshDue = false
-            refreshQuiet.stop()
-            refreshMaxWait.stop()
-            refreshBusy.stop()
-            refreshMinInterval.restart()
-        }
-        spacesStarted = Date.now()
         spacesProcess.command = id ? ["flow-spaces", action, id] : ["flow-spaces", action]
         spacesProcess.running = true
     }
+    // Flow's state as flow-spaces or the controller reported it.
+    function applySpaces(result) {
+        if (result.error) { spacesError = result.error; return }
+        if (JSON.stringify(windows) !== JSON.stringify(result.windows)) windows = result.windows
+        if (JSON.stringify(displaySpaces) !== JSON.stringify(result.spaces)) displaySpaces = result.spaces
+        if (JSON.stringify(layers) !== JSON.stringify(result.layers || [])) layers = result.layers || []
+        if (JSON.stringify(incompleteGroups) !== JSON.stringify(result.incomplete_groups || [])) incompleteGroups = result.incomplete_groups || []
+        if (JSON.stringify(pins) !== JSON.stringify(result.pins)) pins = result.pins
+        if (JSON.stringify(otherPins) !== JSON.stringify(result.other_pins || [])) otherPins = result.other_pins || []
+        displayLabel = result.display ? result.display.label : ""
+        displayName = result.display ? result.display.name || "" : ""
+        displayCount = result.display_count || 1
+        if (JSON.stringify(displays) !== JSON.stringify(result.displays || [])) displays = result.displays || []
+        displayOrientation = result.orientation || ""
+    }
     Process {
         id: spacesProcess
-        onRunningChanged: if (!running && root.pendingSpaceActions.length) Qt.callLater(root.drainSpaceActions)
+        // The controller reads what the action changed, which Niri may not have sent an event for (a pin).
+        onRunningChanged: if (!running) { root.requestRefresh(); if (root.pendingSpaceActions.length) Qt.callLater(root.drainSpaceActions) }
         stdout: StdioCollector {
             onStreamFinished: {
                 try {
@@ -489,19 +422,7 @@ ShellRoot {
                             else root.deskOpen = true
                         }
                     } else {
-                        if (JSON.stringify(root.windows) !== JSON.stringify(result.windows)) root.windows = result.windows
-                        if (JSON.stringify(root.displaySpaces) !== JSON.stringify(result.spaces)) root.displaySpaces = result.spaces
-                        if (JSON.stringify(root.layers) !== JSON.stringify(result.layers || [])) root.layers = result.layers || []
-                        if (JSON.stringify(root.incompleteGroups) !== JSON.stringify(result.incomplete_groups || [])) root.incompleteGroups = result.incomplete_groups || []
-                        if (JSON.stringify(root.pins) !== JSON.stringify(result.pins)) root.pins = result.pins
-                        if (JSON.stringify(root.otherPins) !== JSON.stringify(result.other_pins || [])) root.otherPins = result.other_pins || []
-                        root.displayLabel = result.display ? result.display.label : ""
-                        root.displayName = result.display ? result.display.name || "" : ""
-                        root.displayCount = result.display_count || 1
-                        if (JSON.stringify(root.displays) !== JSON.stringify(result.displays || [])) root.displays = result.displays || []
-                        root.displayOrientation = result.orientation || ""
-                        root.applyTitles()
-                        if (root.openStarted.desk && root.deskOpen && root.spacesStarted >= root.openStarted.desk) root.openEnds("desk")
+                        root.applySpaces(result)
                         if (result.action !== "refresh") root.spacesError = ""
                         if (result.notice) root.showToast(result.notice)
                         if (["focus", "focus-number", "focus-window", "move-to-display"].includes(result.action)) { root.deskOpen = false; root.switcherOpen = false }
@@ -529,7 +450,7 @@ ShellRoot {
                         root.spacesError = result.error || ""
                         if (!result.error) root.renameGroupId = ""
                     }
-                    if (!result.error) root.scheduleRefresh()
+                    if (!result.error) root.requestRefresh()
                 } catch (e) { root.recoveryMessage = "Could not read recovery result" }
             }
         }
@@ -558,11 +479,10 @@ ShellRoot {
             recoveryProcess.command = ["flow-recovery", "auto-save"]; recoveryProcess.running = true
         }
     }
-    Timer { interval: niriEvents.running ? 30000 : 3000; running: true; repeat: true; triggeredOnStart: true; onTriggered: root.spaceAction("refresh") }
     // A display that changes size (a rotation) reshapes the Layers Flow shaped on the next refresh, and Niri
     // may send no window event for a workspace with only floating windows.
     readonly property string screenSizes: Quickshell.screens.map(screen => screen.name + " " + screen.width + "x" + screen.height).join(",")
-    onScreenSizesChanged: scheduleRefresh()
+    onScreenSizesChanged: requestRefresh()
     // Automatic layout runs when a Group that asks for it does not suit its display's orientation: after a
     // rotation, a move to another display or the toggle. It waits while a shell surface is open or another
     // action runs, and a pass that leaves the same Groups unsuited is not repeated until something changes.
@@ -587,11 +507,10 @@ ShellRoot {
         }
     }
     // For tests/niri_performance_smoke.py: how long the last opening of each surface took inside the shell, from
-    // the request to its content. Desk: until it shows a flow-spaces answer started after it opened. Overview:
+    // the request to its content. Desk: until it shows the refresh it asked the controller for. Overview:
     // until it is shown, after its snapshot. Search: until it shows a listing. Each entry is {ms, count}.
     property var openStarted: ({})
     property var openTook: ({})
-    property real spacesStarted: 0
     function openBegins(name) { openStarted[name] = Date.now() }
     function openEnds(name) {
         if (!openStarted[name]) return
@@ -609,7 +528,7 @@ ShellRoot {
         openMenuWhenReady = false
         if (!deskOpen) Quickshell.execDetached(["niri", "msg", "action", "close-overview"])
         deskOpen = !deskOpen
-        if (deskOpen) { openBegins("desk"); spaceAction("refresh") }
+        if (deskOpen) { openBegins("desk"); deskRefresh = requestRefresh() }
     }
 
     // The search panel is the launcher; closeLauncher remains the name its callers know.

@@ -54,10 +54,11 @@ def main():
     me = Path("/proc/self/comm").read_text().strip()  # the CLI is run by this test, so it is the owner
 
     def orphans():
-        """Niri event streams re-parented to this test: a shell or service that leaked one."""
+        """Niri event streams and controllers re-parented to this test: a shell or service that leaked one."""
         out = subprocess.run(["ps", "-eo", "pid,ppid,cmd"], text=True, stdout=subprocess.PIPE).stdout
         return {line.split()[0] for line in out.splitlines()[1:]
-                if line.split()[1] == str(os.getpid()) and "event-stream" in line}
+                if line.split()[1] == str(os.getpid())
+                and ("event-stream" in line or "flow_controller" in line)}
 
     with IsolatedState("flow-activities-") as tmp:
         runtime = Path(tmp) / "runtime"
@@ -140,12 +141,17 @@ def main():
             steps.append("a caller was refused a fourth activity, and its three ended when it was killed")
 
             # A service killed outright must not leave its event stream behind either. The first service
-            # gives up the name, so the new one owns it and starts its stream before it is killed.
+            # gives up the name, so the new one owns it and starts its stream before it is killed. Its Flow
+            # state is its own, so no shell's controller serves it and it follows Niri itself.
             service.terminate()
             service.wait(timeout=10)
 
             wait_for(lambda: owner() is None, "the first service to give up its name")
-            doomed = start(python, str(CODE / "flow_api.py"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            alone = Path(tmp) / "alone"
+            alone.mkdir()
+            doomed = subprocess.Popen([python, str(CODE / "flow_api.py")], env=dict(env, XDG_STATE_HOME=str(alone)),
+                                      text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            processes.append(doomed)
             wait_for(lambda: owner() == doomed.pid, lambda: f"the second service to own the name ({owner()})")
             wait_for(lambda: "event-stream" in subprocess.run(["ps", "-o", "cmd=", "--ppid", str(doomed.pid)], text=True,
                                                               stdout=subprocess.PIPE).stdout, "its event stream")

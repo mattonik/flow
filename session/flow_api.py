@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """The Flow Platform API service (ADR-0009): spaces on the session D-Bus.
 
-All policy is in flow_api_core; this file only binds it to GDBus, reads state through the read-only
-``flow-spaces observe`` and focuses through the same ``flow-spaces`` actions the shell uses.
+All policy is in flow_api_core; this file only binds it to GDBus. It reads state from the shell's resident
+controller (ADR-0011, flow_controller.py) and emits Changed when the controller's state changes. Without a
+controller (no shell runs) it reads through the read-only ``flow-spaces observe`` and follows Niri's event
+stream itself. It focuses through the same ``flow-spaces`` actions the shell uses.
 """
 import json
 import os
@@ -14,6 +16,7 @@ import time
 from gi.repository import Gio, GLib
 
 import flow_api_core as core
+import flow_controller
 import spaces
 
 PATH = "/io/github/mattonik/Flow1"
@@ -74,6 +77,7 @@ class Service:
         self.session = session
         self.pending = 0
         self.first_event = None
+        self.controller = None  # the connection to the shell's controller, while there is one
 
     def run_spaces(self, *args):
         process = subprocess.run([*self.spaces_command, *args], text=True, stdout=subprocess.PIPE,
@@ -90,7 +94,18 @@ class Service:
         """Flow state, cached briefly for listing. Decisions that grant something use fresh state."""
         stamp, value = self.cache
         if fresh or value is None or time.monotonic() - stamp > CACHE_SECONDS:
-            value = self.run_spaces("observe")
+            try:
+                value = flow_controller.ask({"get": "observe"})
+            except (FileNotFoundError, ConnectionRefusedError, ConnectionResetError):
+                value = self.run_spaces("observe")  # no shell, or its controller just stopped: read it as before
+            except TimeoutError as exc:
+                # A controller that does not answer in time waits on an action, as flow-spaces would.
+                raise core.ApiError("Failed", "Flow is busy; try again") from exc
+            except (OSError, ValueError) as exc:
+                raise core.ApiError("Failed", "Flow state is unavailable") from exc
+            if not isinstance(value, dict) or "error" in value:
+                message = value.get("error") if isinstance(value, dict) else None
+                raise core.error_from(message or "Flow state is unavailable")
             self.cache = (time.monotonic(), value)
         return core.project(value, self.session)
 
@@ -228,9 +243,47 @@ def watch_niri(service, children):
         except GLib.Error:
             line = None
         if line is None:
-            GLib.timeout_add_seconds(5, lambda: watch_niri(service, children) and False)
+            # Ended by a controller taking over (watch_controller), or by Niri: only the latter is restarted.
+            if service.controller is None and children and children[0] is process:
+                GLib.timeout_add_seconds(5, lambda: watch_niri(service, children) and False)
             return
         service.niri_event()
+        source.read_line_async(GLib.PRIORITY_DEFAULT, None, read)
+
+    stream.read_line_async(GLib.PRIORITY_DEFAULT, None, read)
+    return False
+
+
+def watch_controller(service, children):
+    """Changed for each change of the controller's state. While no controller runs (no shell), follow Niri's
+    event stream instead, and look for a controller again every 5 s."""
+    try:
+        address = Gio.UnixSocketAddress.new(str(flow_controller.socket_path()))
+        connection = Gio.SocketClient.new().connect(address, None)
+    except (GLib.Error, OSError):
+        if not children:
+            watch_niri(service, children)
+        GLib.timeout_add_seconds(5, lambda: watch_controller(service, children) and False)
+        return False
+    for child in children:  # the controller follows Niri now
+        child.force_exit()
+    children.clear()
+    service.controller = connection  # kept, or the connection closes
+    connection.get_output_stream().write_all(b'{"watch": true}\n', None)
+    stream = Gio.DataInputStream.new(connection.get_input_stream())
+
+    def read(source, result):
+        try:
+            line, _ = source.read_line_finish_utf8(result)
+        except GLib.Error:
+            line = None
+        if line is None:  # the controller stopped, with its shell
+            service.controller = None
+            GLib.idle_add(lambda: watch_controller(service, children) and False)
+            return
+        if line.startswith('{"state"'):
+            # The first one too: Flow's state may have changed while no controller was watched.
+            service.changed()
         source.read_line_async(GLib.PRIORITY_DEFAULT, None, read)
 
     stream.read_line_async(GLib.PRIORITY_DEFAULT, None, read)
@@ -276,7 +329,7 @@ def main():
         connection.signal_subscribe("org.freedesktop.DBus", "org.freedesktop.DBus", "NameOwnerChanged",
                                     "/org/freedesktop/DBus", None, Gio.DBusSignalFlags.NONE, name_owner_changed)
 
-        watch_niri(holder["service"], children)
+        watch_controller(holder["service"], children)
 
     def lost(_connection, _name):
         if "service" not in holder:
