@@ -15,7 +15,8 @@
     # installed only with Plasma, is not checked. Screen readers, and the opt-in app menu, need the
     # accessibility bus: the evaluated setting must be on, whichever module sets it.
     # The installed flow-search runs for real: the shell's search panel needs `--json` to answer with
-    # results, and `--open` to find gio (opening a missing file fails in gio, never for want of it).
+    # results, `--files` to find a file by name in a user folder, and `--open` to find gio (opening a missing
+    # file fails in gio, never for want of it).
     checks.aarch64-linux.module = let
       inherit (self.nixosConfigurations.test) config pkgs;
       inherit (nixpkgs) lib;
@@ -28,6 +29,9 @@
       ${lib.getExe config.programs.niri.package} validate -c ${niriConfig}
       HOME=$TMPDIR PATH=/no-such ${search}/bin/flow-search --json > rows.json
       ${lib.getExe pkgs.python3} -c 'import json; rows = json.load(open("rows.json")); assert rows and rows[0]["kind"] == "settings", rows'
+      mkdir -p $TMPDIR/Documents/.notes && touch "$TMPDIR/Documents/.notes/Quarterly report.txt"
+      echo report | HOME=$TMPDIR PATH=/no-such ${search}/bin/flow-search --files > files.json
+      ${lib.getExe pkgs.python3} -c 'import json; rows = json.load(open("files.json")); assert [r["title"] for r in rows] == ["Quarterly report.txt"], rows'
       rc=0; HOME=$TMPDIR PATH=/no-such ${search}/bin/flow-search --open file file:///no-such || rc=$?
       [ "$rc" -ne 0 ] && [ "$rc" -ne 127 ] || { echo "flow-search --open exited $rc: gio missing or a missing file opened"; exit 1; }
       mkdir $out

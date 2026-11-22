@@ -596,21 +596,41 @@ ShellRoot {
     property int searchIndex: 0
     readonly property var searchMatches: {
         const query = searchQuery.trim().toLowerCase()
-        const pool = searchAppsOnly ? searchResults.filter(r => r.kind === "app") : searchResults
+        // Files found by name while typing come after search.py's results, less the recent files among them.
+        const listed = new Set(searchResults.filter(r => r.kind === "file").map(r => r.value))
+        const pool = searchAppsOnly ? searchResults.filter(r => r.kind === "app")
+            : searchResults.concat(searchFileResults.filter(r => !listed.has(r.value)))
         if (!query) return pool.slice(0, 60)
         const scored = []
         pool.forEach((result, index) => {
             const title = result.title.toLowerCase(), detail = result.detail.toLowerCase()
             const words = title.split(/[\s·:/._-]+/)
             const score = title === query ? 0 : title.startsWith(query) ? 1 : words.some(w => w.startsWith(query)) ? 2
-                : title.includes(query) ? 3 : detail.includes(query) ? 4 : -1
+                : title.includes(query) ? 3 : detail.includes(query) ? 4
+                : query.split(/\s+/).every(w => title.includes(w)) ? 5 : -1
             if (score >= 0) scored.push({score: score, index: index, result: result})
         })
         // Ties keep search.py's order (an app before the same app as a Layer): V4's sort is not stable.
         scored.sort((a, b) => a.score - b.score || a.index - b.index)
         return scored.slice(0, 60).map(entry => entry.result)
     }
-    onSearchMatchesChanged: searchIndex = 0
+    // The chosen row stays chosen while results arrive for the same query (files come in as they are found);
+    // a new query chooses the first row again.
+    property string searchChosenKey: ""
+    property string searchChosenFor: ""
+    onSearchIndexChanged: {
+        const chosen = searchMatches[searchIndex]
+        searchChosenKey = chosen ? chosen.kind + "\n" + chosen.value : ""
+        searchChosenFor = searchQuery
+    }
+    onSearchMatchesChanged: {
+        const kept = searchChosenFor === searchQuery
+            ? searchMatches.findIndex(r => r.kind + "\n" + r.value === searchChosenKey) : -1
+        if (kept >= 0) searchIndex = kept
+        else { searchIndex = 0; searchIndexChanged() }
+        // A new model scrolls the list back to its top; the chosen row stays in sight.
+        if (searchMatches.length) Qt.callLater(() => searchView.positionViewAtIndex(searchIndex, ListView.Contain))
+    }
     // One listing per opening of search. A listing still running when search opens again lists what was there
     // before (windows since closed): it is sent SIGTERM and its answer dropped, so only the newest one is shown.
     // That stops search.py, not the `flow-spaces refresh` it started, which finishes under spaces.lock.
@@ -636,6 +656,52 @@ ShellRoot {
                 destroy()
             }
         }
+    }
+    // Files by name, walked in the user folders while typing (flow-search --files): one walk per query. A walk for
+    // an older query is stopped as soon as the query changes, and an answer it still gives is dropped. Nothing is
+    // indexed or stored, and the query goes on stdin: a command line is readable by every user of the machine.
+    property var searchFileResults: []
+    property var searchWalk: null   // the walk for the current query; null once it has answered
+    Component {
+        id: searchWalker
+        Process {
+            id: walker
+            property string query: ""
+            command: ["flow-search", "--files"]
+            stdinEnabled: true
+            onStarted: write(query + "\n")
+            stdout: StdioCollector {
+                onStreamFinished: {
+                    if (root.searchWalk !== walker) return
+                    let rows = null
+                    try { rows = JSON.parse(this.text) } catch (error) {}
+                    root.searchFileResults = Array.isArray(rows) ? rows : []
+                }
+            }
+            onRunningChanged: if (!running) {
+                if (root.searchWalk === walker) root.searchWalk = null
+                destroy()
+            }
+        }
+    }
+    Timer { id: searchWalkTimer; interval: 150; onTriggered: root.walkSearchFiles() }
+    onSearchQueryChanged: {
+        dropSearchWalk()
+        if (searchQuery.trim().length < 3) searchFileResults = []
+        searchWalkTimer.restart()
+    }
+    onSearchOpenChanged: if (!searchOpen) walkSearchFiles()
+    function dropSearchWalk() {
+        const stale = searchWalk
+        searchWalk = null
+        if (stale) stale.running = false
+    }
+    function walkSearchFiles() {
+        const query = searchQuery.trim()
+        dropSearchWalk()
+        if (!searchOpen || searchAppsOnly || query.length < 3) { searchFileResults = []; return }
+        searchWalk = searchWalker.createObject(root, { query: query })
+        searchWalk.running = true
     }
     function listSearchResults() {
         const stale = searchListing
@@ -679,6 +745,7 @@ ShellRoot {
         searchQuery = ""
         searchIndex = 0
         searchResults = []   // never the last run's: its windows may have closed
+        searchFileResults = []
         searchFailed = true    // until flow-search prints its list: one that never starts never answers
         searchOpen = true
         listSearchResults()
@@ -2471,7 +2538,7 @@ ShellRoot {
                 height: palette.resultsHeight
                 horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                 wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
-                text: root.searchListing ? "Looking…"
+                text: root.searchListing || root.searchWalk ? "Looking…"
                     : root.searchFailed ? "Search couldn’t list anything. Close it and try again."
                     : root.searchQuery.trim() ? "Nothing matches “" + root.searchQuery.trim() + "”"
                     : "Nothing to show"
