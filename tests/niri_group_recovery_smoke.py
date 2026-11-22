@@ -265,12 +265,15 @@ def main():
             expect(["ab", "n", "u", "v"], "another app after u")
             niri("action", "focus-window", "--id", window("u")["id"])
             spaces("stack")
-            other_id = next(g["group_id"] for g in spaces("create-group")["spaces"] if g.get("group_id") and g["group_id"] != group_id)
+            other_id = next(sp["group_id"] for sp in spaces("create-group")["spaces"] if sp["active"])
             spaces("group-layout", other_id)
             expect(["ab", "n", "u", "v"], "a side-by-side Group after the pinned app")
             niri("action", "consume-or-expel-window-right", "--id", window("b")["id"])
-            entry = next(e for e in spaces("refresh")["incomplete_groups"] if e["id"] == group_id)
+            apart = spaces("refresh")
+            entry = next(e for e in apart["incomplete_groups"] if e["id"] == group_id)
             expect(["a", "b", "n", "u", "v"], "this display's pinned app after the Group's apps, pin ordering paused")
+            if app_pin not in {p["id"] for p in apart["pins"]}:  # the refresh lists this display's pins only
+                raise RuntimeError(f"The pinned app's pin is not this display's: {apart['pins']}")
             if not entry["can_rejoin"]:
                 raise RuntimeError(f"Rejoin Group was not offered with this display's pinned app after it: {entry}")
             spaces("rejoin-group", group_id)
