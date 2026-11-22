@@ -29,6 +29,8 @@ class CoverageHelpersTest(unittest.TestCase):
         self.assertEqual(coverage.accelerator("n;<Alt>f:n;<Control>n"), "<Control>n")
         self.assertEqual(coverage.accelerator("Ctrl+N"), "Ctrl+N")
         self.assertEqual(coverage.accelerator("n;;"), "")
+        self.assertEqual(coverage.accelerator("Alt+N"), "")  # Qt: the mnemonic of an item without a shortcut
+        self.assertEqual(coverage.accelerator("Alt+F4"), "Alt+F4")
         self.assertEqual(coverage.accelerator(""), "")
 
     def test_narrowing_needs_title_and_active_to_single_out_a_frame(self):

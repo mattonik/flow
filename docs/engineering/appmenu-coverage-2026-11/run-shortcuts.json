@@ -1,0 +1,415 @@
+{
+ "rows": [
+  {
+   "key": "kate",
+   "late": false,
+   "window": 2507,
+   "title": "Welcome  \u2014 Kate",
+   "app_id": "org.kde.kate",
+   "pid": 468277,
+   "extra_windows": [],
+   "pid_windows": 1,
+   "reader": {
+    "items": 186,
+    "top": [
+     "File",
+     "Edit",
+     "View",
+     "Go",
+     "Projects",
+     "LSP Client",
+     "Sessions",
+     "Tools",
+     "Settings",
+     "Help"
+    ],
+    "median_s": 0.47,
+    "error": null
+   },
+   "fixed": {
+    "items": 186,
+    "top": [
+     "File",
+     "Edit",
+     "View",
+     "Go",
+     "Projects",
+     "LSP Client",
+     "Sessions",
+     "Tools",
+     "Settings",
+     "Help"
+    ],
+    "median_s": 0.45,
+    "error": null
+   },
+   "probe": {
+    "on_bus": true,
+    "app_name": "kate",
+    "capped": {
+     "nodes": 546,
+     "depth": 12,
+     "bars": 1,
+     "ms": 333,
+     "items": 186,
+     "top": [
+      "File",
+      "Edit",
+      "View",
+      "Go",
+      "Projects",
+      "LSP Client",
+      "Sessions",
+      "Tools",
+      "Settings",
+      "Help"
+     ]
+    },
+    "full": {
+     "nodes": 603,
+     "depth": 17,
+     "bars": 1,
+     "ms": 391,
+     "items": 186,
+     "top": [
+      "File",
+      "Edit",
+      "View",
+      "Go",
+      "Projects",
+      "LSP Client",
+      "Sessions",
+      "Tools",
+      "Settings",
+      "Help"
+     ]
+    },
+    "shortcuts": 48,
+    "shortcut_examples": [
+     "New=Ctrl+N",
+     "New Window=Ctrl+Shift+N",
+     "Open\u2026=Ctrl+O",
+     "Open Folder...=Ctrl+T, O"
+    ]
+   },
+   "command": {
+    "found": true,
+    "labels": [
+     "Help",
+     "About Kate"
+    ],
+    "ok": true,
+    "error": null,
+    "opened": [
+     "About Kate"
+    ]
+   }
+  },
+  {
+   "key": "sqlitebrowser",
+   "late": false,
+   "window": 2509,
+   "title": "DB Browser for SQLite",
+   "app_id": "sqlitebrowser",
+   "pid": 468383,
+   "extra_windows": [],
+   "pid_windows": 1,
+   "reader": {
+    "items": 67,
+    "top": [
+     "File",
+     "Edit",
+     "View",
+     "Tools",
+     "Help"
+    ],
+    "median_s": 0.51,
+    "error": null
+   },
+   "fixed": {
+    "items": 67,
+    "top": [
+     "File",
+     "Edit",
+     "View",
+     "Tools",
+     "Help"
+    ],
+    "median_s": 0.51,
+    "error": null
+   },
+   "probe": {
+    "on_bus": true,
+    "app_name": "DB Browser for SQLite",
+    "capped": {
+     "nodes": 815,
+     "depth": 12,
+     "bars": 1,
+     "ms": 377,
+     "items": 67,
+     "top": [
+      "File",
+      "Edit",
+      "View",
+      "Tools",
+      "Help"
+     ]
+    },
+    "full": {
+     "nodes": 821,
+     "depth": 14,
+     "bars": 1,
+     "ms": 378,
+     "items": 67,
+     "top": [
+      "File",
+      "Edit",
+      "View",
+      "Tools",
+      "Help"
+     ]
+    },
+    "shortcuts": 16,
+    "shortcut_examples": [
+     "New Database...=Ctrl+N",
+     "Open Database...=Ctrl+O",
+     "Open Database Read Only...=Ctrl+Shift+O",
+     "Close Database=Ctrl+F4"
+    ]
+   },
+   "command": {
+    "found": true,
+    "labels": [
+     "Help",
+     "About"
+    ],
+    "ok": false,
+    "error": "atspi_error: Did not receive a reply. Possible causes include: the remote application did not send a reply, the message bus security policy blocked the reply, the reply timeout expired, or the network connection was broken. (1)",
+    "opened": [
+     "About DB Browser for SQLite"
+    ]
+   }
+  },
+  {
+   "key": "writer",
+   "late": false,
+   "window": 2511,
+   "title": "Untitled 1 \u2014 LibreOffice Writer",
+   "app_id": "libreoffice-writer",
+   "pid": 468551,
+   "extra_windows": [],
+   "pid_windows": 1,
+   "reader": {
+    "items": 0,
+    "top": [],
+    "median_s": 0.1,
+    "error": "constructor returned NULL"
+   },
+   "fixed": {
+    "items": 1385,
+    "top": [
+     "File",
+     "Edit",
+     "View",
+     "Insert",
+     "Format",
+     "Styles",
+     "Table",
+     "Form",
+     "Tools",
+     "Window",
+     "Help",
+     "File",
+     "Edit",
+     "View",
+     "Insert",
+     "Format",
+     "Styles",
+     "Table",
+     "Form",
+     "Tools",
+     "Window",
+     "Help"
+    ],
+    "median_s": 0.79,
+    "error": null
+   },
+   "probe": {
+    "on_bus": true,
+    "app_name": "soffice",
+    "capped": {
+     "nodes": 2030,
+     "depth": 12,
+     "bars": 2,
+     "ms": 545,
+     "items": 1385,
+     "top": [
+      "File",
+      "Edit",
+      "View",
+      "Insert",
+      "Format",
+      "Styles",
+      "Table",
+      "Form",
+      "Tools",
+      "Window",
+      "Help",
+      "File",
+      "Edit",
+      "View",
+      "Insert",
+      "Format",
+      "Styles",
+      "Table",
+      "Form",
+      "Tools",
+      "Window",
+      "Help"
+     ]
+    },
+    "full": {
+     "nodes": 2113,
+     "depth": 17,
+     "bars": 2,
+     "ms": 563,
+     "items": 1385,
+     "top": [
+      "File",
+      "Edit",
+      "View",
+      "Insert",
+      "Format",
+      "Styles",
+      "Table",
+      "Form",
+      "Tools",
+      "Window",
+      "Help",
+      "File",
+      "Edit",
+      "View",
+      "Insert",
+      "Format",
+      "Styles",
+      "Table",
+      "Form",
+      "Tools",
+      "Window",
+      "Help"
+     ]
+    },
+    "shortcuts": 175,
+    "shortcut_examples": [
+     "Text Document=<Primary>n",
+     "Templates...=<Primary><Shift>n",
+     "Open...=<Primary>o",
+     "Manage Templates=<Primary><Shift>n"
+    ]
+   },
+   "command": {
+    "found": true,
+    "labels": [
+     "Help",
+     "About LibreOffice"
+    ],
+    "ok": true,
+    "error": null,
+    "opened": [
+     "About LibreOffice"
+    ]
+   }
+  },
+  {
+   "key": "mousepad",
+   "late": false,
+   "window": 2513,
+   "title": "Untitled 1 - Mousepad",
+   "app_id": "org.xfce.mousepad",
+   "pid": 468683,
+   "extra_windows": [],
+   "pid_windows": 1,
+   "reader": {
+    "items": 230,
+    "top": [
+     "File",
+     "Edit",
+     "Search",
+     "View",
+     "Document",
+     "Help"
+    ],
+    "median_s": 0.23,
+    "error": null
+   },
+   "fixed": {
+    "items": 230,
+    "top": [
+     "File",
+     "Edit",
+     "Search",
+     "View",
+     "Document",
+     "Help"
+    ],
+    "median_s": 0.24,
+    "error": null
+   },
+   "probe": {
+    "on_bus": true,
+    "app_name": "org.xfce.mousepad",
+    "capped": {
+     "nodes": 327,
+     "depth": 8,
+     "bars": 1,
+     "ms": 93,
+     "items": 230,
+     "top": [
+      "File",
+      "Edit",
+      "Search",
+      "View",
+      "Document",
+      "Help"
+     ]
+    },
+    "full": {
+     "nodes": 327,
+     "depth": 8,
+     "bars": 1,
+     "ms": 90,
+     "items": 230,
+     "top": [
+      "File",
+      "Edit",
+      "Search",
+      "View",
+      "Document",
+      "Help"
+     ]
+    },
+    "shortcuts": 37,
+    "shortcut_examples": [
+     "New=<Primary>n",
+     "New Window=<Primary><Shift>n",
+     "Open...=<Primary>o",
+     "Save=<Primary>s"
+    ]
+   },
+   "command": {
+    "found": true,
+    "labels": [
+     "Help",
+     "About"
+    ],
+    "ok": true,
+    "error": null,
+    "opened": [
+     "About mousepad"
+    ]
+   }
+  }
+ ],
+ "late": [],
+ "multi": []
+}

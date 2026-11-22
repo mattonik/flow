@@ -407,11 +407,13 @@ def find_command(menus, command):
 
 
 def accelerator(binding):
-    """The shortcut in an AT-SPI key binding: GTK and Qt give "mnemonic;path;accelerator", others the key alone."""
+    """The shortcut in an AT-SPI key binding. GTK gives "mnemonic;path;accelerator"; Qt gives the shortcut
+    alone, or, for an item without one, its mnemonic ("Alt+N"), which is not a shortcut and gives ""."""
     if not binding:
         return ""
     parts = binding.split(";")
-    return (parts[2] if len(parts) == 3 else parts[0] if len(parts) == 1 else parts[-1]).strip()
+    key = (parts[2] if len(parts) == 3 else parts[0] if len(parts) == 1 else parts[-1]).strip()
+    return "" if re.fullmatch(r"(Alt\+|<Alt>)\S", key) else key
 
 
 def narrowing(frames, title):
