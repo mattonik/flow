@@ -264,7 +264,7 @@ Flow used Niri's own Overview (a vertical zoom of workspaces), fuzzel for search
   - **Footer:** "Enter to open · ↑ ↓ to choose · Esc to close". Escape works from anywhere in the panel.
   - **Behaviour:** `flow-search --json` lists the results, the shell filters them as you type and runs the choice. Apps and files open through `flow-search --open`, in their own scope. See *Search on the installed system*.
   - **What is listed:** Flow settings, quick settings, pins (also other displays'), open windows, recent files and installed apps, each app also as a Layer. Apps without a desktop file are left out, since they cannot be opened by name.
-  - **No fuzzel:** `flow-search`'s fuzzel mode was removed (2026-11-21), and the standalone fuzzel launcher `flow-apps`, which nothing started, with its themed wrapper and generated fuzzel themes (2026-11-22). Flow no longer installs fuzzel.
+  - **No fuzzel:** `flow-search`'s fuzzel mode was removed on 2026-11-21. On 2026-11-22 the unused `flow-apps` launcher, its themed wrapper and the generated fuzzel themes went too, and Flow no longer installs fuzzel.
 - **Platform API:** `ShowOverview` opens Flow's Overview, and `ShowLauncher` opens the panel's app view. Both count an Overview that is still opening as open.
 
 Tests:
@@ -484,6 +484,7 @@ Surface by surface:
   - **Not yet effective:** swayidle is a Niri startup command, so its new lock command applies from the next sign-in.
   - **Focus ring:** one colour cannot stand out against both light and dark app content.
   - **CI:** it evaluates no Nix, so the module is only checked when the guest builds it.
+- **fuzzel** (the old app launcher and search) was themed from the same tokens too; that went with `flow-apps` on 2026-11-22.
 - **Desk:** a larger search field, pins as cards, activities as cards with a progress track, and tools sized to their labels.
 - **Switcher:** a rounded bottom sheet. Each space is a card, and a Group's actions sit in a two-column grid with *Dissolve* as the danger action.
 - **Quick settings, notifications and the toast** are rounded panels.

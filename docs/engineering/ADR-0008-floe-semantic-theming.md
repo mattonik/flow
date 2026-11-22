@@ -12,4 +12,4 @@ The integration intentionally **does not** change Niri configuration colors, Fla
 
 **Remaining verification:** Run the static tests in `tests/test_floe_theme.py` (token parity and AA text contrast). Codex must launch the actual Quickshell/Niri guest, validate QML loading from `/etc/flow/FloeTheme.qml`, check all shell panels and native menu text, change the theme, close/reopen Desk, restart shell and log in again, confirm per-user persistence, and verify app focus and window arrangement remain unchanged. Screenshot both modes at desktop and portrait dimensions. Roll back using the last working NixOS generation if QML fails to load.
 
-**Future:** Generate QML/CSS deterministically from tokens; expose XDG appearance preference with permission boundaries and an opt-in follow-system mode; align Niri focus rings and Fuzzel; support reduced motion and configurable high contrast.
+**Future:** Generate QML/CSS deterministically from tokens; expose XDG appearance preference with permission boundaries and an opt-in follow-system mode; align Niri focus rings; support reduced motion and configurable high contrast.
