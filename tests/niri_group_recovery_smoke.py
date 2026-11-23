@@ -20,8 +20,8 @@ then for a side-by-side Group with a saved split:
 - with the pinned Group's apps apart and an unpinned app after them, Rejoin Group stacks them (the manual path),
   and so does recovery; Rejoin Group does too with a pinned app still after them, another display's, or this
   display's while a side-by-side Group pauses pin ordering, and once that Group is stacked or dissolved, the
-  pins go back in pin order (at once, or at the next refresh); an unfinished layout change (simulated) pauses
-  pin ordering too: one to side by side stays paused once finished, one back to a stack puts the pins back.
+  pins go back in pin order (at once, or at the next refresh); a layout change killed halfway pauses pin
+  ordering too: one to side by side stays paused once finished, one back to a stack puts the pins back.
 Real state files are checksummed.
 """
 
@@ -29,6 +29,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -128,6 +130,26 @@ def main():
 
         def group(group_id):
             return next(g for g in groups() if g["id"] == group_id)
+
+        def killed_at(action, *args):
+            """Runs ``flow-spaces *args`` and kills it, as a crash would, when it asks Niri for ``action``: every
+            earlier Niri action is done, that one is never sent. A ``niri`` ahead on PATH holds the helper there."""
+            held = Path(tmp) / "held"
+            held.mkdir(exist_ok=True)
+            (held / "reached").unlink(missing_ok=True)
+            (held / "niri").write_text(f'#!/bin/sh\ncase " $* " in *" {action} "*) : > "{held}/reached"; exec sleep 300;; '
+                                       f'esac\nexec "{shutil.which("niri")}" "$@"\n')
+            (held / "niri").chmod(0o755)
+            process = subprocess.Popen(["flow-spaces", *args], env=dict(env, PATH=f"{held}:{env['PATH']}"),
+                                       stdout=subprocess.DEVNULL, start_new_session=True)
+            try:
+                wait_for(lambda: (held / "reached").exists() or process.poll() is not None, f"flow-spaces to ask for {action}")
+                if process.poll() is not None:
+                    raise RuntimeError(f"flow-spaces {args} ended (exit {process.returncode}) before asking for {action}")
+            finally:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
 
         def close_all():
             for w in ours():
@@ -316,15 +338,14 @@ def main():
             expect(["ab", "n", "uv"], "the pins back in pin order once the second Group, stacked, ended the pause")
             pins_reached(spaces("refresh"))
             expect(["ab", "n", "uv"], "the pins still in pin order at the next refresh")
-            # An unfinished layout change pauses pin ordering too, with no Group side by side yet. Simulated: the
-            # stacked second Group's change to side by side is interrupted once its apps are split, while their widths
-            # settle (its longest stretch), as a crash there leaves it: the pending layout saved first, the stored
-            # layout still a stack, and the apps in columns of their own.
-            saved = json.loads((state / "groups.json").read_text())
-            next(g for g in saved["groups"] if g["id"] == other_id)["pending_layout"] = "side-by-side"
-            (state / "groups.json").write_text(json.dumps(saved))
-            niri("action", "consume-or-expel-window-right", "--id", window("v")["id"])
-            expect(["ab", "n", "u", "v"], "the second Group's apps split, its layout change unfinished")
+            # An unfinished layout change pauses pin ordering too, with no Group side by side yet. The stacked second
+            # Group's change to side by side is killed once its apps are split, before their widths are set: the
+            # pending layout saved, the stored layout still a stack, and the apps in columns of their own.
+            niri("action", "focus-window", "--id", window("u")["id"])
+            killed_at("set-window-width", "group-layout", other_id)
+            expect(["ab", "n", "u", "v"], "the second Group's apps split, its layout change killed")
+            if group(other_id).get("pending_layout") != "side-by-side" or group(other_id).get("layout", "stack") != "stack":
+                raise RuntimeError(f"The killed change to side by side did not leave it unfinished: {group(other_id)}")
             niri("action", "focus-window", "--id", window("a")["id"])
             niri("action", "move-column-to-index", 4)
             expect(["n", "u", "v", "ab"], "the pinned Group moved to the end, a layout change unfinished")
@@ -342,21 +363,18 @@ def main():
                        for sp in finished["spaces"]):
                 raise RuntimeError(f"The finished Group is not recognised side by side: {finished['spaces']}")
             steps.append("with the pinned Group moved behind the second Group while its change to side by side was "
-                         "unfinished, its apps split (simulated), a refresh left the pins out of order and offered "
+                         "unfinished, killed with its apps split, a refresh left the pins out of order and offered "
                          "Finish layout change, which put the Group side by side with the pins still paused")
 
             # And an unfinished change back to a stack: paused until finished, and the finishing puts the pins back,
-            # since the Group is then neither side by side nor mid-change. Simulated as an interruption right after its
-            # first Niri action leaves it: the measured split and the pending stack saved first, then the apps joined.
-            # The pause holds by the stored layout, still side by side, as after a real interruption; the pending
+            # since the Group is then neither side by side nor mid-change. Killed once its apps are joined, before the
+            # stack is given its full width. The pause holds by the stored layout, still side by side; the pending
             # layout alone is what holds it in the step above.
-            sizes = [window(s)["layout"]["tile_size"][0] for s in "uv"]
-            saved = json.loads((state / "groups.json").read_text())
-            entry = next(g for g in saved["groups"] if g["id"] == other_id)
-            entry.update(side_ratio=round(sizes[0] / sum(sizes), 4), pending_layout="stack")
-            (state / "groups.json").write_text(json.dumps(saved))
-            niri("action", "consume-or-expel-window-left", "--id", window("v")["id"])
-            expect(["n", "uv", "ab"], "the second Group's apps joined, its change to a stack unfinished")
+            niri("action", "focus-window", "--id", window("u")["id"])
+            killed_at("set-window-width", "group-layout", other_id)
+            expect(["n", "uv", "ab"], "the second Group's apps joined, its change to a stack killed")
+            if group(other_id).get("pending_layout") != "stack" or group(other_id).get("layout") != "side-by-side":
+                raise RuntimeError(f"The killed change to a stack did not leave it unfinished: {group(other_id)}")
             paused = spaces("refresh")  # synchronous: any reordering is done when it returns
             if columns() != ["n", "uv", "ab"]:
                 raise RuntimeError(f"Pin ordering ran during an unfinished change to a stack: {columns()}")
@@ -373,7 +391,7 @@ def main():
                 raise RuntimeError(f"The finished stack is not full width: {window('u')['layout']}, output {full}")
             pins_reached(spaces("refresh"))
             expect(["ab", "n", "uv"], "the pins still in pin order at the next refresh")
-            steps.append("with the second Group's change back to a stack unfinished, its apps joined (simulated), a "
+            steps.append("with the second Group's change back to a stack killed with its apps joined, a "
                          "refresh left the pins out of order and offered Finish layout change; finishing it put the "
                          "pinned Group and the pinned app back first, in pin order")
 
