@@ -170,10 +170,13 @@ def main():
             # A change is saved by the next save.
             start = time.time()
             sock.focus(tiles[2])
-            wait_for(lambda: saved_focus() == tiles[2], "the save of a focus change", timeout=SAVE_EVERY + 10)
-            took = time.time() - start
-            check("a focus change: saved by the next automatic save", round(took, 1), f"< {SAVE_EVERY + 1}",
-                  took < SAVE_EVERY + 1, "s")
+            try:
+                wait_for(lambda: saved_focus() == tiles[2], "the save of a focus change", timeout=SAVE_EVERY + 10)
+                took = round(time.time() - start, 1)
+            except RuntimeError:
+                took = None  # not saved
+            check("a focus change: saved by the next automatic save", took, f"< {SAVE_EVERY + 1}",
+                  took is not None and took < SAVE_EVERY + 1, "s")
 
             # A space last snapshotted over a minute ago (tiles[3], in the second walk) is taken again.
             start = time.time()

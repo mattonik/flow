@@ -614,8 +614,8 @@ ShellRoot {
         }
     }
     // Saving automatically runs only when what it saves may have changed: the windows, spaces, pins or displays
-    // the controller last sent. A save costs about 60 ms of CPU (two Pythons) and a synced write; every 30 s
-    // with nothing changed that was more than the idle shell's own CPU.
+    // the controller last sent. A save costs about 60 ms of CPU (two Pythons) and a synced write: every 30 s,
+    // with nothing changed, about what the idle shell itself spends.
     property bool sessionChanged: true
     onWindowsChanged: sessionChanged = true
     onDisplaySpacesChanged: sessionChanged = true
