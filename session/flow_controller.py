@@ -390,6 +390,8 @@ class Controller:
                 self.coalescer.now()
             if "auto_save" in request:
                 # What is unsaved stays so while no client asks (from the first refresh on): asking saves it.
+                if request["auto_save"] and not client.auto_save:
+                    self.refused = False  # a refusal from before the pause or the toggle is no longer the last
                 client.auto_save = bool(request["auto_save"])
             if request.get("get") == "observe":
                 self.observers.append(client)

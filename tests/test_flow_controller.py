@@ -575,6 +575,19 @@ class AutoSaveTest(ControllerCase):
         self.until(lambda: len(self.told) == 2)  # after a save that was not a refusal, the next one is tentative
         self.assertEqual(self.saved[2][1], False)
 
+    def test_asking_again_starts_with_a_tentative_refusal(self):
+        refused = {"error": "two windows", "refused": True}
+        self.answers = [refused, refused]
+        self.started()
+        self.assertEqual(self.saved[0][1], False)
+        self.ask({"auto_save": False})  # a Save session or Restore session in the shell
+        self.run_for(0.1)
+        self.ask({"auto_save": True})
+        self.focus(8)
+        self.until(lambda: len(self.saved) == 2)
+        self.assertEqual(self.saved[1][1], False)
+        self.assertEqual(self.told, [])
+
     def test_a_refusal_that_went_away_never_pauses(self):
         self.answers = [{"error": "two windows", "refused": True}, {"message": "Saved", "written": True}]
         self.started()

@@ -25,8 +25,14 @@ class ShellAutoSaveTest(unittest.TestCase):
     def test_a_result_after_the_setting_was_switched_off_changes_nothing(self):
         body = SHELL[SHELL.index("    function autoSaved(result) {"):]
         body = body[:body.index("\n    }\n")]
-        self.assertEqual(body.splitlines()[1].strip(), "if (!menuPreferences.autoRecovery) return  // switched off since")
+        self.assertLess(body.index("if (!menuPreferences.autoRecovery) return"), body.index("recoveryMessage ="))
+        self.assertLess(body.index("if (!result.error) return"), body.index("autoRecoveryBlocked = true"))
 
+    def test_the_controller_is_told_on_connecting_and_on_every_change(self):
+        self.assertRegex(SHELL, r"if \(connected\) \{ write\('\{\"watch\": true, \"auto_save\": ' \+ root\.autoSaveWanted \+ '\}\\n'\)")
+        handler = SHELL[SHELL.index("onAutoSaveWantedChanged:"):]
+        handler = handler[:handler.index("\n    }\n")]
+        self.assertIn("controller.write(JSON.stringify({ auto_save: autoSaveWanted }) + ", handler)
 
 if __name__ == "__main__":
     unittest.main()

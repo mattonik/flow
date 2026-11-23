@@ -123,7 +123,8 @@ def flow_locks(state, wait=True):
 
 
 class Refused(ValueError):
-    """The automatic save will not save what is there: windows it could not recover, or a Group mid-change."""
+    """The automatic save will not save what is there: windows it could not recover, a Group mid-change, or a
+    Niri it could not read (no focused workspace while displays come and go, no answer)."""
 
 
 def save_locked(path, checked=False, if_changed=False, reading=None):
@@ -134,7 +135,12 @@ def save_locked(path, checked=False, if_changed=False, reading=None):
     pins = pin_store.read(path.parent / "spaces.json")[0]
     pinned_apps(pins)
     workspace, windows = reading or spaces.snapshot()
-    display = focused_display(workspace, path.parent)[0]
+    try:
+        display = focused_display(workspace, path.parent)[0]
+    except (ValueError, OSError) as exc:
+        if checked:
+            raise Refused(str(exc)) from exc
+        raise
     dirs = spaces.data_dirs()
     if checked:
         entries = [{"app_id": w.get("app_id"), "column": (w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0]}
@@ -189,7 +195,10 @@ def automatic(op, path, wait=True, pause=True):
             return {"error": "Automatic saving is paused; review and save the session."}
         try:
             with flow_locks(path.parent, wait):
-                workspace, windows = spaces.snapshot()
+                try:
+                    workspace, windows = spaces.snapshot()
+                except (ValueError, OSError) as exc:
+                    raise Refused(str(exc)) from exc
                 if not any(w.get("workspace_id") == workspace["id"] for w in windows):
                     return {"message": "Automatic saving skipped an empty workspace."}
                 return save_locked(path, checked=True, if_changed=True, reading=(workspace, windows))
