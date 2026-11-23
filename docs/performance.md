@@ -299,14 +299,16 @@ An automatic save that found nothing to write costs about 1 ms of CPU in the con
 
 | `tests/niri_background_smoke.py` (UTM guest) | Main (with the previous change) | This change | Neutralised |
 |---|---|---|---|
-| Startup: the first automatic save | 30.5 s | 3.5 s | never ✗ (the shell never asks; or asks only once connected, while recovery is still paused) |
+| Startup: the first automatic save | 30.5 s | 3.5 s | never ✗ (the shell never asks; or asks only on connecting, while recovery is still paused) |
 | 65 s with nothing changed: automatic saves | 0 | 0 | |
-| A focus change, the last save over 30 s ago: saved (under 5 s) | 16.2 s ✗ | 2.3 s | |
-| Focus overshooting and back for 4 s: the saved session rewritten | no | no | yes ✗ (an unchanged snapshot written again) |
-| A window joining another's column, focus unchanged: saved | 30.7 s | 29.9 s | |
-| A second window of one app, closed after the save that found it: saving goes on | | | |
-| A second window of one app that stays: saving pauses and Desk shows it | yes | yes | no ✗ (errors ignored) |
+| A focus change, the last save over 30 s ago: saved (under 5 s) | 16.2 and 16.3 s ✗ | 2.2 and 2.3 s | |
+| Focus overshooting and back for 4 s, nothing changed in the end: the saved session rewritten | no | no | yes ✗ (an unchanged snapshot written again) |
+| A window joining another's column, focus unchanged: saved | 30.7 s | 29.9 and 30.0 s | |
+| A second window of one app, closed after the save that found it: saving goes on | no ✗ (paused at once) | yes | no ✗ (every refusal pauses) |
+| A second window of one app that stays: saving pauses and Desk shows it | already paused | yes | no ✗ (errors ignored) |
 | Paused: automatic saves after a change | 0 | 0 | |
+
+Main fails two of the 13 checks (three, counting the one its earlier pause skips), and this change passes all 13 in the last run of each version. The performance smoke passes all 31 on both, run back to back once the host was quiet. While another VM loaded the host (load average 72), both failed different timing checks.
 
 The snapshot checks pass on both, as before. `tests/test_flow_controller.py` and `tests/test_restore.py` cover the controller's side: no save until a client asks, none after a refresh nothing asked for, the wait and the interval, refreshes with the stream down, a held lock tried again a second later and never in a spin, a bug reported without stopping the loop, only the asking clients told, no subprocess, an unchanged snapshot left alone, and a bug pausing recovery. Each of those mechanisms, neutralised, fails its test. The first version counted a refresh only once its coalescer was due. When the 30 s safety refresh came first and answered the events, that change was never saved; the unit test with a short safety interval caught it.
 
