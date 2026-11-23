@@ -371,6 +371,7 @@ ShellRoot {
         return refreshAsked
     }
     function niriEvent(event) {
+        sessionStirred = Date.now()
         if (event.WindowFocusChanged || event.WorkspaceActiveWindowChanged || event.WindowsChanged) {
             appMenuFocusMoves += 1
             requestAppIdentity()
@@ -584,6 +585,7 @@ ShellRoot {
                     if (recoveryProcess.command[1] === "save" && root.recoveryToast) { root.recoveryToast = false; root.showToast(root.recoveryMessage) }
                     if (recoveryProcess.command[1] === "auto-start" || recoveryProcess.command[1] === "auto-save" || recoveryProcess.command[1] === "auto-ready") {
                         root.autoRecoveryBlocked = !!result.error
+                        if (recoveryProcess.command[1] === "auto-save") root.autoSaved(result)
                         if (result.error) { root.deskOpen = true; root.settingsOpen = true; Qt.callLater(function() { root.reveal(recoveryStatus) }) }
                     }
                     if (recoveryProcess.command[1] === "save" && !result.error && menuPreferences.autoRecovery) autoReadyTimer.restart()
@@ -613,10 +615,31 @@ ShellRoot {
             recoveryProcess.command = ["flow-recovery", "auto-ready"]; recoveryProcess.running = true
         }
     }
+    // Saving automatically runs only while a change of what it saves (restore.py save()) is unsaved: the
+    // windows, spaces, pins or displays the controller sent. A save reads Niri itself, which can be between
+    // two states the controller never sent (focus overshooting and coming back): one that ran within a second
+    // of a Niri event the shell saw, or of a change, leaves the change unsaved, to be saved again next time.
+    property int sessionChanges: 1
+    property int savedChanges: 0
+    property int savingChanges: 0
+    property double sessionStirred: 0   // Date.now() of the last change or Niri event the shell saw
+    property double autoSaveBegan: 0
+    function sessionChange() { sessionChanges += 1; sessionStirred = Date.now() }
+    onWindowsChanged: sessionChange()
+    onDisplaySpacesChanged: sessionChange()
+    onPinsChanged: sessionChange()
+    onOtherPinsChanged: sessionChange()
+    onDisplaysChanged: sessionChange()
+    function autoSaved(result) {
+        if (!result.error && result.message && sessionStirred < autoSaveBegan - 1000) savedChanges = savingChanges
+    }
     Timer {
         interval: 30000; running: menuPreferences.autoRecovery; repeat: true
         onTriggered: {
-            if (root.autoRecoveryBlocked || recoveryProcess.running || spacesProcess.running || root.pendingSpaceActions.length) return
+            if (root.sessionChanges === root.savedChanges || root.autoRecoveryBlocked || recoveryProcess.running
+                || spacesProcess.running || root.pendingSpaceActions.length) return
+            root.savingChanges = root.sessionChanges
+            root.autoSaveBegan = Date.now()
             recoveryProcess.command = ["flow-recovery", "auto-save"]; recoveryProcess.running = true
         }
     }
@@ -725,11 +748,12 @@ ShellRoot {
         const found = displaySpaces.findIndex(space => String(space.id) === overviewSpaceId)
         return found >= 0 ? found : Math.max(0, Math.min(displaySpaces.length - 1, activeSpaceIndex))
     }
-    property var spaceSnapshots: ({})   // space id -> version of its snapshot file
+    property var spaceSnapshots: ({})   // space id -> {version, look, at} of its snapshot file
     // Snapshots are screen contents: only in the session's private runtime directory, never /tmp.
     readonly property string snapshotDir: Quickshell.env("XDG_RUNTIME_DIR") ? Quickshell.env("XDG_RUNTIME_DIR") + "/flow-snapshots" : ""
     function snapshotUrl(space) {
-        const version = space ? spaceSnapshots[String(space.id)] : 0
+        const taken = space ? spaceSnapshots[String(space.id)] : null
+        const version = taken ? taken.version : 0
         return version ? "file://" + snapshotDir + "/" + space.id + ".jpg?v=" + version : ""
     }
     readonly property var overviewSpace: displaySpaces[overviewIndex] || null
@@ -791,13 +815,30 @@ ShellRoot {
     property string settledSpaceId: ""
     readonly property bool workViewOnly: !deskOpen && !switcherOpen && !spacesOverviewOpen && !overviewOpen
         && !searchOpen && !appMenuOpen && !quickSettingsOpen && !notificationsOpen
-    Timer { id: snapshotSettle; interval: 700; onTriggered: if (root.workViewOnly) root.snapshotActiveSpace(null) }
+    // A settled space is not taken again while its picture is current: under a minute old, and of the same look
+    // (what the shell knows of the space, and the display's size). Opening Overview takes the space on screen
+    // afresh (openSpacesOverview).
+    readonly property int snapshotFresh: 60000
+    readonly property var snapshotIgnores: ["add_label", "can_add", "can_remove", "can_widen", "can_narrow"]  // controls' state
+    function spaceLook(space, screen) {
+        return JSON.stringify(space, (key, value) => snapshotIgnores.includes(key) ? undefined : value)
+            + " " + screen.name + " " + screen.width + "x" + screen.height
+    }
+    function snapshotCurrent(space, screen) {
+        const taken = space && screen ? spaceSnapshots[String(space.id)] : null
+        return !!taken && taken.look === spaceLook(space, screen) && Date.now() - taken.at < snapshotFresh
+    }
+    Timer {
+        id: snapshotSettle; interval: 700
+        onTriggered: if (root.workViewOnly && !root.snapshotCurrent(root.activeSpace, workIsland.screen)) root.snapshotActiveSpace(null)
+    }
     Component.onDestruction: if (snapshotDir) Quickshell.execDetached(["rm", "-rf", "--", snapshotDir])
     function snapshotActiveSpace(done) {
         const space = activeSpace
         const screen = workIsland.screen
         if (!space || !workViewOnly || !screen || !snapshotDir || snapshotProcess.running) { if (done) done(); return }
         snapshotProcess.key = String(space.id)
+        snapshotProcess.look = spaceLook(space, screen)
         snapshotProcess.done = done
         // At the display's own resolution: asking grim for a smaller picture costs more than the whole capture
         // (docs/performance.md), and Overview waits for it. Its card decodes it at its own size. Written
@@ -809,6 +850,7 @@ ShellRoot {
     Process {
         id: snapshotProcess
         property string key: ""
+        property string look: ""
         property var done: null
         onExited: code => {
             const done = snapshotProcess.done
@@ -819,7 +861,8 @@ ShellRoot {
                 for (const id in root.spaceSnapshots)
                     if (root.displaySpaces.some(space => String(space.id) === id)) next[id] = root.spaceSnapshots[id]
                     else gone.push(root.snapshotDir + "/" + id + ".jpg")
-                next[snapshotProcess.key] = (root.spaceSnapshots[snapshotProcess.key] || 0) + 1
+                const before = root.spaceSnapshots[snapshotProcess.key]
+                next[snapshotProcess.key] = { version: (before ? before.version : 0) + 1, look: snapshotProcess.look, at: Date.now() }
                 root.spaceSnapshots = next
                 if (gone.length) Quickshell.execDetached(["rm", "-f", "--"].concat(gone))
             }
