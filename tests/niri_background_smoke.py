@@ -18,8 +18,8 @@ Checked:
 - a space whose window's title changed: its snapshot taken again when it settles;
 - once a change has been saved, 65 s of nothing changing: no automatic save (main saved every 30 s);
 - a focus change saved by the next automatic save, within 33 s;
-- a save that began half a second after a Niri event (focus overshooting to another space and back): saved
-  again at the next tick, as it may have read Niri between two states;
+- a save that began within a second of a Niri event (focus overshooting to another space and back, every
+  0.3 s around the tick): saved again at the next tick, as it may have read Niri between two states;
 - a space whose snapshot is over a minute old: taken again when it settles;
 - a window joining another's column with focus unchanged, which changes only the spaces, with the first save
   after it dying without an answer: saved by the next automatic save.
@@ -222,12 +222,16 @@ def main():
             tick = last + SAVE_EVERY * math.ceil((time.time() + 8 - last) / SAVE_EVERY)  # a tick 8 s away or more
             (titles / SPACES[1]).write_text("background b, retitled")
             wait_for(lambda: "b, retitled" in ipc("window_labels"), "the second new title in the shell's state")
-            time.sleep(max(0, tick - 0.5 - time.time()))
-            sock.focus(tiles[3])
-            sock.focus(tiles[2])
+            # Overshoots every 0.3 s from 2 s before the tick to 2 s after (its stamps keep to its period within a
+            # few ms), so the save it starts begins within a second of one, whenever it falls in that window.
+            time.sleep(max(0, tick - 2 - time.time()))
+            while time.time() < tick + 2:
+                sock.focus(tiles[3])
+                sock.focus(tiles[2])
+                time.sleep(0.3)
             time.sleep(max(0, tick + SAVE_EVERY + 3 - time.time()))
-            around = saves(tick - 1, tick + SAVE_EVERY + 3)
-            check("a save half a second after a Niri event: saved again at the next tick", len(around), "2",
+            around = saves(tick - 3, tick + SAVE_EVERY + 3)
+            check("a save within a second of a Niri event: saved again at the next tick", len(around), "2",
                   len(around) == 2)
 
             # A space last snapshotted over a minute ago (tiles[3], in the first walk) is taken again.
