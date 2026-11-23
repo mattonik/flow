@@ -169,13 +169,6 @@ def main():
                 except RuntimeError:
                     return None
 
-            # Startup: automatic recovery starts with nothing saved, then saves what it finds.
-            try:
-                first_save = round(saved_after(0, "the first automatic save") - shell_started, 1)
-            except RuntimeError:
-                first_save = None
-            check("startup: the first automatic save", first_save, f"< {SAVE_EVERY + 5}",
-                  first_save is not None and first_save < SAVE_EVERY + 5, "s after the shell started")
 
             # Snapshots: every space once, then again with nothing on them changed.
             for ident in tiles:
@@ -202,6 +195,15 @@ def main():
             taken = settles(tiles[0])
             check("a space whose title changed: snapshots when it settles", taken, "1", taken == 1)
 
+            # Startup: automatic recovery starts with nothing saved, then saves what it finds. After the walks,
+            # so that the startup snapshot is not over a minute old by their end.
+            try:
+                first_save = round(saved_after(0, "the first automatic save") - shell_started, 1)
+            except RuntimeError:
+                first_save = None
+            check("startup: the first automatic save", first_save, f"< {SAVE_EVERY + 5}",
+                  first_save is not None and first_save < SAVE_EVERY + 5, "s after the shell started")
+
             # Automatic saving: once what changed is saved, nothing more while nothing changes.
             time.sleep(SAVE_EVERY + 5)  # the save of the walk's changes, if one is still due
             start = time.time()
@@ -217,20 +219,20 @@ def main():
 
             # Focus overshooting to another space and back, for 4 s: what the next save finds is what is saved.
             time.sleep(2)
-            stamp, start = session.stat().st_mtime_ns, time.time()
+            stamp, start = session.stat().st_mtime_ns if session.exists() else None, time.time()
             end = start + 4
             while time.time() < end:
                 sock.focus(tiles[3])
                 sock.focus(tiles[2])
                 time.sleep(0.3)
-            try:
+            try:  # the controller saves after the events (main's shell, which saw no change, does not)
                 wait_for(lambda: saves(start), "a save after the overshoots", timeout=SAVE_EVERY + 10)
                 time.sleep(2)
-                rewritten = session.stat().st_mtime_ns != stamp
             except RuntimeError:
-                rewritten = None  # no save came
-            check("focus overshooting and coming back: the save after it rewrites the saved session", rewritten,
-                  "False", rewritten is False and saved_focus() == tiles[2])
+                pass
+            rewritten = stamp is None or session.stat().st_mtime_ns != stamp
+            check("focus overshooting and coming back: the saved session rewritten", rewritten, "False",
+                  not rewritten and saved_focus() == tiles[2])
 
             # A space last snapshotted over a minute ago (tiles[3], in the first walk) is taken again.
             taken = settles(tiles[3])
