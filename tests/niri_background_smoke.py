@@ -17,18 +17,20 @@ Checked:
   walk, with nothing on them changed: no snapshot (main took one each time a space settled);
 - a space whose window's title changed: its snapshot taken again when it settles;
 - once a change has been saved, 65 s of nothing changing: no automatic save (main saved every 30 s);
-- a focus change saved by the next automatic save, within 33 s;
-- a save that began within a second of a Niri event (focus overshooting to another space and back, every
-  0.3 s around the tick): saved again at the next tick, as it may have read Niri between two states;
+- a focus change, over 30 s after the last save: saved within 5 s (the controller saves 2 s after a change);
+- focus overshooting to another space and back for 4 s: the save after it leaves the saved session as it was;
 - a space whose snapshot is over a minute old: taken again when it settles;
-- a window joining another's column with focus unchanged, which changes only the spaces, with the first save
-  after it dying without an answer: saved by the next automatic save.
+- a window joining another's column with focus unchanged, which changes only the spaces: saved;
+- a second window of one app (recovery cannot tell them apart) closed again after the save that found it: no
+  pause, and saving goes on; one that stays: saving pauses at the next save, Desk opens to say so, and a change
+  after it is not saved.
+
+Automatic saves are the controller's (it reports them on its socket), or main's ``flow-recovery auto-save`` runs.
 
 Prints one JSON line per check and a final ``{"result": ...}``; exits 1 if any check failed.
 """
 
 import json
-import math
 import os
 from pathlib import Path
 import shutil
@@ -37,19 +39,13 @@ import sys
 import time
 
 from isolated_state import IsolatedState
-from niri_performance_smoke import RECORDER, NiriSocket, cpu, niri, read, runs, wait_for
+from niri_performance_smoke import RECORDER, NiriSocket, controller_stats, cpu, niri, read, runs, wait_for
 
 SPACES = "abcde"
 # s on each space. A focus change reaches the shell with the controller's next refresh, up to 1 s later (its
 # maximum wait); the space then settles for 0.7 s before its snapshot, which takes about 0.1 s.
 DWELL = 2.5
-SAVE_EVERY = 30  # s, the shell's automatic-save timer
-# flow-recovery's recorder makes the next auto-save die without an answer while its fail file is there.
-DYING = """#!{bash}
-printf '%s %s %s %s\\n' "$EPOCHREALTIME" "$PPID" "$$" "$*" >> {log}
-if [ "$1" = auto-save ] && [ -e {fail} ]; then rm -f {fail}; exit 1; fi
-exec {real} "$@"
-"""
+SAVE_EVERY = 30  # s at most between automatic saves (main's timer, the controller's AUTO_SAVE_EVERY)
 # Each terminal retitles itself with what its title file holds, once it appears.
 TITLER = r"""f={file}; while :; do
   if [ -e "$f" ]; then printf '\033]2;%s\007' "$(cat "$f")"; rm -f "$f"; fi
@@ -86,11 +82,8 @@ def main():
             (data / "applications" / f"flow-bg-{name}.desktop").write_text(
                 f"[Desktop Entry]\nType=Application\nName=Background {name}\nExec=foot --app-id flow-bg-{name}\n")
         logs = {name: tmp / f"{name}.log" for name in real}
-        fail = tmp / "fail-next-save"
-        (bin_dir / "grim").write_text(RECORDER.format(bash=bash, log=logs["grim"], real=real["grim"]))
-        (bin_dir / "flow-recovery").write_text(DYING.format(bash=bash, log=logs["flow-recovery"], fail=fail,
-                                                            real=real["flow-recovery"]))
         for name in real:
+            (bin_dir / name).write_text(RECORDER.format(bash=bash, log=logs[name], real=real[name]))
             (bin_dir / name).chmod(0o755)
         wayland = os.environ.get("WAYLAND_DISPLAY", "wayland-1")
         env = dict(os.environ, XDG_STATE_HOME=str(tmp), XDG_RUNTIME_DIR=str(runtime), XDG_CONFIG_HOME=str(config),
@@ -103,8 +96,11 @@ def main():
                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10).stdout.strip()
 
         def saves(start, end=None):
-            return [stamp for stamp, _, args in runs(logs["flow-recovery"], start, end or time.time() + 1)
-                    if args == "auto-save"]
+            """When automatic saves began: the controller's, as it reports them, or the ``flow-recovery
+            auto-save`` runs a shell from before the controller saved started."""
+            found = [stamp for stamp, _ in (controller_stats(runtime, tmp) or {}).get("saves", [])]
+            found += [stamp for stamp, _, args in runs(logs["flow-recovery"], 0, time.time() + 1) if args == "auto-save"]
+            return sorted(stamp for stamp in found if start <= stamp <= (end or time.time() + 1))
 
         def snapshots(start, end=None):
             return [stamp for stamp, _, _ in runs(logs["grim"], start, end or time.time() + 1)]
@@ -132,6 +128,7 @@ def main():
         try:
             niri("action", "focus-workspace", empty["idx"])
             tiles = [terminal(name) for name in SPACES]
+            shell_started = time.time()
             shell_process = subprocess.Popen(["quickshell", "-p", shell], env=env, stdin=subprocess.DEVNULL,
                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             pid = shell_process.pid
@@ -174,8 +171,6 @@ def main():
                 except RuntimeError:
                     return None
 
-            # Startup: automatic recovery starts with nothing saved, then saves what it finds.
-            saved_after(0, "the first automatic save")
 
             # Snapshots: every space once, then again with nothing on them changed.
             for ident in tiles:
@@ -202,6 +197,15 @@ def main():
             taken = settles(tiles[0])
             check("a space whose title changed: snapshots when it settles", taken, "1", taken == 1)
 
+            # Startup: automatic recovery starts with nothing saved, then saves what it finds. After the walks,
+            # so that the startup snapshot is not over a minute old by their end.
+            try:
+                first_save = round(saved_after(0, "the first automatic save") - shell_started, 1)
+            except RuntimeError:
+                first_save = None
+            check("startup: the first automatic save", first_save, f"< {SAVE_EVERY + 5}",
+                  first_save is not None and first_save < SAVE_EVERY + 5, "s after the shell started")
+
             # Automatic saving: once what changed is saved, nothing more while nothing changes.
             time.sleep(SAVE_EVERY + 5)  # the save of the walk's changes, if one is still due
             start = time.time()
@@ -209,48 +213,80 @@ def main():
             idle = saves(start, time.time())
             check("65 s with nothing changed: automatic saves", len(idle), "0", len(idle) == 0)
 
-            # A change is saved by the next save.
+            # A change, over 30 s after the last save: saved within seconds (main: by its next 30 s tick).
             sock.focus(tiles[2])
             took = saved_within(lambda: saved_focus() == tiles[2], "the save of a focus change")
-            check("a focus change: saved by the next automatic save", took, f"< {SAVE_EVERY + 3}",
-                  took is not None and took < SAVE_EVERY + 3, "s")
+            check("a focus change, the last save over 30 s ago: saved", took, "< 5",
+                  took is not None and took < 5, "s")
 
-            # A save that began within a second of a Niri event may have read Niri between two states (focus
-            # overshooting and coming back, which the controller never sends): it leaves the change unsaved.
-            time.sleep(SAVE_EVERY + 3)  # a second save of the focus change, if its save ran within a second of it
-            last = max(saves(0))
-            tick = last + SAVE_EVERY * math.ceil((time.time() + 8 - last) / SAVE_EVERY)  # a tick 8 s away or more
-            (titles / SPACES[1]).write_text("background b, retitled")
-            wait_for(lambda: "b, retitled" in ipc("window_labels"), "the second new title in the shell's state")
-            # Overshoots every 0.3 s from 2 s before the tick to 2 s after (its stamps keep to its period within a
-            # few ms), so the save it starts begins within a second of one, whenever it falls in that window.
-            time.sleep(max(0, tick - 2 - time.time()))
-            while time.time() < tick + 2:
+            # Focus overshooting to another space and back, for 4 s: what the next save finds is what is saved.
+            time.sleep(2)
+            stamp, start = session.stat().st_mtime_ns if session.exists() else None, time.time()
+            end = start + 4
+            while time.time() < end:
                 sock.focus(tiles[3])
                 sock.focus(tiles[2])
                 time.sleep(0.3)
-            time.sleep(max(0, tick + SAVE_EVERY + 3 - time.time()))
-            around = saves(tick - 3, tick + SAVE_EVERY + 3)
-            check("a save within a second of a Niri event: saved again at the next tick", len(around), "2",
-                  len(around) == 2)
+            try:  # the controller saves after the events (main's shell, which saw no change, does not)
+                wait_for(lambda: saves(start), "a save after the overshoots", timeout=SAVE_EVERY + 10)
+                time.sleep(2)
+            except RuntimeError:
+                pass
+            rewritten = stamp is None or session.stat().st_mtime_ns != stamp
+            check("focus overshooting and coming back, nothing changed in the end: the saved session rewritten", rewritten, "False",
+                  not rewritten and saved_focus() == tiles[2])
 
             # A space last snapshotted over a minute ago (tiles[3], in the first walk) is taken again.
             taken = settles(tiles[3])
             check("a space snapshotted over a minute ago: snapshots when it settles", taken, "1", taken == 1)
 
-            # A change only to the spaces (the window to the right joins the focused one's column; focus stays),
-            # whose first save dies without an answer: the next one saves it. Once the visit above is saved, so
-            # that no other change is pending.
+            # A change only to the spaces (the window to the right joins the focused one's column; focus stays).
             wait_for(lambda: saved_focus() == tiles[3], "the save of the visit", timeout=SAVE_EVERY + 10)
-            time.sleep(SAVE_EVERY + 3)  # its second save, if its first ran within a second of it
-            fail.write_text("")
-            start = time.time()
             niri("action", "consume-window-into-column")
             took = saved_within(lambda: saved_columns().get(tiles[4]) == saved_columns().get(tiles[3]),
-                                "the save of a column change", SAVE_EVERY * 2 + 10)
-            died = not fail.exists() and len(saves(start)) >= 2
-            check("a window joining another's column, focus unchanged, its first save dying: saved by the next",
-                  took, f"< {SAVE_EVERY * 2 + 3}", died and took is not None and took < SAVE_EVERY * 2 + 3, "s")
+                                "the save of a column change", SAVE_EVERY + 10)
+            check("a window joining another's column, focus unchanged: saved", took, f"< {SAVE_EVERY + 5}",
+                  took is not None and took < SAVE_EVERY + 5, "s")
+
+            # A second window of one app, which recovery cannot tell apart, closed again after the save that found
+            # it: a quick command in a second terminal. Saving goes on, and nothing opens over the work.
+            start = time.time()
+            terminal(SPACES[0])
+            try:
+                wait_for(lambda: saves(start), "the save that finds the second window", timeout=SAVE_EVERY + 10)
+            except RuntimeError:
+                pass
+            terminals[-1].terminate()
+            terminals[-1].wait(timeout=10)
+            closed = time.time()
+            try:
+                wait_for(lambda: saves(closed), "a save after it closed", timeout=SAVE_EVERY + 10)
+                time.sleep(2)
+            except RuntimeError:
+                pass
+            went_on = bool(saves(closed)) and ipc("desk_state") == "closed"
+            check("a second window of one app, closed after the save that found it: saving goes on", went_on,
+                  "True", went_on)
+            if ipc("desk_state") != "closed":
+                ipc("leave")
+
+            # One that stays: saving pauses at the next save, the shell shows it on Desk, and nothing is saved
+            # after it.
+            terminal(SPACES[0])
+            try:
+                wait_for(lambda: ipc("desk_state") == "open", "Desk showing the pause", timeout=2 * SAVE_EVERY + 15)
+                paused = time.time()
+            except RuntimeError:
+                paused = None
+            check("a second window of one app that stays: automatic saving pauses and Desk shows it", paused is not None,
+                  "True", paused is not None)
+            if paused:
+                ipc("leave")
+                time.sleep(1)
+                sock.focus(tiles[1])
+                time.sleep(SAVE_EVERY + 5)
+                after = saves(paused + 0.5)
+                check("paused: automatic saves after a change", len(after), "0", len(after) == 0)
         finally:
             if sock:
                 sock.close()

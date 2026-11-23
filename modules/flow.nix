@@ -11,10 +11,15 @@ let
     cp ${../session}/*.py $out/
     python3 -m compileall -q --invalidation-mode unchecked-hash $out
   '';
-  spaces = pkgs.writeShellScriptBin "flow-spaces" ''
-    export PYTHONPATH="${sessionPython}"
+  # Where Flow's helpers find apps' desktop entries: the session's, then the Nix profiles'. flow-recovery too, so
+  # that the automatic save (in the controller) and the restore after it look in the same folders.
+  dataDirs = ''
     user_name="''${USER:-$(${pkgs.coreutils}/bin/id -un)}"
     export XDG_DATA_DIRS="''${XDG_DATA_DIRS:+$XDG_DATA_DIRS:}$HOME/.nix-profile/share:$HOME/.local/state/nix/profile/share:/etc/profiles/per-user/$user_name/share:/nix/var/nix/profiles/default/share:/run/current-system/sw/share:/usr/local/share:/usr/share"
+  '';
+  spaces = pkgs.writeShellScriptBin "flow-spaces" ''
+    export PYTHONPATH="${sessionPython}"
+    ${dataDirs}
     export PATH="${pkgs.glib}/bin:$PATH"
     exec ${pkgs.python3}/bin/python3 -S -P -m spaces "$@"
   '';
@@ -22,26 +27,24 @@ let
   # in-process, so it needs what flow-spaces needs.
   controller = pkgs.writeShellScriptBin "flow-controller" ''
     export PYTHONPATH="${sessionPython}"
-    user_name="''${USER:-$(${pkgs.coreutils}/bin/id -un)}"
-    export XDG_DATA_DIRS="''${XDG_DATA_DIRS:+$XDG_DATA_DIRS:}$HOME/.nix-profile/share:$HOME/.local/state/nix/profile/share:/etc/profiles/per-user/$user_name/share:/nix/var/nix/profiles/default/share:/run/current-system/sw/share:/usr/local/share:/usr/share"
+    ${dataDirs}
     export PATH="${pkgs.glib}/bin:$PATH"
     exec ${pkgs.python3}/bin/python3 -S -P -m flow_controller "$@"
   '';
   recovery = pkgs.writeShellScriptBin "flow-recovery" ''
     export PYTHONPATH="${sessionPython}"
+    ${dataDirs}
     export PATH="${pkgs.glib}/bin:$PATH"
     exec ${pkgs.python3}/bin/python3 -S -P -m restore "$@"
   '';
   appmenu = pkgs.writeShellScriptBin "flow-appmenu" ''
     export PYTHONPATH="${sessionPython}"
-    user_name="''${USER:-$(${pkgs.coreutils}/bin/id -un)}"
-    export XDG_DATA_DIRS="''${XDG_DATA_DIRS:+$XDG_DATA_DIRS:}$HOME/.nix-profile/share:$HOME/.local/state/nix/profile/share:/etc/profiles/per-user/$user_name/share:/nix/var/nix/profiles/default/share:/run/current-system/sw/share:/usr/local/share:/usr/share"
+    ${dataDirs}
     export GI_TYPELIB_PATH="${pkgs.at-spi2-core}/lib/girepository-1.0:${pkgs.glib}/lib/girepository-1.0:${pkgs.gobject-introspection}/lib/girepository-1.0''${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
     exec ${pkgs.python3.withPackages (p: [ p.pyatspi p.pygobject3 ])}/bin/python3 -P -m appmenu "$@"
   '';
   search = pkgs.writeShellScriptBin "flow-search" ''
-    user_name="''${USER:-$(${pkgs.coreutils}/bin/id -un)}"
-    export XDG_DATA_DIRS="''${XDG_DATA_DIRS:+$XDG_DATA_DIRS:}$HOME/.nix-profile/share:$HOME/.local/state/nix/profile/share:/etc/profiles/per-user/$user_name/share:/nix/var/nix/profiles/default/share:/run/current-system/sw/share:/usr/local/share:/usr/share"
+    ${dataDirs}
     export GI_TYPELIB_PATH="${pkgs.glib}/lib/girepository-1.0:${pkgs.gobject-introspection}/lib/girepository-1.0''${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
     export PYTHONPATH="${sessionPython}"
     # gio opens the chosen app or file (--open): the shell's own PATH, the session's, has no gio.

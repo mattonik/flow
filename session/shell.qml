@@ -343,7 +343,7 @@ ShellRoot {
         path: Quickshell.env("XDG_RUNTIME_DIR")
             ? Quickshell.env("XDG_RUNTIME_DIR") + "/flow-controller-" + Qt.md5(root.stateHome).slice(0, 12) + ".sock" : ""
         onConnectionStateChanged: {
-            if (connected) { write('{"watch": true}\n'); flush(); controllerHealthy.restart() }
+            if (connected) { write('{"watch": true, "auto_save": ' + root.autoSaveWanted + '}\n'); flush(); controllerHealthy.restart() }
             else { controllerHealthy.stop(); controllerConnect.restart() }
         }
         parser: SplitParser {
@@ -354,6 +354,7 @@ ShellRoot {
                     root.applySpaces(message.state)
                     if (message.refreshed !== undefined && message.refreshed >= root.deskRefresh && root.deskOpen) root.openEnds("desk")
                 } else if (message.event) root.niriEvent(message.event)
+                else if (message.auto_saved) root.autoSaved(message.auto_saved)
             }
         }
     }
@@ -371,7 +372,6 @@ ShellRoot {
         return refreshAsked
     }
     function niriEvent(event) {
-        sessionStirred = Date.now()
         if (event.WindowFocusChanged || event.WorkspaceActiveWindowChanged || event.WindowsChanged) {
             appMenuFocusMoves += 1
             requestAppIdentity()
@@ -583,9 +583,8 @@ ShellRoot {
                     const result = JSON.parse(this.text)
                     root.recoveryMessage = result.error || result.message || "Recovery unavailable"
                     if (recoveryProcess.command[1] === "save" && root.recoveryToast) { root.recoveryToast = false; root.showToast(root.recoveryMessage) }
-                    if (recoveryProcess.command[1] === "auto-start" || recoveryProcess.command[1] === "auto-save" || recoveryProcess.command[1] === "auto-ready") {
+                    if (recoveryProcess.command[1] === "auto-start" || recoveryProcess.command[1] === "auto-ready") {
                         root.autoRecoveryBlocked = !!result.error
-                        if (recoveryProcess.command[1] === "auto-save") root.autoSaved(result)
                         if (result.error) { root.deskOpen = true; root.settingsOpen = true; Qt.callLater(function() { root.reveal(recoveryStatus) }) }
                     }
                     if (recoveryProcess.command[1] === "save" && !result.error && menuPreferences.autoRecovery) autoReadyTimer.restart()
@@ -615,33 +614,21 @@ ShellRoot {
             recoveryProcess.command = ["flow-recovery", "auto-ready"]; recoveryProcess.running = true
         }
     }
-    // Saving automatically runs only while a change of what it saves (restore.py save()) is unsaved: the
-    // windows, spaces, pins or displays the controller sent. A save reads Niri itself, which can be between
-    // two states the controller never sent (focus overshooting and coming back): one that ran within a second
-    // of a Niri event the shell saw, or of a change, leaves the change unsaved, to be saved again next time.
-    property int sessionChanges: 1
-    property int savedChanges: 0
-    property int savingChanges: 0
-    property double sessionStirred: 0   // Date.now() of the last change or Niri event the shell saw
-    property double autoSaveBegan: 0
-    function sessionChange() { sessionChanges += 1; sessionStirred = Date.now() }
-    onWindowsChanged: sessionChange()
-    onDisplaySpacesChanged: sessionChange()
-    onPinsChanged: sessionChange()
-    onOtherPinsChanged: sessionChange()
-    onDisplaysChanged: sessionChange()
-    function autoSaved(result) {
-        if (!result.error && result.message && sessionStirred < autoSaveBegan - 1000) savedChanges = savingChanges
+    // Automatic saving is the controller's (flow_controller.py): it saves while the shell asks it to, with the
+    // setting on, recovery not paused and no Save session, Restore session or rename running (a save during a
+    // restore would replace the session it restores, and stop it). It says how each save went. A save that went
+    // well leaves the pause as it is: one that ended as the setting was switched must not undo that pause.
+    readonly property bool autoSaveWanted: menuPreferences.autoRecovery && !autoRecoveryBlocked && !recoveryWorking
+    onAutoSaveWantedChanged: if (controller.connected) {
+        controller.write(JSON.stringify({ auto_save: autoSaveWanted }) + "\n")
+        controller.flush()
     }
-    Timer {
-        interval: 30000; running: menuPreferences.autoRecovery; repeat: true
-        onTriggered: {
-            if (root.sessionChanges === root.savedChanges || root.autoRecoveryBlocked || recoveryProcess.running
-                || spacesProcess.running || root.pendingSpaceActions.length) return
-            root.savingChanges = root.sessionChanges
-            root.autoSaveBegan = Date.now()
-            recoveryProcess.command = ["flow-recovery", "auto-save"]; recoveryProcess.running = true
-        }
+    function autoSaved(result) {
+        if (!menuPreferences.autoRecovery) return  // switched off since
+        recoveryMessage = result.error || result.message || "Recovery unavailable"
+        if (!result.error) return
+        autoRecoveryBlocked = true
+        deskOpen = true; settingsOpen = true; Qt.callLater(function() { root.reveal(recoveryStatus) })
     }
     // A display that changes size (a rotation) reshapes the Layers Flow shaped on the next refresh, and Niri
     // may send no window event for a workspace with only floating windows.

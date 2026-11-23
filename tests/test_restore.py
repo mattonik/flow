@@ -1,10 +1,12 @@
 import contextlib
+import fcntl
 import io
 import importlib.util
 import json
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock, call, patch
 
@@ -89,35 +91,88 @@ class RecoveryTest(unittest.TestCase):
         self.assertFalse(restore.saved_order_matches(entries, restored, ws, [a, c, b | {"layout": {"pos_in_scrolling_layout": [3, 1]}}]))
         self.assertFalse(restore.saved_order_matches(entries, restored[:-1], ws, [a, b, c]))
 
-    def test_automatic_save_rejects_ambiguous_windows_without_overwriting_snapshot(self):
-        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"XDG_STATE_HOME": directory}), \
-                patch.object(sys, "argv", ["flow-recovery", "auto-save-checked"]), \
-                patch.object(restore.group_store, "load", return_value=[]), \
-                patch.object(restore.spaces, "snapshot", return_value=({"id": 1}, [window(1, "app", 1), window(2, "app", 2)])), \
-                patch.object(restore, "focused_display", return_value=(None, set())), \
-                patch.object(restore.spaces, "desktop_file", return_value=Path("/tmp/app.desktop")):
-            path = Path(directory) / "flow/session.json"
-            path.parent.mkdir()
-            path.write_text("previous snapshot")
-            with self.assertRaisesRegex(ValueError, "saved session was preserved"):
-                restore.main()
-            self.assertEqual(path.read_text(), "previous snapshot")
+    def test_automatic_save_refuses_ambiguous_windows_without_overwriting_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stack, patches = self.saving(directory, [window(1, "app", 1), window(2, "app", 2)])
+            with stack:
+                for item in patches:
+                    stack.enter_context(item)
+                path = Path(directory) / "flow/session.json"
+                path.parent.mkdir()
+                path.write_text("previous snapshot")
+                restore.automatic("auto-ready", path)
+                marker = next(p for p in Path(directory).glob("flow-recovery-*") if p.suffix != ".lock")
+                once = restore.automatic("auto-save", path, wait=False, pause=False)
+                self.assertTrue(once["refused"], once)
+                self.assertIn("multiple windows", once["error"])
+                self.assertEqual(marker.read_text(), "ready")  # a refusal without pause leaves recovery ready
+                paused = restore.automatic("auto-save", path, wait=False)
+                self.assertTrue(paused["refused"], paused)
+                self.assertEqual(marker.read_text(), "blocked")
+                self.assertNotIn("refused", restore.automatic("auto-save", path, wait=False))  # paused now
+                self.assertEqual(path.read_text(), "previous snapshot")
+
+    def test_a_group_mid_change_is_a_refusal_too(self):
+        group = {"id": "g", "label": "G", "members": ["one", "two"], "layout": "stack", "pending_layout": "side-by-side"}
+        with tempfile.TemporaryDirectory() as directory:
+            stack, patches = self.saving(directory, [window(1, "one", 1), window(2, "two", 2)], groups=[group])
+            with stack:
+                for item in patches:
+                    stack.enter_context(item)
+                path = Path(directory) / "flow/session.json"
+                restore.automatic("auto-ready", path)
+                once = restore.automatic("auto-save", path, wait=False, pause=False)
+                self.assertTrue(once["refused"], once)
+                self.assertIn("Group layout", once["error"])
+                marker = next(p for p in Path(directory).glob("flow-recovery-*") if p.suffix != ".lock")
+                self.assertEqual(marker.read_text(), "ready")
+
+    def test_a_niri_that_cannot_be_read_is_a_refusal_not_a_pause_at_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stack, patches = self.saving(directory, [window(1, "one", 1)])
+            with stack:
+                for item in patches:
+                    stack.enter_context(item)
+                path = Path(directory) / "flow/session.json"
+                restore.automatic("auto-ready", path)
+                marker = next(p for p in Path(directory).glob("flow-recovery-*") if p.suffix != ".lock")
+                for failure in (ValueError("No active workspace"), TimeoutError("timed out")):
+                    restore.spaces.snapshot.side_effect = failure
+                    once = restore.automatic("auto-save", path, wait=False, pause=False)
+                    self.assertTrue(once["refused"], once)
+                    self.assertEqual(marker.read_text(), "ready")
+                restore.spaces.snapshot.side_effect = None
+                with patch.object(restore, "focused_display", side_effect=TimeoutError("timed out")):  # its outputs
+                    self.assertTrue(restore.automatic("auto-save", path, wait=False, pause=False)["refused"])
+                self.assertEqual(marker.read_text(), "ready")
+                self.assertTrue(restore.automatic("auto-save", path, wait=False, pause=False)["written"])
+
+    def test_a_recovery_step_from_the_command_line_waits_for_the_marker_lock(self):
+        import threading
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \
+                patch.object(restore.spaces, "session_id", return_value="session"):
+            path = Path(directory) / "session.json"
+            restore.automatic("auto-pause", path)
+            held = next(Path(directory).glob("flow-recovery-*.lock")).open("a")
+            fcntl.flock(held, fcntl.LOCK_EX)
+            threading.Timer(0.3, held.close).start()  # closing releases it
+            started = time.monotonic()
+            self.assertIn("ready", restore.automatic("auto-ready", path)["message"])
+            self.assertGreaterEqual(time.monotonic() - started, 0.25)
 
     def test_an_open_layer_neither_pauses_automatic_saving_nor_enters_the_snapshot(self):
         layer = {"id": 9, "app_id": "notes", "workspace_id": 1, "title": "notes", "is_floating": True,
                  "layout": {"pos_in_scrolling_layout": None}}
-        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"XDG_STATE_HOME": directory}), \
-                patch.object(sys, "argv", ["flow-recovery", "auto-save-checked"]), \
-                patch.object(restore.group_store, "load", return_value=[]), \
-                patch.object(restore.spaces, "snapshot", return_value=({"id": 1}, [window(1, "app", 1), layer])), \
-                patch.object(restore.spaces, "session_id", return_value="s"), \
-                patch.object(restore, "focused_display", return_value=(None, set())), \
-                patch.object(restore.spaces, "desktop_file", return_value=Path("/tmp/app.desktop")), \
-                contextlib.redirect_stdout(io.StringIO()):
-            path = Path(directory) / "flow/session.json"
-            path.parent.mkdir()
-            restore.main()
-            self.assertEqual([w["app_id"] for w in json.loads(path.read_text())["windows"]], ["app"])
+        with tempfile.TemporaryDirectory() as directory:
+            stack, patches = self.saving(directory, [window(1, "app", 1), layer])
+            with stack:
+                for item in patches:
+                    stack.enter_context(item)
+                path = Path(directory) / "flow/session.json"
+                restore.automatic("auto-ready", path)
+                self.assertTrue(restore.automatic("auto-save", path, wait=False)["written"])
+                self.assertEqual([w["app_id"] for w in json.loads(path.read_text())["windows"]], ["app"])
 
     def test_automatic_start_restores_only_once_per_compositor_session(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \
@@ -145,7 +200,7 @@ class RecoveryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \
                 patch.object(restore.spaces, "session_id", return_value="session"), \
                 patch.object(restore.spaces, "snapshot", return_value=({"id": 1}, [])) as snapshot, \
-                patch.object(restore.subprocess, "run", return_value=Mock(returncode=1, stdout='{"error":"unsafe"}')) as run:
+                patch.object(restore, "save_locked", side_effect=ValueError("unsafe")) as run:
             path = Path(directory) / "session.json"
             path.write_text("saved")
             restore.automatic("auto-ready", path)
@@ -155,6 +210,75 @@ class RecoveryTest(unittest.TestCase):
             self.assertEqual(restore.automatic("auto-save", path)["error"], "unsafe")
             self.assertIn("paused", restore.automatic("auto-save", path)["error"])
             self.assertEqual(path.read_text(), "saved")
+
+    def saving(self, directory, windows, groups=()):
+        """What an automatic save reads, patched: a ready marker in ``directory``, one workspace of windows."""
+        return contextlib.ExitStack(), [
+            patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory, "XDG_STATE_HOME": directory}),
+            patch.object(restore.spaces, "session_id", return_value="session"),
+            patch.object(restore.spaces, "snapshot", return_value=({"id": 1, "active_window_id": 1}, windows)),
+            patch.object(restore.group_store, "load", return_value=list(groups)),
+            patch.object(restore, "focused_display", return_value=(None, set())),
+            patch.object(restore.spaces, "desktop_file", return_value=Path("/tmp/app.desktop"))]
+
+    def test_an_automatic_save_runs_in_this_process_and_leaves_an_unchanged_snapshot_alone(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stack, patches = self.saving(directory, [window(1, "one", 1), window(2, "two", 2)])
+            with stack, patch.object(restore.subprocess, "run", side_effect=AssertionError("no process")):
+                for item in patches:
+                    stack.enter_context(item)
+                path = Path(directory) / "flow/session.json"
+                restore.automatic("auto-ready", path)
+                first = restore.automatic("auto-save", path, wait=False)
+                self.assertTrue(first["written"], first)
+                self.assertEqual([w["app_id"] for w in json.loads(path.read_text())["windows"]], ["one", "two"])
+                stamp = path.stat().st_mtime_ns
+                reads = restore.spaces.snapshot.call_count
+                reading = restore.spaces.snapshot.return_value
+
+                def under_the_locks():
+                    with (path.parent / "session.lock").open("a") as other, self.assertRaises(BlockingIOError):
+                        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)  # this save holds it
+                    return reading
+                restore.spaces.snapshot.side_effect = under_the_locks
+                again = restore.automatic("auto-save", path, wait=False)
+                restore.spaces.snapshot.side_effect = None
+                self.assertEqual(restore.spaces.snapshot.call_count - reads, 1)  # Niri read once, under the locks
+                self.assertFalse(again["written"], again)
+                self.assertEqual(path.stat().st_mtime_ns, stamp)
+                restore.spaces.snapshot.return_value = ({"id": 1, "active_window_id": 2},
+                                                        [window(1, "one", 1), window(2, "two", 2)])
+                self.assertTrue(restore.automatic("auto-save", path, wait=False)["written"])
+                self.assertEqual([w["focused"] for w in json.loads(path.read_text())["windows"]], [False, True])
+
+    def test_an_automatic_save_without_waiting_gives_way_to_a_held_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stack, patches = self.saving(directory, [window(1, "one", 1)])
+            with stack:
+                for item in patches:
+                    stack.enter_context(item)
+                path = Path(directory) / "flow/session.json"
+                restore.automatic("auto-ready", path)
+                path.parent.mkdir(exist_ok=True)
+                marker = next(Path(directory).glob("flow-recovery-*.lock"))
+                for held in (path.parent / "session.lock", marker):  # an action; another recovery step
+                    with held.open("a") as other:
+                        fcntl.flock(other, fcntl.LOCK_EX)
+                        with self.assertRaises(BlockingIOError):
+                            restore.automatic("auto-save", path, wait=False)
+                self.assertFalse(path.exists())
+                self.assertTrue(restore.automatic("auto-save", path, wait=False)["written"])
+
+    def test_a_bug_in_an_automatic_save_pauses_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stack, patches = self.saving(directory, [window(1, "one", 1)])
+            with stack, patch.object(restore, "save", side_effect=TypeError("bug")):
+                for item in patches:
+                    stack.enter_context(item)
+                path = Path(directory) / "flow/session.json"
+                restore.automatic("auto-ready", path)
+                self.assertIn("preserved", restore.automatic("auto-save", path, wait=False)["error"])
+                self.assertIn("paused", restore.automatic("auto-save", path, wait=False)["error"])
 
     def test_recovery_accepts_only_matching_group_focus_updates(self):
         old = [{"id": "g", "label": "Writing", "members": ["one", "two"]}]
