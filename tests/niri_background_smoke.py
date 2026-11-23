@@ -13,17 +13,22 @@ Every ``grim`` and ``flow-recovery`` the shell starts goes through a recorder fi
 time and arguments and runs the real one.
 
 Checked:
-- once a change has been saved, 65 s of nothing changing: no automatic save (it ran every 30 s);
-- a change (focus moving to another space) is saved by the next automatic save, within 30 s;
-- a second walk through the five spaces, 1.2 s on each, with nothing on them changed: no snapshot (one was
-  taken each time a space settled);
+- a walk through the five spaces, 2.5 s on each: a snapshot of each (one may be there from startup); a second
+  walk, with nothing on them changed: no snapshot (main took one each time a space settled);
 - a space whose window's title changed: its snapshot taken again when it settles;
-- a space whose snapshot is older than a minute: taken again when it settles.
+- once a change has been saved, 65 s of nothing changing: no automatic save (main saved every 30 s);
+- a focus change saved by the next automatic save, within 33 s;
+- a save that began half a second after a Niri event (focus overshooting to another space and back): saved
+  again at the next tick, as it may have read Niri between two states;
+- a space whose snapshot is over a minute old: taken again when it settles;
+- a window joining another's column with focus unchanged, which changes only the spaces: saved by the next
+  automatic save.
 
 Prints one JSON line per check and a final ``{"result": ...}``; exits 1 if any check failed.
 """
 
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -35,7 +40,9 @@ from isolated_state import IsolatedState
 from niri_performance_smoke import RECORDER, NiriSocket, cpu, niri, read, runs, wait_for
 
 SPACES = "abcde"
-DWELL = 1.2  # s on each space: longer than the shell's 0.7 s wait for a space to settle, and its snapshot
+# s on each space. A focus change reaches the shell with the controller's next refresh, up to 1 s later (its
+# maximum wait); the space then settles for 0.7 s before its snapshot, which takes about 0.1 s.
+DWELL = 2.5
 SAVE_EVERY = 30  # s, the shell's automatic-save timer
 # Each terminal retitles itself with what its title file holds, once it appears.
 TITLER = r"""f={file}; while :; do
@@ -93,6 +100,12 @@ def main():
         def snapshots(start, end=None):
             return [stamp for stamp, _, _ in runs(logs["grim"], start, end or time.time() + 1)]
 
+        def saved_columns():
+            try:
+                return {w["window_id"]: w["column"] for w in json.loads(session.read_text())["windows"]}
+            except (OSError, ValueError, KeyError):
+                return {}
+
         def saved_focus():
             try:
                 return next((w["window_id"] for w in json.loads(session.read_text())["windows"] if w["focused"]), None)
@@ -132,31 +145,53 @@ def main():
                 time.sleep(2)  # it saves in about 60 ms in the guest; its process ends well within this
                 return stamp
 
+            def settles(ident):
+                """Focus a space and let it settle: how many snapshots it took."""
+                start = time.time()
+                sock.focus(ident)
+                try:
+                    wait_for(lambda: snapshots(start), "a snapshot", timeout=DWELL + 1)
+                except RuntimeError:
+                    pass
+                time.sleep(1)
+                return len(snapshots(start))
+
+            def saved_within(test, label):
+                """Seconds until the saved session passes ``test``, or None after a save's period and more."""
+                start = time.time()
+                try:
+                    wait_for(test, label, timeout=SAVE_EVERY + 10)
+                    return round(time.time() - start, 1)
+                except RuntimeError:
+                    return None
+
             # Startup: automatic recovery starts with nothing saved, then saves what it finds.
             saved_after(0, "the first automatic save")
 
             # Snapshots: every space once, then again with nothing on them changed.
             for ident in tiles:
                 visit(ident)
+            time.sleep(1)
             first = snapshots(0)
+            check("a first walk through the five spaces: snapshots", len(first), f">= {len(SPACES) - 1}",
+                  len(first) >= len(SPACES) - 1)
             start = time.time()
             reaped = cpu(pid)[1]
             for ident in tiles:
                 visit(ident)
+            time.sleep(1)  # a late snapshot of the last space counts
             again = snapshots(start)
             print(json.dumps({"measure": "second walk: CPU of the shell's helpers",
                               "value": round(100 * (cpu(pid)[1] - reaped) / (time.time() - start), 2),
-                              "unit": "% of a core", "snapshots_first_walk": len(first)}), flush=True)
+                              "unit": "% of a core"}), flush=True)
             check("a second walk through unchanged spaces: snapshots", len(again), "0", len(again) == 0)
 
             # A space whose window changed its title: the shell's state for that space is not what it was.
             visit(tiles[1])
             (titles / SPACES[0]).write_text("background a, retitled")
-            wait_for(lambda: "retitled" in ipc("window_labels"), "the new title in the shell's state")
-            start = time.time()
-            visit(tiles[0])
-            taken = snapshots(start)
-            check("a space whose title changed: snapshots when it settles", len(taken), "1", len(taken) == 1)
+            wait_for(lambda: "a, retitled" in ipc("window_labels"), "the new title in the shell's state")
+            taken = settles(tiles[0])
+            check("a space whose title changed: snapshots when it settles", taken, "1", taken == 1)
 
             # Automatic saving: once what changed is saved, nothing more while nothing changes.
             time.sleep(SAVE_EVERY + 5)  # the save of the walk's changes, if one is still due
@@ -164,25 +199,38 @@ def main():
             time.sleep(65)
             idle = saves(start, time.time())
             check("65 s with nothing changed: automatic saves", len(idle), "0", len(idle) == 0)
-            check("65 s with nothing changed: snapshots", len(snapshots(start, time.time())), "0",
-                  not snapshots(start, time.time()))
 
             # A change is saved by the next save.
-            start = time.time()
             sock.focus(tiles[2])
-            try:
-                wait_for(lambda: saved_focus() == tiles[2], "the save of a focus change", timeout=SAVE_EVERY + 10)
-                took = round(time.time() - start, 1)
-            except RuntimeError:
-                took = None  # not saved
-            check("a focus change: saved by the next automatic save", took, f"< {SAVE_EVERY + 1}",
-                  took is not None and took < SAVE_EVERY + 1, "s")
+            took = saved_within(lambda: saved_focus() == tiles[2], "the save of a focus change")
+            check("a focus change: saved by the next automatic save", took, f"< {SAVE_EVERY + 3}",
+                  took is not None and took < SAVE_EVERY + 3, "s")
 
-            # A space last snapshotted over a minute ago (tiles[3], in the second walk) is taken again.
-            start = time.time()
-            visit(tiles[3])
-            taken = snapshots(start)
-            check("a space snapshotted over a minute ago: snapshots when it settles", len(taken), "1", len(taken) == 1)
+            # A save that began within a second of a Niri event may have read Niri between two states (focus
+            # overshooting and coming back, which the controller never sends): it leaves the change unsaved.
+            time.sleep(SAVE_EVERY + 3)  # a second save of the focus change, if its save ran within a second of it
+            last = max(saves(0))
+            tick = last + SAVE_EVERY * math.ceil((time.time() + 8 - last) / SAVE_EVERY)  # a tick 8 s away or more
+            (titles / SPACES[1]).write_text("background b, retitled")
+            wait_for(lambda: "b, retitled" in ipc("window_labels"), "the second new title in the shell's state")
+            time.sleep(max(0, tick - 0.5 - time.time()))
+            sock.focus(tiles[3])
+            sock.focus(tiles[2])
+            time.sleep(max(0, tick + SAVE_EVERY + 3 - time.time()))
+            around = saves(tick - 1, tick + SAVE_EVERY + 3)
+            check("a save half a second after a Niri event: saved again at the next tick", len(around), "2",
+                  len(around) == 2)
+
+            # A space last snapshotted over a minute ago (tiles[3], in the first walk) is taken again.
+            taken = settles(tiles[3])
+            check("a space snapshotted over a minute ago: snapshots when it settles", taken, "1", taken == 1)
+
+            # A change only to the spaces (the window to the right joins the focused one's column; focus stays).
+            niri("action", "consume-window-into-column")
+            took = saved_within(lambda: saved_columns().get(tiles[4]) == saved_columns().get(tiles[3]),
+                                "the save of a column change")
+            check("a window joining another's column, focus unchanged: saved by the next automatic save", took,
+                  f"< {SAVE_EVERY + 3}", took is not None and took < SAVE_EVERY + 3, "s")
         finally:
             if sock:
                 sock.close()

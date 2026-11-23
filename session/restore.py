@@ -210,6 +210,8 @@ def valid_side_pins(group, pins):
 
 
 def save(path, workspace, windows, session=None, pins=(), registered=None, display=None):
+    # The shell saves automatically only after the state its controller sends changed (shell.qml,
+    # sessionChanges): what is saved here must be in that state, or a change to it alone is not saved.
     side_groups = [g for g in registered or [] if g.get("layout") == "side-by-side"]
     if any(g.get("pending_layout") for g in registered or []):
         raise ValueError("Finish Group layout changes before saving; the snapshot was not replaced")

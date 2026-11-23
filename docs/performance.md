@@ -263,7 +263,7 @@ A review of main after phase 3 found two jobs the shell repeated while nothing h
 
 | `tests/niri_background_smoke.py` (UTM guest) | Main | This change | Neutralised |
 |---|---|---|---|
-| A second walk through five unchanged spaces, 1.2 s each: snapshots | 5 ✗ | 0 | 5 ✗ (pictures never current) |
+| A second walk through five unchanged spaces, 2.5 s each: snapshots | 5 ✗ | 0 | 5 ✗ (pictures never current) |
 | The helpers' CPU over that walk | 1.81% | 0.0% | 1.65% |
 | A space whose window's title changed: snapshots when it settles | 1 | 1 | 0 ✗ (state not compared) |
 | A space whose picture is over a minute old: snapshots when it settles | 1 | 1 | 0 ✗ (age not compared) |
