@@ -133,23 +133,19 @@ def main():
 
         def killed_at(action, *args):
             """Runs ``flow-spaces *args`` and kills it, as a crash would, when it asks Niri for ``action``: every
-            earlier Niri action is done, that one is never sent. A ``niri`` ahead on PATH holds the helper there."""
+            earlier Niri action is done, that one is never sent. A ``niri`` ahead on PATH kills its caller there."""
             held = Path(tmp) / "held"
             held.mkdir(exist_ok=True)
-            (held / "reached").unlink(missing_ok=True)
-            (held / "niri").write_text(f'#!/bin/sh\ncase " $* " in *" {action} "*) : > "{held}/reached"; exec sleep 300;; '
-                                       f'esac\nexec "{shutil.which("niri")}" "$@"\n')
+            real = shutil.which("niri")
+            if not real:
+                raise RuntimeError("niri is not on PATH")
+            (held / "niri").write_text(f'#!/bin/sh\ncase " $* " in *" {action} "*) kill -KILL $PPID; exit 1;; esac\n'
+                                       f'exec "{real}" "$@"\n')
             (held / "niri").chmod(0o755)
-            process = subprocess.Popen(["flow-spaces", *args], env=dict(env, PATH=f"{held}:{env['PATH']}"),
-                                       stdout=subprocess.DEVNULL, start_new_session=True)
-            try:
-                wait_for(lambda: (held / "reached").exists() or process.poll() is not None, f"flow-spaces to ask for {action}")
-                if process.poll() is not None:
-                    raise RuntimeError(f"flow-spaces {args} ended (exit {process.returncode}) before asking for {action}")
-            finally:
-                if process.poll() is None:
-                    os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
+            process = subprocess.run(["flow-spaces", *args], env=dict(env, PATH=f"{held}:{env['PATH']}"),
+                                     stdout=subprocess.DEVNULL, timeout=90)
+            if process.returncode != -signal.SIGKILL:
+                raise RuntimeError(f"flow-spaces {args} ended (exit {process.returncode}) before asking for {action}")
 
         def close_all():
             for w in ours():
