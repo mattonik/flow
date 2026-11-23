@@ -21,8 +21,8 @@ Checked:
 - a save that began half a second after a Niri event (focus overshooting to another space and back): saved
   again at the next tick, as it may have read Niri between two states;
 - a space whose snapshot is over a minute old: taken again when it settles;
-- a window joining another's column with focus unchanged, which changes only the spaces: saved by the next
-  automatic save.
+- a window joining another's column with focus unchanged, which changes only the spaces, with the first save
+  after it dying without an answer: saved by the next automatic save.
 
 Prints one JSON line per check and a final ``{"result": ...}``; exits 1 if any check failed.
 """
@@ -44,6 +44,12 @@ SPACES = "abcde"
 # maximum wait); the space then settles for 0.7 s before its snapshot, which takes about 0.1 s.
 DWELL = 2.5
 SAVE_EVERY = 30  # s, the shell's automatic-save timer
+# flow-recovery's recorder makes the next auto-save die without an answer while its fail file is there.
+DYING = """#!{bash}
+printf '%s %s %s %s\\n' "$EPOCHREALTIME" "$PPID" "$$" "$*" >> {log}
+if [ "$1" = auto-save ] && [ -e {fail} ]; then rm -f {fail}; exit 1; fi
+exec {real} "$@"
+"""
 # Each terminal retitles itself with what its title file holds, once it appears.
 TITLER = r"""f={file}; while :; do
   if [ -e "$f" ]; then printf '\033]2;%s\007' "$(cat "$f")"; rm -f "$f"; fi
@@ -80,8 +86,11 @@ def main():
             (data / "applications" / f"flow-bg-{name}.desktop").write_text(
                 f"[Desktop Entry]\nType=Application\nName=Background {name}\nExec=foot --app-id flow-bg-{name}\n")
         logs = {name: tmp / f"{name}.log" for name in real}
+        fail = tmp / "fail-next-save"
+        (bin_dir / "grim").write_text(RECORDER.format(bash=bash, log=logs["grim"], real=real["grim"]))
+        (bin_dir / "flow-recovery").write_text(DYING.format(bash=bash, log=logs["flow-recovery"], fail=fail,
+                                                            real=real["flow-recovery"]))
         for name in real:
-            (bin_dir / name).write_text(RECORDER.format(bash=bash, log=logs[name], real=real[name]))
             (bin_dir / name).chmod(0o755)
         wayland = os.environ.get("WAYLAND_DISPLAY", "wayland-1")
         env = dict(os.environ, XDG_STATE_HOME=str(tmp), XDG_RUNTIME_DIR=str(runtime), XDG_CONFIG_HOME=str(config),
@@ -156,11 +165,11 @@ def main():
                 time.sleep(1)
                 return len(snapshots(start))
 
-            def saved_within(test, label):
-                """Seconds until the saved session passes ``test``, or None after a save's period and more."""
+            def saved_within(test, label, timeout=SAVE_EVERY + 10):
+                """Seconds until the saved session passes ``test``, or None after ``timeout``."""
                 start = time.time()
                 try:
-                    wait_for(test, label, timeout=SAVE_EVERY + 10)
+                    wait_for(test, label, timeout=timeout)
                     return round(time.time() - start, 1)
                 except RuntimeError:
                     return None
@@ -225,12 +234,19 @@ def main():
             taken = settles(tiles[3])
             check("a space snapshotted over a minute ago: snapshots when it settles", taken, "1", taken == 1)
 
-            # A change only to the spaces (the window to the right joins the focused one's column; focus stays).
+            # A change only to the spaces (the window to the right joins the focused one's column; focus stays),
+            # whose first save dies without an answer: the next one saves it. Once the visit above is saved, so
+            # that no other change is pending.
+            wait_for(lambda: saved_focus() == tiles[3], "the save of the visit", timeout=SAVE_EVERY + 10)
+            time.sleep(SAVE_EVERY + 3)  # its second save, if its first ran within a second of it
+            fail.write_text("")
+            start = time.time()
             niri("action", "consume-window-into-column")
             took = saved_within(lambda: saved_columns().get(tiles[4]) == saved_columns().get(tiles[3]),
-                                "the save of a column change")
-            check("a window joining another's column, focus unchanged: saved by the next automatic save", took,
-                  f"< {SAVE_EVERY + 3}", took is not None and took < SAVE_EVERY + 3, "s")
+                                "the save of a column change", SAVE_EVERY * 2 + 10)
+            died = not fail.exists() and len(saves(start)) >= 2
+            check("a window joining another's column, focus unchanged, its first save dying: saved by the next",
+                  took, f"< {SAVE_EVERY * 2 + 3}", died and took is not None and took < SAVE_EVERY * 2 + 3, "s")
         finally:
             if sock:
                 sock.close()
