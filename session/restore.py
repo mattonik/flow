@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Explicit, best-effort recovery of one Flow workspace."""
+import contextlib
 import json
 import os
 import fcntl
@@ -110,11 +111,46 @@ def saved_order_matches(entries, restored, workspace, windows):
     return True
 
 
-def automatic(op, path):
+@contextlib.contextmanager
+def flow_locks(state, wait=True):
+    """Flow's locks, as every action takes them: session.lock, then spaces.lock. Without ``wait``, a held
+    session.lock raises BlockingIOError (every holder of spaces.lock holds session.lock first)."""
+    state.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with (state / "session.lock").open("a") as session, (state / "spaces.lock").open("a") as held:
+        fcntl.flock(session, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+        fcntl.flock(held, fcntl.LOCK_EX)
+        yield
+
+
+def save_locked(path, checked=False, if_changed=False):
+    """Save session, under Flow's locks, which the caller holds. ``checked``: the automatic save, which pauses
+    rather than save windows it could not recover, and writes only a changed snapshot (``if_changed``)."""
+    registered = group_store.load(path.parent)
+    pins = pin_store.read(path.parent / "spaces.json")[0]
+    pinned_apps(pins)
+    workspace, windows = spaces.snapshot()
+    display = focused_display(workspace, path.parent)[0]
+    dirs = spaces.data_dirs()
+    if checked:
+        entries = [{"app_id": w.get("app_id"), "column": (w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0]}
+                   for w in windows if w.get("workspace_id") == workspace["id"] and not w.get("is_floating")]
+        warnings = recovery_warnings(entries, dirs)
+        if not entries or warnings:
+            raise ValueError("Automatic saving paused; the saved session was preserved. " + "; ".join(warnings))
+    before = path.read_bytes() if path.exists() else None
+    count = save(path, workspace, windows, spaces.session_id(), pins, registered, display, if_changed=if_changed)
+    warnings = recovery_warnings(json.loads(path.read_text())["windows"], dirs)
+    return {"message": f"Saved {count} open windows. Save documents in each app before restarting." +
+            (" " + "; ".join(warnings) if warnings else ""), "written": path.read_bytes() != before}
+
+
+def automatic(op, path, wait=True):
+    """An automatic-recovery step. Without ``wait``, recovery's or Flow's locks held elsewhere raise
+    BlockingIOError (the resident controller saves this way, and tries again later)."""
     runtime = Path(os.environ["XDG_RUNTIME_DIR"])
     marker = runtime / ("flow-recovery-" + hashlib.sha256(spaces.session_id().encode()).hexdigest())
     with marker.with_suffix(".lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        fcntl.flock(lock, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
         state = marker.read_text() if marker.exists() else ""
         if op == "auto-pause":
             marker.write_text("blocked")
@@ -142,15 +178,17 @@ def automatic(op, path):
         workspace, windows = spaces.snapshot()
         if not any(w.get("workspace_id") == workspace["id"] for w in windows):
             return {"message": "Automatic saving skipped an empty workspace."}
-        result = subprocess.run([sys.executable, __file__, "auto-save-checked"], capture_output=True, text=True)
         try:
-            output = json.loads(result.stdout)
-        except json.JSONDecodeError:
+            with flow_locks(path.parent, wait):
+                return save_locked(path, checked=True, if_changed=True)
+        except BlockingIOError:
+            raise
+        except (ValueError, KeyError, OSError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
+            marker.write_text("blocked")
+            return {"error": str(exc)}
+        except Exception:  # noqa: BLE001 — a bug in saving pauses it, as a crashed save did
             marker.write_text("blocked")
             return {"error": "Automatic saving failed; the saved session was preserved."}
-        if result.returncode or output.get("error"):
-            marker.write_text("blocked")
-        return output
 
 
 def write_snapshot(path, data):
@@ -209,9 +247,9 @@ def valid_side_pins(group, pins):
                           and claims[0].get("app_id") == group["members"][0])
 
 
-def save(path, workspace, windows, session=None, pins=(), registered=None, display=None):
-    # The shell saves automatically only after the state its controller sends changed (shell.qml,
-    # sessionChanges): what is saved here must be in that state, or a change to it alone is not saved.
+def save(path, workspace, windows, session=None, pins=(), registered=None, display=None, if_changed=False):
+    """Save the focused workspace's tiled windows and Groups; how many windows. With ``if_changed`` a snapshot
+    that would be the same as the saved one is not written again."""
     side_groups = [g for g in registered or [] if g.get("layout") == "side-by-side"]
     if any(g.get("pending_layout") for g in registered or []):
         raise ValueError("Finish Group layout changes before saving; the snapshot was not replaced")
@@ -302,7 +340,8 @@ def save(path, workspace, windows, session=None, pins=(), registered=None, displ
     data = {"version": 1, "session": session, "windows": entries, "groups": groups}
     if display:
         data["display"] = display
-    write_snapshot(path, data)
+    if not (if_changed and path.exists() and path.read_text() == json.dumps(data, ensure_ascii=False)):
+        write_snapshot(path, data)  # as json.dump writes it, so an unchanged snapshot reads the same
     return len(current)
 
 
@@ -663,22 +702,9 @@ def main():
                 fcntl.flock(spaces_lock, fcntl.LOCK_EX)
                 registered = group_store.load(path.parent)
                 if op in ("save", "auto-save-checked"):
-                    pins_path = path.parent / "spaces.json"
-                    pins = pin_store.read(pins_path)[0]
-                    pinned_apps(pins)
-                    workspace, windows = spaces.snapshot()
-                    display = focused_display(workspace, path.parent)[0]
-                    dirs = (os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share"), *os.environ.get("XDG_DATA_DIRS", "/run/current-system/sw/share:/usr/share").split(":"))
-                    if op == "auto-save-checked":
-                        entries = [{"app_id": w.get("app_id"), "column": (w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0]}
-                                   for w in windows if w.get("workspace_id") == workspace["id"] and not w.get("is_floating")]
-                        warnings = recovery_warnings(entries, dirs)
-                        if not entries or warnings:
-                            raise ValueError("Automatic saving paused; the saved session was preserved. " + "; ".join(warnings))
-                    count = save(path, workspace, windows, spaces.session_id(), pins, registered, display)
-                    warnings = recovery_warnings(json.loads(path.read_text())["windows"], dirs)
-                    print(json.dumps({"message": f"Saved {count} open windows. Save documents in each app before restarting." +
-                                      (" " + "; ".join(warnings) if warnings else "")}))
+                    result = save_locked(path, checked=op == "auto-save-checked")
+                    del result["written"]
+                    print(json.dumps(result))
                 elif op == "rename-group":
                     if len(sys.argv) != 4:
                         raise ValueError("Group name and ID are required")

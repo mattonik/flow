@@ -42,6 +42,11 @@ TITLE_INTERVAL = 1.0  # A title-only change refreshes at once, then at most this
 SAFETY = 30.0  # A refresh at least this often, in case an event was missed;
 STREAM_DOWN = 3.0  # this often while Niri's event stream is down;
 RECONNECT = 5.0  # which is reconnected this long after it ends.
+# Automatic session saving (restore.py), while a client asks for it (the shell, while the setting is on and
+# recovery is not paused): this long after the first refresh that events or a client asked for since the last save,
+AUTO_SAVE_WAIT = 2.0
+AUTO_SAVE_EVERY = 30.0  # and never sooner than this after the previous save began (each writes and syncs a file);
+AUTO_SAVE_RETRY = 1.0  # while recovery or an action holds its locks, tried again this often.
 BUSY_RETRY = 0.1  # An action holding Flow's locks is waited for by trying again this often.
 INBOX_LIMIT = 1 << 20  # no request is this long
 OUTBOX_LIMIT = 16 << 20  # a client this far behind has stopped reading
@@ -115,6 +120,7 @@ class Client:
         self.outbox = bytearray()
         self.watching = False
         self.asked = None  # the id of a refresh it asked for and waits on
+        self.auto_save = False  # it asks for automatic session saving
 
 
 class Controller:
@@ -135,8 +141,13 @@ class Controller:
         self.state_line = None  # the last state pushed, as sent
         self.last_refresh = float("-inf")  # so the safety refresh, the first state, is due at once
         self.recent = collections.deque(maxlen=1000)  # when the last refreshes ran (wall clock), for the smoke
+        self.unsaved_since = None  # when the first refresh since the last automatic save ran
+        self.last_save = float("-inf")
+        self.save_retry = float("-inf")
+        self.saves = collections.deque(maxlen=1000)  # [wall clock, written] of the last automatic saves
         self.stats = {"refreshes": 0, "observes": 0, "events": 0, "title_only": 0, "pushes": 0, "busy": 0,
-                      "reshapes": 0, "failures": 0, "refresh_ms": 0.0, "first_watcher_ms": None}
+                      "reshapes": 0, "failures": 0, "refresh_ms": 0.0, "first_watcher_ms": None,
+                      "auto_saves": 0, "auto_save_writes": 0, "auto_save_ms": 0.0}
         # When it began listening: how soon the first watcher came, for the smoke.
         self.started = time.monotonic() if listened is None else listened
 
@@ -277,6 +288,45 @@ class Controller:
             self.send(client, line)
         return True
 
+    # Automatic session saving -------------------------------------------------------------------------------
+
+    def save_due(self):
+        """When the next automatic save is due, or None."""
+        if self.unsaved_since is None or not any(client.auto_save for client in self.clients):
+            return None
+        return max(self.unsaved_since + AUTO_SAVE_WAIT, self.last_save + AUTO_SAVE_EVERY, self.save_retry)
+
+    def auto_save(self, now):
+        """Save the session as restore.py's automatic save does, in this process, and tell the clients that asked
+        for it. While recovery or an action holds its locks, it is tried again a second later.
+
+        The save reads Niri afresh. Should that catch a state on its way to another (focus overshooting and
+        coming back), the events that follow it refresh, and the next save records where it came to rest.
+        """
+        import restore  # only once saving is asked for: the controller starts without it
+
+        started = time.perf_counter()
+        try:
+            result = restore.automatic("auto-save", self.state_dir / "session.json", wait=False)
+        except BlockingIOError:
+            self.stats["busy"] += 1
+            self.save_retry = now + AUTO_SAVE_RETRY
+            return
+        except Exception:  # noqa: BLE001 — a bug in saving must not stop the loop
+            self.fail("An automatic save")
+            result = {"error": "Automatic saving failed; the saved session was preserved."}
+        self.unsaved_since = None
+        self.last_save = now
+        written = bool(result.get("written"))
+        self.stats["auto_saves"] += 1
+        self.stats["auto_save_writes"] += written
+        self.stats["auto_save_ms"] += (time.perf_counter() - started) * 1000
+        self.saves.append([time.time(), written])
+        line = json.dumps({"auto_saved": result}).encode() + b"\n"
+        for client in list(self.clients):
+            if client.auto_save:
+                self.send(client, line)
+
     # Clients -------------------------------------------------------------------------------------------------
 
     def accept(self):
@@ -329,11 +379,15 @@ class Controller:
             if request.get("refresh"):
                 client.asked = request["refresh"]
                 self.coalescer.now()
+            if "auto_save" in request:
+                # What is unsaved stays so while no client asks (from the first refresh on): asking saves it.
+                client.auto_save = bool(request["auto_save"])
             if request.get("get") == "observe":
                 self.observers.append(client)
             elif request.get("get") == "stats":
                 self.send(client, json.dumps({"reply": {**self.stats, "stream": self.stream is not None,
                                                         "ready": self.niri.ready, "recent": list(self.recent),
+                                                        "saves": list(self.saves),
                                                         "pid": os.getpid()}}).encode() + b"\n")
 
     def send(self, client, line):
@@ -369,9 +423,9 @@ class Controller:
 
     def next_deadline(self):
         deadlines = [self.last_refresh + (SAFETY if self.stream else STREAM_DOWN)]
-        due = self.coalescer.due()
-        if due is not None:
-            deadlines.append(due)
+        for due in (self.coalescer.due(), self.save_due()):
+            if due is not None:
+                deadlines.append(due)
         if self.stream is None:
             deadlines.append(self.stream_retry)
         return min(deadlines)
@@ -387,8 +441,16 @@ class Controller:
         busy = False
         if (due is not None and now >= due) or now >= safety:
             busy = not self.refresh(now)
+            # What a save records changes only with what Niri's events say or a client's action: a refresh that
+            # answered them (even the safety one, when it came first) calls for a save, the safety one alone not,
+            # unless the event stream is down and refreshes are all there is.
+            if not busy and (due is not None or self.stream is None) and self.unsaved_since is None:
+                self.unsaved_since = now
         if not self.answer_observers():
             busy = True
+        saving = self.save_due()
+        if not busy and saving is not None and now >= saving:
+            self.auto_save(now)
         if busy:
             return BUSY_RETRY  # an action holds the locks: try again shortly, never spin
         return max(0.0, self.next_deadline() - now)

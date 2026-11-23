@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "session"))
 import flow_controller as fc  # noqa: E402
+import restore  # noqa: E402  the module the controller saves with, so patches reach it
 import spaces  # noqa: E402  the module the controller runs, so patches reach it
 
 
@@ -169,7 +170,9 @@ class FakeNiriTest(unittest.TestCase):
         self.assertTrue(stream.closed)
 
 
-class ControllerTest(unittest.TestCase):
+class ControllerCase(unittest.TestCase):
+    """A controller on a fake Niri, and one client of it."""
+
     def setUp(self):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
@@ -220,6 +223,8 @@ class ControllerTest(unittest.TestCase):
     def labels(self, state):
         return [w["label"] for w in state["windows"]]
 
+
+class ControllerTest(ControllerCase):
     def test_a_watcher_gets_the_state_then_each_change(self):
         self.ask({"watch": True})
         [state] = self.states(0.4)
@@ -456,6 +461,137 @@ class ControllerTest(unittest.TestCase):
             server.close()
             lock.close()
 
+
+
+class AutoSaveTest(ControllerCase):
+    """Automatic session saving, with restore.automatic faked: when the controller saves and whom it tells."""
+
+    def setUp(self):
+        super().setUp()
+        for name, value in (("AUTO_SAVE_WAIT", 0.2), ("AUTO_SAVE_EVERY", 0.8), ("AUTO_SAVE_RETRY", 0.15),
+                            ("SAFETY", 0.3)):
+            patcher = patch.object(fc, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.saved = []  # when each save ran, by the test's clock
+        self.answers = [{"message": "Saved 2 open windows.", "written": True}]
+
+        def save(op, path, wait=True):
+            self.assertEqual((op, path, wait), ("auto-save", self.tmp / "state/session.json", False))
+            self.saved.append(time.monotonic())
+            answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+            if isinstance(answer, BaseException):
+                raise answer
+            return answer
+        patcher = patch.object(restore, "automatic", side_effect=save)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def focus(self, ident):
+        self.niri.send({"WindowFocusChanged": {"id": ident}})
+
+    def saved_messages(self, seconds):
+        return [m["auto_saved"] for m in self.messages(seconds) if "auto_saved" in m]
+
+    def test_nothing_is_saved_until_a_client_asks(self):
+        self.ask({"watch": True})
+        self.messages(0.4)
+        self.focus(8)
+        self.messages(0.6)
+        self.assertEqual(self.saved, [])
+        self.ask({"auto_save": True})
+        self.assertEqual(self.saved_messages(0.4), [{"message": "Saved 2 open windows.", "written": True}])
+        self.assertEqual(len(self.saved), 1)
+        self.assertEqual((self.controller.stats["auto_saves"], self.controller.stats["auto_save_writes"]), (1, 1))
+
+    def test_with_nothing_changed_it_does_not_save_again_though_it_refreshes(self):
+        self.ask({"watch": True})
+        self.messages(1.0)  # Niri's first events, and their refresh
+        self.ask({"auto_save": True})
+        self.messages(1.0)
+        self.assertEqual(len(self.saved), 1)
+        refreshes = self.controller.stats["refreshes"]
+        self.messages(2.0)  # several safety refreshes, and more than two saves' intervals
+        self.assertGreater(self.controller.stats["refreshes"], refreshes + 3)
+        self.assertEqual(len(self.saved), 1)
+
+    def until_saved(self, count, timeout=2.0):
+        """Run the controller until it has saved ``count`` times."""
+        end = time.monotonic() + timeout
+        while len(self.saved) < count and time.monotonic() < end:
+            self.messages(0.02)
+        self.assertEqual(len(self.saved), count)
+
+    def test_a_change_is_saved_a_wait_after_it_and_an_interval_after_the_last_save(self):
+        self.ask({"watch": True, "auto_save": True})
+        self.until_saved(1)  # after Niri's first events (a refresh's interval after the first)
+        first = self.saved[0]
+        self.focus(8)
+        changed = time.monotonic()
+        self.messages(1.2)
+        self.assertEqual(len(self.saved), 2)
+        self.assertGreaterEqual(self.saved[1] - first, fc.AUTO_SAVE_EVERY - 0.03)  # not at the wait's end
+        self.messages(1.0)  # idle again: once more after a change is all
+        self.assertEqual(len(self.saved), 2)
+        self.focus(7)
+        changed = time.monotonic()
+        self.messages(1.2)  # now an interval after the last save: due at the wait's end
+        self.assertEqual(len(self.saved), 3)
+        # The refresh comes up to MIN_INTERVAL after the previous one, then the wait.
+        self.assertLess(self.saved[2] - changed, fc.MIN_INTERVAL + fc.AUTO_SAVE_WAIT + 0.1)
+
+    def test_with_the_event_stream_down_its_refreshes_call_for_saves(self):
+        self.ask({"watch": True, "auto_save": True})
+        self.messages(1.0)  # the first save, after Niri's first events (a refresh's interval after the first)
+        saves = len(self.saved)
+        with patch.object(fc, "RECONNECT", 30.0), patch.object(fc, "STREAM_DOWN", 0.3):
+            self.niri.end_streams()
+            self.messages(0.2)
+            self.assertIsNone(self.controller.stream)
+            self.messages(fc.AUTO_SAVE_EVERY + 0.6)  # the save the stream's end asks for
+            saves = len(self.saved)
+            self.niri.windows = list(reversed(self.niri.windows))  # a change no event reports
+            self.messages(fc.AUTO_SAVE_EVERY + 0.6)
+        self.assertGreater(len(self.saved), saves)
+
+    def test_a_held_lock_is_tried_again_a_retry_later_never_in_a_spin(self):
+        self.answers = [BlockingIOError(), BlockingIOError(), {"message": "Saved", "written": True}]
+        self.ask({"watch": True, "auto_save": True})
+        answers = self.saved_messages(1.5)
+        self.assertEqual(answers, [{"message": "Saved", "written": True}])
+        self.assertEqual(len(self.saved), 3)
+        self.assertGreaterEqual(self.saved[1] - self.saved[0], fc.AUTO_SAVE_RETRY - 0.03)
+        self.assertEqual(self.controller.stats["auto_saves"], 1)
+
+    def test_a_bug_in_saving_is_reported_and_the_loop_goes_on(self):
+        self.answers = [TypeError("bug"), {"message": "Saved", "written": False}]
+        self.ask({"watch": True, "auto_save": True})
+        with patch("sys.stderr", io.StringIO()):
+            [answer] = self.saved_messages(1.0)
+        self.assertIn("preserved", answer["error"])
+        self.assertEqual(self.controller.stats["failures"], 1)
+        self.focus(8)
+        self.assertEqual(self.saved_messages(1.2), [{"message": "Saved", "written": False}])
+
+    def test_only_the_clients_that_asked_are_told_and_stopping_stops_it(self):
+        other = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        other.connect(str(fc.socket_path()))
+        self.addCleanup(other.close)
+        other.settimeout(0)
+        other.sendall(b'{"watch": true}\n')
+        self.ask({"watch": True, "auto_save": True})
+        self.assertEqual(len(self.saved_messages(1.0)), 1)
+        heard = b""
+        try:
+            heard = other.recv(1 << 20)
+        except BlockingIOError:
+            pass
+        self.assertNotIn(b"auto_saved", heard)
+        self.ask({"auto_save": False})
+        self.messages(0.1)
+        self.focus(8)
+        self.messages(1.2)
+        self.assertEqual(len(self.saved), 1)
 
 class MainTest(unittest.TestCase):
     def test_it_says_listening_once_its_socket_takes_connections(self):

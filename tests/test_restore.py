@@ -1,4 +1,5 @@
 import contextlib
+import fcntl
 import io
 import importlib.util
 import json
@@ -145,7 +146,7 @@ class RecoveryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \
                 patch.object(restore.spaces, "session_id", return_value="session"), \
                 patch.object(restore.spaces, "snapshot", return_value=({"id": 1}, [])) as snapshot, \
-                patch.object(restore.subprocess, "run", return_value=Mock(returncode=1, stdout='{"error":"unsafe"}')) as run:
+                patch.object(restore, "save_locked", side_effect=ValueError("unsafe")) as run:
             path = Path(directory) / "session.json"
             path.write_text("saved")
             restore.automatic("auto-ready", path)
@@ -155,6 +156,65 @@ class RecoveryTest(unittest.TestCase):
             self.assertEqual(restore.automatic("auto-save", path)["error"], "unsafe")
             self.assertIn("paused", restore.automatic("auto-save", path)["error"])
             self.assertEqual(path.read_text(), "saved")
+
+    def saving(self, directory, windows):
+        """What an automatic save reads, patched: a ready marker in ``directory``, one workspace of windows."""
+        return contextlib.ExitStack(), [
+            patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory, "XDG_STATE_HOME": directory}),
+            patch.object(restore.spaces, "session_id", return_value="session"),
+            patch.object(restore.spaces, "snapshot", return_value=({"id": 1, "active_window_id": 1}, windows)),
+            patch.object(restore.group_store, "load", return_value=[]),
+            patch.object(restore, "focused_display", return_value=(None, set())),
+            patch.object(restore.spaces, "desktop_file", return_value=Path("/tmp/app.desktop"))]
+
+    def test_an_automatic_save_runs_in_this_process_and_leaves_an_unchanged_snapshot_alone(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stack, patches = self.saving(directory, [window(1, "one", 1), window(2, "two", 2)])
+            with stack, patch.object(restore.subprocess, "run", side_effect=AssertionError("no process")):
+                for item in patches:
+                    stack.enter_context(item)
+                path = Path(directory) / "flow/session.json"
+                restore.automatic("auto-ready", path)
+                first = restore.automatic("auto-save", path, wait=False)
+                self.assertTrue(first["written"], first)
+                self.assertEqual([w["app_id"] for w in json.loads(path.read_text())["windows"]], ["one", "two"])
+                stamp = path.stat().st_mtime_ns
+                again = restore.automatic("auto-save", path, wait=False)
+                self.assertFalse(again["written"], again)
+                self.assertEqual(path.stat().st_mtime_ns, stamp)
+                restore.spaces.snapshot.return_value = ({"id": 1, "active_window_id": 2},
+                                                        [window(1, "one", 1), window(2, "two", 2)])
+                self.assertTrue(restore.automatic("auto-save", path, wait=False)["written"])
+                self.assertEqual([w["focused"] for w in json.loads(path.read_text())["windows"]], [False, True])
+
+    def test_an_automatic_save_without_waiting_gives_way_to_a_held_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stack, patches = self.saving(directory, [window(1, "one", 1)])
+            with stack:
+                for item in patches:
+                    stack.enter_context(item)
+                path = Path(directory) / "flow/session.json"
+                restore.automatic("auto-ready", path)
+                path.parent.mkdir(exist_ok=True)
+                marker = next(Path(directory).glob("flow-recovery-*.lock"))
+                for held in (path.parent / "session.lock", marker):  # an action; another recovery step
+                    with held.open("a") as other:
+                        fcntl.flock(other, fcntl.LOCK_EX)
+                        with self.assertRaises(BlockingIOError):
+                            restore.automatic("auto-save", path, wait=False)
+                self.assertFalse(path.exists())
+                self.assertTrue(restore.automatic("auto-save", path, wait=False)["written"])
+
+    def test_a_bug_in_an_automatic_save_pauses_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stack, patches = self.saving(directory, [window(1, "one", 1)])
+            with stack, patch.object(restore, "save", side_effect=TypeError("bug")):
+                for item in patches:
+                    stack.enter_context(item)
+                path = Path(directory) / "flow/session.json"
+                restore.automatic("auto-ready", path)
+                self.assertIn("preserved", restore.automatic("auto-save", path, wait=False)["error"])
+                self.assertIn("paused", restore.automatic("auto-save", path, wait=False)["error"])
 
     def test_recovery_accepts_only_matching_group_focus_updates(self):
         old = [{"id": "g", "label": "Writing", "members": ["one", "two"]}]
