@@ -615,14 +615,16 @@ ShellRoot {
         }
     }
     // Automatic saving is the controller's (flow_controller.py): it saves while the shell asks it to, with the
-    // setting on and recovery not paused, and says how each save went. A save that went well leaves the pause
-    // as it is: one that ended as the setting was switched must not undo the pause that switch made.
-    readonly property bool autoSaveWanted: menuPreferences.autoRecovery && !autoRecoveryBlocked
+    // setting on, recovery not paused and no Save session, Restore session or rename running (a save during a
+    // restore would replace the session it restores, and stop it). It says how each save went. A save that went
+    // well leaves the pause as it is: one that ended as the setting was switched must not undo that pause.
+    readonly property bool autoSaveWanted: menuPreferences.autoRecovery && !autoRecoveryBlocked && !recoveryWorking
     onAutoSaveWantedChanged: if (controller.connected) {
         controller.write(JSON.stringify({ auto_save: autoSaveWanted }) + "\n")
         controller.flush()
     }
     function autoSaved(result) {
+        if (!menuPreferences.autoRecovery) return  // switched off since
         recoveryMessage = result.error || result.message || "Recovery unavailable"
         if (!result.error) return
         autoRecoveryBlocked = true

@@ -238,7 +238,7 @@ class RoutingTest(unittest.TestCase):
     def test_recovery_keys_a_lone_twin_monitor_as_pins_do(self):
         (self.state / "spaces.json").write_text(json.dumps({"version": 2, "pins": [], "displays": {
             "port:DP-1|Dell|U2723QE": {"connector": "DP-1", "label": "Dell U2723QE", "shared_serial": MONITOR_KEY}}}))
-        with patch.object(restore.spaces, "command", return_value=json.dumps({"DP-1": MONITOR})):
+        with patch.object(restore.spaces, "query", return_value=[{"DP-1": MONITOR}]):
             key, connected = restore.focused_display({"output": "DP-1"}, self.state)
         self.assertEqual((key, connected), ("port:DP-1|Dell|U2723QE", {"port:DP-1|Dell|U2723QE"}))
 
@@ -280,11 +280,12 @@ class RoutingTest(unittest.TestCase):
              patch.object(sys, "argv", ["flow-recovery", "restore"]), \
              patch.object(restore.spaces, "snapshot", side_effect=self.focused), \
              patch.object(restore.spaces, "session_id", return_value="session"), \
-             patch.object(restore.spaces, "command", return_value=json.dumps(self.outputs)) as command, \
+             patch.object(restore.spaces, "query", return_value=[self.outputs]) as query, \
+             patch.object(restore.spaces, "command", side_effect=AssertionError("no niri msg")), \
              self.assertRaisesRegex(ValueError, "another connected display"):
             restore.main()
-        self.assertEqual(command.call_args_list[0].args, ("-j", "outputs"))
-        self.assertEqual(len(command.call_args_list), 1)
+        self.assertEqual(query.call_args_list[0].args, ("Outputs",))  # over Niri's socket, no process
+        self.assertEqual(len(query.call_args_list), 1)
 
 
 if __name__ == "__main__":

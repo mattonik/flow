@@ -464,7 +464,9 @@ class ControllerTest(ControllerCase):
 
 
 class AutoSaveTest(ControllerCase):
-    """Automatic session saving, with restore.automatic faked: when the controller saves and whom it tells."""
+    """Automatic session saving, with restore.automatic faked: when the controller saves and whom it tells.
+
+    What should happen is waited for (up to a few seconds); only what should not is watched for a fixed time."""
 
     def setUp(self):
         super().setUp()
@@ -473,12 +475,13 @@ class AutoSaveTest(ControllerCase):
             patcher = patch.object(fc, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
-        self.saved = []  # when each save ran, by the test's clock
+        self.saved = []  # (when, pause) of each save, by the test's clock
         self.answers = [{"message": "Saved 2 open windows.", "written": True}]
+        self.told = []  # what this client was told
 
-        def save(op, path, wait=True):
+        def save(op, path, wait=True, pause=True):
             self.assertEqual((op, path, wait), ("auto-save", self.tmp / "state/session.json", False))
-            self.saved.append(time.monotonic())
+            self.saved.append((time.monotonic(), pause))
             answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
             if isinstance(answer, BaseException):
                 raise answer
@@ -490,88 +493,112 @@ class AutoSaveTest(ControllerCase):
     def focus(self, ident):
         self.niri.send({"WindowFocusChanged": {"id": ident}})
 
-    def saved_messages(self, seconds):
-        return [m["auto_saved"] for m in self.messages(seconds) if "auto_saved" in m]
+    def run_for(self, seconds):
+        self.told += [m["auto_saved"] for m in self.messages(seconds) if "auto_saved" in m]
+
+    def until(self, test, timeout=3.0):
+        end = time.monotonic() + timeout
+        while not test() and time.monotonic() < end:
+            self.run_for(0.02)
+        self.assertTrue(test(), "timed out")
+
+    def started(self):
+        """The shell's way: watch first, Niri's first events and their refresh, then ask for saving."""
+        self.ask({"watch": True})
+        self.run_for(1.0)
+        self.ask({"auto_save": True})
+        self.until(lambda: len(self.saved) == 1)
 
     def test_nothing_is_saved_until_a_client_asks(self):
         self.ask({"watch": True})
-        self.messages(0.4)
+        self.run_for(0.4)
         self.focus(8)
-        self.messages(0.6)
+        self.run_for(1.0)
         self.assertEqual(self.saved, [])
         self.ask({"auto_save": True})
-        self.assertEqual(self.saved_messages(0.4), [{"message": "Saved 2 open windows.", "written": True}])
-        self.assertEqual(len(self.saved), 1)
+        self.until(lambda: self.told)
+        self.assertEqual(self.told, [{"message": "Saved 2 open windows.", "written": True}])
         self.assertEqual((self.controller.stats["auto_saves"], self.controller.stats["auto_save_writes"]), (1, 1))
 
     def test_with_nothing_changed_it_does_not_save_again_though_it_refreshes(self):
-        self.ask({"watch": True})
-        self.messages(1.0)  # Niri's first events, and their refresh
-        self.ask({"auto_save": True})
-        self.messages(1.0)
-        self.assertEqual(len(self.saved), 1)
+        self.started()
         refreshes = self.controller.stats["refreshes"]
-        self.messages(2.0)  # several safety refreshes, and more than two saves' intervals
+        self.run_for(2.0)  # several safety refreshes, and more than two saves' intervals
         self.assertGreater(self.controller.stats["refreshes"], refreshes + 3)
         self.assertEqual(len(self.saved), 1)
 
-    def until_saved(self, count, timeout=2.0):
-        """Run the controller until it has saved ``count`` times."""
-        end = time.monotonic() + timeout
-        while len(self.saved) < count and time.monotonic() < end:
-            self.messages(0.02)
-        self.assertEqual(len(self.saved), count)
-
     def test_a_change_is_saved_a_wait_after_it_and_an_interval_after_the_last_save(self):
-        self.ask({"watch": True, "auto_save": True})
-        self.until_saved(1)  # after Niri's first events (a refresh's interval after the first)
-        first = self.saved[0]
+        self.started()
+        first = self.saved[0][0]
         self.focus(8)
-        changed = time.monotonic()
-        self.messages(1.2)
-        self.assertEqual(len(self.saved), 2)
-        self.assertGreaterEqual(self.saved[1] - first, fc.AUTO_SAVE_EVERY - 0.03)  # not at the wait's end
-        self.messages(1.0)  # idle again: once more after a change is all
+        self.until(lambda: len(self.saved) == 2)
+        self.assertGreaterEqual(self.saved[1][0] - first, fc.AUTO_SAVE_EVERY - 0.03)  # not at the wait's end
+        self.run_for(1.0)  # idle again: once more after a change is all
         self.assertEqual(len(self.saved), 2)
         self.focus(7)
         changed = time.monotonic()
-        self.messages(1.2)  # now an interval after the last save: due at the wait's end
-        self.assertEqual(len(self.saved), 3)
-        # The refresh comes up to MIN_INTERVAL after the previous one, then the wait.
-        self.assertLess(self.saved[2] - changed, fc.MIN_INTERVAL + fc.AUTO_SAVE_WAIT + 0.1)
+        self.until(lambda: len(self.saved) == 3)
+        # An interval after the last save: due at the wait's end. The refresh comes up to MIN_INTERVAL after the
+        # previous one, then the wait.
+        self.assertLess(self.saved[2][0] - changed, fc.MIN_INTERVAL + fc.AUTO_SAVE_WAIT + 0.15)
 
     def test_with_the_event_stream_down_its_refreshes_call_for_saves(self):
-        self.ask({"watch": True, "auto_save": True})
-        self.messages(1.0)  # the first save, after Niri's first events (a refresh's interval after the first)
-        saves = len(self.saved)
+        self.started()
         with patch.object(fc, "RECONNECT", 30.0), patch.object(fc, "STREAM_DOWN", 0.3):
             self.niri.end_streams()
-            self.messages(0.2)
-            self.assertIsNone(self.controller.stream)
-            self.messages(fc.AUTO_SAVE_EVERY + 0.6)  # the save the stream's end asks for
-            saves = len(self.saved)
+            self.until(lambda: self.controller.stream is None)
+            self.until(lambda: len(self.saved) == 2)  # the save the stream's end asks for
             self.niri.windows = list(reversed(self.niri.windows))  # a change no event reports
-            self.messages(fc.AUTO_SAVE_EVERY + 0.6)
-        self.assertGreater(len(self.saved), saves)
+            self.until(lambda: len(self.saved) == 3)
 
     def test_a_held_lock_is_tried_again_a_retry_later_never_in_a_spin(self):
         self.answers = [BlockingIOError(), BlockingIOError(), {"message": "Saved", "written": True}]
         self.ask({"watch": True, "auto_save": True})
-        answers = self.saved_messages(1.5)
-        self.assertEqual(answers, [{"message": "Saved", "written": True}])
+        self.until(lambda: self.told)
+        self.assertEqual(self.told, [{"message": "Saved", "written": True}])
         self.assertEqual(len(self.saved), 3)
-        self.assertGreaterEqual(self.saved[1] - self.saved[0], fc.AUTO_SAVE_RETRY - 0.03)
+        self.assertGreaterEqual(self.saved[1][0] - self.saved[0][0], fc.AUTO_SAVE_RETRY - 0.03)
         self.assertEqual(self.controller.stats["auto_saves"], 1)
+
+    def test_a_refusal_is_kept_back_once_and_only_the_next_pauses(self):
+        refused = {"error": "foot: multiple windows need manual recovery after restart", "refused": True}
+        self.answers = [refused, refused, {"message": "Saved", "written": True}]
+        self.started()
+        self.run_for(0.3)
+        self.assertEqual(self.told, [])  # the first refusal is not the client's
+        self.assertEqual(self.saved[0][1], False)
+        self.until(lambda: self.told)  # an interval later, with nothing new: the change is still unsaved
+        self.assertEqual(self.told, [refused])
+        self.assertEqual(self.saved[1][1], True)
+        self.assertGreaterEqual(self.saved[1][0] - self.saved[0][0], fc.AUTO_SAVE_EVERY - 0.03)
+        self.focus(8)
+        self.until(lambda: len(self.told) == 2)  # after a save that was not a refusal, the next one is tentative
+        self.assertEqual(self.saved[2][1], False)
+
+    def test_a_refusal_that_went_away_never_pauses(self):
+        self.answers = [{"error": "two windows", "refused": True}, {"message": "Saved", "written": True}]
+        self.started()
+        self.until(lambda: self.told)
+        self.assertEqual(self.told, [{"message": "Saved", "written": True}])
+        self.assertEqual([pause for _, pause in self.saved], [False, True])
+
+    def test_an_error_from_niri_is_reported_as_it_is_not_as_a_bug(self):
+        self.answers = [ValueError("No focused workspace"), {"message": "Saved", "written": False}]
+        self.ask({"watch": True, "auto_save": True})
+        self.until(lambda: self.told)
+        self.assertEqual(self.told, [{"error": "No focused workspace"}])
+        self.assertEqual(self.controller.stats["failures"], 0)
 
     def test_a_bug_in_saving_is_reported_and_the_loop_goes_on(self):
         self.answers = [TypeError("bug"), {"message": "Saved", "written": False}]
         self.ask({"watch": True, "auto_save": True})
         with patch("sys.stderr", io.StringIO()):
-            [answer] = self.saved_messages(1.0)
-        self.assertIn("preserved", answer["error"])
+            self.until(lambda: self.told)
+        self.assertIn("preserved", self.told[0]["error"])
         self.assertEqual(self.controller.stats["failures"], 1)
         self.focus(8)
-        self.assertEqual(self.saved_messages(1.2), [{"message": "Saved", "written": False}])
+        self.until(lambda: len(self.told) == 2)
+        self.assertEqual(self.told[1], {"message": "Saved", "written": False})
 
     def test_only_the_clients_that_asked_are_told_and_stopping_stops_it(self):
         other = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -580,7 +607,7 @@ class AutoSaveTest(ControllerCase):
         other.settimeout(0)
         other.sendall(b'{"watch": true}\n')
         self.ask({"watch": True, "auto_save": True})
-        self.assertEqual(len(self.saved_messages(1.0)), 1)
+        self.until(lambda: self.told)
         heard = b""
         try:
             heard = other.recv(1 << 20)
@@ -588,10 +615,11 @@ class AutoSaveTest(ControllerCase):
             pass
         self.assertNotIn(b"auto_saved", heard)
         self.ask({"auto_save": False})
-        self.messages(0.1)
+        self.run_for(0.1)
         self.focus(8)
-        self.messages(1.2)
+        self.run_for(1.2)
         self.assertEqual(len(self.saved), 1)
+
 
 class MainTest(unittest.TestCase):
     def test_it_says_listening_once_its_socket_takes_connections(self):

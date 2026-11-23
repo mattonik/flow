@@ -122,13 +122,18 @@ def flow_locks(state, wait=True):
         yield
 
 
-def save_locked(path, checked=False, if_changed=False):
-    """Save session, under Flow's locks, which the caller holds. ``checked``: the automatic save, which pauses
-    rather than save windows it could not recover, and writes only a changed snapshot (``if_changed``)."""
+class Refused(ValueError):
+    """The automatic save will not save what is there: windows it could not recover, or a Group mid-change."""
+
+
+def save_locked(path, checked=False, if_changed=False, reading=None):
+    """Save session, under Flow's locks, which the caller holds. ``checked``: the automatic save, which refuses
+    rather than save windows it could not recover, and writes only a changed snapshot (``if_changed``).
+    ``reading``: Niri's focused workspace and windows, read under the same locks."""
     registered = group_store.load(path.parent)
     pins = pin_store.read(path.parent / "spaces.json")[0]
     pinned_apps(pins)
-    workspace, windows = spaces.snapshot()
+    workspace, windows = reading or spaces.snapshot()
     display = focused_display(workspace, path.parent)[0]
     dirs = spaces.data_dirs()
     if checked:
@@ -136,17 +141,24 @@ def save_locked(path, checked=False, if_changed=False):
                    for w in windows if w.get("workspace_id") == workspace["id"] and not w.get("is_floating")]
         warnings = recovery_warnings(entries, dirs)
         if not entries or warnings:
-            raise ValueError("Automatic saving paused; the saved session was preserved. " + "; ".join(warnings))
+            raise Refused("Automatic saving paused; the saved session was preserved. " + "; ".join(warnings))
     before = path.read_bytes() if path.exists() else None
-    count = save(path, workspace, windows, spaces.session_id(), pins, registered, display, if_changed=if_changed)
+    try:
+        count = save(path, workspace, windows, spaces.session_id(), pins, registered, display, if_changed=if_changed)
+    except ValueError as exc:  # save()'s refusals: a Group mid-change, pins to check
+        if checked:
+            raise Refused(str(exc)) from exc
+        raise
     warnings = recovery_warnings(json.loads(path.read_text())["windows"], dirs)
     return {"message": f"Saved {count} open windows. Save documents in each app before restarting." +
             (" " + "; ".join(warnings) if warnings else ""), "written": path.read_bytes() != before}
 
 
-def automatic(op, path, wait=True):
+def automatic(op, path, wait=True, pause=True):
     """An automatic-recovery step. Without ``wait``, recovery's or Flow's locks held elsewhere raise
-    BlockingIOError (the resident controller saves this way, and tries again later)."""
+    BlockingIOError (the resident controller saves this way, and tries again later). Without ``pause``, a save
+    that refuses what is there says so (``"refused": true``) and leaves recovery ready: the controller tries
+    once more before it pauses, as what it refused may not last (a second terminal for a quick command)."""
     runtime = Path(os.environ["XDG_RUNTIME_DIR"])
     marker = runtime / ("flow-recovery-" + hashlib.sha256(spaces.session_id().encode()).hexdigest())
     with marker.with_suffix(".lock").open("a") as lock:
@@ -175,14 +187,18 @@ def automatic(op, path, wait=True):
             return {"message": "Automatic session recovery is ready."}
         if state != "ready":
             return {"error": "Automatic saving is paused; review and save the session."}
-        workspace, windows = spaces.snapshot()
-        if not any(w.get("workspace_id") == workspace["id"] for w in windows):
-            return {"message": "Automatic saving skipped an empty workspace."}
         try:
             with flow_locks(path.parent, wait):
-                return save_locked(path, checked=True, if_changed=True)
+                workspace, windows = spaces.snapshot()
+                if not any(w.get("workspace_id") == workspace["id"] for w in windows):
+                    return {"message": "Automatic saving skipped an empty workspace."}
+                return save_locked(path, checked=True, if_changed=True, reading=(workspace, windows))
         except BlockingIOError:
             raise
+        except Refused as exc:
+            if pause:
+                marker.write_text("blocked")
+            return {"error": str(exc), "refused": True}
         except (ValueError, KeyError, OSError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
             marker.write_text("blocked")
             return {"error": str(exc)}
@@ -680,7 +696,7 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
 def focused_display(workspace, state=None):
     """The focused workspace's display key and every connected display key, keyed as pins are."""
     displays = pin_store.read(state / "spaces.json")[1] if state else {}
-    identities, _ = pin_store.identities(json.loads(spaces.command("-j", "outputs")), pin_store.shared_serials(displays))
+    identities, _ = pin_store.identities(spaces.query("Outputs")[0], pin_store.shared_serials(displays))
     record = identities.get(workspace.get("output"))
     return (record["key"] if record else None), {r["key"] for r in identities.values()}
 
@@ -694,15 +710,15 @@ def main():
     if op == "status":
         print(json.dumps({"saved": path.exists()}))
         return
-    if op in ("save", "auto-save-checked", "rename-group", "restore"):
+    if op in ("save", "rename-group", "restore"):
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         with (path.parent / "session.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             with (path.parent / "spaces.lock").open("a") as spaces_lock:
                 fcntl.flock(spaces_lock, fcntl.LOCK_EX)
                 registered = group_store.load(path.parent)
-                if op in ("save", "auto-save-checked"):
-                    result = save_locked(path, checked=op == "auto-save-checked")
+                if op == "save":
+                    result = save_locked(path)
                     del result["written"]
                     print(json.dumps(result))
                 elif op == "rename-group":

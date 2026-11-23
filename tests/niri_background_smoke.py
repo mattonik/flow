@@ -21,7 +21,9 @@ Checked:
 - focus overshooting to another space and back for 4 s: the save after it leaves the saved session as it was;
 - a space whose snapshot is over a minute old: taken again when it settles;
 - a window joining another's column with focus unchanged, which changes only the spaces: saved;
-- a second window of one app: automatic saving pauses, Desk opens to say so, and a change after it is not saved.
+- a second window of one app (recovery cannot tell them apart) closed again after the save that found it: no
+  pause, and saving goes on; one that stays: saving pauses at the next save, Desk opens to say so, and a change
+  after it is not saved.
 
 Automatic saves are the controller's (it reports them on its socket), or main's ``flow-recovery auto-save`` runs.
 
@@ -94,8 +96,8 @@ def main():
                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10).stdout.strip()
 
         def saves(start, end=None):
-            """When automatic saves began: the controller's (it saves in-process since 2026-11-23), or the
-            ``flow-recovery auto-save`` runs main's shell started."""
+            """When automatic saves began: the controller's, as it reports them, or the ``flow-recovery
+            auto-save`` runs a shell from before the controller saved started."""
             found = [stamp for stamp, _ in (controller_stats(runtime, tmp) or {}).get("saves", [])]
             found += [stamp for stamp, _, args in runs(logs["flow-recovery"], 0, time.time() + 1) if args == "auto-save"]
             return sorted(stamp for stamp in found if start <= stamp <= (end or time.time() + 1))
@@ -231,7 +233,7 @@ def main():
             except RuntimeError:
                 pass
             rewritten = stamp is None or session.stat().st_mtime_ns != stamp
-            check("focus overshooting and coming back: the saved session rewritten", rewritten, "False",
+            check("focus overshooting and coming back, nothing changed in the end: the saved session rewritten", rewritten, "False",
                   not rewritten and saved_focus() == tiles[2])
 
             # A space last snapshotted over a minute ago (tiles[3], in the first walk) is taken again.
@@ -246,15 +248,37 @@ def main():
             check("a window joining another's column, focus unchanged: saved", took, f"< {SAVE_EVERY + 5}",
                   took is not None and took < SAVE_EVERY + 5, "s")
 
-            # A second window of one app, which recovery cannot tell apart: saving pauses, the shell shows it
-            # on Desk, and nothing is saved after it.
+            # A second window of one app, which recovery cannot tell apart, closed again after the save that found
+            # it: a quick command in a second terminal. Saving goes on, and nothing opens over the work.
+            start = time.time()
             terminal(SPACES[0])
             try:
-                wait_for(lambda: ipc("desk_state") == "open", "Desk showing the pause", timeout=SAVE_EVERY + 15)
+                wait_for(lambda: saves(start), "the save that finds the second window", timeout=SAVE_EVERY + 10)
+            except RuntimeError:
+                pass
+            terminals[-1].terminate()
+            terminals[-1].wait(timeout=10)
+            closed = time.time()
+            try:
+                wait_for(lambda: saves(closed), "a save after it closed", timeout=SAVE_EVERY + 10)
+                time.sleep(2)
+            except RuntimeError:
+                pass
+            went_on = bool(saves(closed)) and ipc("desk_state") == "closed"
+            check("a second window of one app, closed after the save that found it: saving goes on", went_on,
+                  "True", went_on)
+            if ipc("desk_state") != "closed":
+                ipc("leave")
+
+            # One that stays: saving pauses at the next save, the shell shows it on Desk, and nothing is saved
+            # after it.
+            terminal(SPACES[0])
+            try:
+                wait_for(lambda: ipc("desk_state") == "open", "Desk showing the pause", timeout=2 * SAVE_EVERY + 15)
                 paused = time.time()
             except RuntimeError:
                 paused = None
-            check("a second window of one app: automatic saving pauses and Desk shows it", paused is not None,
+            check("a second window of one app that stays: automatic saving pauses and Desk shows it", paused is not None,
                   "True", paused is not None)
             if paused:
                 ipc("leave")

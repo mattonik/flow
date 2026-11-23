@@ -45,7 +45,7 @@ RECONNECT = 5.0  # which is reconnected this long after it ends.
 # Automatic session saving (restore.py), while a client asks for it (the shell, while the setting is on and
 # recovery is not paused): this long after the first refresh that events or a client asked for since the last save,
 AUTO_SAVE_WAIT = 2.0
-AUTO_SAVE_EVERY = 30.0  # and never sooner than this after the previous save began (each writes and syncs a file);
+AUTO_SAVE_EVERY = 30.0  # and never sooner than this after the previous save began (a changed one syncs a file);
 AUTO_SAVE_RETRY = 1.0  # while recovery or an action holds its locks, tried again this often.
 BUSY_RETRY = 0.1  # An action holding Flow's locks is waited for by trying again this often.
 INBOX_LIMIT = 1 << 20  # no request is this long
@@ -144,6 +144,7 @@ class Controller:
         self.unsaved_since = None  # when the first refresh since the last automatic save ran
         self.last_save = float("-inf")
         self.save_retry = float("-inf")
+        self.refused = False  # the last save refused what was there; the next refusal pauses recovery
         self.saves = collections.deque(maxlen=1000)  # [wall clock, written] of the last automatic saves
         self.stats = {"refreshes": 0, "observes": 0, "events": 0, "title_only": 0, "pushes": 0, "busy": 0,
                       "reshapes": 0, "failures": 0, "refresh_ms": 0.0, "first_watcher_ms": None,
@@ -301,26 +302,34 @@ class Controller:
         for it. While recovery or an action holds its locks, it is tried again a second later.
 
         The save reads Niri afresh. Should that catch a state on its way to another (focus overshooting and
-        coming back), the events that follow it refresh, and the next save records where it came to rest.
+        coming back), the events that follow it refresh, and the next save records where it came to rest. A
+        state it refuses (a second window of one app) may not last either: the first refusal is kept from the
+        clients and leaves the change unsaved, and only a refusal at the next save, an interval later, pauses.
         """
-        import restore  # only once saving is asked for: the controller starts without it
-
         started = time.perf_counter()
         try:
-            result = restore.automatic("auto-save", self.state_dir / "session.json", wait=False)
+            import restore  # only once saving is asked for: the controller starts without it
+            result = restore.automatic("auto-save", self.state_dir / "session.json", wait=False, pause=self.refused)
         except BlockingIOError:
             self.stats["busy"] += 1
             self.save_retry = now + AUTO_SAVE_RETRY
             return
+        except (ValueError, OSError, subprocess.SubprocessError) as exc:  # Niri's, as flow-recovery said them
+            result = {"error": str(exc)}
         except Exception:  # noqa: BLE001 — a bug in saving must not stop the loop
             self.fail("An automatic save")
             result = {"error": "Automatic saving failed; the saved session was preserved."}
-        self.unsaved_since = None
         self.last_save = now
-        written = bool(result.get("written"))
         self.stats["auto_saves"] += 1
-        self.stats["auto_save_writes"] += written
         self.stats["auto_save_ms"] += (time.perf_counter() - started) * 1000
+        if result.get("refused") and not self.refused:
+            self.refused = True
+            self.saves.append([time.time(), False])
+            return
+        self.refused = False
+        self.unsaved_since = None
+        written = bool(result.get("written"))
+        self.stats["auto_save_writes"] += written
         self.saves.append([time.time(), written])
         line = json.dumps({"auto_saved": result}).encode() + b"\n"
         for client in list(self.clients):
@@ -449,7 +458,7 @@ class Controller:
         if not self.answer_observers():
             busy = True
         saving = self.save_due()
-        if not busy and saving is not None and now >= saving:
+        if not busy and saving is not None and now >= saving:  # while busy, saving would only meet the same lock
             self.auto_save(now)
         if busy:
             return BUSY_RETRY  # an action holds the locks: try again shortly, never spin
