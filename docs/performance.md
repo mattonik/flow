@@ -267,7 +267,7 @@ The shell now runs a save only while a change is unsaved: a change to the window
 
 A change counts as saved only once a save has answered without an error. A save that dies without an answer leaves it unsaved, and the next tick saves it. A save also reads Niri itself, which can be between two states the controller never sent: focus overshooting to the next space and coming back before the controller's next refresh, 0.15 to 1 s later. A save that began within a second of a Niri event the shell saw, or of a change, therefore leaves the change unsaved too, and the next tick saves it again. The controller forwards the shell only some of Niri's events (focus and the window list), so a change Niri reports only in the others, undone before the next refresh while a save runs, is still saved wrong until the next change: a column moved and moved back, a title that changes and changes back, a window sent to another workspace and brought back.
 
-The better place for automatic saving is the controller, which holds the exact state it sends and could save from it in-process: no Python start-ups, no list of what a save depends on, and no second read of Niri. That is a larger change, left for later.
+The better place for automatic saving is the controller, which holds the exact state it sends and can save in-process: no Python start-ups and no list of what a save depends on. The next section moves it there, and replaces the rules of this one.
 
 | `tests/niri_background_smoke.py` (UTM guest) | Main | This change | Neutralised |
 |---|---|---|---|
@@ -282,3 +282,28 @@ The better place for automatic saving is the controller, which holds the exact s
 | A window joining another's column, focus unchanged, the first save dying: saved by the next (under 63 s) | 55.2 s | 56.9 s | never ✗ (spaces' changes not noted, or a change marked saved when its save began) |
 
 Main fails two of the nine checks, and this change passes all of them. Each fix, neutralised with its symbols kept, fails its own check (two at a time where they touch different checks; marking a change saved when its save begins also defeats the Niri-event rule). The handlers for pins, other pins and displays are not covered: a save checks against the pins but records none, and a move to another display changes the spaces too. Automatic recovery is still off by default, and the performance smoke runs with it off, so its numbers are unchanged.
+
+## Automatic saving in the controller (2026-11-23)
+
+The previous change left automatic saving in the shell: a 30 s timer that ran `flow-recovery auto-save`, two Python processes, gated on a list of five state properties that stood for what a save records, and on rules for a save that died or caught a passing state. All of that is gone. The resident controller (ADR-0011) saves instead, in its own process, through the same code: `restore.automatic("auto-save", ..., wait=False)`.
+
+- **When.** 2 s after the first refresh since its last save that Niri's events or a client asked for, and never sooner than 30 s after the previous save. A safety refresh that nothing asked for (every 30 s) does not call for a save, unless the event stream is down and refreshes are all there is. What a save records changes only with Niri's events or Flow's own actions, and both ask for a refresh, so no list of what a save depends on is kept.
+- **A passing state.** The save reads Niri afresh. If it catches focus overshooting to the next space, the events that bring it back ask for a refresh, and so for another save, which records where it came to rest. The previous change's remaining hole (a column moved and moved back while a save ran) closes the same way.
+- **Unchanged.** A snapshot the same as the saved one is not written again, so a save after events that changed nothing costs no write.
+- **Never waiting.** Recovery's marker lock and Flow's `session.lock` are tried without waiting, and a held one is tried again a second later. So the controller's loop never waits on `flow-recovery auto-start` (which holds the marker lock while it reopens apps) or on an action.
+- **Who asks.** The shell asks while the setting is on and recovery is not paused, and gets each result. An error pauses recovery and opens Desk to say so, as before. A good result never lifts a pause: one that ends as the setting is switched must not undo the pause the switch made.
+
+An automatic save that found nothing to write costs about 1 ms of CPU in the controller (5.5 ms of wall time, most of it Niri answering; medians of 10 in the guest, with two windows). `flow-recovery auto-save` cost 57 ms of CPU for the same save. `flow-recovery auto-save` still works from the command line, and now runs in one process.
+
+| `tests/niri_background_smoke.py` (UTM guest) | Main (with the previous change) | This change | Neutralised |
+|---|---|---|---|
+| Startup: the first automatic save | 30.5 s | 3.5 s | never ✗ (the shell never asks; or asks only once connected, while recovery is still paused) |
+| 65 s with nothing changed: automatic saves | 0 | 0 | |
+| A focus change, the last save over 30 s ago: saved (under 5 s) | 16.2 s ✗ | 2.3 s | |
+| Focus overshooting and back for 4 s: the saved session rewritten | no | no | yes ✗ (an unchanged snapshot written again) |
+| A window joining another's column, focus unchanged: saved | 30.7 s | 29.9 s | |
+| A second window of one app: saving pauses and Desk shows it | yes | yes | no ✗ (errors ignored) |
+| Paused: automatic saves after a change | 0 | 0 | |
+
+The snapshot checks pass on both, as before. `tests/test_flow_controller.py` and `tests/test_restore.py` cover the controller's side: no save until a client asks, none after a refresh nothing asked for, the wait and the interval, refreshes with the stream down, a held lock tried again a second later and never in a spin, a bug reported without stopping the loop, only the asking clients told, no subprocess, an unchanged snapshot left alone, and a bug pausing recovery. Each of those mechanisms, neutralised, fails its test. The first version counted a refresh only once its coalescer was due. When the 30 s safety refresh came first and answered the events, that change was never saved; the unit test with a short safety interval caught it.
+
