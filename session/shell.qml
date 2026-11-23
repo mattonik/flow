@@ -613,10 +613,21 @@ ShellRoot {
             recoveryProcess.command = ["flow-recovery", "auto-ready"]; recoveryProcess.running = true
         }
     }
+    // Saving automatically runs only when what it saves may have changed: the windows, spaces, pins or displays
+    // the controller last sent. A save costs about 60 ms of CPU (two Pythons) and a synced write; every 30 s
+    // with nothing changed that was more than the idle shell's own CPU.
+    property bool sessionChanged: true
+    onWindowsChanged: sessionChanged = true
+    onDisplaySpacesChanged: sessionChanged = true
+    onPinsChanged: sessionChanged = true
+    onOtherPinsChanged: sessionChanged = true
+    onDisplaysChanged: sessionChanged = true
     Timer {
         interval: 30000; running: menuPreferences.autoRecovery; repeat: true
         onTriggered: {
-            if (root.autoRecoveryBlocked || recoveryProcess.running || spacesProcess.running || root.pendingSpaceActions.length) return
+            if (!root.sessionChanged || root.autoRecoveryBlocked || recoveryProcess.running || spacesProcess.running
+                || root.pendingSpaceActions.length) return
+            root.sessionChanged = false   // a change while it saves is saved next time
             recoveryProcess.command = ["flow-recovery", "auto-save"]; recoveryProcess.running = true
         }
     }
@@ -791,13 +802,31 @@ ShellRoot {
     property string settledSpaceId: ""
     readonly property bool workViewOnly: !deskOpen && !switcherOpen && !spacesOverviewOpen && !overviewOpen
         && !searchOpen && !appMenuOpen && !quickSettingsOpen && !notificationsOpen
-    Timer { id: snapshotSettle; interval: 700; onTriggered: if (root.workViewOnly) root.snapshotActiveSpace(null) }
+    // A settled space is not taken again while its picture is current: taken under a minute ago, of the same
+    // state (its windows, their titles and focus, its shares) on the same display. A capture costs grim 27 ms at
+    // 1280 x 800 and 87 ms at 3840 x 2160, and a walk back and forth between spaces took one every time.
+    // Opening Overview still takes the space on screen fresh (openSpacesOverview).
+    readonly property int snapshotFresh: 60000
+    property var snapshotTaken: ({})   // space id -> {look, at} of its picture
+    function spaceLook(space, screen) {
+        return JSON.stringify(space) + " " + screen.name + " " + screen.width + "x" + screen.height
+    }
+    function snapshotCurrent(space, screen) {
+        const taken = space && screen ? snapshotTaken[String(space.id)] : null
+        return !!taken && !!spaceSnapshots[String(space.id)] && taken.look === spaceLook(space, screen)
+            && Date.now() - taken.at < snapshotFresh
+    }
+    Timer {
+        id: snapshotSettle; interval: 700
+        onTriggered: if (root.workViewOnly && !root.snapshotCurrent(root.activeSpace, workIsland.screen)) root.snapshotActiveSpace(null)
+    }
     Component.onDestruction: if (snapshotDir) Quickshell.execDetached(["rm", "-rf", "--", snapshotDir])
     function snapshotActiveSpace(done) {
         const space = activeSpace
         const screen = workIsland.screen
         if (!space || !workViewOnly || !screen || !snapshotDir || snapshotProcess.running) { if (done) done(); return }
         snapshotProcess.key = String(space.id)
+        snapshotProcess.look = spaceLook(space, screen)
         snapshotProcess.done = done
         // At the display's own resolution: asking grim for a smaller picture costs more than the whole capture
         // (docs/performance.md), and Overview waits for it. Its card decodes it at its own size. Written
@@ -809,17 +838,22 @@ ShellRoot {
     Process {
         id: snapshotProcess
         property string key: ""
+        property string look: ""
         property var done: null
         onExited: code => {
             const done = snapshotProcess.done
             snapshotProcess.done = null
             if (code === 0) {
-                const next = {}, gone = []
+                const next = {}, taken = {}, gone = []
                 // Keep only spaces that still exist; the others' pictures are deleted.
                 for (const id in root.spaceSnapshots)
-                    if (root.displaySpaces.some(space => String(space.id) === id)) next[id] = root.spaceSnapshots[id]
-                    else gone.push(root.snapshotDir + "/" + id + ".jpg")
+                    if (root.displaySpaces.some(space => String(space.id) === id)) {
+                        next[id] = root.spaceSnapshots[id]
+                        if (root.snapshotTaken[id]) taken[id] = root.snapshotTaken[id]
+                    } else gone.push(root.snapshotDir + "/" + id + ".jpg")
                 next[snapshotProcess.key] = (root.spaceSnapshots[snapshotProcess.key] || 0) + 1
+                taken[snapshotProcess.key] = { look: snapshotProcess.look, at: Date.now() }
+                root.snapshotTaken = taken
                 root.spaceSnapshots = next
                 if (gone.length) Quickshell.execDetached(["rm", "-f", "--"].concat(gone))
             }
