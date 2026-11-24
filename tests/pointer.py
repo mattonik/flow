@@ -94,13 +94,17 @@ class Pointer:
     def hover(self, read, label="the target", timeout=10):
         """Moves onto the item ``read()`` gives (a ``pointer_target``, or None while it is hidden) and waits until
         it shows the pointer, so a click that follows lands on a surface that is on screen. Returns its middle."""
-        end, last = time.monotonic() + timeout, None
+        end, last, tries = time.monotonic() + timeout, None, 0
         while time.monotonic() < end:
             last = read()
             if last:
-                self.move(center(last))
                 if last["hovered"]:
                     return center(last)
+                # A surface that has just mapped shows the pointer from its second motion, not its first: move
+                # again, a few pixels off, every time it still does not (the installed shell, in the guest).
+                x, y = center(last)
+                self.move((x + 3 * (tries % 2), y))
+                tries += 1
             time.sleep(0.2)
         raise RuntimeError(f"Timed out waiting for {label} to show the pointer ({last})")
 

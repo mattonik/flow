@@ -147,7 +147,7 @@ class Run:
                      and (app_id is None or w["app_id"] == app_id) and (title is None or title in (w["title"] or ""))]
             return fresh[0] if len(fresh) == 1 else None
         window = wait_for(found, f"a new window ({app_id or title})", timeout)
-        self.opened.append(window["id"])
+        self.opened.append(window["id"])  # closed at the end, if still open
         return window
 
     def spawn(self, app_id, title):
@@ -215,7 +215,7 @@ class Run:
     def spaces_setup(self):
         """A pinned app, an unpinned one and a neutral one, side by side, with the neutral one focused."""
         t = self.token
-        self.names = {k: f"F008 {k} {t}" for k in ("pinned", "unpinned", "other")}
+        self.names = {k: f"F008 {k} {t}" for k in ("pinned", "unpinned")}
         self.ids = {k: f"flow-f008-{t}-{k}" for k in self.names}
         data = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "applications"
         data.mkdir(parents=True, exist_ok=True)
@@ -223,7 +223,8 @@ class Run:
         entry.write_text(f"[Desktop Entry]\nType=Application\nName={self.names['pinned']}\n"
                          f"Exec=foot --app-id {self.ids['pinned']} -T \"{self.names['pinned']}\" sleep 3600\n")
         self.cleanups.append(lambda: entry.unlink(missing_ok=True))
-        self.win = {k: self.spawn(self.ids[k], self.names[k])["id"] for k in ("pinned", "unpinned", "other")}
+        self.win = {k: self.spawn(self.ids[k], self.names[k])["id"] for k in ("pinned", "unpinned")}
+        self.win["other"] = self.base
         self.focus(self.win["pinned"])
         # flow-spaces pins the focused window; the pin is removed at the end.
         self.pinned_before = {p["id"] for p in self.observe()["pins"]}
@@ -285,14 +286,19 @@ class Run:
         buttons = [c for c in self.json("controls") or [] if c["surface"] == "desk" and c["kind"] == "button" and c["text"] == "Settings"]
         return buttons[0] if buttons else None
 
+    def settings_open(self):
+        """True or False while Desk shows its Settings button, None while it does not."""
+        button = self.desk_settings()
+        return None if button is None else button["open"]
+
     def check_settings(self):
         pointer = self.pointer
         # Start from Desk with Settings collapsed, as the shell is when it has just started.
         self.ipc("toggle")
-        wait_for(lambda: self.surfaces()["desk"] and self.desk_settings(), "Desk with its Settings button")
-        if self.desk_settings()["open"]:
+        wait_for(lambda: self.surfaces()["desk"] and self.settings_open() is not None, lambda: f"Desk with its Settings button ({self.surfaces()}, {self.desk_settings()})")
+        if self.settings_open():
             pointer.click(self.control_center(self.desk_settings()))
-            wait_for(lambda: not self.desk_settings()["open"], "Settings to collapse")
+            wait_for(lambda: self.settings_open() is False, "Settings to collapse")
         self.ipc("toggle")
         wait_for(lambda: not self.surfaces()["desk"], "Desk to close")
         self.search("Flow Settings")
@@ -302,15 +308,15 @@ class Run:
         self.type_keys("-k", "Return")
         self.chosen_closed()
         try:
-            wait_for(lambda: self.surfaces()["desk"] and (b := self.desk_settings()) and b["open"],
+            wait_for(lambda: self.surfaces()["desk"] and self.settings_open(),
                      lambda: f"Desk with Settings expanded ({self.surfaces()}, {self.desk_settings()})")
             switches = [c for c in self.json("controls") if c["surface"] == "desk" and c["kind"] == "switch"]
             if not switches:
                 raise RuntimeError("Settings is open but shows no switch")
         finally:
-            if self.desk_settings() and self.desk_settings()["open"]:
+            if self.settings_open():
                 pointer.click(self.control_center(self.desk_settings()))
-                wait_for(lambda: not self.desk_settings()["open"], "Settings to collapse again")
+                wait_for(lambda: self.settings_open() is False, "Settings to collapse again")
             if self.surfaces()["desk"]:
                 self.ipc("toggle")
                 wait_for(lambda: not self.surfaces()["desk"], "Desk to close")
@@ -428,8 +434,6 @@ class Run:
             raise RuntimeError(f"flow-search on PATH is {installed}, not the installed one")
         if self.surfaces() is None:
             raise RuntimeError(f"The shell {self.shell} does not answer on IPC")
-        if any(self.surfaces().values()):
-            raise RuntimeError(f"A shell surface is open already: {self.surfaces()}")
         # The test works on an empty workspace of its own: the focused one, if empty, else the last of its output.
         start = focused_workspace()
         spaces = [w for w in read("workspaces") if w["output"] == start["output"]]
@@ -441,6 +445,11 @@ class Run:
         wait_for(lambda: focused_workspace()["id"] == target["id"], "the empty workspace")
         pins_before = {p["id"] for p in self.observe()["pins"]}
         self.pointer = Pointer(allow_installed_shell=True)
+        # An empty workspace shows Desk: a window of the test's own, kept open, keeps the shell's surfaces closed.
+        self.base = self.spawn(f"flow-f008-{self.token}-base", f"F008 base {self.token}")["id"]
+        if self.surfaces()["desk"]:  # the shell shows Desk on an empty workspace, and leaves it open
+            self.ipc("toggle")
+        wait_for(lambda: not any(self.surfaces().values()), lambda: f"every shell surface closed ({self.surfaces()})")
         subprocess.run(["wtype", "-k", "Hyper_L"], check=True, timeout=10)  # a keymap no later call sends
         failure = None
         try:
@@ -493,6 +502,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, RuntimeError, KeyError, subprocess.SubprocessError, ValueError) as exc:
+    except (OSError, RuntimeError, KeyError, TypeError, subprocess.SubprocessError, ValueError) as exc:
         print(f"Installed search test failed: {exc!r}", file=sys.stderr)
         sys.exit(1)
