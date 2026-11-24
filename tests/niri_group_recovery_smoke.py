@@ -21,7 +21,8 @@ then for a side-by-side Group with a saved split:
   and so does recovery; Rejoin Group does too with a pinned app still after them, another display's, or this
   display's while a side-by-side Group pauses pin ordering, and once that Group is stacked or dissolved, the
   pins go back in pin order (at once, or at the next refresh); a layout change killed halfway pauses pin
-  ordering too: one to side by side stays paused once finished, one back to a stack puts the pins back.
+  ordering too: one to side by side stays paused once finished, one back to a stack puts the pins back; and a
+  change to side by side killed while its widths settle finishes at the saved split.
 Real state files are checksummed.
 """
 
@@ -131,21 +132,32 @@ def main():
         def group(group_id):
             return next(g for g in groups() if g["id"] == group_id)
 
-        def killed_at(action, *args):
-            """Runs ``flow-spaces *args`` and kills it, as a crash would, when it asks Niri for ``action``: every
-            earlier Niri action is done, that one is never sent. A ``niri`` ahead on PATH kills its caller there."""
+        def killed_at(action, *args, nth=1, then_sleep=False):
+            """Runs ``flow-spaces *args`` and kills it, as a crash would, at its ``nth`` request for Niri's ``action``:
+            every earlier Niri action is done, and that one is never sent. With ``then_sleep`` it is sent, and the kill
+            comes once the helper next sleeps (its kernel wait shows ``nanosleep``). A ``niri`` ahead on PATH does it."""
             held = Path(tmp) / "held"
             held.mkdir(exist_ok=True)
+            (held / "count").write_text("0")
             real = shutil.which("niri")
             if not real:
                 raise RuntimeError("niri is not on PATH")
-            (held / "niri").write_text(f'#!/bin/sh\ncase " $* " in *" {action} "*) kill -KILL $PPID; exit 1;; esac\n'
-                                       f'exec "{real}" "$@"\n')
+            if then_sleep:  # in the background, with no pipe of the helper's held open
+                kill = (f'"{real}" "$@"; s=$?; p=$PPID; (i=0; while [ $i -lt 500 ]; do '
+                        f'grep -q nanosleep /proc/$p/wchan && {{ kill -KILL $p; exit; }}; sleep 0.01; i=$((i + 1)); '
+                        f'done) </dev/null >/dev/null 2>&1 & exit $s')
+            else:
+                kill = "kill -KILL $PPID; exit 1"
+            (held / "niri").write_text(
+                f'#!/bin/sh\ncase " $* " in *" {action} "*)\n'
+                f'  n=$(($(cat "{held}/count") + 1)); echo $n > "{held}/count"\n'
+                f'  if [ $n -eq {nth} ]; then {kill}; fi;;\nesac\nexec "{real}" "$@"\n')
             (held / "niri").chmod(0o755)
             process = subprocess.run(["flow-spaces", *args], env=dict(env, PATH=f"{held}:{env['PATH']}"),
                                      stdout=subprocess.DEVNULL, timeout=90)
             if process.returncode != -signal.SIGKILL:
-                raise RuntimeError(f"flow-spaces {args} ended (exit {process.returncode}) before asking for {action}")
+                raise RuntimeError(f"flow-spaces {args} ended (exit {process.returncode}) before it was killed at its "
+                                   f"request {nth} for {action}")
 
         def close_all():
             for w in ours():
@@ -391,10 +403,38 @@ def main():
                          "refresh left the pins out of order and offered Finish layout change; finishing it put the "
                          "pinned Group and the pinned app back first, in pin order")
 
-            # Dissolved while side by side: dissolving does not order pins, so they go back at the next refresh.
+            # Side by side again, killed while the widths settle: in the pause that lets the apps take the widths sent,
+            # before they are measured and the layout saved. A saved 25/75 split (written in as a stored preference)
+            # tells the widths sent apart from the widths Niri gives new columns.
+            saved = json.loads((state / "groups.json").read_text())
+            next(g for g in saved["groups"] if g["id"] == other_id)["side_ratio"] = 0.25
+            (state / "groups.json").write_text(json.dumps(saved))
+
+            def share():
+                sizes = [window(s)["layout"]["tile_size"][0] for s in "uv"]
+                return sizes[0] / sum(sizes)
+
             niri("action", "focus-window", "--id", window("u")["id"])
-            spaces("group-layout", other_id)
-            expect(["ab", "n", "u", "v"], "the second Group side by side again")
+            killed_at("set-window-width", "group-layout", other_id, nth=2, then_sleep=True)
+            expect(["ab", "n", "u", "v"], "the second Group's apps split, killed while the widths settle")
+            wait_for(lambda: abs(share() - 0.25) <= 0.05, lambda: f"the widths sent before the kill: u has {share():.2f}")
+            if group(other_id).get("pending_layout") != "side-by-side" or group(other_id).get("layout", "stack") != "stack":
+                raise RuntimeError(f"The change killed while the widths settle did not leave it unfinished: {group(other_id)}")
+            entry = next((e for e in spaces("refresh")["incomplete_groups"] if e["id"] == other_id), None)
+            if not entry or not entry.get("can_resume_layout"):
+                raise RuntimeError(f"Finish layout change was not offered after a kill while the widths settle: {entry}")
+            finished = spaces("resume-group-layout", other_id)
+            expect(["ab", "n", "u", "v"], "the second Group side by side again, finished")
+            if (group(other_id).get("pending_layout") or group(other_id).get("layout") != "side-by-side"
+                    or abs(share() - 0.25) > 0.05):
+                raise RuntimeError(f"Finishing after a kill while the widths settle: {group(other_id)}, u has {share():.2f}")
+            if not any(sp.get("group_id") == other_id and sp.get("group_layout") == "side-by-side"
+                       for sp in finished["spaces"]):
+                raise RuntimeError(f"The finished Group is not recognised side by side: {finished['spaces']}")
+            steps.append("with the second Group's change to side by side killed while its widths settled, "
+                         "Finish layout change was offered and put it side by side at its saved 25/75 split")
+
+            # Dissolved while side by side: dissolving does not order pins, so they go back at the next refresh.
             pinned_last("before dissolving the second Group")
             spaces("dissolve-group", other_id)
             if columns() != ["n", "u", "v", "ab"]:
