@@ -17,9 +17,12 @@ def window(ident, app, column, row=1, workspace=1):
             "is_floating": False, "layout": {"pos_in_scrolling_layout": [column, row]}}
 
 
+OUTPUTS = ({"Virtual-1": {"logical": {"width": 1000, "height": 700}}}, [])
+
+
 class GroupLayoutTest(unittest.TestCase):
     def setUp(self):
-        self.ws = {"id": 1, "active_window_id": 11}
+        self.ws = {"id": 1, "active_window_id": 11, "output": "Virtual-1"}
         self.windows = [window(11, "a", 1, 1), window(12, "b", 2, 1), window(13, "other", 3)]
         self.group = {"id": "g", "label": "Work", "members": ["a", "b"], "layout": "side-by-side"}
 
@@ -113,6 +116,7 @@ class GroupLayoutTest(unittest.TestCase):
                     raise OSError("interrupted")
 
             with patch.object(spaces, "snapshot", side_effect=lambda: (self.ws, self.windows)), \
+                 patch.object(spaces, "display_state", return_value=OUTPUTS), \
                  patch.object(spaces, "command", side_effect=action):
                 spaces.change_group_layout(state, registry, [], "g", self.ws, self.windows, "s")
                 self.assertEqual(groups.load(state)[0]["side_ratio"], 0.65)
@@ -121,6 +125,7 @@ class GroupLayoutTest(unittest.TestCase):
             self.assertEqual(groups.load(state)[0]["pending_layout"], "side-by-side")
             actions = []
             with patch.object(spaces, "snapshot", side_effect=lambda: (self.ws, self.windows)), \
+                 patch.object(spaces, "display_state", return_value=OUTPUTS), \
                  patch.object(spaces, "command", side_effect=lambda *args: actions.append(args)):
                 spaces.change_group_layout(state, registry, [], "g", self.ws, self.windows, "s", resume=True)
             self.assertEqual([args[-1] for args in actions], ["65.0%", "35.0%"])
@@ -159,10 +164,82 @@ class GroupLayoutTest(unittest.TestCase):
                 if args[1] == "consume-or-expel-window-right":
                     self.windows[1]["layout"]["pos_in_scrolling_layout"] = [2, 1]
             with patch.object(spaces, "snapshot", side_effect=lambda: (self.ws, self.windows)), \
+                 patch.object(spaces, "display_state", return_value=OUTPUTS), \
                  patch.object(spaces, "command", side_effect=action), \
                  self.assertRaisesRegex(ValueError, "size constraints"):
                 spaces.change_group_layout(state, registry, [], "g", self.ws, self.windows, "s")
             self.assertEqual(groups.load(state)[0]["pending_layout"], "side-by-side")
+
+    def test_side_by_side_settles_only_at_its_share_of_the_display(self):
+        """Each tile is measured against the display, not the tiles' own total.
+
+        At 20/80 with the second app still full width, the first app is 0.17 of the total and the second
+        0.83, each within 0.05 of its share, so the row was saved side by side though it was wider than
+        the screen. At 25/75 the old check refused only because 0.8 - 0.75 is 0.05000000000000004 in
+        floating point; at 99% instead of 100% it accepted that too."""
+        cases = (("25/75, second app stays full width", {"a": 0.25}, {"a": 250, "b": 1000}, False),
+                 ("25/75, second app stays at 99%", {"a": 0.25}, {"a": 250, "b": 990}, False),
+                 ("20/80, second app stays full width", {"a": 0.2}, {"a": 200, "b": 1000}, False),
+                 ("three apps a little too wide", {}, {"a": 370, "b": 370, "c": 370}, False),
+                 ("both apps stop at 40%", {"a": 0.5}, {"a": 400, "b": 400}, False),
+                 ("took 75%", {"a": 0.25}, {"a": 250, "b": 750}, True),
+                 ("three thirds", {}, {"a": 333.3, "b": 333.3, "c": 333.4}, True))
+        for name, saved, widths, settles in cases:
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                state = Path(directory)
+                ws = self.ws
+                members = list(widths)
+                live = [window(11 + i, app, 1, i + 1) for i, app in enumerate(members)]
+                for w in live:
+                    w["layout"]["tile_size"] = [1000, 700]
+                group = {"id": "g", "label": "Work", "members": members, "layout": "stack",
+                         **({"side_ratio": saved["a"]} if saved else {})}
+                registry = [group]
+                groups.write(state / "groups.json", registry)
+
+                def action(*args):
+                    if args[1] == "consume-or-expel-window-right":
+                        # The last stacked app leaves for its own column, just after the stack.
+                        k = next(i for i, w in enumerate(live) if w["id"] == int(args[-1]))
+                        for i, w in enumerate(live):
+                            w["layout"]["pos_in_scrolling_layout"] = [1, i + 1] if i < k else [i - k + 2, 1]
+                    elif args[1] == "set-window-width":
+                        member = next(w for w in live if w["id"] == int(args[3]))
+                        member["layout"]["tile_size"][0] = widths[member["app_id"]]
+
+                with patch.object(spaces, "snapshot", side_effect=lambda: (ws, live)), \
+                     patch.object(spaces, "display_state", return_value=OUTPUTS), \
+                     patch.object(spaces, "command", side_effect=action), \
+                     patch.object(spaces.time, "sleep"):
+                    if settles:
+                        spaces.change_group_layout(state, registry, [], "g", ws, live, "s")
+                    else:
+                        with self.assertRaisesRegex(ValueError, "size constraints prevent the saved proportions"):
+                            spaces.change_group_layout(state, registry, [], "g", ws, live, "s")
+                saved_group = groups.load(state)[0]
+                self.assertEqual(saved_group["layout"], "side-by-side" if settles else "stack")
+                self.assertEqual(saved_group.get("pending_layout"), None if settles else "side-by-side")
+
+    def test_resize_settles_only_at_its_share_of_the_display(self):
+        """Resizing and moving to a display wait in settled_ratios, which measures against the display too."""
+        for widths, settles in (((250, 990), False), ((250, 750), True)):
+            with self.subTest(widths=widths):
+                for w, width in zip(self.windows, widths):
+                    w["layout"]["tile_size"] = [width, 700]
+                with patch.object(spaces, "snapshot", return_value=(self.ws, self.windows)), \
+                     patch.object(spaces, "display_state", return_value=OUTPUTS), \
+                     patch.object(spaces.time, "sleep"):
+                    found = spaces.settled_ratios([11, 12], [0.25, 0.75], self.ws)
+                self.assertEqual(found is not None, settles)
+
+    def test_settling_without_the_display_size_refuses(self):
+        for w in self.windows:
+            w["layout"]["tile_size"] = [500, 700]
+        with patch.object(spaces, "snapshot", return_value=(self.ws, self.windows)), \
+             patch.object(spaces, "display_state", return_value=({}, [])), \
+             patch.object(spaces.time, "sleep"), \
+             self.assertRaisesRegex(ValueError, "did not report the display's size"):
+            spaces.settled_ratios([11, 12], [0.5, 0.5], self.ws)
 
     def test_action_failure_keeps_pending_registry_for_resume(self):
         with tempfile.TemporaryDirectory() as directory:

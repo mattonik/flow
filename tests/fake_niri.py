@@ -8,7 +8,8 @@ class FakeNiri:
         self.active = active
         self.output = output
         self.workspace = workspace
-        self.widths = {}
+        self.widths = {}  # a window's width, in percent of the output
+        self.logical = {"width": 1000, "height": 700}  # the output's logical size; Flow's Niri has no gaps
         self.floating = []
         self.shell_has_keyboard = False  # Desk, a launcher or the overview holds the keyboard
         self.tiled_active = active  # Niri remembers the active column while a floating window has focus
@@ -23,7 +24,7 @@ class FakeNiri:
         windows = []
         for c, column in enumerate(self.columns, 1):
             for r, ident in enumerate(column, 1):
-                width = self.widths.get(ident, 50.0) * 10
+                width = self.widths.get(ident, 50.0) * self.logical["width"] / 100
                 windows.append({"id": ident, "app_id": self.apps[ident], "title": self.apps[ident],
                                 "workspace_id": self.workspace, "is_floating": False,
                                 "is_focused": ident == self.active and not self.shell_has_keyboard,
@@ -35,6 +36,9 @@ class FakeNiri:
                             "layout": {"pos_in_scrolling_layout": None, "tile_size": [576, 480]}})
         return {"id": self.workspace, "active_window_id": self.active, "output": self.output,
                 "is_focused": True, "is_active": True}, windows
+
+    def display_state(self):
+        return {self.output: {"logical": dict(self.logical)}}, [self.snapshot()[0]]
 
     def after_active_column(self):
         tiled = [i for column in self.columns for i in column]
@@ -175,7 +179,8 @@ class MultiNiri:
                                     "is_focused": (name == self.focused_output and ident == self.active[name]
                                                    and not self.shell_has_keyboard),
                                     "layout": {"pos_in_scrolling_layout": [c, r],
-                                               "tile_size": [self.widths.get(ident, 50.0) * 10, 700]}})
+                                               "tile_size": [self.widths.get(ident, 50.0)
+                                                             * self.outputs[name]["logical"]["width"] / 100, 700]}})
         return next(w for w in self.workspaces() if w["is_focused"]), windows
 
     def display_state(self):

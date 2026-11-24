@@ -26,6 +26,7 @@ class SameAppTest(unittest.TestCase):
         (self.state / "groups.json").write_text('{"version": 1, "groups": []}')
         # Two terminals and two editors: the Group is terminal 1 + editor 2; 5 and 6 are other windows of those apps.
         self.niri = FakeNiri([[1, 2], [5], [6]], {1: "terminal", 2: "editor", 5: "terminal", 6: "editor"}, 1)
+        self.niri.logical = OUTPUTS["Virtual-1"]["logical"]
         self.session = "session-1"
         patcher = patch.object(spaces.time, "sleep")
         patcher.start()

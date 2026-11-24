@@ -38,6 +38,7 @@ class MemberResizeTest(unittest.TestCase):
         niri = StubbornNiri([[9], [1], [2], [3]], APPS, 1, **kw)
         niri.widths = {9: 100.0, 1: 50.0, 2: 25.0, 3: 25.0}
         for item in (patch.object(spaces, "snapshot", side_effect=niri.snapshot),
+                     patch.object(spaces, "display_state", side_effect=niri.display_state),
                      patch.object(spaces, "command", side_effect=niri)):
             item.start()
             self.addCleanup(item.stop)

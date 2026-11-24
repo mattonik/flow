@@ -394,8 +394,9 @@ class RecoveryTest(unittest.TestCase):
                 action.assert_not_called()
                 self.assertEqual(json.dumps(windows, sort_keys=True), before)
 
-    def test_side_group_snapshot_recovers_custom_widths(self):
-        ws = {"id": 1, "active_window_id": 2}
+    @patch.object(restore.spaces, "display_state", return_value=({"Virtual-1": {"logical": {"width": 1000, "height": 700}}}, []))
+    def test_side_group_snapshot_recovers_custom_widths(self, _):
+        ws = {"id": 1, "active_window_id": 2, "output": "Virtual-1"}
         windows = [window(1, "one", 1), window(2, "two", 2)]
         windows[0]["layout"]["tile_size"] = [650, 700]
         windows[1]["layout"]["tile_size"] = [350, 700]
@@ -412,6 +413,12 @@ class RecoveryTest(unittest.TestCase):
             actions.assert_any_call("action", "set-window-width", "--id", 2, "35%")
             windows[0]["layout"]["tile_size"] = [900, 700]
             windows[1]["layout"]["tile_size"] = [100, 700]
+            report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), Mock(),
+                                        session="current", registered=[group])
+            self.assertIn("Application size constraints prevented recovery of Group proportions", report)
+            # 650 and 420 are 0.61 and 0.39 of their total, near 65/35, but the row is wider than the display.
+            windows[1]["layout"]["tile_size"] = [420, 700]
+            windows[0]["layout"]["tile_size"] = [650, 700]
             report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), Mock(),
                                         session="current", registered=[group])
             self.assertIn("Application size constraints prevented recovery of Group proportions", report)

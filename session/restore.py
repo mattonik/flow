@@ -511,7 +511,7 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                             report.append("Side-by-side Group changed during recovery; check manually")
                             break
                         widths = spaces.measured_ratios(pair)
-                        if not widths or all(abs(w / sum(widths) - r) <= 0.05 for w, r in zip(widths, ratios)):
+                        if not widths or spaces.widths_settled(widths, ratios, spaces.display_width(current)):
                             break
                         if attempt == 10:
                             report.append("Application size constraints prevented recovery of Group proportions")
