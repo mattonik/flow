@@ -491,16 +491,44 @@ def can_resize(shares, index, direction):
     return min(shares[index] + direction * step, shares[neighbor] - direction * step) >= 100 * MIN_SHARE - 0.5
 
 
-def settled_ratios(ids, ratios, workspace_id):
-    """Wait briefly for clients to commit requested widths; return the windows, or None if they refuse."""
+def display_width(workspace):
+    """The logical width of the workspace's display, which side-by-side shares are of.
+
+    Flow's Niri has no gaps or struts, and the shell's layer surfaces reserve no space, so columns share
+    the whole width.
+    """
+    size = layer_output(workspace)
+    if not size:
+        raise ValueError("Niri did not report the display's size; check the windows")
+    return size[0]
+
+
+def widths_settled(widths, ratios, display):
+    """Whether each tile is its share of the display, within 0.05, and the row fits the display.
+
+    Shares of the tiles' own total are not enough: at 20/80 with the second app still full width,
+    the first is 0.17 of the total and the second 0.83, so a row wider than the screen would pass.
+    The row may exceed the display by a logical pixel per tile, for Niri's rounding.
+    """
+    return (all(abs(w / display - r) <= 0.05 for w, r in zip(widths, ratios))
+            and sum(widths) <= display + len(widths))
+
+
+def settled_ratios(ids, ratios, workspace, display=None):
+    """Wait briefly for clients to commit requested widths; return the windows, or None if they refuse.
+
+    ``display`` is the display's logical width, read from Niri when not given.
+    """
     time.sleep(0.2)
     for attempt in range(11):
         ws, live = snapshot()
         found = [next((w for w in live if w.get("id") == ident), None) for ident in ids]
-        if ws["id"] != workspace_id or not all(found):
+        if ws["id"] != workspace["id"] or not all(found):
             raise ValueError("Group changed while resizing; check the windows")
         widths = measured_ratios(found)
-        if not widths or all(abs(w / sum(widths) - r) <= 0.05 for w, r in zip(widths, ratios)):
+        if widths:
+            display = display or display_width(ws)
+        if not widths or widths_settled(widths, ratios, display):
             return found
         if attempt < 10:
             time.sleep(0.1)
@@ -786,7 +814,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
         for member in (found[index], found[neighbor]):
             command("action", "set-window-width", "--id", member["id"],
                     f"{round(values[found.index(member)] * 100, 2)}%")
-        settled = settled_ratios([w["id"] for w in found], values, workspace["id"])
+        settled = settled_ratios([w["id"] for w in found], values, workspace)
         if not settled:
             actual = measured_ratios([next(w for w in snapshot()[1] if w["id"] == m["id"]) for m in found])
             if actual:
@@ -1556,9 +1584,12 @@ def change_group_layout(state, groups, pins, group_id, workspace, windows, socke
         if target == "side-by-side":
             # Allow clients to commit the sizes requested by Niri.
             time.sleep(0.2)
+            display = None
             for attempt in range(11):
                 widths = measured_ratios(checked(goal))
-                if not widths or all(abs(w / sum(widths) - r) <= 0.05 for w, r in zip(widths, ratios)):
+                if widths:
+                    display = display or display_width(workspace)
+                if not widths or widths_settled(widths, ratios, display):
                     break
                 if attempt == 10:
                     raise ValueError("Application size constraints prevent the saved proportions")
@@ -1671,7 +1702,9 @@ def move_to_display(pins, groups, target_key, connected, workspaces, workspace, 
             command("action", "set-window-width", "--id", ident, f"{round(ratio * 100, 2)}%")
         logical = ((outputs or {}).get(target) or {}).get("logical") or {}
         portrait = logical.get("height", 0) > logical.get("width", 0)
-        fits = settled_ratios([w["id"] for w in ordered], saved, workspace["id"])
+        # Unknown width: stack it rather than leave a row that may not fit.
+        fits = bool(logical.get("width")) and settled_ratios([w["id"] for w in ordered], saved, workspace,
+                                                             logical["width"])
         if not fits or (group.get("auto_layout") and portrait):
             workspace, windows = snapshot()
             change_group_layout(state, groups, pins, group["id"], workspace, windows, socket, allow_unfocused=True)

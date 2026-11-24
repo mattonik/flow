@@ -22,6 +22,7 @@ class LargerGroupTest(unittest.TestCase):
     def niri(self, columns, active=1):
         niri = FakeNiri(columns, APPS, active)
         patches = (patch.object(spaces, "snapshot", side_effect=niri.snapshot),
+                   patch.object(spaces, "display_state", side_effect=niri.display_state),
                    patch.object(spaces, "command", side_effect=niri))
         for item in patches:
             item.start()
@@ -305,8 +306,9 @@ class LargerGroupTest(unittest.TestCase):
                 "windows": [{"app_id": a, "column": c, "focused": c == 1} for a, c in (("a", 1), ("b", 2), ("c", 3))]}
         niri = FakeNiri([[1], [2], [3]], APPS, 1)
         ws, windows = niri.snapshot()
-        report, _ = restore.restore(data, ws, windows, (), lambda d: None, niri.snapshot, niri,
-                                    wait=lambda s: None, session="new", registered=[group])
+        with patch.object(spaces, "display_state", side_effect=niri.display_state):
+            report, _ = restore.restore(data, ws, windows, (), lambda d: None, niri.snapshot, niri,
+                                        wait=lambda s: None, session="new", registered=[group])
         self.assertEqual([niri.widths[i] for i in (1, 2, 3)], [50.0, 25.0, 25.0])
         self.assertEqual(report, [])
 
