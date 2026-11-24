@@ -217,8 +217,7 @@ class Run:
         t = self.token
         self.names = {k: f"F008 {k} {t}" for k in ("pinned", "unpinned")}
         self.ids = {k: f"flow-f008-{t}-{k}" for k in self.names}
-        data = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "applications"
-        data.mkdir(parents=True, exist_ok=True)
+        data = self.applications()
         entry = data / f"{self.ids['pinned']}.desktop"
         entry.write_text(f"[Desktop Entry]\nType=Application\nName={self.names['pinned']}\n"
                          f"Exec=foot --app-id {self.ids['pinned']} -T \"{self.names['pinned']}\" sleep 3600\n")
@@ -236,6 +235,14 @@ class Run:
         self.cleanups.append(lambda: subprocess.run(["flow-spaces", "unpin", self.pin], stdout=subprocess.DEVNULL,
                                                     stderr=subprocess.DEVNULL, timeout=60))
         self.focus(self.win["other"])
+
+    def applications(self):
+        """The user's applications folder, made if it was not there and removed again if it is then empty."""
+        folder = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "applications"
+        if not folder.exists():
+            folder.mkdir(parents=True)
+            self.cleanups.append(lambda: folder.rmdir() if not any(folder.iterdir()) else None)
+        return folder
 
     def observe(self):
         return json.loads(subprocess.check_output(["flow-spaces", "observe"], text=True, timeout=30))
@@ -374,8 +381,7 @@ class Run:
                 if dump.strip():
                     subprocess.run(["dconf", "load", "/org/xfce/mousepad/"], input=dump, text=True)
             self.cleanups.append(restore_dconf)
-        desktop = data / "applications" / f"flow-f008-{t}-editor.desktop"
-        desktop.parent.mkdir(parents=True, exist_ok=True)
+        desktop = self.applications() / f"flow-f008-{t}-editor.desktop"
         desktop.write_text(f"[Desktop Entry]\nType=Application\nName=F008 Editor {t}\nExec={editor} %F\n"
                            "MimeType=text/plain;\n")
         self.cleanups.append(lambda: desktop.unlink(missing_ok=True))
