@@ -5,7 +5,8 @@ Run inside a Niri session on the installed system, from a copy of this checkout 
 takes the guest's screen lock and does the rest). The installed shell (``/etc/flow/shell.qml``, or the shell named
 by ``FLOW_SHELL``) must be running; its IPC reads what is on screen and ``flow-pointer`` clicks. Keys are typed
 with wtype into the search panel, which has the keyboard while open. ``--only NAME`` runs one check (names below),
-which the mutation runner uses.
+which the mutation runner uses. ``--shots DIR`` saves screenshots (grim) of the recent file found, Flow Settings
+expanded and Quick Settings open.
 
 Each check opens search, types, and presses Return or clicks; what it asserts is the effect on the system:
 
@@ -91,6 +92,7 @@ class Run:
         self.processes = []
         self.cleanups = []
         self.pointer = None
+        self.shots = None  # a folder for screenshots (--shots), taken with grim
 
     # --- the shell ---
     def ipc(self, *call):
@@ -172,6 +174,11 @@ class Run:
         return {i: (found[i]["workspace_id"], tuple(found[i]["layout"]["pos_in_scrolling_layout"] or ()),
                     tuple(round(s) for s in found[i]["layout"]["tile_size"]), found[i]["is_floating"])
                 for i in ids}
+
+    def shot(self, name):
+        if self.shots:
+            time.sleep(0.6)  # past the surface's opening animation
+            subprocess.run(["grim", str(Path(self.shots) / f"{name}.png")], check=True, timeout=20)
 
     def step(self, text):
         self.steps.append(text)
@@ -317,6 +324,7 @@ class Run:
         try:
             wait_for(lambda: self.surfaces()["desk"] and self.settings_open(),
                      lambda: f"Desk with Settings expanded ({self.surfaces()}, {self.desk_settings()})")
+            self.shot("2-flow-settings")
             switches = [c for c in self.json("controls") if c["surface"] == "desk" and c["kind"] == "switch"]
             if not switches:
                 raise RuntimeError("Settings is open but shows no switch")
@@ -347,6 +355,7 @@ class Run:
         self.chosen_closed()
         try:
             wait_for(lambda: self.surfaces()["quick"], lambda: f"Quick Settings to open ({self.surfaces()})")
+            self.shot("3-quick-settings")
             shown = [c for c in self.json("controls") if c["surface"] == "quick"]
             if not shown:
                 raise RuntimeError("Quick Settings is open but shows nothing")
@@ -415,6 +424,7 @@ class Run:
         rows = self.search(note.name)["rows"]
         if [(r["kind"], r["title"]) for r in rows] != [("file", note.name)]:
             raise RuntimeError(f"Search for {note.name} showed {rows}")
+        self.shot("1-recent-file-found")
         found = json.loads(subprocess.check_output(["flow-search", "--json"], text=True, timeout=30))
         if [r["detail"].split(" · ")[0] for r in found if r["title"] == note.name] != ["Recent file"]:
             raise RuntimeError("The file is not listed as a recent file by flow-search")
@@ -500,9 +510,12 @@ class Run:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--only", action="append", choices=CHECKS, help="run only this check (repeatable)")
-    names = parser.parse_args().only or CHECKS
-    names = [n for n in CHECKS if n in names]
-    print(json.dumps(Run(os.environ.get("FLOW_SHELL", INSTALLED_SHELL)).run(names), indent=1))
+    parser.add_argument("--shots", help="a folder for screenshots of the recent file found, Flow Settings and Quick Settings")
+    args = parser.parse_args()
+    names = [n for n in CHECKS if n in (args.only or CHECKS)]
+    run = Run(os.environ.get("FLOW_SHELL", INSTALLED_SHELL))
+    run.shots = args.shots
+    print(json.dumps(run.run(names), indent=1))
 
 
 if __name__ == "__main__":

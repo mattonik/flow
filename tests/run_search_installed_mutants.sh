@@ -22,7 +22,7 @@ systemctl --user stop flow-shell
 # start_shell OLD NEW SEARCH: a copy of the installed shell with OLD replaced by NEW (both empty: unchanged), and a
 # flow-search wrapper that runs SEARCH first (a shell snippet that may exit), started the way the unit starts it.
 start_shell() {
-  rm -rf "$work/shell" "$work/bin"; cp -rL /etc/flow "$work/shell"; mkdir "$work/bin"
+  rm -rf "$work/shell" "$work/bin"; cp -rL /etc/flow "$work/shell"; chmod -R u+w "$work/shell"; mkdir "$work/bin"
   python3 - "$work/shell/shell.qml" "$1" "$2" <<'PY'
 import sys
 path, old, new = sys.argv[1:]
