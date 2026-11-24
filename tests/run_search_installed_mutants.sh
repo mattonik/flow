@@ -44,6 +44,7 @@ PY
 failed=0
 # mutant DESCRIPTION CHECK OLD NEW SEARCH
 mutant() {
+  [ -z "${ONLY:-}" ] || [ "$ONLY" = "$2" ] || return 0   # ONLY=check runs the mutants of one check
   stop_mutant
   start_shell "$3" "$4" "$5"
   FLOW_SHELL="$work/shell/shell.qml" timeout 300 python3 tests/niri_search_installed_smoke.py --only "$2" > "$work/out" 2>&1; rc=$?
@@ -52,7 +53,7 @@ mutant() {
 }
 
 start_shell '' '' ''
-if FLOW_SHELL="$work/shell/shell.qml" timeout 600 python3 tests/niri_search_installed_smoke.py > "$work/out" 2>&1; then
+if [ -n "${ONLY:-}" ]; then echo "(control skipped: ONLY=$ONLY)"; elif FLOW_SHELL="$work/shell/shell.qml" timeout 600 python3 tests/niri_search_installed_smoke.py > "$work/out" 2>&1; then
   echo "control passed: every check, against an unmutated copy of the installed shell"
 else
   echo "CONTROL FAILED"; cat "$work/out"; exit 1
@@ -65,7 +66,8 @@ mutant "flow-search --open app does nothing" apps '' '' "$OPEN_APP"
 mutant "a click on a row does nothing" click 'onClicked: root.runSearchResult(resultRow.modelData)' 'onClicked: {}' ''
 mutant "choosing a pin does not focus it" spaces "$FOCUS_PIN" 'else if (result.kind === "pin") {}' ''
 mutant "choosing a window does not focus it" spaces 'else if (result.kind === "window") spaceAction("focus-window", result.value)' 'else if (result.kind === "window") {}' ''
-mutant "a pin whose app is closed is not launched" closed-pin "$FOCUS_PIN" 'else if (result.kind === "pin" && result.detail.indexOf("Open") >= 0) spaceAction("focus", result.value)' ''
+# A pin whose app is closed says "Pinned space · Open" (it offers to open it); an open one says "Pinned space".
+mutant "a pin whose app is closed is not launched" closed-pin "$FOCUS_PIN" 'else if (result.kind === "pin" && result.detail.indexOf("Open") < 0) spaceAction("focus", result.value)' ''
 mutant "Flow Settings does not expand Settings" settings '                if (!deskOpen) toggleDesk()
                 settingsOpen = true' '                if (!deskOpen) toggleDesk()' ''
 mutant "Quick Settings does not open" quick 'if (result.value === "quick_open") { if (!quickSettingsOpen) toggleQuickSettings() }' 'if (result.value === "quick_open") { }' ''

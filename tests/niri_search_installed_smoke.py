@@ -259,7 +259,7 @@ class Run:
             self.spaces_setup()
         ids = list(self.win.values())
         layout = self.mine(ids)
-        for kind, label, detail in (("pin", "pinned", "Pinned space · Open"), ("window", "unpinned", "Open window")):
+        for kind, label in (("pin", "pinned"), ("window", "unpinned")):
             self.focus(self.win["other"])
             rows = self.search(self.names[label])["rows"]
             if (rows[0]["kind"], rows[0]["title"]) != (kind, self.names[label]):
@@ -300,6 +300,20 @@ class Run:
         buttons = [c for c in self.json("controls") or [] if c["surface"] == "desk" and c["kind"] == "button" and c["text"] == "Settings"]
         return buttons[0] if buttons else None
 
+    def set_desk(self, want):
+        """Desk open or shut. A toggle while Desk is still moving is not always taken, so it is asked again."""
+        for _ in range(4):
+            if self.surfaces()["desk"] == want:
+                return
+            self.ipc("toggle")
+            end = time.monotonic() + 3
+            while time.monotonic() < end and self.surfaces()["desk"] != want:
+                time.sleep(0.2)
+        wait_for(lambda: self.surfaces()["desk"] == want, f"Desk to {'open' if want else 'close'}")
+
+    def close_desk(self):
+        self.set_desk(False)
+
     def settings_open(self):
         """True or False while Desk shows its Settings button, None while it does not."""
         button = self.desk_settings()
@@ -308,13 +322,12 @@ class Run:
     def check_settings(self):
         pointer = self.pointer
         # Start from Desk with Settings collapsed, as the shell is when it has just started.
-        self.ipc("toggle")
+        self.set_desk(True)
         wait_for(lambda: self.surfaces()["desk"] and self.settings_open() is not None, lambda: f"Desk with its Settings button ({self.surfaces()}, {self.desk_settings()})")
         if self.settings_open():
             pointer.click(self.control_center(self.desk_settings()))
             wait_for(lambda: self.settings_open() is False, "Settings to collapse")
-        self.ipc("toggle")
-        wait_for(lambda: not self.surfaces()["desk"], "Desk to close")
+        self.close_desk()
         self.search("Flow Settings")
         rows = self.view()["rows"]
         if (rows[0]["kind"], rows[0]["title"]) != ("settings", "Flow Settings"):
@@ -332,9 +345,7 @@ class Run:
             if self.settings_open():
                 pointer.click(self.control_center(self.desk_settings()))
                 wait_for(lambda: self.settings_open() is False, "Settings to collapse again")
-            if self.surfaces()["desk"]:
-                self.ipc("toggle")
-                wait_for(lambda: not self.surfaces()["desk"], "Desk to close")
+            self.close_desk()
         pointer.park()
         self.step("Flow Settings, then Return, opened Desk with its Settings section expanded and its switches shown "
                   f"({', '.join(c['words'][0] if c['words'] else '?' for c in switches[:3])}…); both were closed again")
