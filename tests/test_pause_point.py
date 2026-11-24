@@ -1,4 +1,4 @@
-"""Flow's state writers, killed part-way through, leave the file they write whole (F-018).
+"""Flow's state writers, killed part-way through, leave the file they write whole.
 
 Each writer is paused by session/pause_point.py where a kill hurts most: its new content written and synced to
 a temporary file, the rename not yet done. A process stopped there by SIGTERM (as the controller is when its shell
@@ -22,8 +22,8 @@ SESSION = Path(__file__).resolve().parents[1] / "session"
 sys.path.insert(0, str(SESSION))
 import pause_point
 
-# What each writer replaces, and the call that replaces it, run in a child that exits on SIGTERM as the
-# controller does (session/flow_controller.py, main()).
+# What each writer replaces, and the call that replaces it, run in a child with the controller's own SIGTERM
+# handling (flow_controller.exit_on_sigterm()).
 OLD = {"groups.json": {"version": 1, "groups": []},
        "spaces.json": {"version": 2, "displays": {}, "pins": []},
        "session.json": {"version": 1, "session": None, "windows": [], "groups": []}}
@@ -33,9 +33,10 @@ CALLS = {
     "session.write": ("session.json", "import restore; restore.write_snapshot(path, {'version': 1, 'session': None, "
                                       "'windows': [{'app_id': 'a', 'column': 1}] * 200, 'groups': []})"),
 }
-CHILD = """import signal, sys
+CHILD = """import sys
 from pathlib import Path
-signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+import flow_controller
+flow_controller.exit_on_sigterm()
 path = Path(sys.argv[1])
 {call}
 """

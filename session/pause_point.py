@@ -27,8 +27,7 @@ def reached(point):
         return False
     state = Path(state).resolve()
     flag = Path(flag)
-    if (not flag.is_absolute() or state == (Path.home() / ".local/state").resolve()
-            or state not in flag.resolve().parents):
+    if state == (Path.home() / ".local/state").resolve() or state not in flag.resolve().parents:
         return False
     flag.write_text(str(os.getpid()))
     time.sleep(PAUSE)

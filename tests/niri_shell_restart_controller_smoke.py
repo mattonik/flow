@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""F-018: the shell restarts that the resident controller (ADR-0011) brought, and those of the installed shell.
+"""The shell restarts that the resident controller (ADR-0011) brought, and those of the installed shell.
 
-See *F-018 acceptance* in docs/IMPLEMENTATION_STATUS.md for the checks; each restart below runs all of them.
+The checks are listed under *what a shell restart must not change* in docs/IMPLEMENTATION_STATUS.md.
 
 Development mode (the default) runs inside a Niri session from the Flow checkout, with ``FLOW_SHELL`` naming the
 development ``shell.qml`` and ``flow-spaces``, ``flow-recovery`` and ``flow-controller`` on PATH running this
@@ -43,10 +43,13 @@ import threading
 import time
 import uuid
 
-from isolated_state import IsolatedState, started_with
+from contextlib import contextmanager
+
+from isolated_state import IsolatedState
 
 STATE_FILES = ("spaces.json", "groups.json", "session.json")
-# What else may be in the state folder. A temporary file of a writer stopped by SIGTERM is not.
+# What else may be in the state folder; a new state file belongs here too. A temporary file of a writer stopped
+# by SIGTERM does not.
 KNOWN = {*STATE_FILES, "groups.initialized", "session.lock", "spaces.lock", "layer-shapes.json", "spaces.v1.json"}
 INSTALLED_SHELL = "/etc/flow/shell.qml"
 
@@ -123,6 +126,25 @@ def controller_socket(env):
     """session/flow_controller.py, socket_path(), for ``env``."""
     home = env.get("XDG_STATE_HOME") or env.get("HOME", "") + "/.local/state"
     return Path(env["XDG_RUNTIME_DIR"]) / f"flow-controller-{hashlib.md5(home.encode()).hexdigest()[:12]}.sock"
+
+
+@contextmanager
+def sampled(path):
+    """How many sockets listen at ``path``, every 5 ms while the block runs: the list, filled as it goes."""
+    samples, stop = [], threading.Event()
+
+    def sampler():
+        while not stop.is_set():
+            samples.append(listening(path))
+            time.sleep(0.005)
+
+    thread = threading.Thread(target=sampler, daemon=True)
+    thread.start()
+    try:
+        yield samples
+    finally:
+        stop.set()
+        thread.join()
 
 
 def listening(path):
@@ -218,6 +240,10 @@ class Bench:
             found[pin["id"]] = (number, mine.index(pin) + 1, apps)
         return found
 
+    def serving(self):
+        """One controller listens, under the socket's name, and answers there."""
+        return listening(self.socket) == 1 and self.socket.is_socket() and isinstance(self.stats(), dict)
+
     def stats(self):
         """The controller's save counters (session/flow_controller.py, {"get": "stats"})."""
         import socket
@@ -268,14 +294,15 @@ class Bench:
         """Checks 1, 2, 4 and 5 once the new shell has settled: work, files and view as ``base``."""
         def same():
             return (self.work() == base["work"] and self.files() == base["files"] and self.view() == base["view"]
-                    and self.ipc("spaces_error") == "" and self.setting() == base["setting"]
-                    and len(self.controllers()) == 1 and listening(self.socket) == 1)
+                    and self.ipc("spaces_error") == "" and self.setting() == base["setting"] and not self.stray()
+                    and len(self.controllers()) == 1 and self.serving())
         try:
             wait_for(same, f"{how} to settle", timeout=timeout, step=0.25)
         except Failed:
             now = {"work": self.work(), "view": self.view(), "error": self.ipc("spaces_error"),
                    "automatic recovery": json.loads(self.ipc("recovery_state")),
-                   "controllers": self.controllers(), "listening": listening(self.socket),
+                   "controllers": self.controllers(), "listening": listening(self.socket), "stray": self.stray(),
+                   "answers": self.stats(),
                    "files": file_differences(base["files"], self.files())}
             raise Failed(f"{how}: not the state from before: {now} (before: {base['work']}, {base['view']})") from None
         self.parse(self.files())
@@ -346,7 +373,7 @@ class Bench:
             if self.shell_process and self.shell_process.poll() is not None:
                 raise Failed("The development shell exited")
             try:
-                return self.ipc("toast") == "" and listening(self.socket) == 1 and bool(self.view()["spaces"])
+                return self.ipc("toast") == "" and self.serving() and bool(self.view()["spaces"])
             except subprocess.SubprocessError:
                 return False
         wait_for(up, "the shell and its controller", timeout=30, step=0.2)
@@ -474,26 +501,14 @@ def focus_only(line):
 
 def rapid(bench, base, count=5):
     """Restarts within a few seconds: never two controllers listening; one afterwards; nothing lost."""
-    samples, stop = [], threading.Event()
-
-    def sampler():
-        while not stop.is_set():
-            samples.append(listening(bench.socket))
-            time.sleep(0.005)
-
-    thread = threading.Thread(target=sampler, daemon=True)
-    thread.start()
     old = bench.controllers()
-    try:
+    with sampled(bench.socket) as samples:
         for index in range(count):
             bench.stop(signal.SIGKILL if index % 2 else signal.SIGTERM)
             bench.start(wait=False)
             time.sleep(0.4 + 0.25 * index)
         bench.ready()
         bench.settled(f"{count} restarts within a few seconds", base)
-    finally:
-        stop.set()
-        thread.join()
     check(f"{count} restarts: never two controllers listening", max(samples) <= 1,
           f"{len(samples)} samples, at most {max(samples)}")
     check(f"{count} restarts: the old controllers are gone", not set(old) & set(bench.controllers()))
@@ -505,31 +520,21 @@ def handover(bench, base, hold=4.0):
     Its shell's death stops the old controller at once (pdeathsig), so restarts alone never overlap two. SIGSTOP
     keeps it running past its shell: its TERM waits until SIGCONT, ``hold`` s after the new shell started.
     """
-    samples, stop = [], threading.Event()
-
-    def sampler():
-        while not stop.is_set():
-            samples.append(listening(bench.socket))
-            time.sleep(0.005)
-
     old = bench.controllers()
-    thread = threading.Thread(target=sampler, daemon=True)
-    thread.start()
     try:
-        for pid in old:
-            os.kill(pid, signal.SIGSTOP)
-        bench.stop(signal.SIGKILL)
-        bench.start(wait=False)
-        wait_for(lambda: set(bench.controllers()) - set(old), "the new shell's controller", timeout=20)
-        time.sleep(hold)
-        waiting = sorted(set(bench.controllers()) - set(old))
-        for pid in old:
-            os.kill(pid, signal.SIGCONT)
-        bench.ready()
-        bench.settled("a new shell beside a stopped controller", base)
+        with sampled(bench.socket) as samples:
+            for pid in old:
+                os.kill(pid, signal.SIGSTOP)
+            bench.stop(signal.SIGKILL)
+            bench.start(wait=False)
+            wait_for(lambda: set(bench.controllers()) - set(old), "the new shell's controller", timeout=20)
+            time.sleep(hold)
+            waiting = sorted(set(bench.controllers()) - set(old))
+            for pid in old:
+                os.kill(pid, signal.SIGCONT)
+            bench.ready()
+            bench.settled("a new shell beside a stopped controller", base)
     finally:
-        stop.set()
-        thread.join()
         for pid in old:
             try:
                 os.kill(pid, signal.SIGCONT)
@@ -553,7 +558,7 @@ def development(args):
         runtime, config, data = tmp / "runtime", tmp / "config", tmp / "data"
         runtime.mkdir(mode=0o700)
         (config).mkdir()
-        # Without appMenuEnabled, the key before it: Qt's Settings then wrote autoRecovery=false back (F-018).
+        # Without appMenuEnabled, the key declared before it: each restart must keep automatic recovery on.
         (config / "flow-settings.ini").write_text("[General]\nautoRecovery=true\n")
         wayland = os.environ.get("WAYLAND_DISPLAY", "wayland-1")
         env = dict(os.environ, XDG_STATE_HOME=str(tmp), XDG_RUNTIME_DIR=str(runtime), XDG_CONFIG_HOME=str(config),
@@ -598,7 +603,7 @@ def development(args):
 
             old = bench.controllers()
             os.kill(old[0], signal.SIGKILL)
-            wait_for(lambda: bench.controllers() and bench.controllers() != old and listening(bench.socket) == 1,
+            wait_for(lambda: bench.controllers() and bench.controllers() != old and bench.serving(),
                      "the shell to start another controller", timeout=20)
             bench.settled("the controller killed alone", base)
             bench.receives("the controller killed alone", base)
@@ -624,7 +629,10 @@ def development(args):
                 pass
             now = {name: (real_state / name).read_bytes() if (real_state / name).exists() else None for name in STATE_FILES}
             if now != real:
-                raise Failed("A real Flow pin, Group or session file changed")
+                if sys.exc_info()[0] is not None:
+                    print("A real Flow pin, Group or session file changed", file=sys.stderr)
+                else:
+                    raise Failed("A real Flow pin, Group or session file changed")
 
 
 def cleanup(bench):
@@ -681,7 +689,6 @@ def installed(args):
         return value
 
     start_focus = next(w for w in read("workspaces") if w["is_focused"])
-    restored = False
     try:
         setup(bench, spaces)
         # The Layer is opened by the installed shell, so it runs as its apps do (an app scope of its own).
@@ -700,41 +707,42 @@ def installed(args):
         for command in args.installed:
             how = f"`{command}`"
             shell, old = unit_shell(), bench.controllers()
-            samples, stop = [], threading.Event()
-
-            def sampler():
-                while not stop.is_set():
-                    samples.append(listening(bench.socket))
-                    time.sleep(0.005)
-
-            thread = threading.Thread(target=sampler, daemon=True)
-            thread.start()
-            try:
+            with sampled(bench.socket) as samples:
                 subprocess.run(command, shell=True, check=True, timeout=1200)
                 wait_for(lambda: unit_shell() not in (None, shell), f"{how}: a new installed shell", timeout=60)
                 bench.ready()
                 check(f"{how}: the old controller is gone", not set(old) & set(bench.controllers()), str(old))
                 bench.settled(how, base, timeout=60)
-            finally:
-                stop.set()
-                thread.join()
             check(f"{how}: never two controllers listening", max(samples) <= 1, f"at most {max(samples)}")
             bench.shortcuts(how, base)
             bench.receives(how, base)
             bench.settled(f"{how}, after the shortcuts", base)
         return {"result": "pass", "two_displays": bench.two}
     finally:
+        restored = put_back(bench, backup, runtime, markers, entries, start_focus)
+        if not restored and sys.exc_info()[0] is None:
+            raise Failed(f"The real state was not put back; the backup stays in {backup}")
+
+
+def put_back(bench, backup, runtime, markers, entries, start_focus):
+    """Close the test windows and put the real state and recovery markers back, with the unit stopped so its
+    controller cannot write meanwhile; start the unit again whatever happens. Whether all came back byte for byte."""
+    restored = False
+    try:
         cleanup(bench)
         for entry in entries:
             entry.unlink(missing_ok=True)
-        # The real state as it was: the unit's controller may write while it is put back, so stop it first.
         try:
             niri("action", "focus-monitor", start_focus["output"])
             niri("action", "focus-workspace", start_focus["idx"])
         except (OSError, subprocess.SubprocessError):
             pass
         subprocess.run(["systemctl", "--user", "stop", "flow-shell"], check=False)
-        wait_for(lambda: not bench.controllers(), "the installed controller to stop", timeout=20)
+        end = time.monotonic() + 20
+        while bench.controllers() and time.monotonic() < end:
+            time.sleep(0.2)
+        for pid in bench.controllers():  # a controller the unit's stop left: it must not write over the backup
+            os.kill(pid, signal.SIGKILL)
         shutil.rmtree(bench.state)
         shutil.copytree(backup / "flow", bench.state, symlinks=True)
         for path, data in markers.items():
@@ -747,13 +755,17 @@ def installed(args):
         restored = (same and sorted(p.relative_to(bench.state) for p in bench.state.rglob("*")) ==
                     sorted(p.relative_to(backup / "flow") for p in (backup / "flow").rglob("*"))
                     and {p: p.read_bytes() for p in runtime.glob("flow-recovery-*") if p.is_file()} == markers)
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        print(f"Putting the real state back failed: {exc}", file=sys.stderr)
+    finally:
         subprocess.run(["systemctl", "--user", "start", "flow-shell"], check=False)
         print(json.dumps({"check": "the real state and recovery markers put back byte for byte", "ok": restored}),
               flush=True)
         if restored:
-            shutil.rmtree(backup)
+            shutil.rmtree(backup, ignore_errors=True)
         else:
             print(f"The real state backup stays in {backup}", file=sys.stderr)
+    return restored
 
 
 def main():

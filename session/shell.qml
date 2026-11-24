@@ -125,9 +125,8 @@ ShellRoot {
     property var appMenu: null   // the open menu: {id (window), name, menus}
     property string appMenuError: ""
     // One setting per Core.Settings. Qt 6.12's Settings, loading a file without one of its keys, writes back the
-    // values its later properties had before they were loaded, their defaults: a file without appMenuEnabled
-    // turned automatic recovery off on the next start (F-018, docs/IMPLEMENTATION_STATUS.md). Alone in its
-    // object, a missing key can only be written with its own default.
+    // values its later properties had before they were loaded: their defaults, over what the file held. Alone in
+    // its object, a missing key is only ever written with its own default.
     readonly property string settingsFile: "file://" + (Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config") + "/flow-settings.ini"
     Core.Settings {
         id: menuPreferences

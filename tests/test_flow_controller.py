@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import signal
 import socket
 import sys
 import tempfile
@@ -664,6 +665,44 @@ class MainTest(unittest.TestCase):
             self.assertEqual(fc.main(), 0)
         self.assertEqual(before_listening, [""])
         self.assertEqual(said, ["listening\n"])
+
+
+    def test_on_sigterm_it_closes_its_socket_and_removes_its_name_before_it_releases_its_lock(self):
+        """A controller waiting on the lock must find nothing listening once it has it."""
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        tmp = Path(folder.name)
+        (tmp / "runtime").mkdir()
+        listen, seen = fc.listen, []
+
+        def listening(*args, **kwargs):
+            server, lock = listen(*args, **kwargs)
+
+            class Lock:
+                def close(self):
+                    seen.append((server.fileno(), fc.socket_path().exists()))
+                    lock.close()
+            return server, Lock()
+
+        class Terminated:
+            def __init__(self, *args):
+                pass
+
+            def serve(self):
+                os.kill(os.getpid(), signal.SIGTERM)
+                time.sleep(5)
+
+        with patch.dict(os.environ, {"NIRI_SOCKET": str(tmp / "niri.sock"), "XDG_RUNTIME_DIR": str(tmp / "runtime"),
+                                     "XDG_STATE_HOME": str(tmp / "state-home")}), \
+                patch.object(fc, "Controller", Terminated), patch.object(fc, "listen", listening), \
+                patch("sys.stdout", new_callable=io.StringIO):
+            previous = signal.getsignal(signal.SIGTERM)
+            try:
+                with self.assertRaises(SystemExit):
+                    fc.main()
+            finally:
+                signal.signal(signal.SIGTERM, previous)
+        self.assertEqual(seen, [(-1, False)])
 
 
 class NiriStateFocusTimestampTest(unittest.TestCase):

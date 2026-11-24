@@ -535,13 +535,19 @@ def listen(runtime, wait=True):
     return server, lock
 
 
+def exit_on_sigterm():
+    """SIGTERM (the shell's death, through pdeathsig) exits through ``finally``: a write in flight removes its
+    temporary file, and main() closes its socket before it releases its lock."""
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+
+
 def main():
     runtime = os.environ.get("XDG_RUNTIME_DIR")
     niri_path = os.environ.get("NIRI_SOCKET")
     if not runtime or not niri_path:
         print("flow-controller: XDG_RUNTIME_DIR and NIRI_SOCKET must be set", file=sys.stderr)
         return 2
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    exit_on_sigterm()
     server, lock = listen(Path(runtime))  # waits while another controller serves this session
     listened = time.monotonic()
     print("listening", flush=True)  # the shell connects on this line rather than waiting for its next try
@@ -550,9 +556,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        # Before the lock is released: a waiting controller binds its socket only after this. The listening socket
-        # is closed too, not left to the interpreter's exit, which a waiting controller would otherwise beat and
-        # listen beside it (tests/niri_shell_restart_controller_smoke.py).
+        # Before the lock is released, the socket is closed and its name removed: a waiting controller takes the
+        # lock, then binds the name, and is never listening beside this one while the interpreter exits.
         server.close()
         socket_path(runtime).unlink(missing_ok=True)
         lock.close()
