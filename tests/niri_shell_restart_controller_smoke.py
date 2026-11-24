@@ -450,10 +450,13 @@ def mid_write(bench, base, group, point):
                      f"{saved_focus(bench.files())}, the controller {bench.stats()}, the recovery marker "
                      f"{bench.marker()}") from None
     fresh = bench.snapshot(how)
-    check(f"{how}: the change and nothing else", fresh["work"]["windows"] == base["work"]["windows"]
-          and fresh["view"]["pins"] == base["view"]["pins"] and fresh["view"]["layers"] == base["view"]["layers"]
-          and spaces_shape(fresh["view"]) == spaces_shape(base["view"])
-          and same_but_focus(fresh["files"], base["files"]), "")
+    wrong = [part for part, same in (
+        ("windows", fresh["work"]["windows"] == base["work"]["windows"]),
+        ("shell's pins and Layers", (fresh["view"]["pins"], fresh["view"]["layers"]) == (base["view"]["pins"], base["view"]["layers"])),
+        ("shell's spaces", spaces_shape(fresh["view"]) == spaces_shape(base["view"])),
+        ("setting", fresh["setting"] == base["setting"])) if not same]
+    wrong += [line for line in file_differences(base["files"], fresh["files"]) if not focus_only(line)]
+    check(f"{how}: the change and nothing else", not wrong, "; ".join(wrong))
     return fresh
 
 
@@ -462,24 +465,9 @@ def spaces_shape(view):
     return [(s["group_id"], s["group_layout"], s["active"]) for s in view["spaces"]]
 
 
-def same_but_focus(files, base):
-    """The state files equal but for which Group app and which window had focus."""
-    def strip(name, data):
-        if data is None:
-            return None
-        value = json.loads(data)
-        if name == "groups.json":
-            for g in value["groups"]:
-                g.pop("last_focused_app", None)
-        elif name == "spaces.json":
-            for p in value["pins"]:
-                p.pop("last_focused_app", None)
-                p.pop("window_id", None)  # a Group pin's window is its focused member
-        else:
-            for w in value["windows"]:
-                w.pop("focused", None)
-        return value
-    return all(strip(name, files[name]) == strip(name, base[name]) for name in STATE_FILES)
+def focus_only(line):
+    """Whether a difference between two state files is which Group app or window had focus."""
+    return any(key in line.split(":")[0] for key in ("last_focused_app", "window_id", "focused"))
 
 
 def rapid(bench, base, count=5):
@@ -574,6 +562,7 @@ def development(args):
             for point in ("groups.write", "spaces.write", "session.write"):
                 base = mid_write(bench, base, group, point)
                 bench.shortcuts(f"after a SIGKILL at {point}", base)
+                base = bench.snapshot(f"after a SIGKILL at {point}, after the shortcuts")  # see first start
 
             rapid(bench, base)
             bench.shortcuts("after the rapid restarts", base)
