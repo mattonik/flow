@@ -1683,7 +1683,7 @@ ShellRoot {
         // What the shell last read from flow-spaces: pins with their windows, spaces with their Group layout, Layers.
         function spaces_view(): string {
             return JSON.stringify({ pins: root.pins.map(p => ({ id: p.id, kind: p.kind, window_ids: p.window_ids || [] })),
-                                    spaces: root.displaySpaces.map(s => ({ id: s.id, group_id: s.group_id || "", group_layout: s.group_layout || "" })),
+                                    spaces: root.displaySpaces.map(s => ({ id: s.id, group_id: s.group_id || "", group_layout: s.group_layout || "", active: !!s.active })),
                                     layers: root.layers.map(l => l.id) })
         }
         // Each window of the workspace with the label the shell shows for it, for tests/niri_performance_smoke.py.

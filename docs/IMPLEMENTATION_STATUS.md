@@ -593,6 +593,37 @@ A NEMESIS review found that the first version of the test killed the shell while
 
 Not covered: a restart while `flow-recovery restore` opens apps, a development shell reloading during an action, and the lost error.
 
+### F-018 acceptance: what a shell restart must not change (2026-11-24)
+
+The spec's line is "Quickshell restart does not terminate app windows or corrupt pinned state". F-018 passes when every check below holds across every restart below, in the guest, on the merged and installed code.
+
+**Checks, for each restart:**
+1. **Windows.** Every test window is still open, with the same Niri window ID, workspace, column, row and width. The focused output, the focused window and each workspace's active window are the same, unless the restart's own case moves focus.
+2. **State files.** Read the moment the old shell and its controller are gone, before a new shell starts: `spaces.json`, `groups.json` and `session.json` (written when automatic recovery is on) each parse as JSON. Each has the same bytes as before the restart. Where a write was in flight, a file holds either its old bytes or the new bytes that write intended, never anything else. After a SIGTERM no temporary file is left in the state folder. Once the new shell has settled, each file holds exactly what was intended: the old bytes, or the in-flight change and nothing else.
+3. **Pin shortcuts.** Every pin is reached by the call its shortcut makes: Super+number (`desk focus N`) for Main's pins, Super+Alt with a display digit and a space digit (`desk display_digit`) for another display's.
+4. **The shell shows the same state.** Its `spaces_view` (pins with their windows, spaces with their Group layout and which is active, Layers) is the same as before, and `spaces_error` is empty.
+5. **One controller.** The old controller is gone, through pdeathsig, before or as the new shell's starts, and no two controllers listen on the shell's socket at any moment. Afterwards exactly one listens, and the shell gets its updates: a focus change shows in `spaces_view`.
+6. **Real state.** Development runs use isolated state, runtime and configuration folders, and the real `spaces.json`, `groups.json` and `session.json` keep their checksums. Installed runs back up the real state folder and the recovery marker, and put them back byte for byte afterwards.
+
+**Restarts:**
+
+| Restart | Covered by |
+|---|---|
+| Development shell, SIGTERM (graceful) and SIGKILL (crash) | `niri_shell_restart_smoke.py`, `niri_shell_restart_controller_smoke.py` |
+| The same with a second output connected, each display with its own pin | `niri_shell_restart_controller_smoke.py` with Virtual-2 on |
+| During a Flow action the shell started (Group layout, pin, Layer) | `niri_shell_restart_smoke.py` |
+| SIGKILL of the shell while the controller is mid-refresh: a write to `groups.json` in flight, and one to `spaces.json` | `niri_shell_restart_controller_smoke.py` |
+| SIGKILL of the shell while the controller is mid-automatic-save, automatic recovery on | `niri_shell_restart_controller_smoke.py` |
+| SIGKILL of the controller alone; the shell starts another | `niri_shell_restart_controller_smoke.py` |
+| Five shell restarts within a few seconds, SIGTERM and SIGKILL alternating | `niri_shell_restart_controller_smoke.py` |
+| `systemctl --user restart flow-shell` on the installed shell | `niri_shell_restart_controller_smoke.py --installed` |
+| A crash of the installed shell (SIGKILL of the unit's main process; systemd starts it again) | `niri_shell_restart_controller_smoke.py --installed` |
+| A NixOS switch that changes Flow's files, and the switch back | `niri_shell_restart_controller_smoke.py --installed` |
+
+The kill lands inside a write through a test-only pause, `session/pause_point.py`. Each writer calls it after its temporary file is written and synced, and before the rename. It pauses only when `FLOW_TEST_PAUSE` names that point, and `XDG_STATE_HOME` is set to a folder other than `~/.local/state` that holds the flag file it creates. The smoke sets both for the development shell it starts with isolated state, so an installed session never pauses. `tests/test_pause_point.py` stops each of the three writers there with SIGTERM and with SIGKILL in CI.
+
+Out of scope: a real reboot (F-003), real hardware, and Quickshell's live reload. Only development shells reload; the installed shell turns file watching off.
+
 ### Under a stream of compositor events (2026-11-22)
 
 The shell coalesces the refreshes Niri's events ask for: 150 ms after the last event, at most 1 s after the first unanswered one, and at least 0.5 s after the previous refresh. A window whose only change is its title is relabelled from the event, with no `flow-spaces` run. The new title shows at once, then at most once a second. `flow-spaces` reads Niri over one socket connection, and the helpers run compiled bytecode from the store, so `refresh` and `observe` dropped from about 66 ms to 22 ms. `flow-search` observes instead of refreshing. The opt-in app menu asks for the focused app's identity when focus moves, not every 1.5 s. Automatic layout runs when a Group does not suit its display's orientation, not every 2 s.
