@@ -715,9 +715,21 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
             raise ValueError(problem)
         if group.get("layout") == "side-by-side":
             joined = found + [neighbor]
+            # The new app takes an equal share; the others keep their proportions to each other.
+            shares = group_store.ratios(group)
+            n = len(shares) + 1
+            ratios = [r * (n - 1) / n for r in shares] + [1 / n]
+            for member, ratio in zip(joined, ratios):
+                command("action", "set-window-width", "--id", member["id"], f"{round(ratio * 100, 2)}%")
+            if not settled_ratios([w["id"] for w in joined], ratios, workspace):
+                width = (measured_ratios([neighbor]) or [0])[0]
+                alone = round(100 * width / display_width(workspace), 2) if width else 100
+                for member, ratio in zip(found, shares):
+                    command("action", "set-window-width", "--id", member["id"], f"{round(ratio * 100, 2)}%")
+                command("action", "set-window-width", "--id", neighbor["id"], f"{alone}%")
+                raise ValueError("An app's size limits prevent an equal share; the app was not added")
             group_store.remap_ratios(group, group["members"] + [neighbor["app_id"]])
-            if measured_ratios(joined):
-                group_store.set_ratios(group, measured_ratios(joined))
+            group_store.set_ratios(group, ratios)
         else:
             ws, live = snapshot()
             _, fresh = live_group(groups, arg, ws, live, socket)
@@ -807,6 +819,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
         # Width comes from the next app, or the previous one for the last app.
         neighbor = index + 1 if index + 1 < len(found) else index - 1
         step = RESIZE_STEP if op == "member-wider" else -RESIZE_STEP
+        before = values[:]
         values[index], values[neighbor] = values[index] + step, values[neighbor] - step
         if min(values[index], values[neighbor]) < MIN_SHARE - 1e-6:
             raise ValueError("That app is already as wide as it can be" if step > 0
@@ -816,10 +829,11 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
                     f"{round(values[found.index(member)] * 100, 2)}%")
         settled = settled_ratios([w["id"] for w in found], values, workspace)
         if not settled:
-            actual = measured_ratios([next(w for w in snapshot()[1] if w["id"] == m["id"]) for m in found])
-            if actual:
-                group_store.set_ratios(group, actual)
-            raise ValueError("An app's size limits prevent that width; the Group keeps the closest size")
+            # As the refusing app left it, the row may not fit the display; the widths before the step did.
+            for member in (found[index], found[neighbor]):
+                command("action", "set-window-width", "--id", member["id"],
+                        f"{round(before[found.index(member)] * 100, 2)}%")
+            raise ValueError("An app's size limits prevent that width; the Group keeps its widths")
         group_store.set_ratios(group, values)
         remember_focus({"group_id": group["id"]}, found[index])
     elif op == "make-layer":
@@ -892,8 +906,8 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
         if problem:
             command("action", "focus-window", "--id", layer["id"])
             raise ValueError(problem)
-        shares = group_store.ratios(group)
-        # Tiled after the Group's last column, the Layer is the neighbor that add-to-group takes in.
+        # Tiled after the Group's last column, the Layer is the neighbor that add-to-group takes in;
+        # side by side, add-to-group gives it an equal share.
         command("action", "focus-window", "--id", found[-1]["id"])
         command("action", "focus-window", "--id", layer["id"])
         command("action", "move-window-to-tiling", "--id", layer["id"])
@@ -904,15 +918,6 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
             run(pins, "add-to-group", group["id"], ws, live, socket, groups, display)
         except ValueError as exc:
             raise ValueError(f"The Layer is now a space after the Group but did not join it: {exc}") from exc
-        if group.get("layout") == "side-by-side":
-            # The new app takes an equal share; the others keep their proportions to each other.
-            n = len(shares) + 1
-            group_store.set_ratios(group, [r * (n - 1) / n for r in shares] + [1 / n])
-            ws, live = snapshot()
-            members = group_members(group, live)
-            for member, ratio in zip(members, group_store.ratios(group)):
-                if member:
-                    command("action", "set-window-width", "--id", member["id"], f"{round(ratio * 100, 2)}%")
         command("action", "focus-window", "--id", layer["id"])
     elif op == "close-layer":
         window = layer_window(arg, workspace, windows)
@@ -1289,7 +1294,7 @@ def layer_window(arg, workspace, windows):
     return window
 
 
-def display_spaces(workspace, windows, groups=(), pins=()):
+def display_spaces(workspace, windows, groups=(), pins=(), display=None):
     """Represent each tiled column once; floating windows are Layers, not spaces."""
     current = [w for w in windows if w.get("workspace_id") == workspace["id"]
                and not w.get("is_floating") and position(w)]
@@ -1322,7 +1327,8 @@ def display_spaces(workspace, windows, groups=(), pins=()):
                 selected = next((w for w in joined if w["active"]),
                                 next((w for w in joined if w["app_id"] == last), joined[0]))
                 widths = measured_ratios(found)
-                shares = [round(100 * w / sum(widths)) for w in widths] if widths else \
+                # Shares of the display's width (``display``), so a row that does not fit shows as such.
+                shares = [round(100 * w / (display or sum(widths))) for w in widths] if widths else \
                     [round(100 * r) for r in group_store.ratios(group)]
                 result.append({"id": selected["id"], "label": group["label"], "group_id": group["id"],
                                "group_layout": "side-by-side", "auto_layout": group.get("auto_layout", False),
@@ -1961,7 +1967,8 @@ def _run_locked(state, op, arg, reshape=True):
                    for w in ordered]
         record = connected.get(workspace.get("output"))
         logical = (outputs.get(workspace.get("output")) or {}).get("logical") or {}
-        return {"pins": result, "windows": visible, "spaces": display_spaces(workspace, windows, groups, pins),
+        return {"pins": result, "windows": visible,
+                "spaces": display_spaces(workspace, windows, groups, pins, logical.get("width")),
                "layers": layers(workspace, windows, layer_memory()[1]["layers"]),
                "incomplete_groups": incomplete_groups(workspace, windows, groups, pins),
                "other_pins": other_pins(pins, display, displays, connected, ambiguous, workspaces, windows, socket, groups),

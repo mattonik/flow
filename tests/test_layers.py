@@ -30,6 +30,7 @@ class LayerTest(unittest.TestCase):
         (self.data / "applications/org.example.Notes.desktop").write_text(
             "[Desktop Entry]\nType=Application\nName=Notes\nExec=notes\nStartupWMClass=notes\n")
         for item in (patch.object(spaces, "snapshot", side_effect=self.niri.snapshot),
+                     patch.object(spaces, "display_state", side_effect=self.niri.display_state),
                      patch.object(spaces, "command", side_effect=self.niri),
                      patch.object(spaces.time, "sleep"),
                      patch.dict(os.environ, {"XDG_DATA_HOME": str(self.data), "XDG_DATA_DIRS": str(self.data / "x")})):
