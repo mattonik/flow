@@ -17,14 +17,16 @@ Each check opens search, types, and presses Return or clicks; what it asserts is
   windows' columns, sizes and workspace stay as they were; ``closed-pin``: the pinned app, closed, is launched
   again by Return on its row, in an app scope, and the other windows keep their order and sizes;
 - ``settings``: Flow Settings opens Desk with its Settings section expanded; ``quick``: Quick Settings opens
-  that panel. Both are closed again, and Settings is left collapsed as it was found;
+  that panel. Both are closed again, and Settings is left collapsed;
 - ``recent``: Mousepad opens a disposable file outside the user folders, so Mousepad itself records it in
   ``recently-used.xbel``, with no hand-written history. Search then finds it by name, as a recent file and not as
   a found one, and Return opens it, in an app scope, in Mousepad.
 
+A SIGTERM (``timeout``) leaves through the same cleanup.
+
 State it touches and restores: the test's windows; one pin (unpinned at the end); ``recently-used.xbel``,
 ``~/.config/mimeapps.list`` and Mousepad's dconf keys; temporary desktop entries and a folder under ``$HOME``;
-the focused workspace. The pins, recent-file list and mime defaults are compared with how they were found.
+the focused workspace. Settings is left collapsed (it is collapsed first, so the check can tell). The pins are compared with how they were found.
 """
 
 import argparse
@@ -32,6 +34,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import shutil
 import subprocess
 import sys
@@ -322,7 +325,14 @@ class Run:
     def check_settings(self):
         pointer = self.pointer
         # Start from Desk with Settings collapsed, as the shell is when it has just started.
-        self.set_desk(True)
+        # Desk can still be closing from the search that ran before: open it until its Settings button shows.
+        for _ in range(4):
+            self.set_desk(True)
+            end = time.monotonic() + 3
+            while time.monotonic() < end and self.settings_open() is None:
+                time.sleep(0.2)
+            if self.settings_open() is not None:
+                break
         wait_for(lambda: self.surfaces()["desk"] and self.settings_open() is not None, lambda: f"Desk with its Settings button ({self.surfaces()}, {self.desk_settings()})")
         if self.settings_open():
             pointer.click(self.control_center(self.desk_settings()))
@@ -468,18 +478,18 @@ class Run:
         target = next((w for w in sorted(spaces, key=lambda w: w["idx"], reverse=True) if w["id"] not in busy), None)
         if not target:
             raise RuntimeError("No empty workspace to work on")
-        niri("action", "focus-workspace", target["idx"])
-        wait_for(lambda: focused_workspace()["id"] == target["id"], "the empty workspace")
-        pins_before = {p["id"] for p in self.observe()["pins"]}
-        self.pointer = Pointer(allow_installed_shell=True)
-        # An empty workspace shows Desk: a window of the test's own, kept open, keeps the shell's surfaces closed.
-        self.base = self.spawn(f"flow-f008-{self.token}-base", f"F008 base {self.token}")["id"]
-        if self.surfaces()["desk"]:  # the shell shows Desk on an empty workspace, and leaves it open
-            self.ipc("toggle")
-        wait_for(lambda: not any(self.surfaces().values()), lambda: f"every shell surface closed ({self.surfaces()})")
-        subprocess.run(["wtype", "-k", "Hyper_L"], check=True, timeout=10)  # a keymap no later call sends
         failure = None
         try:
+            niri("action", "focus-workspace", target["idx"])
+            wait_for(lambda: focused_workspace()["id"] == target["id"], "the empty workspace")
+            pins_before = {p["id"] for p in self.observe()["pins"]}
+            self.pointer = Pointer(allow_installed_shell=True)
+            # An empty workspace shows Desk: a window of the test's own, kept open, keeps the shell's surfaces closed.
+            self.base = self.spawn(f"flow-f008-{self.token}-base", f"F008 base {self.token}")["id"]
+            if self.surfaces()["desk"]:  # the shell shows Desk on an empty workspace, and leaves it open
+                self.ipc("toggle")
+            wait_for(lambda: not any(self.surfaces().values()), lambda: f"every shell surface closed ({self.surfaces()})")
+            subprocess.run(["wtype", "-k", "Hyper_L"], check=True, timeout=10)  # a keymap no later call sends
             for name in names:
                 getattr(self, "check_" + name.replace("-", "_"))()
         except BaseException as exc:
@@ -505,6 +515,10 @@ class Run:
         for process in self.processes:
             if process.poll() is None:
                 process.terminate()
+        # An editor that search started rewrites its settings and the recent-file list as it exits: wait for it.
+        end = time.monotonic() + 10
+        while time.monotonic() < end and subprocess.run(["pgrep", "-x", "mousepad"], stdout=subprocess.DEVNULL).returncode == 0:
+            time.sleep(0.2)
         for cleanup in reversed(self.cleanups):
             try:
                 cleanup()
@@ -519,6 +533,8 @@ class Run:
 
 
 def main():
+    # timeout(1) sends SIGTERM: leave through the cleanup, as an exception does.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     parser = argparse.ArgumentParser()
     parser.add_argument("--only", action="append", choices=CHECKS, help="run only this check (repeatable)")
     parser.add_argument("--shots", help="a folder for screenshots of the recent file found, Flow Settings and Quick Settings")

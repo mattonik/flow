@@ -54,7 +54,7 @@ def center(target):
 class Pointer:
     def __init__(self, env=None, allow_installed_shell=False):
         """``allow_installed_shell``: for a test that drives the installed shell itself (niri_search_installed_smoke.py);
-        it aims at items in the middle of the screen, clear of the home indicator, island and banners."""
+        the home indicator, island and banners may then sit under the pointer, so aim at the middle of the screen."""
         self.env = env
         if not shutil.which("flow-pointer", path=(env or {}).get("PATH")):
             raise RuntimeError("flow-pointer is not on PATH (nix build .#flow-pointer)")
@@ -100,8 +100,8 @@ class Pointer:
             if last:
                 if last["hovered"]:
                     return center(last)
-                # A surface that has just mapped shows the pointer from its second motion, not its first: move
-                # again, a few pixels off, every time it still does not (the installed shell, in the guest).
+                # Moving again to the same place is not a motion the installed shell's panel answers (measured in the
+                # guest): move a few pixels off and back instead, every time it still shows no pointer.
                 x, y = center(last)
                 self.move((x + 3 * (tries % 2), y))
                 tries += 1
