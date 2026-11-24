@@ -52,11 +52,13 @@ def center(target):
 
 
 class Pointer:
-    def __init__(self, env=None):
+    def __init__(self, env=None, allow_installed_shell=False):
+        """``allow_installed_shell``: for a test that drives the installed shell itself (niri_search_installed_smoke.py);
+        it aims at items in the middle of the screen, clear of the home indicator, island and banners."""
         self.env = env
         if not shutil.which("flow-pointer", path=(env or {}).get("PATH")):
             raise RuntimeError("flow-pointer is not on PATH (nix build .#flow-pointer)")
-        if subprocess.run(["systemctl", "--user", "is-active", "--quiet", "flow-shell"]).returncode == 0:
+        if not allow_installed_shell and subprocess.run(["systemctl", "--user", "is-active", "--quiet", "flow-shell"]).returncode == 0:
             raise RuntimeError("Stop the installed shell first: its surfaces would take the pointer")
         outputs = json.loads(subprocess.check_output(["niri", "msg", "-j", "outputs"], text=True, timeout=10))
         self.left, self.top, self.width, self.height = layout_box(outputs)
