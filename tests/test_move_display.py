@@ -213,6 +213,18 @@ class MoveToDisplayTest(unittest.TestCase):
         saved = json.loads((self.state / "groups.json").read_text())["groups"][0]
         self.assertEqual(saved["side_ratios"], [0.5, 0.25, 0.25])
 
+    def test_a_group_is_stacked_when_the_display_width_is_unknown(self):
+        """Its widths cannot be checked, so it is stacked rather than left in a row that may not fit."""
+        self.setup({"eDP-1": [[1], [2], [3]], "DP-1": [[8]]}, focused=2, groups=[self.side_trio()])
+        unsized = {**OUTPUTS, "DP-1": {**MONITOR, "logical": {"x": 1280, "y": 0}}}
+        self.niri.display_state = lambda: (unsized, self.niri.workspaces())
+        with patch.object(spaces.time, "sleep"):
+            result = self.invoke("move-to-display", MONITOR_KEY)
+        self.assertEqual(self.niri.layout()["DP-1"], [["terminal"], ["a", "b", "c"]])
+        self.assertEqual(result["notice"], "Trio was stacked to fit Dell U2723QE")
+        saved = json.loads((self.state / "groups.json").read_text())["groups"][0]
+        self.assertEqual(saved["side_ratios"], [0.5, 0.25, 0.25])
+
     def test_a_manual_side_by_side_group_that_fits_stays_side_by_side_on_portrait(self):
         self.setup({"eDP-1": [[1], [2], [3]], "DP-1": [[8]]}, focused=2, groups=[self.side_trio()])
         self.portrait_monitor()

@@ -174,16 +174,17 @@ class GroupLayoutTest(unittest.TestCase):
         """Each tile is measured against the display, not the tiles' own total.
 
         At 20/80 with the second app still full width, the first app is 0.17 of the total and the second
-        0.83, each within 0.05 of its share, so the row was saved side by side though it was wider than
-        the screen. At 25/75 the old check refused only because 0.8 - 0.75 is 0.05000000000000004 in
-        floating point; at 99% instead of 100% it accepted that too."""
+        0.83, each within 0.05 of its share, though the row is wider than the screen. The row may exceed
+        the display by a logical pixel per app."""
         cases = (("25/75, second app stays full width", {"a": 0.25}, {"a": 250, "b": 1000}, False),
                  ("25/75, second app stays at 99%", {"a": 0.25}, {"a": 250, "b": 990}, False),
                  ("20/80, second app stays full width", {"a": 0.2}, {"a": 200, "b": 1000}, False),
                  ("three apps a little too wide", {}, {"a": 370, "b": 370, "c": 370}, False),
                  ("both apps stop at 40%", {"a": 0.5}, {"a": 400, "b": 400}, False),
                  ("took 75%", {"a": 0.25}, {"a": 250, "b": 750}, True),
-                 ("three thirds", {}, {"a": 333.3, "b": 333.3, "c": 333.4}, True))
+                 ("three thirds", {}, {"a": 333.3, "b": 333.3, "c": 333.4}, True),
+                 ("three thirds, a pixel over each", {}, {"a": 334, "b": 334, "c": 334}, True),
+                 ("three thirds, 13 pixels over each", {}, {"a": 346, "b": 346, "c": 346}, False))
         for name, saved, widths, settles in cases:
             with self.subTest(name), tempfile.TemporaryDirectory() as directory:
                 state = Path(directory)

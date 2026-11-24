@@ -416,9 +416,10 @@ class RecoveryTest(unittest.TestCase):
             report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), Mock(),
                                         session="current", registered=[group])
             self.assertIn("Application size constraints prevented recovery of Group proportions", report)
-            # 650 and 420 are 0.61 and 0.39 of their total, near 65/35, but the row is wider than the display.
-            windows[1]["layout"]["tile_size"] = [420, 700]
+            # 650 and 380 are 0.63 and 0.37 of their total, and of the display 0.65 and 0.38, each near
+            # 65/35, but the row is wider than the display.
             windows[0]["layout"]["tile_size"] = [650, 700]
+            windows[1]["layout"]["tile_size"] = [380, 700]
             report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), Mock(),
                                         session="current", registered=[group])
             self.assertIn("Application size constraints prevented recovery of Group proportions", report)
@@ -434,6 +435,23 @@ class RecoveryTest(unittest.TestCase):
                 restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
                                 session="current", registered=[group])
             actions.assert_not_called()
+
+    def test_side_group_recovery_measures_against_its_own_display(self):
+        ws = {"id": 1, "active_window_id": 2, "output": "eDP-1"}
+        windows = [window(1, "one", 1), window(2, "two", 2)]
+        windows[0]["layout"]["tile_size"] = [832, 700]
+        windows[1]["layout"]["tile_size"] = [448, 700]
+        group = {"id": "g", "label": "Work", "members": ["one", "two"], "layout": "side-by-side", "side_ratio": 0.65}
+        saved = {"version": 1, "session": "current", "groups": [group],
+                 "windows": [{"app_id": "one", "column": 1}, {"app_id": "two", "column": 2, "focused": True}]}
+        for outputs, expected in (
+                ({"eDP-1": {"logical": {"width": 1280, "height": 800}}}, []),
+                ({}, ["Group proportions were not checked: Niri did not report the display's size"])):
+            with self.subTest(outputs=outputs), \
+                 patch.object(restore.spaces, "display_state", return_value=(outputs, [])):
+                report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), Mock(),
+                                                session="current", registered=[group])
+            self.assertEqual((report, count), (expected, 2))
 
     def test_unpinned_side_group_snapshot_and_recovery(self):
         ws = {"id": 1, "active_window_id": 2}
