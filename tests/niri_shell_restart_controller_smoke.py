@@ -17,7 +17,9 @@ set up; with a second output connected, a pinned app on it too. Then, in turn:
   new ``spaces.json`` not yet; the refresh records which Group app has focus;
 - the same while it is mid-automatic-save, paused before ``session.json`` is renamed;
 - five restarts within a few seconds, SIGTERM and SIGKILL alternating, while a sampler checks every 5 ms that no
-  two controllers listen on the shell's socket.
+  two controllers listen on the shell's socket;
+- a new shell while the old controller still runs (stopped with SIGSTOP, so its pdeathsig waits): the new
+  controller must wait on the old one's lock and take over once it exits, never listening beside it.
 
 ``--installed CMD...`` instead restarts the installed shell (the ``flow-shell`` unit, ``/etc/flow/shell.qml``)
 with each command in turn, such as ``systemctl --user restart flow-shell`` or a NixOS switch. It works on the real
@@ -497,6 +499,49 @@ def rapid(bench, base, count=5):
     check(f"{count} restarts: the old controllers are gone", not set(old) & set(bench.controllers()))
 
 
+def handover(bench, base, hold=4.0):
+    """A new shell while the old controller still runs: it must wait on the old one's lock, not serve beside it.
+
+    Its shell's death stops the old controller at once (pdeathsig), so restarts alone never overlap two. SIGSTOP
+    keeps it running past its shell: its TERM waits until SIGCONT, ``hold`` s after the new shell started.
+    """
+    samples, stop = [], threading.Event()
+
+    def sampler():
+        while not stop.is_set():
+            samples.append(listening(bench.socket))
+            time.sleep(0.005)
+
+    old = bench.controllers()
+    thread = threading.Thread(target=sampler, daemon=True)
+    thread.start()
+    try:
+        for pid in old:
+            os.kill(pid, signal.SIGSTOP)
+        bench.stop(signal.SIGKILL)
+        bench.start(wait=False)
+        wait_for(lambda: set(bench.controllers()) - set(old), "the new shell's controller", timeout=20)
+        time.sleep(hold)
+        waiting = sorted(set(bench.controllers()) - set(old))
+        for pid in old:
+            os.kill(pid, signal.SIGCONT)
+        bench.ready()
+        bench.settled("a new shell beside a stopped controller", base)
+    finally:
+        stop.set()
+        thread.join()
+        for pid in old:
+            try:
+                os.kill(pid, signal.SIGCONT)
+            except ProcessLookupError:
+                pass
+    check("a new shell beside a stopped controller: never two controllers listening", max(samples) <= 1,
+          f"{len(samples)} samples, at most {max(samples)}")
+    check("a new shell beside a stopped controller: the new controller took over once the old one exited",
+          not set(old) & set(bench.controllers()) and set(bench.controllers()) <= set(waiting),
+          f"old {old}, waiting {waiting}, now {bench.controllers()}")
+
+
 def development(args):
     shell = os.environ.get("FLOW_SHELL")
     if not shell:
@@ -565,6 +610,7 @@ def development(args):
                 base = bench.snapshot(f"after a SIGKILL at {point}, after the shortcuts")  # see first start
 
             rapid(bench, base)
+            handover(bench, base)
             bench.shortcuts("after the rapid restarts", base)
             bench.receives("after the rapid restarts", base)
             bench.settled("after the rapid restarts and a focus change", base)
@@ -696,11 +742,12 @@ def installed(args):
         for path in runtime.glob("flow-recovery-*"):
             if path.is_file() and path not in markers:
                 path.unlink()
-        subprocess.run(["systemctl", "--user", "start", "flow-shell"], check=False)
         same = all((backup / "flow" / p.relative_to(bench.state)).read_bytes() == p.read_bytes()
                    for p in bench.state.rglob("*") if p.is_file())
-        restored = same and sorted(p.relative_to(bench.state) for p in bench.state.rglob("*")) == \
-            sorted(p.relative_to(backup / "flow") for p in (backup / "flow").rglob("*"))
+        restored = (same and sorted(p.relative_to(bench.state) for p in bench.state.rglob("*")) ==
+                    sorted(p.relative_to(backup / "flow") for p in (backup / "flow").rglob("*"))
+                    and {p: p.read_bytes() for p in runtime.glob("flow-recovery-*") if p.is_file()} == markers)
+        subprocess.run(["systemctl", "--user", "start", "flow-shell"], check=False)
         print(json.dumps({"check": "the real state and recovery markers put back byte for byte", "ok": restored}),
               flush=True)
         if restored:

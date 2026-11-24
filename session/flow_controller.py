@@ -550,7 +550,10 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        # Before the lock is released: a waiting controller binds its socket only after this.
+        # Before the lock is released: a waiting controller binds its socket only after this. The listening socket
+        # is closed too, not left to the interpreter's exit, which a waiting controller would otherwise beat and
+        # listen beside it (tests/niri_shell_restart_controller_smoke.py).
+        server.close()
         socket_path(runtime).unlink(missing_ok=True)
         lock.close()
     return 0
