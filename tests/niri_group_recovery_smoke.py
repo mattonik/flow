@@ -142,10 +142,12 @@ def main():
             real = shutil.which("niri")
             if not real:
                 raise RuntimeError("niri is not on PATH")
+            for marker in ("sent", "killed"):
+                (held / marker).unlink(missing_ok=True)
             if then_sleep:  # in the background, with no pipe of the helper's held open
-                kill = (f'"{real}" "$@"; s=$?; p=$PPID; (i=0; while [ $i -lt 500 ]; do '
-                        f'grep -q nanosleep /proc/$p/wchan && {{ kill -KILL $p; exit; }}; sleep 0.01; i=$((i + 1)); '
-                        f'done) </dev/null >/dev/null 2>&1 & exit $s')
+                kill = (f'"{real}" "$@"; s=$?; echo $s > "{held}/sent"; p=$PPID; (i=0; while [ $i -lt 500 ] && '
+                        f'[ -d /proc/$p ]; do grep -q nanosleep /proc/$p/wchan && {{ kill -KILL $p; : > "{held}/killed"; '
+                        f'exit; }}; sleep 0.01; i=$((i + 1)); done) </dev/null >/dev/null 2>&1 & exit $s')
             else:
                 kill = "kill -KILL $PPID; exit 1"
             (held / "niri").write_text(
@@ -156,8 +158,12 @@ def main():
             process = subprocess.run(["flow-spaces", *args], env=dict(env, PATH=f"{held}:{env['PATH']}"),
                                      stdout=subprocess.DEVNULL, timeout=90)
             if process.returncode != -signal.SIGKILL:
-                raise RuntimeError(f"flow-spaces {args} ended (exit {process.returncode}) before it was killed at its "
-                                   f"request {nth} for {action}")
+                if then_sleep and (held / "sent").exists():
+                    raise RuntimeError(f"flow-spaces {args} sent its request {nth} for {action} (exit "
+                                       f"{(held / 'sent').read_text().strip()}) and ended (exit {process.returncode}) "
+                                       "without sleeping where it could be killed")
+                raise RuntimeError(f"flow-spaces {args} ended (exit {process.returncode}) before its request {nth} "
+                                   f"for {action}")
 
         def close_all():
             for w in ours():
@@ -405,19 +411,20 @@ def main():
 
             # Side by side again, killed while the widths settle: in the pause that lets the apps take the widths sent,
             # before they are measured and the layout saved. A saved 25/75 split (written in as a stored preference)
-            # tells the widths sent apart from the widths Niri gives new columns.
+            # tells the widths sent apart from the full width Niri gives new columns here: each tile is checked against
+            # the output, since with u's width alone (25% beside 100%) u's share of the two is 0.20.
             saved = json.loads((state / "groups.json").read_text())
             next(g for g in saved["groups"] if g["id"] == other_id)["side_ratio"] = 0.25
             (state / "groups.json").write_text(json.dumps(saved))
 
-            def share():
-                sizes = [window(s)["layout"]["tile_size"][0] for s in "uv"]
-                return sizes[0] / sum(sizes)
+            def at_split():
+                sizes = [window(s)["layout"]["tile_size"][0] / full for s in "uv"]
+                return all(abs(size - goal) <= 0.03 for size, goal in zip(sizes, (0.25, 0.75))), sizes
 
             niri("action", "focus-window", "--id", window("u")["id"])
             killed_at("set-window-width", "group-layout", other_id, nth=2, then_sleep=True)
             expect(["ab", "n", "u", "v"], "the second Group's apps split, killed while the widths settle")
-            wait_for(lambda: abs(share() - 0.25) <= 0.05, lambda: f"the widths sent before the kill: u has {share():.2f}")
+            wait_for(lambda: at_split()[0], lambda: f"both widths sent before the kill: u and v have {at_split()[1]}")
             if group(other_id).get("pending_layout") != "side-by-side" or group(other_id).get("layout", "stack") != "stack":
                 raise RuntimeError(f"The change killed while the widths settle did not leave it unfinished: {group(other_id)}")
             entry = next((e for e in spaces("refresh")["incomplete_groups"] if e["id"] == other_id), None)
@@ -426,8 +433,8 @@ def main():
             finished = spaces("resume-group-layout", other_id)
             expect(["ab", "n", "u", "v"], "the second Group side by side again, finished")
             if (group(other_id).get("pending_layout") or group(other_id).get("layout") != "side-by-side"
-                    or abs(share() - 0.25) > 0.05):
-                raise RuntimeError(f"Finishing after a kill while the widths settle: {group(other_id)}, u has {share():.2f}")
+                    or not at_split()[0]):
+                raise RuntimeError(f"Finishing after a kill while the widths settle: {group(other_id)}, {at_split()[1]}")
             if not any(sp.get("group_id") == other_id and sp.get("group_layout") == "side-by-side"
                        for sp in finished["spaces"]):
                 raise RuntimeError(f"The finished Group is not recognised side by side: {finished['spaces']}")
