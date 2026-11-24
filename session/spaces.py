@@ -484,11 +484,26 @@ def measured_ratios(found):
     return widths if all(isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 for v in widths) else None
 
 
-def can_resize(shares, index, direction):
-    """Whether one Narrower (-1) or Wider (+1) step fits; width is traded with the next app, or the previous."""
+def resized(shares, index, step):
+    """Shares of the display after app ``index`` takes ``step`` of it from its neighbor: the next app, or the
+    previous one for the last. Returns the shares and the neighbor's index.
+
+    The app moves by exactly ``step``; the neighbor also takes any gap or overflow, so the row fills the display.
+    """
     neighbor = index + 1 if index + 1 < len(shares) else index - 1
-    step = 100 * RESIZE_STEP
-    return min(shares[index] + direction * step, shares[neighbor] - direction * step) >= 100 * MIN_SHARE - 0.5
+    new = list(shares)
+    new[index] += step
+    new[neighbor] += 1 - sum(new)
+    return new, neighbor
+
+
+def can_resize(shares, index, direction):
+    """Whether one Narrower (-1) or Wider (+1) step leaves both apps at the minimum share or more.
+
+    ``shares`` are whole percentages of the display, as the switcher shows them.
+    """
+    new, neighbor = resized([share / 100 for share in shares], index, direction * RESIZE_STEP)
+    return min(new[index], new[neighbor]) >= MIN_SHARE - 0.005
 
 
 def display_width(workspace):
@@ -713,30 +728,31 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
         neighbor, problem = neighbor_to_add(group, found, workspace, windows, groups, pins)
         if not neighbor:
             raise ValueError(problem)
+        ws, live = snapshot()
+        _, fresh = live_group(groups, arg, ws, live, socket)
+        again, _ = neighbor_to_add(group, fresh, ws, live, groups, pins)
+        if (ws["id"] != workspace["id"] or ws.get("active_window_id") != workspace.get("active_window_id")
+                or [w["id"] for w in fresh] != [w["id"] for w in found] or not again or again["id"] != neighbor["id"]):
+            raise ValueError("Group or focus changed; try again")
         if group.get("layout") == "side-by-side":
-            joined = found + [neighbor]
+            joined = fresh + [again]
             # The new app takes an equal share; the others keep their proportions to each other.
             shares = group_store.ratios(group)
             n = len(shares) + 1
             ratios = [r * (n - 1) / n for r in shares] + [1 / n]
+            measured = measured_ratios(fresh)
+            before = [w / display_width(ws) for w in measured] if measured else shares
             for member, ratio in zip(joined, ratios):
                 command("action", "set-window-width", "--id", member["id"], f"{round(ratio * 100, 2)}%")
             if not settled_ratios([w["id"] for w in joined], ratios, workspace):
-                width = (measured_ratios([neighbor]) or [0])[0]
-                alone = round(100 * width / display_width(workspace), 2) if width else 100
-                for member, ratio in zip(found, shares):
+                # The Group's apps go back to where they were, and the app to a full-width space, as spaces are.
+                for member, ratio in zip(fresh, before):
                     command("action", "set-window-width", "--id", member["id"], f"{round(ratio * 100, 2)}%")
-                command("action", "set-window-width", "--id", neighbor["id"], f"{alone}%")
+                command("action", "set-window-width", "--id", again["id"], "100%")
                 raise ValueError("An app's size limits prevent an equal share; the app was not added")
-            group_store.remap_ratios(group, group["members"] + [neighbor["app_id"]])
+            group_store.remap_ratios(group, group["members"] + [again["app_id"]])
             group_store.set_ratios(group, ratios)
         else:
-            ws, live = snapshot()
-            _, fresh = live_group(groups, arg, ws, live, socket)
-            again, _ = neighbor_to_add(group, fresh, ws, live, groups, pins)
-            if (ws["id"] != workspace["id"] or ws.get("active_window_id") != workspace.get("active_window_id")
-                    or [w["id"] for w in fresh] != [w["id"] for w in found] or not again or again["id"] != neighbor["id"]):
-                raise ValueError("Group or focus changed; try again")
             # The standalone window joins the bottom of the Group's column.
             command("action", "consume-or-expel-window-left", "--id", neighbor["id"])
             ws, live = snapshot()
@@ -779,8 +795,10 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
                 or (side and position(out)[0] != position(kept[-1])[0] + 1)):
             raise ValueError("Could not confirm the app left the Group; the Group was not changed. Check the windows")
         group_store.remap_ratios(group, [w["app_id"] for w in remaining])
-        if side and measured_ratios(kept):
-            group_store.set_ratios(group, measured_ratios(kept))
+        if side:
+            # The remaining apps keep their proportions to each other and fill the row the app left.
+            for member, ratio in zip(kept, group_store.ratios(group)):
+                command("action", "set-window-width", "--id", member["id"], f"{round(ratio * 100, 2)}%")
         update_group_pins(pins, group, kept, socket)
     elif op in ("member-left", "member-right"):
         group, found, index = group_of_window(groups, arg, workspace, windows, socket)
@@ -815,12 +833,10 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
         if group.get("layout") != "side-by-side":
             raise ValueError("Only apps side by side can be resized")
         measured = measured_ratios(found)
-        values = [w / sum(measured) for w in measured] if measured else group_store.ratios(group)
-        # Width comes from the next app, or the previous one for the last app.
-        neighbor = index + 1 if index + 1 < len(found) else index - 1
+        # Shares of the display, as the switcher shows them.
+        before = [w / display_width(workspace) for w in measured] if measured else group_store.ratios(group)
         step = RESIZE_STEP if op == "member-wider" else -RESIZE_STEP
-        before = values[:]
-        values[index], values[neighbor] = values[index] + step, values[neighbor] - step
+        values, neighbor = resized(before, index, step)
         if min(values[index], values[neighbor]) < MIN_SHARE - 1e-6:
             raise ValueError("That app is already as wide as it can be" if step > 0
                              else "That app is already as narrow as it can be")
@@ -829,7 +845,7 @@ def run(pins, op, arg, workspace, windows, socket, groups=(), display=None):
                     f"{round(values[found.index(member)] * 100, 2)}%")
         settled = settled_ratios([w["id"] for w in found], values, workspace)
         if not settled:
-            # As the refusing app left it, the row may not fit the display; the widths before the step did.
+            # Both apps go back to where they were, rather than where the refusing app left them.
             for member in (found[index], found[neighbor]):
                 command("action", "set-window-width", "--id", member["id"],
                         f"{round(before[found.index(member)] * 100, 2)}%")

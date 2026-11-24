@@ -92,6 +92,53 @@ class MemberResizeTest(unittest.TestCase):
         self.assertEqual((niri.widths[1], niri.widths[2], niri.widths[3]), (50.0, 25.0, 25.0))
         self.assertEqual(group_store.ratios(registry[0]), [0.5, 0.25, 0.25])
 
+    def test_the_buttons_and_the_steps_agree_on_rows_that_do_not_fill_the_display(self):
+        """The switcher's shares and a step are both of the display. The app moves by exactly one step and its
+        neighbor takes the rest, so the row fills the display; a disabled step is the one that is refused."""
+        for row in ((50.0, 25.0, 25.0), (40.0, 20.0, 20.0), (60.0, 30.0, 30.0), (50.0, 15.0, 25.0), (35.0, 30.0, 25.0)):
+            for index in range(3):
+                for op, flag in (("member-wider", "can_widen"), ("member-narrower", "can_narrow")):
+                    with self.subTest(row=row, app=index + 1, op=op):
+                        niri, registry = self.niri(), [self.trio()]
+                        niri.widths.update(zip((1, 2, 3), row))
+                        ws, windows = niri.snapshot()
+                        space = next(s for s in spaces.display_spaces(ws, windows, registry, (), 1000) if s["group_id"])
+                        self.assertEqual(space["shares"], [round(w) for w in row])
+                        if space[flag][index]:
+                            self.run_op(niri, op, str(index + 1), registry)
+                            widths = [niri.widths[i] for i in (1, 2, 3)]
+                            step = 10.0 if op == "member-wider" else -10.0
+                            self.assertAlmostEqual(widths[index], row[index] + step, places=1)
+                            self.assertAlmostEqual(sum(widths), 100.0, places=1)
+                        else:
+                            with self.assertRaisesRegex(ValueError, "already as"):
+                                self.run_op(niri, op, str(index + 1), registry)
+                            self.assertEqual(tuple(niri.widths[i] for i in (1, 2, 3)), row)
+
+    def test_a_refused_step_on_a_row_wider_than_the_display_puts_back_its_widths(self):
+        niri, registry = self.niri(minimum={2: 32.0}), [self.trio()]
+        niri.widths.update({1: 55.0, 2: 35.0, 3: 25.0})  # 115% of the display
+        # Narrower gives 45/30/25, which fills the display, but b keeps 32%: a row of 102%.
+        with self.assertRaisesRegex(ValueError, "the Group keeps its widths"):
+            self.run_op(niri, "member-narrower", "1", registry)
+        self.assertEqual((niri.widths[1], niri.widths[2], niri.widths[3]), (55.0, 35.0, 25.0))
+
+    def test_removing_an_app_side_by_side_fills_the_row(self):
+        niri, registry = self.niri(), [self.trio()]
+        self.run_op(niri, "remove-from-group", "2", registry)
+        self.assertEqual(registry[0]["members"], ["a", "c"])
+        self.assertEqual((niri.widths[1], niri.widths[3]), (66.67, 33.33))
+        self.assertEqual([round(r, 4) for r in group_store.ratios(registry[0])], [0.6667, 0.3333])
+
+    def test_adding_checks_the_windows_again_before_resizing_them(self):
+        niri, group = self.pair_and_neighbor()
+        ws, windows = niri.snapshot()
+        niri.columns = [[9], [3], [1], [2]]  # the neighbor moved before the action ran
+        with self.assertRaisesRegex(ValueError, "Group or focus changed"):
+            spaces.run([], "add-to-group", "g", ws, windows, "s", [group])
+        self.assertFalse([a for a in niri.log if a[:2] == ("action", "set-window-width")])
+        self.assertEqual(group["members"], ["a", "b"])
+
     def pair_and_neighbor(self, **kw):
         niri = self.niri(**kw)
         niri.widths.update({1: 60.0, 2: 40.0, 3: 100.0})
@@ -106,12 +153,14 @@ class MemberResizeTest(unittest.TestCase):
         self.assertEqual(group_store.ratios(group), [0.4, 0.2667, 0.3333])
 
     def test_an_app_that_refuses_its_share_is_not_added(self):
+        """The Group's apps go back to the widths they had, and the app to a full-width space."""
         niri, group = self.pair_and_neighbor(minimum={3: 50.0})
+        niri.widths.update({1: 55.0, 2: 40.0, 3: 70.0})
         with self.assertRaisesRegex(ValueError, "size limits prevent an equal share; the app was not added"):
             self.run_op(niri, "add-to-group", "g", [group])
         self.assertEqual(group["members"], ["a", "b"])
         self.assertEqual(group_store.ratios(group), [0.6, 0.4])
-        self.assertEqual((niri.widths[1], niri.widths[2], niri.widths[3]), (60.0, 40.0, 100.0))
+        self.assertEqual((niri.widths[1], niri.widths[2], niri.widths[3]), (55.0, 40.0, 100.0))
 
     def test_the_switcher_shows_each_share_of_the_display(self):
         """A row wider than the display shows as such, not as shares of its own total."""
