@@ -73,11 +73,37 @@ def read(path):
     return pins, displays, version
 
 
+def _sync_directory(folder):
+    directory = os.open(folder, os.O_RDONLY)
+    try:
+        os.fsync(directory)  # make a rename in it durable
+    finally:
+        os.close(directory)
+
+
+def _keep_rollback(path, rollback):
+    """Copy ``path`` to ``rollback`` whole or not at all, and durably, before ``path`` is converted: a copy cut short
+    would be kept, as it exists, and the original it stands for replaced."""
+    import shutil, tempfile
+    with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as tmp:
+        try:
+            tmp.write(path.read_bytes())
+            tmp.flush()
+            os.fsync(tmp.fileno())
+            shutil.copystat(path, tmp.name)
+            os.replace(tmp.name, rollback)
+            _sync_directory(path.parent)
+        finally:
+            if os.path.exists(tmp.name):
+                os.unlink(tmp.name)
+
+
 def write(path, pins, displays, version):
-    import shutil, tempfile  # here, not above: flow-spaces runs after every burst of Niri events and mostly only reads
-    if version == 1 and path.exists() and not (path.parent / "spaces.v1.json").exists():
+    import tempfile  # here, not above: flow-spaces runs after every burst of Niri events and mostly only reads
+    rollback = path.parent / "spaces.v1.json"
+    if version == 1 and path.exists() and not rollback.exists():
         # Keep the original single-display list for rollback before the first conversion.
-        shutil.copy2(path, path.parent / "spaces.v1.json")
+        _keep_rollback(path, rollback)
     with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as tmp:
         try:
             json.dump({"version": 2, "displays": displays, "pins": pins}, tmp, ensure_ascii=False)
@@ -87,11 +113,7 @@ def write(path, pins, displays, version):
                 import pause_point
                 pause_point.reached("spaces.write")
             os.replace(tmp.name, path)
-            directory = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory)  # make the rename itself durable
-            finally:
-                os.close(directory)
+            _sync_directory(path.parent)
         finally:
             if os.path.exists(tmp.name):
                 os.unlink(tmp.name)
