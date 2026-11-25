@@ -227,6 +227,7 @@ def write_snapshot(path, data):
                 import pause_point
                 pause_point.reached("session.write")
             os.replace(tmp.name, path)
+            group_store.sync_directory(path.parent)  # make the rename itself durable
         finally:
             if os.path.exists(tmp.name):
                 os.unlink(tmp.name)
