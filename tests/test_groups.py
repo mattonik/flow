@@ -115,6 +115,18 @@ class GroupRegistryTest(unittest.TestCase):
                 groups.load(state)
             self.assertFalse((state / "groups.json").exists())
 
+    def test_rename_trims_the_name_and_refuses_a_bad_one_or_an_unknown_group(self):
+        registry = [{"id": "g", "label": "Work", "members": ["a", "b"]},
+                    {"id": "h", "label": "Play", "members": ["c", "d"]}]
+        groups.rename(registry, "g", "  Studio  ")
+        self.assertEqual([g["label"] for g in registry], ["Studio", "Play"])
+        for ident, label in (("g", " "), ("g", ""), ("g", "x" * 81), ("missing", "New name")):
+            with self.subTest(ident=ident, label=label), self.assertRaises(ValueError):
+                groups.rename(registry, ident, label)
+        self.assertEqual([g["label"] for g in registry], ["Studio", "Play"])
+        groups.rename(registry, "h", "x" * 80)
+        self.assertEqual(registry[1]["label"], "x" * 80)
+
     def test_create_rename_dissolve_without_replacing_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
