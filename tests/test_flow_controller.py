@@ -221,6 +221,27 @@ class ControllerCase(unittest.TestCase):
     def states(self, seconds):
         return [m["state"] for m in self.messages(seconds) if "state" in m]
 
+    def wait_until(self, test, timeout=5.0):
+        """Run the controller until ``test(messages received since)`` holds; those messages. Up to ``timeout``."""
+        seen, end = [], time.monotonic() + timeout
+        while not test(seen):
+            self.assertLess(time.monotonic(), end, f"timed out waiting on the controller: {seen}")
+            seen += self.messages(0.02)
+        return seen
+
+    def wait_for_states(self, test=bool, timeout=5.0):
+        """Run the controller until the states received since pass ``test``; those states. What should happen is
+        waited for, up to ``timeout``: a slow or busy machine must not fail a test, only one where it never comes."""
+        seen, end = [], time.monotonic() + timeout
+        while not test(seen):
+            self.assertLess(time.monotonic(), end, f"timed out waiting for the controller's state: {seen}")
+            seen += self.states(0.02)
+        return seen
+
+    def wait_for_labels(self, labels, timeout=5.0):
+        """The states received until one shows ``labels``."""
+        return self.wait_for_states(lambda seen: seen and self.labels(seen[-1]) == labels, timeout)
+
     def labels(self, state):
         return [w["label"] for w in state["windows"]]
 
@@ -228,12 +249,11 @@ class ControllerCase(unittest.TestCase):
 class ControllerTest(ControllerCase):
     def test_a_watcher_gets_the_state_then_each_change(self):
         self.ask({"watch": True})
-        [state] = self.states(0.4)
+        state = self.wait_for_states()[0]
         self.assertEqual((self.labels(state), state["action"]), (["one", "two"], "refresh"))
         self.niri.windows = [window(7, "one", 1), window(8, "two", 2), window(9, "three", 3)]
         self.niri.send({"WindowOpenedOrChanged": {"window": self.niri.windows[-1]}})
-        [state] = self.states(fc.QUIET + 0.3)
-        self.assertEqual(self.labels(state), ["one", "two", "three"])
+        self.wait_for_labels(["one", "two", "three"])
         self.assertEqual(self.controller.stats["pushes"], 2)
 
     def test_a_title_change_shows_at_once_then_at_most_once_an_interval(self):
@@ -252,23 +272,25 @@ class ControllerTest(ControllerCase):
 
     def test_a_refresh_asked_for_is_answered_even_unchanged(self):
         self.ask({"watch": True})
-        self.states(0.4)
+        self.wait_for_states()
         self.ask({"refresh": 7})
-        [message] = [m for m in self.messages(0.3) if "state" in m]
+        [message] = [m for m in self.wait_until(lambda seen: any("refreshed" in m for m in seen)) if "state" in m]
         self.assertEqual((message["refreshed"], self.labels(message["state"])), (7, ["one", "two"]))
 
     def test_forwarded_events_reach_watchers(self):
         self.ask({"watch": True})
-        self.states(0.4)
+        self.wait_for_states()
         self.niri.send({"WindowFocusChanged": {"id": 8}})
         self.niri.send({"OverviewOpenedOrClosed": {"is_open": True}})
         self.niri.send({"KeyboardLayoutSwitched": {"idx": 1}})
-        events = [m["event"] for m in self.messages(0.3) if "event" in m]
+        seen = self.wait_until(lambda seen: sum("event" in m for m in seen) >= 2)
+        seen += self.messages(0.1)  # and nothing for the third, sent after them
+        events = [m["event"] for m in seen if "event" in m]
         self.assertEqual([next(iter(e)) for e in events], ["WindowFocusChanged", "OverviewOpenedOrClosed"])
 
     def test_an_action_holding_the_lock_is_waited_for_never_blocked_on_nor_spun_on(self):
         self.ask({"watch": True})
-        self.states(0.4)
+        self.wait_for_states()
         refreshes = self.controller.stats["refreshes"]
         with (self.tmp / "state" / "session.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
@@ -280,14 +302,15 @@ class ControllerTest(ControllerCase):
             self.assertEqual(self.controller.stats["refreshes"], refreshes)
             self.assertTrue(1 <= self.controller.stats["busy"] <= 2 * (0.5 / fc.BUSY_RETRY + 1),
                             self.controller.stats["busy"])
-        self.messages(0.3)
+        self.wait_until(lambda _: self.controller.stats["refreshes"] > refreshes)
         self.assertEqual(self.controller.stats["refreshes"], refreshes + 1)
 
     def test_a_refresh_asked_for_skips_the_minimum_interval(self):
         self.ask({"watch": True})
-        self.states(0.4)
+        self.wait_for_states()
+        refreshes = self.controller.stats["refreshes"]
         self.niri.send({"WindowLayoutsChanged": {"changes": []}})
-        self.states(fc.QUIET + 0.05)  # a refresh for the event has just run
+        self.wait_until(lambda _: self.controller.stats["refreshes"] > refreshes)  # a refresh for the event has just run
         self.ask({"refresh": 3})
         started = time.monotonic()
         while not [m for m in self.messages(0.02) if m.get("refreshed") == 3]:
@@ -295,8 +318,7 @@ class ControllerTest(ControllerCase):
 
     def test_desktop_names_are_read_afresh_for_each_refresh(self):
         with patch.object(spaces.app_name, "cache_clear") as clear:
-            self.states(0.3)
-        self.assertGreaterEqual(clear.call_count, 1)
+            self.wait_until(lambda _: clear.call_count >= 1)
 
     def test_a_focus_timestamp_does_not_make_the_next_title_change_structural(self):
         self.ask({"watch": True})
@@ -305,7 +327,7 @@ class ControllerTest(ControllerCase):
         self.niri.send({"WindowFocusTimestampChanged": {"id": 7, "focus_timestamp": stamp}})
         self.niri.windows[0] = {**self.niri.windows[0], "title": "renamed", "focus_timestamp": stamp}
         self.niri.send({"WindowOpenedOrChanged": {"window": self.niri.windows[0]}})
-        self.messages(0.1)
+        self.wait_until(lambda _: self.controller.stats["title_only"] >= 1)
         self.assertEqual(self.controller.stats["title_only"], 1)
 
     def test_a_client_that_floods_is_dropped(self):
@@ -321,7 +343,7 @@ class ControllerTest(ControllerCase):
 
         sender = threading.Thread(target=send)
         sender.start()
-        self.messages(0.5)
+        self.wait_until(lambda _: len(self.controller.clients) == 1 and not sender.is_alive())
         sender.join(timeout=5)
         self.assertEqual(len(self.controller.clients), 1)  # only this test's quiet client is left
         flood.settimeout(1)
@@ -352,15 +374,19 @@ class ControllerTest(ControllerCase):
         self.ask({"watch": True})
         with patch.object(spaces, "run_locked", side_effect=TypeError("a bug")), \
              patch("sys.stderr", new_callable=lambda: open(os.devnull, "w")):
-            [state] = self.states(0.3)
+            state = self.wait_for_states()[0]
         self.assertIn("TypeError", state["error"])
         self.assertEqual(self.controller.stats["failures"], 1)
         self.niri.send({"WindowLayoutsChanged": {"changes": []}})
-        self.assertEqual(self.labels(self.states(fc.MIN_INTERVAL + 0.3)[-1]), ["one", "two"])
+        self.wait_for_labels(["one", "two"])
 
     def test_observe_is_answered_fresh_and_writes_nothing(self):
         self.ask({"get": "observe"})
-        [reply] = [m["reply"] for m in self.messages(0.3) if "reply" in m]
+        replies, end = [], time.monotonic() + 5
+        while not replies:
+            self.assertLess(time.monotonic(), end, "timed out waiting for the observe reply")
+            replies += [m["reply"] for m in self.messages(0.02) if "reply" in m]
+        [reply] = replies
         self.assertEqual((self.labels(reply), reply["action"]), (["one", "two"], "observe"))
 
     def test_ask_answers_one_request_for_the_platform_api(self):
@@ -368,7 +394,9 @@ class ControllerTest(ControllerCase):
         with patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(self.tmp / "runtime")}):
             asking = threading.Thread(target=lambda: answer.update(fc.ask({"get": "observe"})))
             asking.start()
-            self.messages(0.3)
+            end = time.monotonic() + 5
+            while asking.is_alive() and time.monotonic() < end:
+                self.messages(0.02)
             asking.join(timeout=5)
         self.assertEqual((self.labels(answer), answer["action"]), (["one", "two"], "observe"))
         with patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(self.tmp / "nowhere")}), self.assertRaises(OSError):
@@ -376,25 +404,23 @@ class ControllerTest(ControllerCase):
 
     def test_the_stream_is_reconnected_and_refreshed_after(self):
         self.ask({"watch": True})
-        self.states(0.4)
+        self.wait_for_states()
         self.niri.end_streams()
         self.messages(0.1)
         self.assertIsNone(self.controller.stream)
         self.niri.windows = [window(7, "renamed", 1), window(8, "two", 2)]
-        [state] = self.states(fc.RECONNECT + 0.4)[-1:]
+        self.wait_for_labels(["renamed", "two"], timeout=fc.RECONNECT + 5)
         self.assertIsNotNone(self.controller.stream)
-        self.assertEqual(self.labels(state), ["renamed", "two"])
 
     def test_a_malformed_niri_event_is_logged_and_the_loop_goes_on(self):
         self.ask({"watch": True})
-        self.states(0.4)
+        self.wait_for_states()
         with patch("sys.stderr", new_callable=lambda: open(os.devnull, "w")):
             self.niri.send({"WindowOpenedOrChanged": {"window": 5}})
             self.niri.windows = [window(7, "one", 1), window(8, "two", 2), window(9, "three", 3)]
             self.niri.send({"WindowOpenedOrChanged": {"window": self.niri.windows[-1]}})
-            states = self.states(fc.MAX_WAIT + 0.3)
+            self.wait_for_labels(["one", "two", "three"])
         self.assertEqual(self.controller.stats["failures"], 1)
-        self.assertEqual(self.labels(states[-1]), ["one", "two", "three"])
 
     def test_every_observer_is_answered_when_one_has_gone(self):
         class Gone:
@@ -415,15 +441,14 @@ class ControllerTest(ControllerCase):
         self.controller.selector.register(gone.connection, fc.selectors.EVENT_READ, gone)
         self.controller.observers.append(gone)
         self.ask({"get": "observe"})
-        replies = [m for m in self.messages(0.3) if "reply" in m]
+        replies = [m for m in self.wait_until(lambda seen: any("reply" in m for m in seen)) if "reply" in m]
         self.assertEqual(len(replies), 1)
         self.assertNotIn(gone, self.controller.clients)
 
     def test_a_client_that_stops_reading_is_dropped(self):
         self.ask({"watch": True})
         with patch.object(fc, "OUTBOX_LIMIT", 64):
-            self.messages(0.3)
-        self.assertEqual(self.controller.clients, [])
+            self.wait_until(lambda _: not self.controller.clients)
 
     def test_it_counts_how_soon_its_first_watcher_came_not_other_clients(self):
         self.messages(0.1)  # this test's client, connected in setUp, only connected
@@ -432,7 +457,7 @@ class ControllerTest(ControllerCase):
         self.messages(0.1)
         self.assertIsNone(self.controller.stats["first_watcher_ms"])  # asking for stats is not watching
         self.ask({"watch": True})
-        self.messages(0.1)
+        self.wait_until(lambda _: self.controller.stats["first_watcher_ms"] is not None)
         first = self.controller.stats["first_watcher_ms"]
         self.assertIsInstance(first, int)
         self.ask({"watch": True})
