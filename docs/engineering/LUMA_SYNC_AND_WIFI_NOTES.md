@@ -17,6 +17,8 @@ Luma describes a prompt after unlocking another computer: the user can continue 
 
 **Proposed next test:** With two disposable local Niri workspaces and isolated state, simulate an imported semantic snapshot containing an unavailable app and a two-app Group. Check that a preview reports the omission, existing windows and pins remain unchanged, no network request occurs, and no action happens until confirmation. This is a proposed design experiment, not current behavior or a substitute for a two-device security test.
 
+**Status (2026-11-25):** run as a local guest smoke against Floe's step-1 snapshot import ([ADR-0012](ADR-0012-semantic-snapshot.md), `tests/niri_snapshot_import_smoke.py`), and passed; see *Flow Sync step 1* in [implementation status](../IMPLEMENTATION_STATUS.md). It is still not a two-device or security test.
+
 ## Wi-Fi band selection and roaming
 
 Luma says its nightly prefers 5 or 6 GHz on multiband routers when signal quality is good, avoids changing bands during calls, streams or downloads on a good connection, avoids repeated attempts at access points that refused it, reduces scanning on good connections, and still moves quickly when a connection weakens. The release lists changed NetworkManager packages and a new wpa_supplicant package, but does not say which component implements each behavior or publish thresholds or a patch reference in the release note. This is a roaming/policy improvement as described, not proof of a generic 5 GHz driver fix. [Source](https://simplyluma.com/releases/1.0.0-nightly.20261124.1).
