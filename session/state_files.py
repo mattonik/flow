@@ -27,7 +27,7 @@ def sweep(folder, now=None):
             except OSError:  # gone meanwhile, or a folder by that name: not this write's to fail on
                 continue
             removed.append(name)
-            print(f"flow: removed {name}, a temporary file left by a writer that was stopped", file=sys.stderr)
+            print(f"flow: removed {path}, a temporary file left by a writer that was stopped", file=sys.stderr)
     return removed
 
 

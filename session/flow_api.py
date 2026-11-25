@@ -80,8 +80,8 @@ class Service:
         self.controller = None  # the connection to the shell's controller, while there is one
 
     def run_spaces(self, *args):
-        process = subprocess.run([*self.spaces_command, *args], text=True, stdout=subprocess.PIPE,
-                                 stderr=subprocess.DEVNULL, timeout=60)
+        # Its stderr is the service's: messages and tracebacks reach the flow-api unit's journal, unprefixed.
+        process = subprocess.run([*self.spaces_command, *args], text=True, stdout=subprocess.PIPE, timeout=60)
         try:
             value = json.loads(process.stdout)
         except ValueError as exc:

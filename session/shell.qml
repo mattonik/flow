@@ -71,6 +71,7 @@ ShellRoot {
     Process {
         id: networkStatusProcess
         command: ["nmcli", "-t", "-f", "CONNECTIVITY", "general"]
+        stderr: SplitParser { onRead: line => console.warn("nmcli: " + line) }
         stdout: StdioCollector { onStreamFinished: {
             const state = this.text.trim()
             root.networkStatus = ({full: "Connected", limited: "Limited", portal: "Sign-in required", none: "Offline", unknown: "Unknown"})[state] || "Network unavailable"
@@ -293,6 +294,7 @@ ShellRoot {
     // record nothing, and then run with it switched off.
     Process {
         id: appMenuRelease
+        stderr: SplitParser { onRead: line => console.warn("flow-appmenu: " + line) }
         command: ["flow-appmenu", "release"]
         onExited: if (menuPreferences.appMenuEnabled && !appMenuReader.running) appMenuReader.running = true
     }
@@ -560,6 +562,8 @@ ShellRoot {
         id: spacesProcess
         // The controller reads what the action changed, which Niri may not have sent an event for (a pin).
         onRunningChanged: if (!running) { root.requestRefresh(); if (root.pendingSpaceActions.length) Qt.callLater(root.drainSpaceActions) }
+        // Its messages and tracebacks reach the shell's log (the flow-shell unit's journal), as the controller's do.
+        stderr: SplitParser { onRead: line => console.warn("flow-spaces: " + line) }
         stdout: StdioCollector {
             onStreamFinished: {
                 try {
@@ -585,6 +589,7 @@ ShellRoot {
     Process {
         id: recoveryProcess
         onRunningChanged: if (!running && root.pendingSpaceActions.length) Qt.callLater(root.drainSpaceActions)
+        stderr: SplitParser { onRead: line => console.warn("flow-recovery: " + line) }
         stdout: StdioCollector {
             onStreamFinished: {
                 try {
@@ -844,6 +849,7 @@ ShellRoot {
     }
     Process {
         id: snapshotProcess
+        stderr: SplitParser { onRead: line => console.warn("snapshot: " + line) }
         property string key: ""
         property string look: ""
         property var done: null
@@ -920,6 +926,7 @@ ShellRoot {
         id: searchLister
         Process {
             id: lister
+            stderr: SplitParser { onRead: line => console.warn("flow-search: " + line) }
             command: ["flow-search", "--json"]
             // Quickshell finishes the stream before running turns false (a stopped listing's ends at once,
             // empty); one that never starts only turns running false, and search says it failed.
@@ -948,6 +955,7 @@ ShellRoot {
         id: searchWalker
         Process {
             id: walker
+            stderr: SplitParser { onRead: line => console.warn("flow-search: " + line) }
             property string query: ""
             command: ["flow-search", "--files"]
             stdinEnabled: true
@@ -997,6 +1005,8 @@ ShellRoot {
     Component {
         id: searchOpener
         Process {
+            // Why an open failed: flow-search --open says it on stderr.
+            stderr: SplitParser { onRead: line => console.warn("flow-search: " + line) }
             property string failure: ""
             property bool began: false
             property bool done: false
