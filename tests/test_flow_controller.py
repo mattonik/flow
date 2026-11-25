@@ -224,8 +224,11 @@ class ControllerCase(unittest.TestCase):
     # What should happen is waited for, up to a deadline: a slow or busy machine must not fail a test, only one
     # where it never comes. Each wait runs the controller first, so a condition true from the start proves nothing
     # without it, and a test that must show nothing more happened looks for a short while after.
-    def wait_until(self, test, timeout=5.0):
+    DEADLINE = 5.0  # s of real time a wait may take
+
+    def wait_until(self, test, timeout=None):
         """Run the controller until ``test(messages received since)`` holds; those messages."""
+        timeout = self.DEADLINE if timeout is None else timeout
         seen, end = [], time.monotonic() + timeout
         while True:
             seen += self.messages(0.02)
@@ -234,12 +237,12 @@ class ControllerCase(unittest.TestCase):
             if time.monotonic() >= end:
                 self.fail(f"the controller did not get there within {timeout} s; last received: {seen[-3:]}")
 
-    def wait_for_states(self, test=bool, timeout=5.0):
+    def wait_for_states(self, test=bool, timeout=None):
         """Run the controller until the states received since pass ``test``; those states."""
         states = lambda seen: [m["state"] for m in seen if "state" in m]
         return states(self.wait_until(lambda seen: test(states(seen)), timeout))
 
-    def wait_for_labels(self, labels, timeout=5.0):
+    def wait_for_labels(self, labels, timeout=None):
         """The states received until one shows ``labels``."""
         return self.wait_for_states(lambda states: bool(states) and self.labels(states[-1]) == labels, timeout)
 
@@ -263,20 +266,6 @@ class ControllerTest(ControllerCase):
         self.niri.send({"WindowOpenedOrChanged": {"window": self.niri.windows[-1]}})
         self.wait_for_labels(["one", "two", "three"])
         self.assertEqual(self.controller.stats["pushes"], 2)
-
-    def test_a_title_change_shows_at_once_then_at_most_once_an_interval(self):
-        self.ask({"watch": True})
-        self.states(fc.TITLE_INTERVAL + 0.1)  # the first state, and long enough after it
-        refreshes, seen, started = self.controller.stats["refreshes"], [], time.monotonic()
-        for index in range(12):  # a title every 0.05 s for 0.6 s
-            self.niri.windows[0] = {**self.niri.windows[0], "title": f"title {index}"}
-            self.niri.send({"WindowOpenedOrChanged": {"window": self.niri.windows[0]}})
-            seen += [(time.monotonic() - started, self.labels(s)[0]) for s in self.states(0.05)]
-        seen += [(time.monotonic() - started, self.labels(s)[0]) for s in self.states(fc.TITLE_INTERVAL + 0.1)]
-        self.assertEqual(self.controller.stats["title_only"], 12)
-        self.assertLess(seen[0][0], 0.1)  # the first title at once
-        self.assertEqual(seen[-1][1], "title 11")  # the last one within an interval of the stream's end
-        self.assertLessEqual(self.controller.stats["refreshes"] - refreshes, 4)  # 0.6 s / 0.3 s, plus the first and last
 
     def test_a_refresh_asked_for_is_answered_even_unchanged(self):
         self.watching()
@@ -497,8 +486,8 @@ class ControllerTest(ControllerCase):
 
 
 class Clock:
-    """The controller's clock in AutoSaveTest: ``monotonic()`` moves only as the test runs the loop, so when a save
-    comes, measured on it, does not depend on how busy the machine is. Everything else is ``time``'s."""
+    """The controller's clock in a ClockedCase: ``monotonic()`` moves only as the test runs the loop, so when
+    something comes, measured on it, does not depend on how busy the machine is. Everything else is ``time``'s."""
 
     def __init__(self, now):
         self.now = now
@@ -510,14 +499,15 @@ class Clock:
         return getattr(time, name)
 
 
-class AutoSaveTest(ControllerCase):
-    """Automatic session saving, with restore.automatic faked: when the controller saves and whom it tells.
-
-    Its times are the controller's clock (``Clock``), moved STEP at a time as the test runs the loop. What should
-    happen is waited for, up to a deadline in real time (the fake Niri answers from a thread of its own); what
-    should not is watched for a stretch of the controller's clock."""
+class ClockedCase(ControllerCase):
+    """A controller on a ``Clock`` of its own, moved STEP at a time as the test runs the loop: for tests of when
+    things happen. What should happen is still waited for up to a deadline in real time (the fake Niri answers from
+    a thread of its own); what should not is watched for a stretch of the controller's clock."""
 
     STEP = 0.01
+    # Real time only guards against a hang here: what is waited for comes on the controller's clock, a STEP per
+    # turn, and a turn takes longer in real time the busier the machine.
+    DEADLINE = 60.0
 
     def setUp(self):
         super().setUp()
@@ -525,6 +515,45 @@ class AutoSaveTest(ControllerCase):
         patcher = patch.object(fc, "time", self.clock)
         patcher.start()
         self.addCleanup(patcher.stop)
+
+    def messages(self, seconds):
+        """Run the controller for ``seconds`` of its clock, a STEP at a time: each turn reads what has arrived and
+        does what is due at the clock's time. What this client received meanwhile."""
+        end = self.clock.now + seconds - 1e-9
+        while self.clock.now < end:
+            self.controller.turn(0.001)
+            self.clock.now += self.STEP
+            try:
+                self.received += self.client.recv(1 << 20)
+            except BlockingIOError:
+                pass
+        *lines, self.received = self.received.split(b"\n")
+        return [json.loads(line) for line in lines]
+
+
+class TitleIntervalTest(ClockedCase):
+    def test_a_title_change_shows_at_once_then_at_most_once_an_interval(self):
+        self.watching()
+        self.messages(fc.TITLE_INTERVAL + self.STEP)  # an interval since the last refresh
+        refreshes, seen, started = self.controller.stats["refreshes"], [], self.clock.now
+        for index in range(12):  # a title every 0.05 s for 0.6 s
+            self.niri.windows[0] = {**self.niri.windows[0], "title": f"title {index}"}
+            self.niri.send({"WindowOpenedOrChanged": {"window": self.niri.windows[0]}})
+            seen += [(round(self.clock.now - started, 3), self.labels(s)[0]) for s in self.states(0.05)]
+        seen += [(round(self.clock.now - started, 3), self.labels(s)[0]) for s in self.states(fc.TITLE_INTERVAL + 0.1)]
+        self.assertEqual(self.controller.stats["title_only"], 12)
+        self.assertEqual(seen[0], (0.05, "title 0"))  # the first title at once: in the first 0.05 s
+        self.assertEqual(seen[-1][1], "title 11")  # the last one within an interval of the stream's end
+        # At most one refresh an interval: 0.6 s / 0.3 s, plus the first and the last.
+        self.assertLessEqual(self.controller.stats["refreshes"] - refreshes, 4)
+
+
+class AutoSaveTest(ClockedCase):
+    """Automatic session saving, with restore.automatic faked: when the controller saves and whom it tells, on the
+    controller's own clock."""
+
+    def setUp(self):
+        super().setUp()
         for name, value in (("AUTO_SAVE_WAIT", 0.2), ("AUTO_SAVE_EVERY", 0.8), ("AUTO_SAVE_RETRY", 0.15),
                             ("SAFETY", 0.3)):
             patcher = patch.object(fc, name, value)
@@ -557,25 +586,12 @@ class AutoSaveTest(ControllerCase):
     def focus(self, ident):
         self.niri.send({"WindowFocusChanged": {"id": ident}})
 
-    def messages(self, seconds):
-        """Run the controller for ``seconds`` of its clock, a STEP at a time: each turn reads what has arrived and
-        does what is due at the clock's time. What this client received meanwhile."""
-        end = self.clock.now + seconds - 1e-9
-        while self.clock.now < end:
-            self.controller.turn(0.001)
-            self.clock.now += self.STEP
-            try:
-                self.received += self.client.recv(1 << 20)
-            except BlockingIOError:
-                pass
-        *lines, self.received = self.received.split(b"\n")
-        return [json.loads(line) for line in lines]
-
     def run_for(self, seconds):
         self.told += [m["auto_saved"] for m in self.messages(seconds) if "auto_saved" in m]
 
-    def until(self, test, timeout=30.0):
+    def until(self, test, timeout=None):
         """Run the loop until ``test()`` holds; a deadline in real time, as it only guards against a hang."""
+        timeout = self.DEADLINE if timeout is None else timeout
         end = time.monotonic() + timeout
         while True:
             self.run_for(self.STEP)
