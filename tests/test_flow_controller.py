@@ -224,7 +224,7 @@ class ControllerCase(unittest.TestCase):
     # What should happen is waited for, up to a deadline: a slow or busy machine must not fail a test, only one
     # where it never comes. Each wait runs the controller first, so a condition true from the start proves nothing
     # without it, and a test that must show nothing more happened looks for a short while after.
-    DEADLINE = 5.0  # s of real time a wait may take
+    DEADLINE = 20.0  # s of real time a wait may take: it guards against a hang, so a busy machine has room
 
     def wait_until(self, test, timeout=None):
         """Run the controller until ``test(messages received since)`` holds; those messages."""
@@ -273,6 +273,17 @@ class ControllerTest(ControllerCase):
         seen = self.wait_until(lambda seen: any("refreshed" in m for m in seen)) + self.messages(0.1)
         [message] = [m for m in seen if "state" in m]
         self.assertEqual((message["refreshed"], self.labels(message["state"])), (7, ["one", "two"]))
+        refreshes = self.controller.stats["refreshes"]
+        self.niri.send({"WindowLayoutsChanged": {"changes": []}})  # the next refresh answers nobody
+        seen = self.wait_until(lambda _: self.controller.stats["refreshes"] > refreshes) + self.messages(0.1)
+        self.assertEqual([m for m in seen if "refreshed" in m], [])
+
+    def test_an_unchanged_state_is_not_pushed_again(self):
+        self.watching()
+        refreshes, pushes = self.controller.stats["refreshes"], self.controller.stats["pushes"]
+        self.niri.send({"WindowLayoutsChanged": {"changes": []}})  # a refresh, and nothing changed
+        seen = self.wait_until(lambda _: self.controller.stats["refreshes"] > refreshes) + self.messages(0.1)
+        self.assertEqual(([m for m in seen if "state" in m], self.controller.stats["pushes"]), ([], pushes))
 
     def test_forwarded_events_reach_watchers(self):
         self.watching()
@@ -300,16 +311,6 @@ class ControllerTest(ControllerCase):
         self.wait_until(lambda _: self.controller.stats["refreshes"] > refreshes)
         self.messages(0.1)
         self.assertEqual(self.controller.stats["refreshes"], refreshes + 1)
-
-    def test_a_refresh_asked_for_skips_the_minimum_interval(self):
-        self.watching()
-        refreshes = self.controller.stats["refreshes"]
-        self.niri.send({"WindowLayoutsChanged": {"changes": []}})
-        self.wait_until(lambda _: self.controller.stats["refreshes"] > refreshes)  # a refresh for the event has just run
-        self.ask({"refresh": 3})
-        started = time.monotonic()
-        while not [m for m in self.messages(0.02) if m.get("refreshed") == 3]:
-            self.assertLess(time.monotonic() - started, fc.MIN_INTERVAL / 2)
 
     def test_desktop_names_are_read_afresh_for_each_refresh(self):
         with patch.object(spaces.app_name, "cache_clear") as clear:
@@ -396,15 +397,6 @@ class ControllerTest(ControllerCase):
         with patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(self.tmp / "nowhere")}), self.assertRaises(OSError):
             fc.ask({"get": "observe"})
 
-    def test_the_stream_is_reconnected_and_refreshed_after(self):
-        self.watching()
-        self.niri.end_streams()
-        self.messages(0.1)
-        self.assertIsNone(self.controller.stream)
-        self.niri.windows = [window(7, "renamed", 1), window(8, "two", 2)]
-        self.wait_for_labels(["renamed", "two"], timeout=fc.RECONNECT + 5)
-        self.assertIsNotNone(self.controller.stream)
-
     def test_a_malformed_niri_event_is_logged_and_the_loop_goes_on(self):
         self.watching()
         with patch("sys.stderr", new_callable=lambda: open(os.devnull, "w")):
@@ -441,7 +433,8 @@ class ControllerTest(ControllerCase):
     def test_a_client_that_stops_reading_is_dropped(self):
         self.ask({"watch": True})
         with patch.object(fc, "OUTBOX_LIMIT", 64):
-            # Once it has refreshed it has accepted this client and sent it the state: more than the outbox holds.
+            # The state it sends this client once it reads the watch, after its first refresh, is more than the
+            # outbox holds: the client is dropped then.
             self.wait_until(lambda _: self.controller.stats["refreshes"] >= 1)
             self.messages(0.1)
         self.assertEqual(self.controller.clients, [])
@@ -508,6 +501,9 @@ class ClockedCase(ControllerCase):
     # Real time only guards against a hang here: what is waited for comes on the controller's clock, a STEP per
     # turn, and a turn takes longer in real time the busier the machine.
     DEADLINE = 60.0
+    # On the controller's clock, though, what is waited for must come soon: it moves however long the wait, and
+    # given long enough something else (the stream reconnected, a safety refresh) could meet the condition.
+    WITHIN = 5.0
 
     def setUp(self):
         super().setUp()
@@ -515,6 +511,27 @@ class ClockedCase(ControllerCase):
         patcher = patch.object(fc, "time", self.clock)
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.refreshed = []  # when each refresh ran, on the controller's clock
+        refresh = self.controller.refresh
+
+        def recorded(now):
+            ran = refresh(now)
+            if ran:
+                self.refreshed.append(now)
+            return ran
+        self.controller.refresh = recorded
+
+    def wait_until(self, test, timeout=None, within=None):
+        """As ControllerCase's, and within ``within`` (WITHIN) s of the controller's clock."""
+        within, start = self.WITHIN if within is None else within, self.clock.now
+
+        def soon(seen):
+            if test(seen):
+                return True
+            if self.clock.now - start > within:
+                self.fail(f"not within {within} s of the controller's clock; last received: {seen[-3:]}")
+            return False
+        return super().wait_until(soon, timeout)
 
     def messages(self, seconds):
         """Run the controller for ``seconds`` of its clock, a STEP at a time: each turn reads what has arrived and
@@ -531,7 +548,9 @@ class ClockedCase(ControllerCase):
         return [json.loads(line) for line in lines]
 
 
-class TitleIntervalTest(ClockedCase):
+class TimingTest(ClockedCase):
+    """When the controller refreshes, on its own clock."""
+
     def test_a_title_change_shows_at_once_then_at_most_once_an_interval(self):
         self.watching()
         self.messages(fc.TITLE_INTERVAL + self.STEP)  # an interval since the last refresh
@@ -544,8 +563,30 @@ class TitleIntervalTest(ClockedCase):
         self.assertEqual(self.controller.stats["title_only"], 12)
         self.assertEqual(seen[0], (0.05, "title 0"))  # the first title at once: in the first 0.05 s
         self.assertEqual(seen[-1][1], "title 11")  # the last one within an interval of the stream's end
-        # At most one refresh an interval: 0.6 s / 0.3 s, plus the first and the last.
+        # At most one refresh an interval: 0.6 s / 0.3 s, plus the first and the last; never two sooner.
         self.assertLessEqual(self.controller.stats["refreshes"] - refreshes, 4)
+        times = [when for when in self.refreshed if when >= started]
+        self.assertGreaterEqual(min(b - a for a, b in zip(times, times[1:])), fc.TITLE_INTERVAL - 1e-9, times)
+
+    def test_a_refresh_asked_for_skips_the_minimum_interval(self):
+        self.watching()
+        refreshes = self.controller.stats["refreshes"]
+        self.niri.send({"WindowLayoutsChanged": {"changes": []}})
+        self.wait_until(lambda _: self.controller.stats["refreshes"] > refreshes)  # a refresh for the event has just run
+        self.ask({"refresh": 3})
+        asked = self.clock.now
+        self.wait_until(lambda seen: any(m.get("refreshed") == 3 for m in seen))
+        self.assertLessEqual(self.refreshed[-1] - asked, self.STEP + 1e-9)  # at once, not MIN_INTERVAL later
+
+    def test_the_stream_is_reconnected_and_refreshed_after(self):
+        self.watching()
+        self.niri.end_streams()
+        self.messages(fc.RECONNECT / 2)
+        self.assertIsNone(self.controller.stream)  # not before RECONNECT
+        self.niri.windows = [window(7, "renamed", 1), window(8, "two", 2)]
+        self.wait_for_labels(["renamed", "two"])
+        self.assertIsNotNone(self.controller.stream)
+
 
 
 class AutoSaveTest(ClockedCase):
@@ -573,15 +614,6 @@ class AutoSaveTest(ClockedCase):
         patcher = patch.object(restore, "automatic", side_effect=save)
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.refreshed = []  # when each refresh ran, on the controller's clock
-        refresh = self.controller.refresh
-
-        def recorded(now):
-            ran = refresh(now)
-            if ran:
-                self.refreshed.append(now)
-            return ran
-        self.controller.refresh = recorded
 
     def focus(self, ident):
         self.niri.send({"WindowFocusChanged": {"id": ident}})
@@ -589,16 +621,18 @@ class AutoSaveTest(ClockedCase):
     def run_for(self, seconds):
         self.told += [m["auto_saved"] for m in self.messages(seconds) if "auto_saved" in m]
 
-    def until(self, test, timeout=None):
-        """Run the loop until ``test()`` holds; a deadline in real time, as it only guards against a hang."""
+    def until(self, test, timeout=None, within=None):
+        """Run the loop until ``test()`` holds, within ``within`` (WITHIN) s of the controller's clock; a deadline in
+        real time guards against a hang."""
         timeout = self.DEADLINE if timeout is None else timeout
-        end = time.monotonic() + timeout
+        within = self.WITHIN if within is None else within
+        end, start = time.monotonic() + timeout, self.clock.now
         while True:
             self.run_for(self.STEP)
             if test():
                 return
-            if time.monotonic() >= end:
-                self.fail(f"the controller did not get there within {timeout} s; saved {self.saved}, told {self.told}")
+            if self.clock.now - start > within or time.monotonic() >= end:
+                self.fail(f"the controller did not get there; saved {self.saved}, told {self.told}")
 
     def settled(self):
         """Watch, and run until Niri's first two events are read and the refresh they ask for has run."""
@@ -634,7 +668,7 @@ class AutoSaveTest(ClockedCase):
         first = self.saved[0][0]
         self.focus(8)
         self.until(lambda: len(self.saved) == 2)
-        self.assertGreaterEqual(self.saved[1][0] - first, fc.AUTO_SAVE_EVERY - 0.03)  # not at the wait's end
+        self.assertAlmostEqual(self.saved[1][0] - first, fc.AUTO_SAVE_EVERY, delta=self.STEP + 1e-9)  # not at the wait's end
         self.run_for(1.0)  # idle again: once more after a change is all
         self.assertEqual(len(self.saved), 2)
         self.focus(7)
@@ -642,7 +676,7 @@ class AutoSaveTest(ClockedCase):
         self.until(lambda: len(self.saved) == 3)
         # An interval after the last save: due the wait after the first refresh since the change, which comes up to
         # MIN_INTERVAL after the previous one.
-        answered = next(when for when in self.refreshed if when > changed)
+        answered = next(when for when in self.refreshed if when >= changed)
         self.assertAlmostEqual(self.saved[2][0] - answered, fc.AUTO_SAVE_WAIT, delta=self.STEP + 1e-9)
         self.assertLess(self.saved[2][0] - changed, fc.MIN_INTERVAL + fc.AUTO_SAVE_WAIT + 0.15)
 
@@ -654,6 +688,7 @@ class AutoSaveTest(ClockedCase):
             self.until(lambda: len(self.saved) == 2)  # the save the stream's end asks for
             self.niri.windows = list(reversed(self.niri.windows))  # a change no event reports
             self.until(lambda: len(self.saved) == 3)
+            self.assertIsNone(self.controller.stream)  # saved on the stream-down refreshes, not after a reconnect
 
     def test_a_held_lock_is_tried_again_a_retry_later_never_in_a_spin(self):
         self.answers = [BlockingIOError(), BlockingIOError(), {"message": "Saved", "written": True}]
@@ -661,7 +696,7 @@ class AutoSaveTest(ClockedCase):
         self.until(lambda: self.told)
         self.assertEqual(self.told, [{"message": "Saved", "written": True}])
         self.assertEqual(len(self.saved), 3)
-        self.assertGreaterEqual(self.saved[1][0] - self.saved[0][0], fc.AUTO_SAVE_RETRY - 0.03)
+        self.assertAlmostEqual(self.saved[1][0] - self.saved[0][0], fc.AUTO_SAVE_RETRY, delta=self.STEP + 1e-9)
         self.assertEqual(self.controller.stats["auto_saves"], 1)
 
     def test_a_refusal_is_kept_back_once_and_only_the_next_pauses(self):
@@ -674,7 +709,7 @@ class AutoSaveTest(ClockedCase):
         self.until(lambda: self.told)  # an interval later, with nothing new: the change is still unsaved
         self.assertEqual(self.told, [refused])
         self.assertEqual(self.saved[1][1], True)
-        self.assertGreaterEqual(self.saved[1][0] - self.saved[0][0], fc.AUTO_SAVE_EVERY - 0.03)
+        self.assertAlmostEqual(self.saved[1][0] - self.saved[0][0], fc.AUTO_SAVE_EVERY, delta=self.STEP + 1e-9)
         self.focus(8)
         self.until(lambda: len(self.told) == 2)  # after a save that was not a refusal, the next one is tentative
         self.assertEqual(self.saved[2][1], False)
