@@ -3,6 +3,7 @@ after it, so a power cut cannot bring back the file from before a write that had
 version-1 pin file is made the same way, and is durable before the original is converted. A temporary file that a
 writer killed outright left is removed by a later write once it is an hour old, and only then."""
 
+import io
 import json
 import os
 from pathlib import Path
@@ -193,8 +194,11 @@ class LeftBehindTest(unittest.TestCase):
             os.utime(self.state / name, (now - age, now - age))
         (self.state / (state_files.TEMP_PREFIX + "folder")).mkdir()  # not a file: left, and no error
         os.utime(self.state / (state_files.TEMP_PREFIX + "folder"), (now - 2 * state_files.STALE,) * 2)
-        with patch("sys.stderr"):
+        with patch("sys.stderr", new_callable=io.StringIO) as said:
             self.assertEqual(sorted(state_files.sweep(self.state, now)), sorted(stale))
+        self.assertEqual(sorted(said.getvalue().splitlines()),
+                         sorted(f"flow: removed {self.state / name}, a temporary file left by a writer that was stopped"
+                                for name in stale))
         self.assertEqual(sorted(p.name for p in self.state.iterdir()),
                          sorted(fresh + kept + [state_files.TEMP_PREFIX + "folder"]))
 
@@ -216,7 +220,7 @@ class LeftBehindTest(unittest.TestCase):
         _, err = again.communicate(timeout=30)
         self.assertEqual(again.returncode, 0, err)
         self.assertEqual(self.left(), [])
-        self.assertIn(f"removed {left[0]}", err)
+        self.assertIn(f"removed {self.state / left[0]}", err)
 
     def test_a_write_beside_one_in_progress_leaves_it_alone(self):
         """A writer paused before its rename; another write meanwhile, which does not wait on the locks (as a
