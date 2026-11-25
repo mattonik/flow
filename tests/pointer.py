@@ -52,11 +52,13 @@ def center(target):
 
 
 class Pointer:
-    def __init__(self, env=None):
+    def __init__(self, env=None, allow_installed_shell=False):
+        """``allow_installed_shell``: for a test that drives the installed shell itself (niri_search_installed_smoke.py);
+        the home indicator, island and banners may then sit under the pointer, so aim at the middle of the screen."""
         self.env = env
         if not shutil.which("flow-pointer", path=(env or {}).get("PATH")):
             raise RuntimeError("flow-pointer is not on PATH (nix build .#flow-pointer)")
-        if subprocess.run(["systemctl", "--user", "is-active", "--quiet", "flow-shell"]).returncode == 0:
+        if not allow_installed_shell and subprocess.run(["systemctl", "--user", "is-active", "--quiet", "flow-shell"]).returncode == 0:
             raise RuntimeError("Stop the installed shell first: its surfaces would take the pointer")
         outputs = json.loads(subprocess.check_output(["niri", "msg", "-j", "outputs"], text=True, timeout=10))
         self.left, self.top, self.width, self.height = layout_box(outputs)
@@ -92,13 +94,17 @@ class Pointer:
     def hover(self, read, label="the target", timeout=10):
         """Moves onto the item ``read()`` gives (a ``pointer_target``, or None while it is hidden) and waits until
         it shows the pointer, so a click that follows lands on a surface that is on screen. Returns its middle."""
-        end, last = time.monotonic() + timeout, None
+        end, last, tries = time.monotonic() + timeout, None, 0
         while time.monotonic() < end:
             last = read()
             if last:
-                self.move(center(last))
                 if last["hovered"]:
                     return center(last)
+                # Moving again to the same place is not a motion the installed shell's panel answers (measured in the
+                # guest): move a few pixels off and back instead, every time it still shows no pointer.
+                x, y = center(last)
+                self.move((x + 3 * (tries % 2), y))
+                tries += 1
             time.sleep(0.2)
         raise RuntimeError(f"Timed out waiting for {label} to show the pointer ({last})")
 

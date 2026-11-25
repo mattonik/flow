@@ -124,10 +124,18 @@ ShellRoot {
     property bool overviewOpen: false
     property var appMenu: null   // the open menu: {id (window), name, menus}
     property string appMenuError: ""
+    // One setting per Core.Settings. Qt 6.12's Settings, loading a file without one of its keys, writes back the
+    // values its later properties had before they were loaded: their defaults, over what the file held. Alone in
+    // its object, a missing key is only ever written with its own default.
+    readonly property string settingsFile: "file://" + (Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config") + "/flow-settings.ini"
     Core.Settings {
         id: menuPreferences
-        location: "file://" + (Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config") + "/flow-settings.ini"
+        location: root.settingsFile
         property bool appMenuEnabled: false
+    }
+    Core.Settings {
+        id: recoveryPreferences
+        location: root.settingsFile
         property bool autoRecovery: false
     }
     property var appMenuPath: []
@@ -587,7 +595,7 @@ ShellRoot {
                         root.autoRecoveryBlocked = !!result.error
                         if (result.error) { root.deskOpen = true; root.settingsOpen = true; Qt.callLater(function() { root.reveal(recoveryStatus) }) }
                     }
-                    if (recoveryProcess.command[1] === "save" && !result.error && menuPreferences.autoRecovery) autoReadyTimer.restart()
+                    if (recoveryProcess.command[1] === "save" && !result.error && recoveryPreferences.autoRecovery) autoReadyTimer.restart()
                     if (recoveryProcess.command[1] === "rename-group") {
                         root.spacesError = result.error || ""
                         if (!result.error) root.renameGroupId = ""
@@ -599,9 +607,9 @@ ShellRoot {
     }
     Timer {
         id: autoStartTimer; interval: 3000
-        Component.onCompleted: if (menuPreferences.autoRecovery) start()
+        Component.onCompleted: if (recoveryPreferences.autoRecovery) start()
         onTriggered: {
-            if (!menuPreferences.autoRecovery) return
+            if (!recoveryPreferences.autoRecovery) return
             if (recoveryProcess.running || spacesProcess.running) { restart(); return }
             recoveryProcess.command = ["flow-recovery", "auto-start"]; recoveryProcess.running = true
         }
@@ -609,7 +617,7 @@ ShellRoot {
     Timer {
         id: autoReadyTimer; interval: 200
         onTriggered: {
-            if (!menuPreferences.autoRecovery) return
+            if (!recoveryPreferences.autoRecovery) return
             if (recoveryProcess.running || spacesProcess.running) { restart(); return }
             recoveryProcess.command = ["flow-recovery", "auto-ready"]; recoveryProcess.running = true
         }
@@ -618,13 +626,13 @@ ShellRoot {
     // setting on, recovery not paused and no Save session, Restore session or rename running (a save during a
     // restore would replace the session it restores, and stop it). It says how each save went. A save that went
     // well leaves the pause as it is: one that ended as the setting was switched must not undo that pause.
-    readonly property bool autoSaveWanted: menuPreferences.autoRecovery && !autoRecoveryBlocked && !recoveryWorking
+    readonly property bool autoSaveWanted: recoveryPreferences.autoRecovery && !autoRecoveryBlocked && !recoveryWorking
     onAutoSaveWantedChanged: if (controller.connected) {
         controller.write(JSON.stringify({ auto_save: autoSaveWanted }) + "\n")
         controller.flush()
     }
     function autoSaved(result) {
-        if (!menuPreferences.autoRecovery) return  // switched off since
+        if (!recoveryPreferences.autoRecovery) return  // switched off since
         recoveryMessage = result.error || result.message || "Recovery unavailable"
         if (!result.error) return
         autoRecoveryBlocked = true
@@ -1069,16 +1077,22 @@ ShellRoot {
 
     // Floe's appearance preference is per-user and does not change app/window state.
     FloeTheme { id: floeTheme; light: appearancePreferences.lightMode }
+    // One setting per Core.Settings, as for flow-settings.ini above.
+    readonly property string appearanceFile: "file://" + (Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config") + "/floe-appearance.ini"
     Core.Settings {
         id: appearancePreferences
-        location: "file://" + (Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config") + "/floe-appearance.ini"
+        location: root.appearanceFile
         property bool lightMode: false
+    }
+    Core.Settings {
+        id: motionPreferences
+        location: root.appearanceFile
         property bool reduceMotion: false
     }
     // Motion follows the brand's quick token (120 ms). Linux offers Quickshell no reduced-motion signal,
     // so it is a per-user preference in Desk settings; with it on, every change is instant.
-    readonly property int motionQuick: appearancePreferences.reduceMotion ? 0 : 120
-    readonly property int motionStandard: appearancePreferences.reduceMotion ? 0 : 220
+    readonly property int motionQuick: motionPreferences.reduceMotion ? 0 : 120
+    readonly property int motionStandard: motionPreferences.reduceMotion ? 0 : 220
     // The brand's standard curve, cubic-bezier(.22, 1, .36, 1).
     readonly property var standardCurve: [0.22, 1, 0.36, 1, 1, 1]
     // One clock for every "busy, amount unknown" indicator, so a card rebuilt by an activity update
@@ -1680,10 +1694,16 @@ ShellRoot {
         // Read-only, for scripted checks of shell feedback.
         function toast(): string { return root.toast }
         function spaces_error(): string { return root.spacesError }
+        // Automatic recovery as the shell holds it, for tests/niri_shell_restart_controller_smoke.py.
+        function recovery_state(): string {
+            return JSON.stringify({ setting: recoveryPreferences.autoRecovery, paused: root.autoRecoveryBlocked,
+                                    working: root.recoveryWorking, saving: root.autoSaveWanted,
+                                    message: root.recoveryMessage, connected: controller.connected })
+        }
         // What the shell last read from flow-spaces: pins with their windows, spaces with their Group layout, Layers.
         function spaces_view(): string {
             return JSON.stringify({ pins: root.pins.map(p => ({ id: p.id, kind: p.kind, window_ids: p.window_ids || [] })),
-                                    spaces: root.displaySpaces.map(s => ({ id: s.id, group_id: s.group_id || "", group_layout: s.group_layout || "" })),
+                                    spaces: root.displaySpaces.map(s => ({ id: s.id, group_id: s.group_id || "", group_layout: s.group_layout || "", active: !!s.active })),
                                     layers: root.layers.map(l => l.id) })
         }
         // Each window of the workspace with the label the shell shows for it, for tests/niri_performance_smoke.py.
@@ -2319,9 +2339,9 @@ ShellRoot {
                         FlowSwitch {
                             id: reduceMotionSwitch
                             text: "Reduce motion"
-                            checked: appearancePreferences.reduceMotion
+                            checked: motionPreferences.reduceMotion
                             Accessible.name: "Reduce motion: buttons and progress change instantly"
-                            onToggled: { appearancePreferences.reduceMotion = checked; appearancePreferences.sync() }
+                            onToggled: { motionPreferences.reduceMotion = checked; motionPreferences.sync() }
                         }
                         FlowSwitch {
                             id: menuSwitch
@@ -2343,18 +2363,18 @@ ShellRoot {
                         FlowSwitch {
                             id: autoRecoverySwitch
                             text: "Automatically save and restore session"
-                            checked: menuPreferences.autoRecovery
+                            checked: recoveryPreferences.autoRecovery
                             enabled: !root.recoveryWorking && !root.spacesWorking
                             Accessible.name: text
                             onToggled: {
                                 // Enabled through automatic recovery so focus stays, but a change waits for it:
                                 // the run's result would otherwise undo the pause below.
                                 if (recoveryProcess.running) {
-                                    checked = Qt.binding(() => menuPreferences.autoRecovery)
+                                    checked = Qt.binding(() => recoveryPreferences.autoRecovery)
                                     root.recoveryMessage = "Wait for automatic recovery to finish"
                                     return
                                 }
-                                menuPreferences.autoRecovery = checked; menuPreferences.sync()
+                                recoveryPreferences.autoRecovery = checked; recoveryPreferences.sync()
                                 root.autoRecoveryBlocked = true
                                 if (checked) { recoveryProcess.command = ["flow-recovery", "auto-pause"]; recoveryProcess.running = true }
                             }

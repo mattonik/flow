@@ -17,7 +17,7 @@ def definition(name):
 class ShellAutoSaveTest(unittest.TestCase):
     def test_saving_is_asked_for_only_with_the_setting_on_recovery_ready_and_no_recovery_command_running(self):
         self.assertEqual(sorted(term.strip() for term in definition("autoSaveWanted").split("&&")),
-                         ["!autoRecoveryBlocked", "!recoveryWorking", "menuPreferences.autoRecovery"])
+                         ["!autoRecoveryBlocked", "!recoveryWorking", "recoveryPreferences.autoRecovery"])
         # A save during Restore session would replace the session it restores; Save and rename count too.
         self.assertEqual(definition("recoveryWorking"),
                          'recoveryProcess.running && !String(recoveryProcess.command[1]).startsWith("auto-")')
@@ -25,7 +25,7 @@ class ShellAutoSaveTest(unittest.TestCase):
     def test_a_result_after_the_setting_was_switched_off_changes_nothing(self):
         body = SHELL[SHELL.index("    function autoSaved(result) {"):]
         body = body[:body.index("\n    }\n")]
-        self.assertLess(body.index("if (!menuPreferences.autoRecovery) return"), body.index("recoveryMessage ="))
+        self.assertLess(body.index("if (!recoveryPreferences.autoRecovery) return"), body.index("recoveryMessage ="))
         self.assertLess(body.index("if (!result.error) return"), body.index("autoRecoveryBlocked = true"))
 
     def test_the_controller_is_told_on_connecting_and_on_every_change(self):

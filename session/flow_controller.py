@@ -535,13 +535,33 @@ def listen(runtime, wait=True):
     return server, lock
 
 
+EXIT_DEADLINE = 5  # s for an exit to finish once SIGTERM came; then SIGALRM's default action ends the controller
+
+
+def exit_on_sigterm():
+    """SIGTERM (the shell's death, through pdeathsig) exits through ``finally``: a write in flight removes its
+    temporary file, and main() closes its socket before it releases its lock.
+
+    Only the first: prctl(2) has the parent-death signal sent when the thread that started the controller exits,
+    and again when each thread it is then reparented to exits, so a multithreaded shell that dies thread by thread
+    can send it more than once. A second SIGTERM raising again inside a ``finally`` would cut it short and leave a
+    temporary file in the state folder. An exit that never finishes (its SystemExit swallowed in a finalizer, or a
+    cleanup that hangs) can then no longer be ended by another SIGTERM, and would keep the lock a new controller
+    waits on: SIGALRM ends it after EXIT_DEADLINE."""
+    def exit_once(*_):
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.alarm(EXIT_DEADLINE)
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, exit_once)
+
+
 def main():
     runtime = os.environ.get("XDG_RUNTIME_DIR")
     niri_path = os.environ.get("NIRI_SOCKET")
     if not runtime or not niri_path:
         print("flow-controller: XDG_RUNTIME_DIR and NIRI_SOCKET must be set", file=sys.stderr)
         return 2
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    exit_on_sigterm()
     server, lock = listen(Path(runtime))  # waits while another controller serves this session
     listened = time.monotonic()
     print("listening", flush=True)  # the shell connects on this line rather than waiting for its next try
@@ -550,7 +570,9 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        # Before the lock is released: a waiting controller binds its socket only after this.
+        # Before the lock is released, the socket is closed and its name removed: a waiting controller takes the
+        # lock, then binds the name, and is never listening beside this one while the interpreter exits.
+        server.close()
         socket_path(runtime).unlink(missing_ok=True)
         lock.close()
     return 0

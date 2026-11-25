@@ -56,7 +56,7 @@ def read(path):
     """Return (pins, displays, version) without changing anything; reject unknown formats."""
     if not path.exists():
         return [], {}, 2
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(data, list):
         pins, displays, version = data, {}, 1
     elif isinstance(data, dict) and data.get("version") == 2:
@@ -74,24 +74,14 @@ def read(path):
 
 
 def write(path, pins, displays, version):
-    import shutil, tempfile  # here, not above: flow-spaces runs after every burst of Niri events and mostly only reads
-    if version == 1 and path.exists() and not (path.parent / "spaces.v1.json").exists():
-        # Keep the original single-display list for rollback before the first conversion.
-        shutil.copy2(path, path.parent / "spaces.v1.json")
-    with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as tmp:
-        try:
-            json.dump({"version": 2, "displays": displays, "pins": pins}, tmp, ensure_ascii=False)
-            tmp.flush()
-            os.fsync(tmp.fileno())
-            os.replace(tmp.name, path)
-            directory = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory)  # make the rename itself durable
-            finally:
-                os.close(directory)
-        finally:
-            if os.path.exists(tmp.name):
-                os.unlink(tmp.name)
+    import state_files  # here, not above: flow-spaces runs after every burst of Niri events and mostly only reads
+    rollback = path.parent / "spaces.v1.json"
+    if version == 1 and path.exists() and not rollback.exists():
+        # Keep the original single-display list for rollback before the first conversion. A copy cut short would be
+        # kept, as it exists, while the original it stands for is replaced: it is made whole or not at all, first.
+        state_files.replace_durably(rollback, path.read_bytes(), like=path)
+    data = json.dumps({"version": 2, "displays": displays, "pins": pins}, ensure_ascii=False)
+    state_files.replace_durably(path, data.encode(), pause="spaces.write")
 
 
 def migrate(pins, displays, version, connected, locate):

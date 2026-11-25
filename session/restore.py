@@ -9,7 +9,6 @@ from collections import Counter
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import time
 import uuid
 import spaces
@@ -155,7 +154,7 @@ def save_locked(path, checked=False, if_changed=False, reading=None):
         if checked:
             raise Refused(str(exc)) from exc
         raise
-    warnings = recovery_warnings(json.loads(path.read_text())["windows"], dirs)
+    warnings = recovery_warnings(json.loads(path.read_text(encoding="utf-8"))["windows"], dirs)
     return {"message": f"Saved {count} open windows. Save documents in each app before restarting." +
             (" " + "; ".join(warnings) if warnings else ""), "written": path.read_bytes() != before}
 
@@ -217,30 +216,9 @@ def automatic(op, path, wait=True, pause=True):
 
 
 def write_snapshot(path, data):
+    import state_files
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as tmp:
-        try:
-            json.dump(data, tmp, ensure_ascii=False)
-            tmp.flush()
-            os.fsync(tmp.fileno())
-            os.replace(tmp.name, path)
-        finally:
-            if os.path.exists(tmp.name):
-                os.unlink(tmp.name)
-
-
-def rename_group(path, group_id, label):
-    label = label.strip()
-    if not label or len(label) > 80:
-        raise ValueError("Group name must be between 1 and 80 characters")
-    data = json.loads(path.read_text())
-    if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("windows"), list) or not isinstance(data.get("groups"), list):
-        raise ValueError("Invalid saved session")
-    matches = [g for g in data["groups"] if isinstance(g, dict) and g.get("id") == group_id]
-    if len(matches) != 1:
-        raise ValueError("Saved Group no longer exists or is ambiguous")
-    matches[0]["label"] = label
-    write_snapshot(path, data)
+    state_files.replace_durably(path, json.dumps(data, ensure_ascii=False).encode(), pause="session.write")
 
 
 def pinned_apps(pins):
@@ -291,7 +269,7 @@ def save(path, workspace, windows, session=None, pins=(), registered=None, displ
                 "column": ((w.get("layout", {}).get("pos_in_scrolling_layout") or [None])[0]
                            if not w.get("is_floating") else None)} for w in current]
     previous = spaces.saved_groups(path) if registered is None else registered
-    old = json.loads(path.read_text()) if previous and path.exists() else {}
+    old = json.loads(path.read_text(encoding="utf-8")) if previous and path.exists() else {}
     # A Layer of a Group app is not another member candidate; only tiled windows count.
     live_counts = Counter(w.get("app_id") for w in windows if not w.get("is_floating"))
     for group in previous:
@@ -365,7 +343,7 @@ def save(path, workspace, windows, session=None, pins=(), registered=None, displ
     data = {"version": 1, "session": session, "windows": entries, "groups": groups}
     if display:
         data["display"] = display
-    if not (if_changed and path.exists() and path.read_text() == json.dumps(data, ensure_ascii=False)):
+    if not (if_changed and path.exists() and path.read_text(encoding="utf-8") == json.dumps(data, ensure_ascii=False)):
         write_snapshot(path, data)  # as json.dump writes it, so an unchanged snapshot reads the same
     return len(current)
 

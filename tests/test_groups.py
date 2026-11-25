@@ -115,6 +115,18 @@ class GroupRegistryTest(unittest.TestCase):
                 groups.load(state)
             self.assertFalse((state / "groups.json").exists())
 
+    def test_rename_trims_the_name_and_refuses_a_bad_one_or_an_unknown_group(self):
+        registry = [{"id": "g", "label": "Work", "members": ["a", "b"]},
+                    {"id": "h", "label": "Play", "members": ["c", "d"]}]
+        groups.rename(registry, "g", "  Studio  ")
+        self.assertEqual([g["label"] for g in registry], ["Studio", "Play"])
+        for ident, label in (("g", " "), ("g", ""), ("g", "x" * 81), ("missing", "New name")):
+            with self.subTest(ident=ident, label=label), self.assertRaises(ValueError):
+                groups.rename(registry, ident, label)
+        self.assertEqual([g["label"] for g in registry], ["Studio", "Play"])
+        groups.rename(registry, "h", "x" * 80)
+        self.assertEqual(registry[1]["label"], "x" * 80)
+
     def test_create_rename_dissolve_without_replacing_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -144,11 +156,17 @@ class GroupRegistryTest(unittest.TestCase):
             self.assertTrue(ident)
             self.assertEqual(snapshot.read_bytes(), original)
             self.assertEqual(groups.load(state)[0]["id"], ident)
-            with patch.dict(os.environ, {"XDG_STATE_HOME": directory}), \
-                 patch.object(sys, "argv", ["flow-recovery", "rename-group", ident, "Writing"]), \
-                 contextlib.redirect_stdout(io.StringIO()):
-                restore.main()
+            def rename(label):
+                with patch.dict(os.environ, {"XDG_STATE_HOME": directory}), \
+                     patch.object(sys, "argv", ["flow-recovery", "rename-group", ident, label]), \
+                     contextlib.redirect_stdout(io.StringIO()):
+                    restore.main()
+            rename("  Writing  ")  # trimmed, as groups.rename does
             self.assertEqual(invoke("refresh")["spaces"][0]["label"], "Writing")
+            registry = (state / "groups.json").read_bytes()
+            with self.assertRaises(ValueError):
+                rename(" ")
+            self.assertEqual((state / "groups.json").read_bytes(), registry)
             pin = invoke("pin-group", ident)["pins"][0]
             self.assertEqual((pin["label"], pin["group_id"]), ("Writing", ident))
             invoke("unpin", pin["id"])
