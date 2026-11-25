@@ -658,7 +658,9 @@ Out of scope: a real reboot (F-003), real hardware, and Quickshell's live reload
 - `niri_shell_restart_controller_smoke.py`, the same way: 60 checks pass on one display, and 60 with Virtual-2 connected (a pin on each display, the external one reached with Super+Alt).
 - `niri_shell_restart_controller_smoke.py --installed` with `systemctl --user restart flow-shell`, `kill -KILL` of the unit's main process, `switch-to-configuration test` to a variant generation (one comment added to `shell.qml` and one to `flow_controller.py`, so the switch stopped and started `flow-shell`), and back to the system profile: 27 checks pass. The installed shell's Layer ran in an app scope of its own and survived all four. The real state and recovery markers came back byte for byte.
 
-**Not fixed, outside a restart's reach:** `restore.write_snapshot` does not sync the state folder after its rename, as the other two writers do, so a power cut just after an automatic save can bring back the snapshot before it. A writer killed by SIGKILL leaves its temporary file in the state folder; nothing removes it later. The smoke's SIGKILLs hit the shell, whose controller dies by SIGTERM; only the controller-alone case SIGKILLs a controller, outside a write.
+**Since 2026-11-25** `restore.write_snapshot` also syncs the state folder after its rename, as the other two writers do, so a power cut just after an automatic save can no longer bring back the snapshot before it. `tests/test_state_writers.py` checks, for all three writers, the file synced before the rename and the folder after it; without each writer's folder sync it fails for that writer.
+
+**Not fixed, outside a restart's reach:** a writer killed by SIGKILL leaves its temporary file in the state folder; nothing removes it later. The smoke's SIGKILLs hit the shell, whose controller dies by SIGTERM; only the controller-alone case SIGKILLs a controller, outside a write.
 
 ### Under a stream of compositor events (2026-11-22)
 
