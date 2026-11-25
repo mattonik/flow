@@ -728,6 +728,25 @@ def export_snapshot(state, target):
     return {"message": f"Exported {count} space{'s' if count > 1 else ''} to {target}.", "left_out": left}
 
 
+def launchable(path):
+    """Whether a desktop entry is an app a user could have had open: ``Type=Application``, neither hidden nor
+    kept out of menus. A snapshot's IDs come from a file, not from this machine's windows (ADR-0012)."""
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return False
+    section, keys = None, {}
+    for line in lines:
+        line = line.strip()
+        if line.startswith("["):
+            section = line
+        elif section == "[Desktop Entry]" and "=" in line:
+            key, value = line.split("=", 1)
+            keys.setdefault(key.strip(), value.strip())
+    return (keys.get("Type") == "Application" and keys.get("Hidden", "false") != "true"
+            and keys.get("NoDisplay", "false") != "true")
+
+
 def import_plan(state, data, dirs):
     """The import's plan for this machine as it is now, and what it was computed from. Call under Flow's locks."""
     import snapshot
@@ -736,8 +755,11 @@ def import_plan(state, data, dirs):
     pinned_apps(pins)
     workspace, windows, outputs, workspaces = spaces.full_state()
     display = snapshot_display(workspace, outputs, displays, pins)
-    report = snapshot.plan(data, windows, groups, pins,
-                           lambda desktop: spaces.desktop_file(snapshot.app_id(desktop), dirs) is not None, display)
+    def installed(desktop):
+        path = spaces.desktop_file(snapshot.app_id(desktop), dirs)
+        return bool(path) and launchable(path)
+
+    report = snapshot.plan(data, windows, groups, pins, installed, display)
     return report, {"groups": groups, "pins": pins, "workspace": workspace, "windows": windows,
                     "workspaces": workspaces, "display": display}
 
@@ -795,21 +817,37 @@ def import_snapshot(state, data, confirm, dirs):
     try:
         notes, _ = restore(restore_data, workspace, windows, dirs, launch, checked_state, spaces.command,
                            session=session, registered=created, display=seen["display"]["key"])
-    except ValueError as exc:
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
         kept = ("; Groups it registered stay: " + ", ".join(g["label"] for g in created)) if created else ""
         raise ValueError(f"The import stopped: {exc}{kept}") from exc
     left = list(report["left_out"])
-    current, live = spaces.snapshot()
-    opened = []
-    for space in report["open"]:
-        apps = [snapshot.app_id(d) for d in space["apps"]]
-        found = [w for w in live if w.get("app_id") in apps and w.get("workspace_id") == workspace["id"]]
-        if len(found) == len(apps):
+    opened, broken = [], []
+    with flow_locks(state):
+        current, live = spaces.snapshot()
+        registered = group_store.load(state, migrate=False)
+        for space in report["open"]:
+            apps = [snapshot.app_id(d) for d in space["apps"]]
+            found = [w for w in live if w.get("app_id") in apps and w.get("workspace_id") == workspace["id"]]
+            if len(found) != len(apps):
+                missing = [d for d in space["apps"] if not any(w.get("app_id") == snapshot.app_id(d) for w in found)]
+                left.append({**({"group": space["group"]["name"]} if space.get("group") else {"app": space["apps"][0]}),
+                             "reason": "did not open: " + ", ".join(missing)})
+                if not space.get("group"):
+                    continue
+            if space.get("group"):
+                group = next(g for g in created if g["members"] == apps)
+                candidate = {"group_id": group["id"], "members": group["members"], "session": None}
+                if len(found) != len(apps) or not spaces.group_windows(candidate, current, live, session, registered):
+                    # A Group recovery could not build is not left registered apart: its apps stay single spaces.
+                    broken.append(group["id"])
+                    if len(found) == len(apps):
+                        left.append({"group": space["group"]["name"],
+                                     "reason": "not created: Flow could not arrange its apps as the Group; "
+                                               "they stay open as spaces of their own"})
+                    continue
             opened.append(space)
-        else:
-            missing = [d for d in space["apps"] if not any(w.get("app_id") == snapshot.app_id(d) for w in found)]
-            left.append({**({"group": space["group"]["name"]} if space.get("group") else {"app": space["apps"][0]}),
-                         "reason": "did not open: " + ", ".join(missing)})
+        if broken:
+            group_store.write(state / "groups.json", [g for g in registered if g["id"] not in broken])
     pins_report = []
     for space in sorted((s for s in report["open"] if s.get("pin")), key=lambda s: s["pin"]):
         name = space["group"]["name"] if space.get("group") else space["apps"][0]
@@ -831,11 +869,16 @@ def import_snapshot(state, data, confirm, dirs):
                     raise ValueError("Workspace changed")
                 spaces.run_locked(state, op, arg, emit=False)
             pins_report.append({"space": name, "pinned": True})
-        except ValueError as exc:
+        except (ValueError, OSError, subprocess.SubprocessError) as exc:
             pins_report.append({"space": name, "pinned": False, "reason": str(exc)})
     message = f"Imported {len(opened)} of {len(report['open'])} spaces onto a new workspace."
     if left:
-        message += " Left out: " + "; ".join(f"{e.get('group') or e.get('app')}: {e['reason']}" for e in left)
+        message += " Left out: " + "; ".join(f"{e.get('group') or e.get('app')}: {e['reason']}" for e in left) + "."
+    unpinned = [p for p in pins_report if not p["pinned"]]
+    if unpinned:
+        message += " Not pinned: " + "; ".join(f"{p['space']}: {p['reason']}" for p in unpinned) + "."
+    if notes:
+        message += " " + "; ".join(notes) + "."
     return {"message": message, "acted": True, "workspace": target["idx"], "opened": opened, "left_out": left,
             "pins": pins_report, "notes": notes}
 
@@ -852,7 +895,8 @@ def main():
         if op == "export":
             print(json.dumps(export_snapshot(path.parent, sys.argv[2])))
             return
-        data = snapshot.parse(Path(sys.argv[2]).read_bytes())
+        with open(sys.argv[2], "rb") as source:
+            data = snapshot.parse(source.read(snapshot.MAX_BYTES + 1))  # parse refuses more than MAX_BYTES
         if op == "preview":
             with flow_locks(path.parent):
                 print(json.dumps(import_plan(path.parent, data, spaces.data_dirs())[0]))

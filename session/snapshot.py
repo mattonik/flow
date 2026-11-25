@@ -16,6 +16,7 @@ VERSION = 1
 MAX_BYTES = 64 * 1024
 MAX_SPACES = 32
 NAME_LENGTH = 80
+MIN_SHARE = 0.15  # spaces.MIN_SHARE: no Group member is narrower than this share of the Group
 _DESKTOP_ID = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,246}\.desktop")
 _KEYS = {"snapshot": {"format", "version", "spaces"}, "space": {"apps", "group", "pin"},
          "group": {"name", "layout", "proportions"}}
@@ -89,10 +90,10 @@ def validate(data):
             if "proportions" in group:
                 shares = group["proportions"]
                 if (group["layout"] != "side-by-side" or not isinstance(shares, list) or len(shares) != len(apps)
-                        or any(isinstance(s, bool) or not isinstance(s, (int, float)) or not 0 < s < 1
+                        or any(isinstance(s, bool) or not isinstance(s, (int, float)) or not MIN_SHARE <= s < 1
                                for s in shares) or abs(sum(shares) - 1) > 0.01):
-                    raise ValueError(f"{where}'s Group proportions are one fraction per app, summing to 1, "
-                                     "and only side by side")
+                    raise ValueError(f"{where}'s Group proportions are one fraction per app, each at least "
+                                     f"{MIN_SHARE:g}, summing to 1, and only side by side")
         if "pin" in space:
             if not _integer(space["pin"]) or space["pin"] < 1 or space["pin"] in ranks:
                 raise ValueError(f"{where}'s pin is a rank not used by another space")
@@ -106,7 +107,7 @@ def parse(raw):
         raise ValueError(f"A snapshot is at most {MAX_BYTES // 1024} KiB")
     try:
         data = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
         raise ValueError("Not a Flow workspace snapshot: it is not JSON") from exc
     return validate(data)
 
@@ -140,7 +141,8 @@ def export(spaces, pins, groups, app_name=lambda app: None):
         group = next((g for g in groups if g["id"] == space.get("group_id")), None) if space.get("group_id") else None
         if group:
             if not all(ids) or seen.intersection(ids):
-                left.append("A Group whose apps have no desktop-file ID or are already exported")
+                left.append(f"The Group of {' + '.join(app or 'an app without an ID' for app in members)}: an app has "
+                            "no desktop-file ID or is already exported")
                 continue
             name = group["label"] if group.get("named") else " + ".join(app_name(app) or app for app in members)
             entry = {"apps": ids, "group": {"name": name[:NAME_LENGTH], "layout": space.get("group_layout") or "stack"}}
@@ -183,7 +185,7 @@ def export(spaces, pins, groups, app_name=lambda app: None):
 def plan(snapshot, windows, groups, pins, installed, display):
     """What an import would do here, as a report; nothing is done.
 
-    ``installed(desktop_id)`` says whether this machine has that desktop entry; ``windows`` are every
+    ``installed(desktop_id)`` says whether this machine has an app of that desktop-file ID; ``windows`` are every
     window Niri has; ``pins`` every display's pins. ``display`` is the focused display:
     ``{"key", "label", "pins": its pin count, "connected": number of displays}``. Apps already open,
     pinned or in a Group here are left out, so an import never moves an existing window or changes an
@@ -234,9 +236,17 @@ def plan(snapshot, windows, groups, pins, installed, display):
     pin_report = []
     after = display["pins"]
     wanted = sorted((s for s in snapshot["spaces"] if "pin" in s), key=lambda s: s["pin"])
+    # Flow changes no pin while a side-by-side Group is on the workspace (spaces.run), so none is promised.
+    side = any(o.get("group", {}).get("layout") == "side-by-side" for o in opening)
+    if side:
+        for space in opening:
+            space["pin"] = None
     for space in wanted:
         name = space["group"]["name"] if space.get("group") else space["apps"][0]
-        if any(o.get("pin") == space["pin"] for o in opening):
+        if side:
+            pin_report.append({"space": name, "position": None,
+                               "reason": "not pinned: pins cannot yet be added beside a side-by-side Group"})
+        elif any(o.get("pin") == space["pin"] for o in opening):
             after += 1
             pin_report.append({"space": name, "position": after, "display": display["label"]})
         else:

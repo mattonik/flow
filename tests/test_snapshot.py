@@ -124,6 +124,17 @@ class Format(unittest.TestCase):
         snapshot.validate(snap({"apps": two, "group": {"name": "W", "layout": "side-by-side",
                                                        "proportions": [0.7, 0.3]}, "pin": 3}))
 
+    def test_proportions_keep_flows_minimum_share(self):
+        self.assertEqual(snapshot.MIN_SHARE, restore.spaces.MIN_SHARE)
+        with self.assertRaisesRegex(ValueError, "at least 0.15"):
+            snapshot.validate(snap({"apps": ["a.desktop", "b.desktop"],
+                                    "group": {"name": "W", "layout": "side-by-side", "proportions": [0.05, 0.95]}}))
+
+    def test_deep_nesting_is_refused_as_not_a_snapshot(self):
+        # Python 3.12's parser recurses (RecursionError, refused as not JSON); later ones parse it, and it is no snapshot.
+        with self.assertRaisesRegex(ValueError, "^Not a Flow workspace snapshot"):
+            snapshot.parse(b"[" * 30000 + b"]" * 30000)
+
 
 class GroupNames(unittest.TestCase):
     def test_renaming_marks_the_name_as_the_users(self):
@@ -298,6 +309,24 @@ class Export(Machine):
         self.assertEqual(self.files(), before)
         self.assertEqual(self.niri.actions, [])
 
+    def test_export_tells_a_bound_group_from_another_window_of_its_app(self):
+        self.niri.spaces[1] = FakeNiri([[21, 22]], {21: "mail", 22: "chat"}, 21, workspace=1)
+        self.niri.spaces[2] = FakeNiri([[23]], {23: "mail"}, 23, workspace=2)
+        self.groups = [{"id": "g", "label": "Talk", "members": ["mail", "chat"], "named": True,
+                        "bound": {"session": "session-1", "windows": {"mail": 21, "chat": 22}}}]
+        self.pins = []
+        self.write_state()
+        target = self.state.parent.parent / "out.json"
+        self.run_main("export", str(target))
+        self.assertEqual(json.loads(target.read_text())["spaces"],
+                         [{"apps": ["mail.desktop", "chat.desktop"], "group": {"name": "Talk", "layout": "stack"}}])
+
+    def test_an_oversized_file_is_refused(self):
+        path = self.state.parent.parent / "big.json"
+        path.write_bytes(b" " * (snapshot.MAX_BYTES + 10))
+        with self.assertRaisesRegex(ValueError, "at most 64 KiB"):
+            self.run_main("preview", str(path))
+
     def test_export_never_replaces_a_file(self):
         target = self.state.parent.parent / "out.json"
         target.write_text("mine")
@@ -364,6 +393,20 @@ class Plan(unittest.TestCase):
         self.assertNotEqual(self.plan(data, windows=[{"id": 1, "app_id": "a"}])["confirm"], first)
         self.assertNotEqual(self.plan(data, missing=("b.desktop",))["confirm"], first)
         self.assertNotEqual(self.plan(snap({"apps": ["b.desktop"]}, {"apps": ["a.desktop"]}))["confirm"], first)
+
+    def test_the_confirmation_names_the_display_not_only_its_label(self):
+        data = snap({"apps": ["a.desktop"]})
+        first = self.plan(data)["confirm"]
+        self.display = {**self.display, "key": "edid:Acme|Panel|SN2"}  # a twin with the same label
+        self.assertNotEqual(self.plan(data)["confirm"], first)
+
+    def test_no_pin_is_promised_beside_a_side_by_side_group(self):
+        report = self.plan(snap({"apps": ["calc.desktop"], "pin": 1},
+                                {"apps": ["a.desktop", "b.desktop"], "pin": 2,
+                                 "group": {"name": "Wide", "layout": "side-by-side", "proportions": [0.6, 0.4]}}))
+        self.assertEqual([s["pin"] for s in report["open"]], [None, None])
+        self.assertEqual([(p["space"], p["position"]) for p in report["pins"]], [("calc.desktop", None), ("Wide", None)])
+        self.assertIn("side-by-side", report["pins"][0]["reason"])
 
     def test_restore_input_columns_and_new_groups(self):
         report = self.plan(snap({"apps": ["a.desktop"]},
@@ -483,6 +526,97 @@ class PreviewAndImport(Machine):
         self.assertIn({"app": "terminal.desktop", "reason": "did not open: terminal.desktop"}, result["left_out"])
         self.assertEqual(result["pins"], [{"space": "terminal.desktop", "pinned": False, "reason": "did not open"}])
         self.assertIn("Imported 1 of 2 spaces", result["message"])
+
+    def test_only_apps_a_user_could_open_count_as_installed(self):
+        apps = self.data / "applications"
+        (apps / "hidden.desktop").write_text("[Desktop Entry]\nType=Application\nHidden=true\nExec=true\n")
+        (apps / "helper.desktop").write_text("[Desktop Entry]\nType=Application\nNoDisplay=true\nExec=true\n")
+        (apps / "link.desktop").write_text("[Desktop Entry]\nType=Link\nURL=https://example.invalid\n")
+        report = self.run_main("preview", self.snapshot_file(snap(
+            {"apps": ["hidden.desktop"]}, {"apps": ["helper.desktop"]}, {"apps": ["link.desktop"]},
+            {"apps": ["calc.desktop"]})))
+        self.assertEqual(report["open"], [{"apps": ["calc.desktop"], "pin": None}])
+        self.assertEqual([e["reason"] for e in report["left_out"]], ["not installed"] * 3)
+
+    def test_nothing_that_can_open_means_nothing_is_done(self):
+        before = self.files()
+        path = self.snapshot_file(snap({"apps": ["gone.desktop"]}))
+        with self.assertRaisesRegex(ValueError, "Nothing in the snapshot can open here; nothing was imported"):
+            self.run_main("import", path, self.run_main("preview", path)["confirm"])
+        self.assertEqual((self.files(), self.niri.actions, self.niri.focused), (before, [], 1))
+
+    def test_a_workspace_that_does_not_come_into_focus_stops_the_import(self):
+        command = self.niri.command
+        self.niri.command = lambda *args: None if args[:2] == ("action", "focus-workspace") else command(*args)
+        path = self.snapshot_file(snap({"apps": ["calc.desktop"]}))
+        confirm = self.run_main("preview", path)["confirm"]
+        with patch.object(restore.spaces, "command", self.niri.command), \
+                self.assertRaisesRegex(ValueError, "did not come into focus empty; nothing was imported"):
+            self.run_main("import", path, confirm)
+        self.assertEqual((self.niri.launched, self.niri.layout(1)), ([], [["existing"], ["inbox"]]))
+
+    def test_a_pinned_side_by_side_import_pins_nothing_and_says_so(self):
+        path = self.snapshot_file(snap({"apps": ["calc.desktop"], "pin": 1},
+                                       {"apps": ["editor.desktop", "terminal.desktop"], "pin": 2,
+                                        "group": {"name": "Wide", "layout": "side-by-side",
+                                                  "proportions": [0.7, 0.3]}}))
+        preview = self.run_main("preview", path)
+        self.assertEqual([p["position"] for p in preview["pins"]], [None, None])
+        result = self.run_main("import", path, preview["confirm"])
+        self.assertEqual(self.niri.layout(2), [["calc"], ["editor"], ["terminal"]])
+        self.assertEqual(result["pins"], [])
+        self.assertEqual(json.loads((self.state / "spaces.json").read_text())["pins"], self.pins)
+        self.assertEqual(result["message"], "Imported 2 of 2 spaces onto a new workspace.")
+
+    def test_a_group_niri_would_not_build_is_left_out_and_unregistered(self):
+        command = self.niri.command
+        self.niri.command = lambda *args: None if args[1:2] == ("consume-window-into-column",) else command(*args)
+        path = self.snapshot_file(self.luma)
+        confirm = self.run_main("preview", path)["confirm"]
+        with patch.object(restore.spaces, "command", self.niri.command):
+            result = self.run_main("import", path, confirm)
+        self.assertEqual(self.niri.layout(2), [["editor"], ["terminal"]])
+        self.assertEqual(result["opened"], [])
+        self.assertIn({"group": "Writing", "reason": "not created: Flow could not arrange its apps as the Group; "
+                                                     "they stay open as spaces of their own"}, result["left_out"])
+        self.assertIn("Imported 0 of 1 spaces", result["message"])
+        self.assertIn("Not pinned: Writing: did not open", result["message"])
+        self.assertEqual(json.loads((self.state / "groups.json").read_text())["groups"], self.groups)
+        # Automatic saving goes on: no separated Group of the import's is left for it to refuse.
+        restore.save_locked(self.state / "session.json", checked=True)
+
+    def test_a_failing_niri_action_still_says_which_groups_stay(self):
+        command = self.niri.command
+
+        def failing(*args):
+            if args[1:2] == ("consume-window-into-column",):
+                raise restore.subprocess.CalledProcessError(1, ["niri", "msg", *args])
+            return command(*args)
+        path = self.snapshot_file(self.luma)
+        confirm = self.run_main("preview", path)["confirm"]
+        with patch.object(restore.spaces, "command", failing), \
+                self.assertRaisesRegex(ValueError, "The import stopped: .*; Groups it registered stay: Writing"):
+            self.run_main("import", path, confirm)
+
+    def test_refreshes_during_the_import_do_not_stop_it(self):
+        """The controller refreshes whenever Niri changes: once the Group is one column, a refresh binds it."""
+        command = self.niri.command
+
+        def refreshed(*args):
+            answer = command(*args)
+            if args[1:2] == ("consume-window-into-column",):
+                with (self.state / "session.lock").open("a") as lock:
+                    restore.fcntl.flock(lock, restore.fcntl.LOCK_EX)
+                    restore.spaces.run_locked(self.state, "refresh", emit=False)
+                group = json.loads((self.state / "groups.json").read_text())["groups"][-1]
+                self.assertIn("bound", group)  # the refresh did change the new Group's record
+            return answer
+        path = self.snapshot_file(self.luma)
+        confirm = self.run_main("preview", path)["confirm"]
+        with patch.object(restore.spaces, "command", refreshed):
+            result = self.run_main("import", path, confirm)
+        self.assertEqual(self.niri.layout(2), [["editor", "terminal"]])
+        self.assertEqual(result["pins"], [{"space": "Writing", "pinned": True}])
 
     def test_a_change_to_existing_pins_during_the_import_stops_it(self):
         path = self.snapshot_file(snap({"apps": ["calc.desktop"]}, {"apps": ["notes.desktop"]}))
