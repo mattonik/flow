@@ -10,11 +10,14 @@ the test runs in phases, one command each, sharing a run folder that outlives th
   Files and Scratch, makes Studio and Notes a Group, pins Mail and the Group, and waits for the controller's
   automatic save. Checks the baseline.
 - ``reboot RUN``: reboots the guest.
-- ``logout RUN``: ends the Niri session and restarts the display manager, which logs in again automatically.
+- ``logout RUN [--swap-pins]``: ends the Niri session and restarts the display manager, which logs in again
+  automatically. With ``--swap-pins`` the two pins first change places, with the shell stopped, so the saved
+  session's order is no longer the pin order and the Group must come back first.
 - ``check RUN --after reboot|relogin``: waits for automatic recovery and checks everything again, and that a new
-  window opened beside Mail ends up after the pins.
-- ``put-back RUN``: closes the test windows and puts the real state, settings, desktop entries and markers back
-  byte for byte, with the shell stopped meanwhile; starts it again whatever happens. Safe to run more than once.
+  window put between the pins ends up after them.
+- ``put-back RUN``: closes the windows the test opened and puts the real state, settings, desktop entries and
+  markers back byte for byte, with the shell stopped meanwhile; starts it again whatever happens. Once a run is put
+  back, it does nothing more.
 
 ``tests/run_reboot_pins_smoke.sh`` runs the phases from the host. Each phase runs in the guest as the session's
 user, over ssh or not: it reads the Niri session's environment from ``systemctl --user show-environment``. With
@@ -25,6 +28,7 @@ window open (the reboot would close it). Prints one JSON line per check; exits 1
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -181,14 +185,17 @@ def window(name):
 
 
 def columns():
-    """The focused workspace's tiled test windows by column, as names: [["mail"], ["studio", "notes"], ...]."""
+    """Every tiled window of the focused workspace, column by column from the first: [["mail"], ["studio", "notes"],
+    ...]. A window that is not the test's shows as "other:" and its app ID, so its place counts too."""
     focused = next(w for w in read("workspaces") if w["is_focused"])
-    placed = sorted((w["layout"]["pos_in_scrolling_layout"], NAMES[w["app_id"]]) for w in ours()
-                    if w["workspace_id"] == focused["id"] and not w["is_floating"]
+    placed = sorted((w["layout"]["pos_in_scrolling_layout"], NAMES.get(w.get("app_id"), f"other:{w.get('app_id')}"))
+                    for w in read("windows") if w["workspace_id"] == focused["id"] and not w["is_floating"]
                     and w["layout"].get("pos_in_scrolling_layout"))
     found = {}
     for (column, _), name in placed:
         found.setdefault(column, []).append(name)
+    if sorted(found) != list(range(1, len(found) + 1)):
+        raise Failed(f"Niri reported columns {sorted(found)}, not 1 to {len(found)}")
     return [found[c] for c in sorted(found)]
 
 
@@ -225,7 +232,8 @@ def open_app(name, timeout=30):
     try:
         wait_for(lambda: any(w["app_id"] == app for w in read("windows")), f"a window of {app}", timeout=timeout)
     except Failed:
-        # Setup only: Nautilus's D-Bus activation once did nothing, a minute after its last instance had exited.
+        # Nautilus's D-Bus activation once did nothing, a minute after its last instance had exited. The test's own
+        # launches try again; recovery's launch after a restart gets no second try.
         print(json.dumps({"note": f"{app} did not open; launched again"}), flush=True)
         launch(desktop_file(app))
         wait_for(lambda: any(w["app_id"] == app for w in read("windows")), f"a window of {app}", timeout=timeout)
@@ -288,9 +296,15 @@ def session_shape(data):
                        for g in data.get("groups", [])]}
 
 
-def expected_session(group_id):
-    rows = [(APPS[name], index, name == "files") for index, column in enumerate(COLUMNS, 1) for name in column]
-    return {"windows": rows, "groups": [(group_id, GROUP_LABEL, [APPS["studio"], APPS["notes"]], "stack")]}
+def expected_columns(record):
+    """The pins' columns first, in pin order, then the dynamic windows in their saved order."""
+    return [["studio", "notes"] if "members" in pin else ["mail"] for pin in record["pins"]] + [["files"], ["scratch"]]
+
+
+def expected_session(record):
+    rows = [(APPS[name], index, name == "files") for index, column in enumerate(expected_columns(record), 1)
+            for name in column]
+    return {"windows": rows, "groups": [(record["group"]["id"], GROUP_LABEL, [APPS["studio"], APPS["notes"]], "stack")]}
 
 
 def pin_identity(pin):
@@ -307,9 +321,11 @@ def group_identity(group):
 
 def verify(how, record, session):
     """Checks 3 to 6 and 8 of the acceptance against the record's pins and Group, in Niri session ``session``."""
-    wait_for(lambda: columns() == COLUMNS, lambda: f"{how}: columns {COLUMNS}, have {columns()}", timeout=30)
-    check(f"{how}: Mail, then Studio over Notes, then Files and Scratch", True, str(columns()))
-    windows = {name: window(name) for column in COLUMNS for name in column}
+    want = expected_columns(record)
+    wait_for(lambda: columns() == want, lambda: f"{how}: columns {want}, have {columns()}", timeout=30)
+    check(f"{how}: the pins in columns 1 and 2 in pin order, then Files and Scratch, and no other window", True,
+          str(columns()))
+    windows = {name: window(name) for column in want for name in column}
     ids = {name: w["id"] for name, w in windows.items()}
     check(f"{how}: one window per app, all tiled on the focused workspace", True,
           ", ".join(f"{name} {ident}" for name, ident in ids.items()))
@@ -331,7 +347,8 @@ def verify(how, record, session):
     pins = load("spaces.json")["pins"]
     check(f"{how}: the same two pins, in the same order", [pin_identity(p) for p in pins] == record["pins"],
           f"{[pin_identity(p) for p in pins]} (before: {record['pins']})")
-    mail_pin, group_pin = pins
+    mail_pin = next(p for p in pins if "members" not in p)
+    group_pin = next(p for p in pins if "members" in p)
     check(f"{how}: Mail's pin reaches the new Mail window in this Niri session",
           mail_pin.get("session") == session and mail_pin.get("window_id") == ids["mail"], json.dumps(mail_pin))
     check(f"{how}: the Group's pin reaches the new Group windows in this Niri session",
@@ -341,17 +358,21 @@ def verify(how, record, session):
     def shown():
         view = json.loads(ipc("spaces_view"))
         return [(p["id"], p["window_ids"]) for p in view["pins"]]
-    expected = [(mail_pin["id"], [ids["mail"]]), (group_pin["id"], [ids["studio"], ids["notes"]])]
+    expected = [(p["id"], [ids["studio"], ids["notes"]] if "members" in p else [ids["mail"]]) for p in pins]
     wait_for(lambda: shown() == expected, lambda: f"{how}: the shell to show {expected}, it shows {shown()}")
     check(f"{how}: the shell shows both pins with their windows", True)
     check(f"{how}: no Flow error in the shell", ipc("spaces_error") == "", ipc("spaces_error"))
 
-    # Check 6: what Super+1 and Super+2 run. Super+2 reaches the Group's last focused member.
-    for digit, name in ((1, "mail"), (2, "notes")):
+    # Check 6: what Super+1 and Super+2 run. The Group's shortcut reaches its last focused member, Notes.
+    reached = []
+    for digit, pin in enumerate(pins, 1):
+        name = "notes" if "members" in pin else "mail"
         key(digit)
         wait_for(lambda: focused_name() == name, lambda: f"{how}: Super+{digit} to focus {name}, focus is on "
                                                          f"{focused_name()}", timeout=10)
-    check(f"{how}: Super+1 reaches Mail and Super+2 the Group's last focused member, Notes", True)
+        reached.append(f"Super+{digit}: {name}")
+    check(f"{how}: each pin's shortcut reaches it (Mail; the Group's last focused member, Notes)", True,
+          ", ".join(reached))
     focus("files")
 
     for name in STATE_FILES:
@@ -361,26 +382,29 @@ def verify(how, record, session):
             raise Failed(f"{how}: {name} is not valid JSON: {exc}") from None
     check(f"{how}: spaces.json, groups.json and session.json parse", True)
     check(f"{how}: no temporary file in the state folder", not stray(), str(stray()))
-    saved = wait_for(lambda: session_shape(load("session.json")) == expected_session(group_id)
+    saved = wait_for(lambda: session_shape(load("session.json")) == expected_session(record)
                      and load("session.json"),
-                     lambda: f"{how}: session.json to hold {expected_session(group_id)}, it holds "
+                     lambda: f"{how}: session.json to hold {expected_session(record)}, it holds "
                              f"{session_shape(load('session.json'))}", timeout=60)
     check(f"{how}: session.json holds the five apps in their columns and the Group", True)
     return ids, saved
 
 
-def new_window_follows(how):
-    """Check 7: a window opened beside Mail ends up after the pins. Closed again, and saved without it."""
-    focus("mail")
+def new_window_follows(how, record):
+    """Check 7: a new window put between the two pins ends up after them. Closed again, and saved without it."""
+    before = expected_columns(record)
+    focus(before[0][-1])
     open_app("new")
-    want = [["mail"], ["studio", "notes"], ["new"], ["files"], ["scratch"]]
+    # Wherever Niri placed it, put it between the pins, as Niri's default placement (right of the focused column) does.
+    niri("action", "move-column-to-index", 2)
+    want = before[:2] + [["new"]] + before[2:]
     wait_for(lambda: columns() == want, lambda: f"{how}: the new window after the pins: {want}, have {columns()}",
              timeout=15)
-    check(f"{how}: a new window opened beside Mail ends up after the pins", True, str(columns()))
+    check(f"{how}: a new window put between the pins ends up after them", True, str(columns()))
     focus("files")
     niri("action", "close-window", "--id", window("new")["id"])
     wait_for(lambda: not any(w["app_id"] == NEW for w in read("windows")), "the new window to close")
-    wait_for(lambda: columns() == COLUMNS and focused_name() == "files", "the columns from before")
+    wait_for(lambda: columns() == before and focused_name() == "files", "the columns from before")
 
 
 # Phases ----------------------------------------------------------------------------------------------------------
@@ -491,10 +515,12 @@ def prepare(run, mail):
              == APPS["notes"], "the Group to remember Notes as focused")
     focus("files")
     spaces("refresh")
-    check("prepare: Mail pinned at Main/1, the Group Studio + Notes at Main/2", True)
 
     record["group"] = group_identity(next(g for g in load("groups.json")["groups"] if g["id"] == group_id))
     record["pins"] = [pin_identity(p) for p in load("spaces.json")["pins"]]
+    displays = load("spaces.json")["displays"]
+    check("prepare: both pins belong to Main (display number 0)",
+          all(displays.get(p.get("display"), {}).get("number") == 0 for p in record["pins"]), json.dumps(displays))
     check("prepare: the Group was made from Studio and Notes, in that order",
           record["group"].get("members") == [APPS["studio"], APPS["notes"]] and record["group"]["label"] == GROUP_LABEL,
           json.dumps(record["group"]))
@@ -503,7 +529,7 @@ def prepare(run, mail):
           and record["pins"][1].get("group_id") == group_id, json.dumps(record["pins"]))
     # The controller saves 2 s after a refresh, and no sooner than 30 s after its previous save.
     wait_for(lambda: (state_folder() / "session.json").exists()
-             and session_shape(load("session.json")) == expected_session(group_id),
+             and session_shape(load("session.json")) == expected_session(record),
              lambda: "the automatic save of the session: " + (
                  json.dumps(session_shape(load("session.json"))) if (state_folder() / "session.json").exists()
                  else "none yet"), timeout=90, step=0.5)
@@ -515,7 +541,8 @@ def prepare(run, mail):
     record["phase"] = "prepared"
     record["checked"] = {"boot": boot_id(), "session": niri_session()}
     write_record(run, record)
-    return {"result": "prepared", "group": group_id}
+    thunderbird = subprocess.run([str(mail), "--version"], text=True, stdout=subprocess.PIPE, timeout=60).stdout
+    return {"result": "prepared", "group": group_id, "mail": thunderbird.strip()}
 
 
 def reboot(run):
@@ -529,11 +556,29 @@ def reboot(run):
     return {"result": "rebooting"}
 
 
-def logout(run):
+def swap_pins(record):
+    """The two pins change places while no shell runs, so the saved session's order is no longer the pin order: as
+    after reordering pins and restarting before the next automatic save."""
+    stop_shell()
+    path = state_folder() / "spaces.json"
+    data = json.loads(path.read_text())
+    data["pins"].reverse()
+    temporary = path.with_name(".f003-swap.json")
+    temporary.write_text(json.dumps(data))
+    temporary.replace(path)
+    record["pins"].reverse()
+    check("logout: the pins swapped, the Group first; the saved session still has Mail first",
+          [p["id"] for p in load("spaces.json")["pins"]] == [p["id"] for p in record["pins"]]
+          and load("session.json")["windows"][0]["app_id"] == APPS["mail"])
+
+
+def logout(run, swap=False):
     record = read_record(run)
     if record["phase"] not in ("prepared", "checked reboot", "checked relogin"):
         raise Failed(f"Not ready for a log out: {record['phase']}")
     before = niri_session()
+    if swap:
+        swap_pins(record)
     record["phase"] = "logging out"
     write_record(run, record)
     # Niri exits before it answers, so the call fails with an empty reply: what ended is checked below.
@@ -562,27 +607,29 @@ def check_after(run, how):
     if record["phase"] != expected:
         raise Failed(f"The run's phase is {record['phase']!r}, not {expected!r}")
     started = time.monotonic()
-    wait_for_session()
     session = niri_session()
     if how == "reboot":
         check("reboot: a new boot", boot_id() != record["checked"]["boot"], boot_id())
     else:
         check("relogin: the same boot, a new Niri session",
               boot_id() == record["checked"]["boot"] and session != record["checked"]["session"], session)
-    check(f"{how}: the installed shell runs", True, f"{time.monotonic() - started:.0f} s after ssh answered")
+    system = os.readlink("/run/current-system")
+    check(f"{how}: the installed shell runs", True, system)
 
     def recovered():
         state = recovery()
         if state["paused"] and state["message"] and not state["working"]:
             raise Failed(f"{how}: automatic recovery paused: {state['message']}")
         return state["setting"] and not state["paused"] and not state["working"] and state
+    # Not paused: the shell starts paused and un-pauses only when auto-start succeeds, having restored every saved
+    # window. Its message is soon an automatic save's, so the message itself is not checked.
     state = wait_for(recovered, lambda: f"{how}: automatic recovery to finish: {recovery()}", timeout=120, step=0.5)
     check(f"{how}: automatic recovery finished on its own", True,
-          f"{time.monotonic() - started:.0f} s; {state['message']}")
+          f"{time.monotonic() - started:.0f} s after this check started; {state['message']}")
     verify(how, record, session)
     screenshot(run, {"reboot": "2-after-reboot.png", "relogin": "3-after-relogin.png"}[how])
-    new_window_follows(how)
-    wait_for(lambda: session_shape(load("session.json")) == expected_session(record["group"]["id"]),
+    new_window_follows(how, record)
+    wait_for(lambda: session_shape(load("session.json")) == expected_session(record),
              lambda: f"{how}: session.json without the new window: {session_shape(load('session.json'))}",
              timeout=60, step=0.5)
     check(f"{how}: saved again without the new window", True)
@@ -591,21 +638,46 @@ def check_after(run, how):
     record["phase"] = f"checked {how}"
     record["checked"] = {"boot": boot_id(), "session": session}
     write_record(run, record)
-    return {"result": "pass", "after": how}
+    return {"result": "pass", "after": how, "system": system}
+
+
+def test_windows(run):
+    """The windows the test opened: its own app IDs, Thunderbird with its profile in ``run``, and Files only while
+    it has one window (the test's; nobody else's opens during a run, which starts with none)."""
+    def cmdline(pid):
+        try:
+            return Path(f"/proc/{pid}/cmdline").read_bytes()
+        except OSError:
+            return b""
+    windows = read("windows")
+    files = [w for w in windows if w.get("app_id") == APPS["files"]]
+    return [w for w in windows
+            if (w.get("app_id") in NAMES and w["app_id"] not in (APPS["mail"], APPS["files"]))
+            or (w.get("app_id") == APPS["mail"] and str(run).encode() in cmdline(w.get("pid")))
+            or (w.get("app_id") == APPS["files"] and len(files) == 1)]
+
+
+def write_marker(state):
+    """Automatic recovery's marker for this Niri session (session/restore.py automatic)."""
+    name = "flow-recovery-" + hashlib.sha256(niri_session().encode()).hexdigest()
+    (runtime() / name).write_text(state)
 
 
 def put_back(run):
     """Close the test windows; the real state, settings, desktop entries and markers back, byte for byte."""
     record = read_record(run)
+    if record["phase"] == "put back":
+        return {"result": "already put back"}  # a second put-back must not restore an old backup over newer state
     restored = False
     try:
-        for w in ours():
+        for w in test_windows(run):
             niri("action", "close-window", "--id", w["id"])
         try:
-            wait_for(lambda: not ours(), "the test windows to close", timeout=20)
+            wait_for(lambda: not test_windows(run), "the test windows to close", timeout=20)
         except Failed:
-            for w in ours():  # an app that asks before it closes
-                os.kill(w["pid"], signal.SIGTERM)
+            for w in test_windows(run):  # an app that asks before it closes; never Files, which serves others
+                if w["app_id"] != APPS["files"]:
+                    os.kill(w["pid"], signal.SIGTERM)
         if record["phase"] == "backing up":
             return {"result": "nothing was changed"}  # the backup never finished; nothing was touched
         stop_shell()
@@ -622,9 +694,15 @@ def put_back(run):
         for path in runtime().glob("flow-recovery-*"):
             if path.name not in record["markers"]:
                 path.unlink()  # automatic recovery's markers for the test's sessions
-        for name in record["markers"]:
-            if (backup / name).exists():
-                shutil.copy2(backup / name, runtime() / name)
+        if record["boot"] == boot_id():  # after a reboot the old markers name sessions that are gone
+            for name in record["markers"]:
+                if (backup / name).exists():
+                    shutil.copy2(backup / name, runtime() / name)
+        if (record["settings_existed"] and re.search(r"(?m)^autoRecovery=true$", settings.read_text())
+                and niri_session() != record["session"]):
+            # With the real setting on, a shell starting in this new Niri session with no marker would restore the
+            # real saved session now. Paused instead: the user reviews it, as after any recovery that needs review.
+            write_marker("blocked")
         files = sorted(p.relative_to(state) for p in state.rglob("*")) if state.exists() else None
         saved = sorted(p.relative_to(backup / "flow") for p in (backup / "flow").rglob("*")) \
             if record["state_existed"] else None
@@ -638,8 +716,9 @@ def put_back(run):
         subprocess.run(["systemctl", "--user", "start", "flow-shell"], check=False, timeout=60)
         check("put-back: the real state, settings and desktop entries back byte for byte; the shell started",
               restored or record["phase"] == "backing up")
-    record["phase"] = "put back"
-    write_record(run, record)
+    if restored:
+        record["phase"] = "put back"
+        write_record(run, record)
     return {"result": "put back"}
 
 
@@ -668,6 +747,8 @@ def main():
             phase.add_argument("--mail", required=True, help="Thunderbird's store path")
         if name == "check":
             phase.add_argument("--after", required=True, choices=("reboot", "relogin"))
+        if name == "logout":
+            phase.add_argument("--swap-pins", action="store_true", help="swap the two pins first, with the shell stopped")
     args = parser.parse_args()
     lock = held(args.screen_lock) if args.screen_lock else None
     if args.phase == "check":
@@ -676,7 +757,7 @@ def main():
         session_environment()
     run = args.run.expanduser().resolve()
     result = {"prepare": lambda: prepare(run, args.mail), "reboot": lambda: reboot(run),
-              "logout": lambda: logout(run), "check": lambda: check_after(run, args.after),
+              "logout": lambda: logout(run, args.swap_pins), "check": lambda: check_after(run, args.after),
               "put-back": lambda: put_back(run)}[args.phase]()
     print(json.dumps({**result, "niri": niri("version").strip()}), flush=True)
     del lock
