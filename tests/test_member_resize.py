@@ -95,14 +95,20 @@ class MemberResizeTest(unittest.TestCase):
     def test_the_buttons_and_the_steps_agree_on_rows_that_do_not_fill_the_display(self):
         """The switcher's shares and a step are both of the display. The app moves by exactly one step and its
         neighbor takes the rest, so the row fills the display; a disabled step is the one that is refused."""
-        for row in ((50.0, 25.0, 25.0), (40.0, 20.0, 20.0), (60.0, 30.0, 30.0), (50.0, 15.0, 25.0), (35.0, 30.0, 25.0)):
+        # Rows that are not whole percentages, as real displays and apps give, are judged on the same exact
+        # shares by the buttons and the step: 25% of 1366 is 341.5 px, and an app at 24.6% shows as 25.
+        rows = [(row, 1000) for row in ((50.0, 25.0, 25.0), (40.0, 20.0, 20.0), (60.0, 30.0, 30.0),
+                                        (50.0, 15.0, 25.0), (35.0, 30.0, 25.0), (44.4, 24.9, 30.7),
+                                        (45.5, 25.0, 29.5), (50.4, 25.0, 24.6))] + [((50.0, 25.0, 24.96), 1366)]
+        for row, width in rows:
             for index in range(3):
                 for op, flag in (("member-wider", "can_widen"), ("member-narrower", "can_narrow")):
-                    with self.subTest(row=row, app=index + 1, op=op):
+                    with self.subTest(row=row, width=width, app=index + 1, op=op):
                         niri, registry = self.niri(), [self.trio()]
+                        niri.logical = {"width": width, "height": 768}
                         niri.widths.update(zip((1, 2, 3), row))
                         ws, windows = niri.snapshot()
-                        space = next(s for s in spaces.display_spaces(ws, windows, registry, (), 1000) if s["group_id"])
+                        space = next(s for s in spaces.display_spaces(ws, windows, registry, (), width) if s["group_id"])
                         self.assertEqual(space["shares"], [round(w) for w in row])
                         if space[flag][index]:
                             self.run_op(niri, op, str(index + 1), registry)
@@ -129,6 +135,13 @@ class MemberResizeTest(unittest.TestCase):
         self.assertEqual(registry[0]["members"], ["a", "c"])
         self.assertEqual((niri.widths[1], niri.widths[3]), (66.67, 33.33))
         self.assertEqual([round(r, 4) for r in group_store.ratios(registry[0])], [0.6667, 0.3333])
+
+    def test_removing_an_app_is_saved_even_if_filling_the_row_fails(self):
+        """The app has left the row already, so the fill is best effort."""
+        niri, registry = self.niri(), [self.trio()]
+        niri.fail_on = lambda args: args[1] == "set-window-width"
+        self.run_op(niri, "remove-from-group", "2", registry)
+        self.assertEqual(registry[0]["members"], ["a", "c"])
 
     def test_adding_checks_the_windows_again_before_resizing_them(self):
         niri, group = self.pair_and_neighbor()
