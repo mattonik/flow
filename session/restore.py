@@ -9,14 +9,12 @@ from collections import Counter
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import time
 import uuid
 import spaces
 import groups as group_store
 import pin_store
 import orphan_io
-from state_files import TEMP_PREFIX
 from launching import app_command
 
 
@@ -218,20 +216,9 @@ def automatic(op, path, wait=True, pause=True):
 
 
 def write_snapshot(path, data):
+    import state_files
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", dir=path.parent, prefix=TEMP_PREFIX, delete=False) as tmp:
-        try:
-            json.dump(data, tmp, ensure_ascii=False)
-            tmp.flush()
-            os.fsync(tmp.fileno())
-            if "FLOW_TEST_PAUSE" in os.environ:
-                import pause_point
-                pause_point.reached("session.write")
-            os.replace(tmp.name, path)
-            group_store.sync_directory(path.parent)  # make the rename itself durable
-        finally:
-            if os.path.exists(tmp.name):
-                os.unlink(tmp.name)
+    state_files.replace_durably(path, json.dumps(data, ensure_ascii=False).encode(), pause="session.write")
 
 
 def rename_group(path, group_id, label):

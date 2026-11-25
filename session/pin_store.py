@@ -15,8 +15,6 @@ that connector is seen. Version 1 files are copied to ``spaces.v1.json`` before 
 import json
 import os
 
-from state_files import TEMP_PREFIX
-
 
 def _text(value):
     return value.strip() if isinstance(value, str) and value.strip() else None
@@ -75,39 +73,15 @@ def read(path):
     return pins, displays, version
 
 
-def _replace_durably(path, data, pause=None, like=None):
-    """Put ``data`` (bytes) at ``path`` whole or not at all, and durably: a synced temporary file renamed into place,
-    then the folder synced. ``like``: a file whose mode and times the new one takes."""
-    import shutil, tempfile  # here, not above: flow-spaces runs after every burst of Niri events and mostly only reads
-    with tempfile.NamedTemporaryFile("wb", dir=path.parent, prefix=TEMP_PREFIX, delete=False) as tmp:
-        try:
-            tmp.write(data)
-            tmp.flush()
-            if like is not None:
-                shutil.copystat(like, tmp.name)
-            os.fsync(tmp.fileno())
-            if pause and "FLOW_TEST_PAUSE" in os.environ:
-                import pause_point
-                pause_point.reached(pause)
-            os.replace(tmp.name, path)
-            directory = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory)  # make the rename itself durable
-            finally:
-                os.close(directory)
-        finally:
-            if os.path.exists(tmp.name):
-                os.unlink(tmp.name)
-
-
 def write(path, pins, displays, version):
+    import state_files  # here, not above: flow-spaces runs after every burst of Niri events and mostly only reads
     rollback = path.parent / "spaces.v1.json"
     if version == 1 and path.exists() and not rollback.exists():
         # Keep the original single-display list for rollback before the first conversion. A copy cut short would be
         # kept, as it exists, while the original it stands for is replaced: it is made whole or not at all, first.
-        _replace_durably(rollback, path.read_bytes(), like=path)
+        state_files.replace_durably(rollback, path.read_bytes(), like=path)
     data = json.dumps({"version": 2, "displays": displays, "pins": pins}, ensure_ascii=False)
-    _replace_durably(path, data.encode(), pause="spaces.write")
+    state_files.replace_durably(path, data.encode(), pause="spaces.write")
 
 
 def migrate(pins, displays, version, connected, locate):

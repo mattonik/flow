@@ -670,11 +670,23 @@ The proof is in `tests/test_pause_point.py`, deterministic and in CI:
 
 The guest loop with the change is a smoke check, not the proof. That debug copy counted second SIGTERMs with a handler that logged and returned where the shipped one ignores, and saw them in 9 of 30 kills. All 30 kills left no temporary file. At the roughly 2 failures in 29 kills seen before, 30 clean kills would still happen by chance about one time in eight.
 
-**Temporary files a writer killed outright leaves (2026-11-25).** A writer killed by SIGKILL, or by a power cut, between its temporary file and the rename leaves that file in the state folder, and nothing removed it later. The writers now name their temporary files with a prefix of their own (`.flow-write-`, `session/state_files.py`). `spaces.py` removes such files each time it takes `spaces.lock`, which every refresh (the controller's included) and every action does. It also removes `tmp` plus eight characters, tempfile's own names from before the prefix. Every writer of the state folder holds `spaces.lock` while it writes, so a file found under the lock is never one being written; the next refresh after a crash clears it. `tests/test_state_writers.py` checks four things:
+**Temporary files a writer killed outright leaves (2026-11-25).** A writer killed by SIGKILL, or by a power cut, between its temporary file and the rename leaves that file in the state folder; nothing removed it later. The three writers (`groups.write`, `pin_store.write`, `restore.write_snapshot`) now share one helper, `state_files.replace_durably`.
+- **Naming:** its temporary files carry the prefix `.flow-write-`.
+- **Removal:** before each write, if this process holds `spaces.lock`, it removes any such file and says so on stderr (the controller's stderr reaches the shell's log).
+- **Why that is safe:** every writer runs under Flow's locks. These are spaces.py's refresh and actions, and flow-recovery's saves, restores and renames; `NamedTemporaryFile` has no other call site in `session/`. So while this process holds the lock, no temporary file in the folder is being written.
+- **Who holds the lock:** `/proc/locks`, which names each lock's holder. A lock another process holds proves nothing about this writer, so a writer without the lock never removes anything, even beside one that has it. Without `/proc/locks` (not Linux) nothing is removed.
+- **Cost:** the read path pays nothing. The next write after a crash clears the file.
+- **Older files:** temporary files from before the prefix (`tmp` and eight characters) are not removed; any found in `~/.local/state/flow` can be deleted by hand.
+
+`tests/test_state_writers.py` checks:
 - each writer's temporary file carries the prefix;
-- the sweep removes those files and nothing else;
-- on Linux, end to end: a writer SIGKILLed at its pause leaves its file, and a real `spaces.py refresh` removes it;
-- without the sweep in `spaces.py`, without a writer's prefix, or with a sweep that takes every file, one of them fails (run in the guest).
+- a sweep removes those files and nothing else, and `/proc/locks` lines are read as this process's hold only;
+- on Linux: a writer SIGKILLed at its pause leaves its file, the next write under the locks removes it and logs that, and a write without the locks removes nothing;
+- on Linux: a writer paused under the locks still finishes while a second writer waits on the locks and a third writes without them.
+
+In the guest, each of these fails at least one of them: no sweep, the lock taken as held by anyone, the PID not compared, the lock always taken as held, and temporary files without the prefix.
+
+The restart smoke still sees a leftover: the development checks read the folder before a new shell starts. In installed runs, a write by the new shell would remove one, and its log line says so.
 
 ### Under a stream of compositor events (2026-11-22)
 
