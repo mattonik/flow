@@ -824,7 +824,9 @@ def import_snapshot(state, data, confirm, dirs):
             arg = str(next(w["id"] for w in live if w.get("app_id") == snapshot.app_id(space["apps"][0])
                            and w.get("workspace_id") == workspace["id"]))
         try:
-            with flow_locks(state):
+            # As flow-spaces runs an action: session.lock held, and run_locked takes spaces.lock itself.
+            with (state / "session.lock").open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
                 if spaces.snapshot()[0]["id"] != workspace["id"]:
                     raise ValueError("Workspace changed")
                 spaces.run_locked(state, op, arg, emit=False)
