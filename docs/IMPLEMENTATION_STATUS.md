@@ -660,6 +660,16 @@ Out of scope: a real reboot (F-003), real hardware, and Quickshell's live reload
 
 **Since 2026-11-25** `restore.write_snapshot` also syncs the state folder after its rename, as the other two writers do, so a power cut just after an automatic save can no longer bring back the snapshot before it. `tests/test_state_writers.py` checks, for all three writers, the file synced before the rename and the folder after it; without each writer's folder sync it fails for that writer. The rollback copy `pin_store.write` keeps of a version-1 `spaces.json` (`spaces.v1.json`) was written in place by `shutil.copy2` and never synced: cut short, it would have stayed torn (it exists, so it is never made again) while its original was converted, and a power cut could have lost its contents. It is now written as `spaces.json` is, through one helper: a synced temporary file, renamed, its folder synced, before the original is replaced. Two more tests in `tests/test_state_writers.py` check that order, and that a copy that cannot be made stops the conversion and leaves nothing behind. A `spaces.v1.json` made before 2026-11-25 was written in place; check that it parses before relying on it.
 
+**Found and fixed after the pass: a second SIGTERM cut the controller's exit short (2026-11-25).** On a later install, one full run of the controller smoke failed after the SIGKILL mid-automatic-save: the save's complete temporary snapshot was left in the state folder. A loop of that case alone failed at its 11th kill; a second loop, with a trace in the controller, at its 18th. In the failing kill the trace showed the controller's SIGTERM handler run twice. The first SIGTERM's exit was unwinding through `write_snapshot`'s `finally` when the second one raised again, before the file was removed. prctl(2) has the parent-death signal sent when the thread that started a process exits, and again when each thread it is then reparented to exits. A multithreaded shell that dies thread by thread can therefore send it more than once.
+
+The handler now ignores SIGTERM once it has run. It also sets an alarm: an exit that does not finish within 5 s is ended by SIGALRM. Otherwise a first exit swallowed in a finalizer, or a cleanup that hangs, could only be ended by SIGKILL, and would keep the lock the next controller waits on.
+
+The proof is in `tests/test_pause_point.py`, deterministic and in CI:
+- A second SIGTERM sent inside the first one's `finally` must not stop that `finally`. With the old handler it always does.
+- An exit swallowed in a finalizer must be ended by the deadline. Without the alarm it is not.
+
+The guest loop with the change is a smoke check, not the proof. That debug copy counted second SIGTERMs with a handler that logged and returned where the shipped one ignores, and saw them in 9 of 30 kills. All 30 kills left no temporary file. At the roughly 2 failures in 29 kills seen before, 30 clean kills would still happen by chance about one time in eight.
+
 **Not fixed, outside a restart's reach:** a writer killed by SIGKILL leaves its temporary file in the state folder; nothing removes it later. The smoke's SIGKILLs hit the shell, whose controller dies by SIGTERM; only the controller-alone case SIGKILLs a controller, outside a write.
 
 ### Under a stream of compositor events (2026-11-22)

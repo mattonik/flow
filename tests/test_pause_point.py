@@ -2,7 +2,7 @@
 
 Each writer is paused by session/pause_point.py where a kill hurts most: its new content written and synced to
 a temporary file, the rename not yet done. A process stopped there by SIGTERM (as the controller is when its shell
-dies: setpriv --pdeathsig TERM, and a handler that exits) or SIGKILL must leave the old file byte for byte, and
+dies: setpriv --pdeathsig TERM, and a handler that exits, once) or SIGKILL must leave the old file byte for byte, and
 after SIGTERM no temporary file either. A writer that wrote in place would leave it cut short at the same point.
 """
 
@@ -117,6 +117,62 @@ class InterruptedWriteTest(unittest.TestCase):
         for point in CALLS:
             with self.subTest(point=point):
                 self.interrupt(point, signal.SIGKILL)
+
+
+# A second SIGTERM while the first one's exit unwinds through a finally: the parent-death signal comes again when
+# each thread the controller is reparented to exits. The finally must still finish.
+TWICE = """import os, signal, sys, time
+from pathlib import Path
+import flow_controller
+flow_controller.exit_on_sigterm()
+done = Path(sys.argv[1])
+try:
+    os.kill(os.getpid(), signal.SIGTERM)
+    time.sleep(5)
+    sys.exit(3)  # the first SIGTERM did not end the try
+finally:
+    os.kill(os.getpid(), signal.SIGTERM)
+    time.sleep(0.2)
+    done.write_text("finished")
+"""
+
+
+# A first SIGTERM handled inside a finalizer: Python reports the SystemExit as ignored and goes on. Another SIGTERM
+# no longer helps, so the deadline must end the process.
+SWALLOWED = """import os, signal, sys, time
+import flow_controller
+flow_controller.EXIT_DEADLINE = 1
+flow_controller.exit_on_sigterm()
+
+class Finalized:
+    def __del__(self):
+        os.kill(os.getpid(), signal.SIGTERM)
+        for _ in range(100):  # the handler runs here, and its SystemExit is ignored
+            pass
+
+Finalized()
+os.kill(os.getpid(), signal.SIGTERM)
+time.sleep(10)
+"""
+
+
+class RepeatedSigtermTest(unittest.TestCase):
+    def test_an_exit_that_never_finishes_is_ended_by_the_deadline(self):
+        started = time.monotonic()
+        child = subprocess.run([sys.executable, "-c", SWALLOWED], env=dict(os.environ, PYTHONPATH=str(SESSION)),
+                               stderr=subprocess.PIPE, text=True, timeout=30)
+        self.assertIn("SystemExit", child.stderr)  # the first exit was swallowed
+        self.assertEqual(child.returncode, -signal.SIGALRM)
+        self.assertLess(time.monotonic() - started, 6)
+
+    def test_a_second_sigterm_does_not_cut_the_exit_short(self):
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, folder, True)
+        done = folder / "done"
+        child = subprocess.run([sys.executable, "-c", TWICE, str(done)], env=dict(os.environ, PYTHONPATH=str(SESSION)),
+                               timeout=30)
+        self.assertEqual(child.returncode, 0)
+        self.assertEqual(done.read_text() if done.exists() else None, "finished")
 
 
 if __name__ == "__main__":
