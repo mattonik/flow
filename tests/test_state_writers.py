@@ -25,7 +25,10 @@ WRITES = {
 
 class DurableWriteTest(unittest.TestCase):
     def events(self, name):
-        """What the writer of ``name`` synced and renamed, in order: ("file" | "folder" | "rename", path)."""
+        """What the writer of ``name`` synced and renamed, in order, and the file and folder it wrote.
+
+        A synced descriptor is known by its device and inode, and a file by its size too: a rename keeps the inode,
+        so the file synced before it is the one now in place only if both match, with all its bytes written."""
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         target = Path(folder.name) / name
@@ -33,31 +36,30 @@ class DurableWriteTest(unittest.TestCase):
         seen, fsync, replace = [], os.fsync, os.replace
 
         def synced(fd):
-            kind = "folder" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file"
-            seen.append((kind, os.path.realpath(os.readlink(f"/proc/self/fd/{fd}")) if os.path.exists("/proc/self/fd")
-                         else None))
+            info = os.fstat(fd)
+            folder_synced = stat.S_ISDIR(info.st_mode)
+            seen.append(("folder" if folder_synced else "file", info.st_dev, info.st_ino,
+                         None if folder_synced else info.st_size))
             return fsync(fd)
 
         def renamed(source, destination):
-            seen.append(("rename", os.path.realpath(destination)))
+            seen.append(("rename",))
             return replace(source, destination)
 
         with patch("os.fsync", synced), patch("os.replace", renamed):
             WRITES[name](target)
-        return seen, os.path.realpath(target), os.path.realpath(target.parent)
+        written, parent = os.stat(target), os.stat(target.parent)
+        return (seen, ("file", written.st_dev, written.st_ino, written.st_size),
+                ("folder", parent.st_dev, parent.st_ino, None))
 
     def test_each_writer_syncs_its_file_then_renames_then_syncs_the_folder(self):
         for name in WRITES:
             with self.subTest(name=name):
-                seen, target, folder = self.events(name)
-                kinds = [kind for kind, _ in seen]
-                self.assertIn("rename", kinds)
-                rename = kinds.index("rename")
-                self.assertEqual(seen[rename][1], target)
-                self.assertIn("file", kinds[:rename])
-                self.assertIn("folder", kinds[rename + 1:])
-                if seen[0][1] is not None:  # Linux names each synced descriptor's file
-                    self.assertIn(("folder", folder), seen[rename + 1:])
+                seen, written, folder = self.events(name)
+                self.assertEqual(seen.count(("rename",)), 1)
+                rename = seen.index(("rename",))
+                self.assertIn(written, seen[:rename], "the new file, all its bytes written, synced before the rename")
+                self.assertIn(folder, seen[rename + 1:], "its folder synced after the rename")
 
 
 if __name__ == "__main__":
