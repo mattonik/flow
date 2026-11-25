@@ -722,6 +722,36 @@ Each of these fails at least one test: no sweep, no age check, ASCII-only JSON i
 
 The restart smoke still sees a leftover: the development checks read the folder before a new shell starts, and a file that young is never removed.
 
+### F-003 acceptance: pinned spaces after a reboot and a new login (2026-11-25)
+
+The spec's line is "Main/1 Mail and Main/2 Studio+Notes stay leftmost after restart; dynamic windows follow". F-003 passes when every check below holds after both restarts below, in the guest, on the installed code built from the change's tree.
+
+**What "after restart" means.** A restart closes every app, and most apps never reopen themselves. Flow reopens them at login through automatic recovery (Settings → *Automatic recovery*, off by default). The installed shell's first `flow-recovery auto-start` in a new Niri session reopens the focused workspace's saved session, pinned apps included. It rebuilds each Group as one column in member order. The next refresh puts the pins first, in pin order. So the journey runs with automatic recovery on, and "after restart" means after that recovery finishes, with no step by the user.
+
+The alternative, a closed pinned app launched from its pin into its place, is not the acceptance. Super+number does open a closed pinned app, but a closed pinned Group cannot be opened that way: its shortcut answers *This pinned Group is unavailable or no longer one stack*. Flow has no launch-on-login setting per pin (spec §9.1 makes it optional), and this change adds none: a second launcher at login would open the same apps as recovery and race it. Automatic recovery covers the focused display only; F-003 is about Main, and other displays' pins after a restart stay open (F-011).
+
+**Setup**, on Main (the guest's only connected display), with the real state, settings and desktop entries backed up and the state folder emptied:
+- **Mail:** Thunderbird 159 from the guest's nixpkgs, a real mail client, with a profile of its own (no account, its first-run dialogs off). It is pinned first, at Main/1.
+- **Studio + Notes:** two Foot windows with app IDs and desktop entries of their own, stacked and made a Group named *Studio + Notes*, members in that order, pinned second (Main/2). Notes was focused last. These two are stand-ins: the guest has no Studio or Notes app. What F-003 tests is Flow's placement, which depends on an app's ID, its desktop entry and its having one window, not on what it draws. The real app's start-up (Thunderbird takes seconds and keeps a profile) is Mail's part.
+- **Dynamic:** Files (Nautilus, installed) and a third Foot stand-in, *Scratch*, unpinned, after the pins. Files has focus.
+- Automatic recovery is on, and the controller's automatic save has written that session.
+
+**Restarts:**
+1. **A reboot** of the guest (`systemctl reboot`). SDDM logs `floe` in automatically.
+2. **A log out and back in**, after the reboot's checks: Niri's `quit`, then the display manager restarted, which logs in automatically as at boot. SDDM's greeter does not log in again by itself (`Relogin=false`), and `floe` has no password to type. The test's ssh session stays open, so `floe`'s user manager outlives the log out; with no other session, a real log out stops it.
+
+**Checks** after each restart, from login, with no input but the test's:
+1. **A new session.** After the reboot, a new boot ID. After the log out, a new Niri socket. The `flow-shell` unit is active.
+2. **Recovery finished on its own.** Within 120 s the shell's `recovery_state` says *Automatic session recovery is ready.*, not paused, not working. `auto-start` says that only when it restored every saved window and confirmed their order.
+3. **Pins leftmost, dynamic windows after them.** One window per test app, all tiled on Main's focused workspace. Columns, left to right: Mail; Studio over Notes; Files; Scratch. Focus is back on Files.
+4. **Still one Group.** `groups.json` holds the Group once, with the same ID, name and member order, bound to the new windows in this Niri session. No other Group holds its apps.
+5. **The same pins.** `spaces.json` holds the same two pins (IDs, names, order, display, Group ID, members), bound to the new windows in this Niri session. The shell's `spaces_view` lists them in that order with those windows, and `spaces_error` is empty.
+6. **Pin shortcuts.** Super+1, typed through Niri's virtual keyboard, focuses Mail. Super+2 focuses the Group's last focused member, Notes.
+7. **A new window follows the pins.** Opened with Mail focused, Niri places it right of Mail. The next refresh puts the Group back second, and the new window third.
+8. **Whole state files.** `spaces.json`, `groups.json` and `session.json` parse, and no temporary file is left in the state folder. `session.json` holds the five apps in the same columns and the Group. At the end the real state folder, settings file and desktop entries are put back byte for byte, and `flow-shell` runs.
+
+Checks 3 to 6 and 8 also hold before the first restart, so the baseline is right.
+
 ### Under a stream of compositor events (2026-11-22)
 
 The shell coalesces the refreshes Niri's events ask for: 150 ms after the last event, at most 1 s after the first unanswered one, and at least 0.5 s after the previous refresh. A window whose only change is its title is relabelled from the event, with no `flow-spaces` run. The new title shows at once, then at most once a second. `flow-spaces` reads Niri over one socket connection, and the helpers run compiled bytecode from the store, so `refresh` and `observe` dropped from about 66 ms to 22 ms. `flow-search` observes instead of refreshing. The opt-in app menu asks for the focused app's identity when focus moves, not every 1.5 s. Automatic layout runs when a Group does not suit its display's orientation, not every 2 s.
