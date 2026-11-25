@@ -219,10 +219,16 @@ def desktop_file(app):
     return next((p for p in found if p.is_file()), None)
 
 
-def open_app(name, timeout=60):
+def open_app(name, timeout=30):
     app = NEW if name == "new" else APPS[name]
     launch(desktop_file(app))
-    wait_for(lambda: any(w["app_id"] == app for w in read("windows")), f"a window of {app}", timeout=timeout)
+    try:
+        wait_for(lambda: any(w["app_id"] == app for w in read("windows")), f"a window of {app}", timeout=timeout)
+    except Failed:
+        # Setup only: Nautilus's D-Bus activation once did nothing, a minute after its last instance had exited.
+        print(json.dumps({"note": f"{app} did not open; launched again"}), flush=True)
+        launch(desktop_file(app))
+        wait_for(lambda: any(w["app_id"] == app for w in read("windows")), f"a window of {app}", timeout=timeout)
     wait_for(lambda: focused_name() == name, f"{name} to take focus", timeout=10)
 
 
@@ -253,7 +259,16 @@ def spaces(*args):
 
 
 def screenshot(run, name):
+    """Niri's overview, once the shell shows the focused window's space active."""
+    ident = next(w for w in read("workspaces") if w["is_focused"])["active_window_id"]
+    wait_for(lambda: any(s["active"] and s["id"] == ident for s in json.loads(ipc("spaces_view"))["spaces"]),
+             "the shell to show the focused window's space", timeout=10)
+    # Niri's overview shows the whole row of columns; it opens, and the view scrolls, in animations.
+    niri("action", "open-overview")
+    time.sleep(1.5)
     subprocess.run(["grim", str(run / name)], check=False, timeout=30)
+    niri("action", "close-overview")
+    time.sleep(0.5)
 
 
 # State files -----------------------------------------------------------------------------------------------------
@@ -565,7 +580,7 @@ def check_after(run, how):
     check(f"{how}: automatic recovery finished on its own", True,
           f"{time.monotonic() - started:.0f} s; {state['message']}")
     verify(how, record, session)
-    screenshot(run, f"2-after-{how}.png")
+    screenshot(run, {"reboot": "2-after-reboot.png", "relogin": "3-after-relogin.png"}[how])
     new_window_follows(how)
     wait_for(lambda: session_shape(load("session.json")) == expected_session(record["group"]["id"]),
              lambda: f"{how}: session.json without the new window: {session_shape(load('session.json'))}",
