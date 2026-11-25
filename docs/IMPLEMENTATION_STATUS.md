@@ -670,7 +670,23 @@ The proof is in `tests/test_pause_point.py`, deterministic and in CI:
 
 The guest loop with the change is a smoke check, not the proof. That debug copy counted second SIGTERMs with a handler that logged and returned where the shipped one ignores, and saw them in 9 of 30 kills. All 30 kills left no temporary file. At the roughly 2 failures in 29 kills seen before, 30 clean kills would still happen by chance about one time in eight.
 
-**Not fixed, outside a restart's reach:** a writer killed by SIGKILL leaves its temporary file in the state folder; nothing removes it later. The smoke's SIGKILLs hit the shell, whose controller dies by SIGTERM; only the controller-alone case SIGKILLs a controller, outside a write.
+**Temporary files a writer killed outright leaves (2026-11-25).** A writer killed by SIGKILL, or by a power cut, between its temporary file and the rename leaves that file in the state folder; nothing removed it later. The three writers (`groups.write`, `pin_store.write`, `restore.write_snapshot`) now share one helper, `state_files.replace_durably`. Its temporary files carry the prefix `.flow-write-`. Before each write it removes such files that are over an hour old, and says so on stderr.
+- **Why the age:** a write takes milliseconds (the test-only pause, 30 s at most), so no temporary file that old is in use. That holds on any filesystem, without asking who holds a lock. A first version asked `/proc/locks`, and a review found its device numbers do not match `stat()`'s on btrfs subvolumes, where it would never have removed anything.
+- **The rare wrong call:** a clock jumping forward by over an hour during a write could make a live file look old. That write then fails, and the file it would have replaced stays whole.
+- **Who sees the log line:** the shell keeps the controller's stderr, so a removal during the controller's own writes (automatic saves, refreshes that record a change) reaches the shell's log. One during a `flow-spaces` action or `flow-recovery` goes nowhere.
+- **Older files:** temporary files from before the prefix (`tmp` and eight characters) are not removed; any found in `~/.local/state/flow` can be deleted by hand.
+- **UTF-8:** the helper writes bytes, so the three files are now written as UTF-8 whatever the locale. Before, two of them followed the locale, as their readers did. Their readers now read UTF-8 too. Under a UTF-8 locale nothing changes.
+
+`tests/test_state_writers.py` checks, on any platform:
+- each writer's temporary file carries the prefix, and each writer's bytes are JSON with non-ASCII kept, as UTF-8;
+- the rollback copy keeps the original's mode;
+- a sweep removes stale prefixed files and nothing else;
+- a writer SIGKILLed at its pause leaves its file, a later write keeps it while it is fresh, and removes it, logged, once it is old;
+- a writer paused before its rename still finishes beside another write made meanwhile.
+
+Each of these fails at least one test: no sweep, no age check, ASCII-only JSON in any of the three writers, the rollback copy without the original's mode, and temporary files without the prefix.
+
+The restart smoke still sees a leftover: the development checks read the folder before a new shell starts, and a file that young is never removed.
 
 ### Under a stream of compositor events (2026-11-22)
 

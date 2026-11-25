@@ -100,29 +100,17 @@ def validate(data):
 
 
 def write(path, groups):
-    import tempfile  # here, not above: flow-spaces runs after every burst of Niri events and mostly only reads
+    import state_files  # here, not above: flow-spaces runs after every burst of Niri events and mostly only reads
     data = {"version": 1, "groups": groups}
     validate(data)
-    with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as tmp:
-        try:
-            json.dump(data, tmp, ensure_ascii=False)
-            tmp.flush()
-            os.fsync(tmp.fileno())
-            if "FLOW_TEST_PAUSE" in os.environ:
-                import pause_point
-                pause_point.reached("groups.write")
-            os.replace(tmp.name, path)
-            sync_directory(path.parent)
-        finally:
-            if os.path.exists(tmp.name):
-                os.unlink(tmp.name)
+    state_files.replace_durably(path, json.dumps(data, ensure_ascii=False).encode(), pause="groups.write")
 
 
 def load(directory):
     path = directory / "groups.json"
     marker = directory / "groups.initialized"
     if path.exists():
-        result = validate(json.loads(path.read_text()))
+        result = validate(json.loads(path.read_text(encoding="utf-8")))
         if not marker.exists():
             mark_initialized(directory)
         return result
@@ -130,7 +118,7 @@ def load(directory):
         raise ValueError("Group registry is missing; state was not changed")
     snapshot = directory / "session.json"
     if snapshot.exists():
-        data = json.loads(snapshot.read_text())
+        data = json.loads(snapshot.read_text(encoding="utf-8"))
         if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("windows"), list):
             raise ValueError("Invalid saved session; Groups were not migrated")
         groups = validate({"version": 1, "groups": data.get("groups", [])})
