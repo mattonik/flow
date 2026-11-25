@@ -694,9 +694,169 @@ def focused_display(workspace, state=None):
     return (record["key"] if record else None), {r["key"] for r in identities.values()}
 
 
+def snapshot_display(workspace, outputs, displays, pins):
+    """The focused display, for a snapshot's plan: its key and label, its pin count, how many are connected."""
+    identities, _ = pin_store.identities(outputs, pin_store.shared_serials(displays))
+    record = identities.get(workspace.get("output"))
+    key = record["key"] if record else None
+    return {"key": key, "label": record["label"] if record else workspace.get("output") or "this display",
+            "pins": len(spaces.local_pins(pins, key)) if key else 0, "connected": len(identities)}
+
+
+def export_snapshot(state, target):
+    """Write the focused workspace as a portable snapshot to a new file (ADR-0012)."""
+    import snapshot
+    with flow_locks(state):
+        groups = group_store.load(state, migrate=False)
+        pins, displays, _ = pin_store.read(state / "spaces.json")
+        workspace, windows, outputs, _ = spaces.full_state()
+        display = snapshot_display(workspace, outputs, displays, pins)
+        spaces.SESSION = spaces.session_id()  # this session's Group bindings tell same-app windows apart
+        try:
+            listed = spaces.display_spaces(workspace, windows, groups, pins)
+        finally:
+            spaces.SESSION = None
+        here = spaces.local_pins(pins, display["key"]) if display["key"] else pins
+        data, left = snapshot.export(listed, here, groups, spaces.app_name)
+    layers = sum(1 for w in windows if w.get("workspace_id") == workspace["id"] and w.get("is_floating"))
+    if layers:
+        left.insert(0, f"{layers} Layer{'s' if layers > 1 else ''} (floating windows): Layers are not exported")
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)  # never replaces a file
+    with os.fdopen(fd, "wb") as out:
+        out.write(snapshot.dump(data))
+    count = len(data["spaces"])
+    return {"message": f"Exported {count} space{'s' if count > 1 else ''} to {target}.", "left_out": left}
+
+
+def import_plan(state, data, dirs):
+    """The import's plan for this machine as it is now, and what it was computed from. Call under Flow's locks."""
+    import snapshot
+    groups = group_store.load(state, migrate=False)
+    pins, displays, _ = pin_store.read(state / "spaces.json")
+    pinned_apps(pins)
+    workspace, windows, outputs, workspaces = spaces.full_state()
+    display = snapshot_display(workspace, outputs, displays, pins)
+    report = snapshot.plan(data, windows, groups, pins,
+                           lambda desktop: spaces.desktop_file(snapshot.app_id(desktop), dirs) is not None, display)
+    return report, {"groups": groups, "pins": pins, "workspace": workspace, "windows": windows,
+                    "workspaces": workspaces, "display": display}
+
+
+def empty_workspace(workspace, windows, workspaces):
+    """The focused display's empty workspace: the focused one when it is empty, else Niri's last one there."""
+    used = {w.get("workspace_id") for w in windows}
+    if workspace["id"] not in used:
+        return workspace
+    mine = sorted((w for w in workspaces if w.get("output") == workspace.get("output")), key=lambda w: w["idx"])
+    if not mine or mine[-1]["id"] in used:
+        raise ValueError("This display has no empty workspace; nothing was imported")
+    return mine[-1]
+
+
+def import_snapshot(state, data, confirm, dirs):
+    """Import a previewed snapshot onto a new workspace; ``confirm`` is the preview's digest (ADR-0012)."""
+    import snapshot
+    with flow_locks(state):
+        report, seen = import_plan(state, data, dirs)
+        if confirm != report["confirm"]:
+            raise ValueError("This is not the confirmation of the current preview: something changed here since, "
+                             "or it belongs to another snapshot. Nothing was imported; preview again")
+        if not report["open"]:
+            raise ValueError("Nothing in the snapshot can open here; nothing was imported")
+        target = empty_workspace(seen["workspace"], seen["windows"], seen["workspaces"])
+        if target["id"] != seen["workspace"]["id"]:
+            spaces.command("action", "focus-workspace", target["idx"])
+        workspace, windows = spaces.snapshot()
+        if workspace["id"] != target["id"] or any(w.get("workspace_id") == target["id"] for w in windows):
+            raise ValueError("The new workspace did not come into focus empty; nothing was imported")
+        restore_data, created = snapshot.restore_input(report)
+        expected = seen["groups"] + created
+        if created:
+            group_store.write(state / "groups.json", expected)
+    session, pins = spaces.session_id(), seen["pins"]
+
+    def checked_state():
+        with flow_locks(state):
+            now_groups = group_store.load(state, migrate=False)
+            now_pins = pin_store.read(state / "spaces.json")[0]
+            current = spaces.snapshot()
+            if (not groups_unchanged_or_focused(expected, now_groups, *current)
+                    or not pins_unchanged_or_rebound(pins, now_pins, session, current[1], current[0], now_groups)):
+                raise ValueError("Groups or pinned spaces changed; the import stopped")
+            return current
+
+    def launch(desktop):
+        current, _ = checked_state()
+        if current["id"] != workspace["id"]:
+            raise ValueError("Workspace changed; the import stopped")
+        subprocess.run(app_command(["gio", "launch", str(desktop)]), check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    try:
+        notes, _ = restore(restore_data, workspace, windows, dirs, launch, checked_state, spaces.command,
+                           session=session, registered=created, display=seen["display"]["key"])
+    except ValueError as exc:
+        kept = ("; Groups it registered stay: " + ", ".join(g["label"] for g in created)) if created else ""
+        raise ValueError(f"The import stopped: {exc}{kept}") from exc
+    left = list(report["left_out"])
+    current, live = spaces.snapshot()
+    opened = []
+    for space in report["open"]:
+        apps = [snapshot.app_id(d) for d in space["apps"]]
+        found = [w for w in live if w.get("app_id") in apps and w.get("workspace_id") == workspace["id"]]
+        if len(found) == len(apps):
+            opened.append(space)
+        else:
+            missing = [d for d in space["apps"] if not any(w.get("app_id") == snapshot.app_id(d) for w in found)]
+            left.append({**({"group": space["group"]["name"]} if space.get("group") else {"app": space["apps"][0]}),
+                         "reason": "did not open: " + ", ".join(missing)})
+    pins_report = []
+    for space in sorted((s for s in report["open"] if s.get("pin")), key=lambda s: s["pin"]):
+        name = space["group"]["name"] if space.get("group") else space["apps"][0]
+        if space not in opened:
+            pins_report.append({"space": name, "pinned": False, "reason": "did not open"})
+            continue
+        if space.get("group"):
+            group_id = next(g["id"] for g in created if g["members"] == [snapshot.app_id(d) for d in space["apps"]])
+            op, arg = "pin-group", group_id
+        else:
+            op = "pin"
+            arg = str(next(w["id"] for w in live if w.get("app_id") == snapshot.app_id(space["apps"][0])
+                           and w.get("workspace_id") == workspace["id"]))
+        try:
+            with flow_locks(state):
+                if spaces.snapshot()[0]["id"] != workspace["id"]:
+                    raise ValueError("Workspace changed")
+                spaces.run_locked(state, op, arg, emit=False)
+            pins_report.append({"space": name, "pinned": True})
+        except ValueError as exc:
+            pins_report.append({"space": name, "pinned": False, "reason": str(exc)})
+    message = f"Imported {len(opened)} of {len(report['open'])} spaces onto a new workspace."
+    if left:
+        message += " Left out: " + "; ".join(f"{e.get('group') or e.get('app')}: {e['reason']}" for e in left)
+    return {"message": message, "acted": True, "workspace": target["idx"], "opened": opened, "left_out": left,
+            "pins": pins_report, "notes": notes}
+
+
 def main():
     path = state_path()
     op = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if op in ("export", "preview", "import"):
+        import snapshot
+        needed = {"export": 3, "preview": 3, "import": 4}[op]
+        if len(sys.argv) != needed:
+            raise ValueError({"export": "Name a new file to export to", "preview": "Name a snapshot file to preview",
+                              "import": "Name the snapshot file and the confirmation from its preview"}[op])
+        if op == "export":
+            print(json.dumps(export_snapshot(path.parent, sys.argv[2])))
+            return
+        data = snapshot.parse(Path(sys.argv[2]).read_bytes())
+        if op == "preview":
+            with flow_locks(path.parent):
+                print(json.dumps(import_plan(path.parent, data, spaces.data_dirs())[0]))
+            return
+        print(json.dumps(import_snapshot(path.parent, data, sys.argv[3], spaces.data_dirs())))
+        return
     if op in ("auto-start", "auto-save", "auto-ready", "auto-pause"):
         print(json.dumps(automatic(op, path)))
         return

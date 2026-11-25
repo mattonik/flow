@@ -86,6 +86,7 @@ def validate(data):
            or any(key in g and g[key] not in ("stack", "side-by-side")
                   for key in ("layout", "pending_layout"))
            or ("auto_layout" in g and not isinstance(g["auto_layout"], bool))
+           or ("named" in g and not isinstance(g["named"], bool))
            or not valid_ratios(g)
            or ("last_focused_app" in g and g["last_focused_app"] not in g["members"])
            or ("pending_layout" in g and g["pending_layout"] == g.get("layout", "stack")) for g in groups):
@@ -106,12 +107,14 @@ def write(path, groups):
     state_files.replace_durably(path, json.dumps(data, ensure_ascii=False).encode(), pause="groups.write")
 
 
-def load(directory):
+def load(directory, migrate=True):
+    """The registered Groups. Without ``migrate`` nothing is migrated or marked, as for a preview that must
+    change nothing (ADR-0012)."""
     path = directory / "groups.json"
     marker = directory / "groups.initialized"
     if path.exists():
         result = validate(json.loads(path.read_text(encoding="utf-8")))
-        if not marker.exists():
+        if migrate and not marker.exists():
             mark_initialized(directory)
         return result
     if marker.exists():
@@ -124,6 +127,8 @@ def load(directory):
         groups = validate({"version": 1, "groups": data.get("groups", [])})
     else:
         groups = []
+    if not migrate:
+        return groups
     write(path, groups)
     mark_initialized(directory)
     return groups
@@ -137,3 +142,5 @@ def rename(groups, group_id, label):
     if len(matches) != 1:
         raise ValueError("Saved Group no longer exists or is ambiguous")
     matches[0]["label"] = label
+    # The name is the user's now, not one made of window titles: a workspace snapshot may carry it (ADR-0012).
+    matches[0]["named"] = True
