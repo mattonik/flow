@@ -108,6 +108,9 @@ def write(path, groups):
             json.dump(data, tmp, ensure_ascii=False)
             tmp.flush()
             os.fsync(tmp.fileno())
+            if "FLOW_TEST_PAUSE" in os.environ:
+                import pause_point
+                pause_point.reached("groups.write")
             os.replace(tmp.name, path)
             sync_directory(path.parent)
         finally:

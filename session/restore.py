@@ -223,6 +223,9 @@ def write_snapshot(path, data):
             json.dump(data, tmp, ensure_ascii=False)
             tmp.flush()
             os.fsync(tmp.fileno())
+            if "FLOW_TEST_PAUSE" in os.environ:
+                import pause_point
+                pause_point.reached("session.write")
             os.replace(tmp.name, path)
         finally:
             if os.path.exists(tmp.name):
