@@ -171,6 +171,8 @@ LiberNT is a Windows NT-compatible operating-system effort descended from ReactO
 
 Luma is useful as a product-direction comparison for a tablet-friendly Linux experience and continuity aspirations. Its delivery model, hardware support, system architecture and sync capabilities must be independently verified before making technical assumptions. None of these projects changes Flow's decision to use Niri/Quickshell/NixOS.
 
+The [November 2026 continuity and Wi-Fi notes](LUMA_SYNC_AND_WIFI_NOTES.md) compare Luma's reported nightly changes with Floe's current implementation and identify proposed tests and source-availability limits.
+
 ---
 
 ## 3. Omarchy utility atlas: what Flow should reuse instead of inventing
