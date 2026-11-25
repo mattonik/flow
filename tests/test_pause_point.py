@@ -119,8 +119,8 @@ class InterruptedWriteTest(unittest.TestCase):
                 self.interrupt(point, signal.SIGKILL)
 
 
-# A second SIGTERM while the first one's exit unwinds through a finally: the kernel's parent-death signal comes
-# again on each reparenting. The finally must still finish.
+# A second SIGTERM while the first one's exit unwinds through a finally: the parent-death signal comes again when
+# each thread the controller is reparented to exits. The finally must still finish.
 TWICE = """import os, signal, sys, time
 from pathlib import Path
 import flow_controller
@@ -129,6 +129,7 @@ done = Path(sys.argv[1])
 try:
     os.kill(os.getpid(), signal.SIGTERM)
     time.sleep(5)
+    sys.exit(3)  # the first SIGTERM did not end the try
 finally:
     os.kill(os.getpid(), signal.SIGTERM)
     time.sleep(0.2)
@@ -136,7 +137,34 @@ finally:
 """
 
 
+# A first SIGTERM handled inside a finalizer: Python reports the SystemExit as ignored and goes on. Another SIGTERM
+# no longer helps, so the deadline must end the process.
+SWALLOWED = """import os, signal, sys, time
+import flow_controller
+flow_controller.EXIT_DEADLINE = 1
+flow_controller.exit_on_sigterm()
+
+class Finalized:
+    def __del__(self):
+        os.kill(os.getpid(), signal.SIGTERM)
+        for _ in range(100):  # the handler runs here, and its SystemExit is ignored
+            pass
+
+Finalized()
+os.kill(os.getpid(), signal.SIGTERM)
+time.sleep(10)
+"""
+
+
 class RepeatedSigtermTest(unittest.TestCase):
+    def test_an_exit_that_never_finishes_is_ended_by_the_deadline(self):
+        started = time.monotonic()
+        child = subprocess.run([sys.executable, "-c", SWALLOWED], env=dict(os.environ, PYTHONPATH=str(SESSION)),
+                               stderr=subprocess.PIPE, text=True, timeout=30)
+        self.assertIn("SystemExit", child.stderr)  # the first exit was swallowed
+        self.assertEqual(child.returncode, -signal.SIGALRM)
+        self.assertLess(time.monotonic() - started, 6)
+
     def test_a_second_sigterm_does_not_cut_the_exit_short(self):
         folder = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, folder, True)

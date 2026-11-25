@@ -701,6 +701,7 @@ class MainTest(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     fc.main()
             finally:
+                signal.alarm(0)  # the handler's deadline, in this test's own process
                 signal.signal(signal.SIGTERM, previous)
         self.assertEqual(seen, [(-1, False)])
 
