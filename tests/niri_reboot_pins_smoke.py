@@ -267,16 +267,20 @@ def spaces(*args):
 
 
 def screenshot(run, name):
-    """Niri's overview, once the shell shows the focused window's space active."""
-    ident = next(w for w in read("workspaces") if w["is_focused"])["active_window_id"]
+    """Niri's overview of the row from its first column, which has focus for the shot; then focus goes back."""
+    before = focused_name()
+    first = columns()[0][-1]
+    focus(first)
+    ident = window(first)["id"]
     wait_for(lambda: any(s["active"] and s["id"] == ident for s in json.loads(ipc("spaces_view"))["spaces"]),
-             "the shell to show the focused window's space", timeout=10)
-    # Niri's overview shows the whole row of columns; it opens, and the view scrolls, in animations.
+             "the shell to show the first space active", timeout=10)
+    # The overview centres on the focused column; it opens, and the view scrolls, in animations.
     niri("action", "open-overview")
     time.sleep(1.5)
     subprocess.run(["grim", str(run / name)], check=False, timeout=30)
     niri("action", "close-overview")
     time.sleep(0.5)
+    focus(before)
 
 
 # State files -----------------------------------------------------------------------------------------------------
@@ -538,6 +542,9 @@ def prepare(run, mail):
     check("prepare: automatic recovery still on and not paused",
           (lambda r: r["setting"] and not r["paused"])(recovery()), json.dumps(recovery()))
     screenshot(run, "1-before.png")
+    # An automatic save may have caught the shot's focus; the restarts must start from the session with Files focused.
+    wait_for(lambda: session_shape(load("session.json")) == expected_session(record),
+             lambda: f"session.json back to Files focused: {session_shape(load('session.json'))}", timeout=60, step=0.5)
     record["phase"] = "prepared"
     record["checked"] = {"boot": boot_id(), "session": niri_session()}
     write_record(run, record)
