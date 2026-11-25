@@ -746,7 +746,7 @@ The alternative, a closed pinned app launched from its pin into its place, is no
 3. **Pins leftmost, dynamic windows after them.** One window per test app, all tiled on Main's focused workspace. Columns, left to right: Mail; Studio over Notes; Files; Scratch. Focus is back on Files.
 4. **Still one Group.** `groups.json` holds the Group once, with the same ID, name and member order, bound to the new windows in this Niri session. No other Group holds its apps.
 5. **The same pins.** `spaces.json` holds the same two pins (IDs, names, order, display, Group ID, members), bound to the new windows in this Niri session. The shell's `spaces_view` lists them in that order with those windows, and `spaces_error` is empty.
-6. **Pin shortcuts.** Super+1, typed through Niri's virtual keyboard, focuses Mail. Super+2 focuses the Group's last focused member, Notes.
+6. **Pin shortcuts.** What the installed `/etc/niri/config.kdl` runs for Super+1 (the shell's `desk focus 1`) focuses Mail, and for Super+2 the Group's last focused member, Notes. The test runs that command itself: Niri's bindings act on real input only, and keys typed through its virtual keyboard (`wtype`) reach the focused app instead. F-018 checked shortcuts the same way.
 7. **A new window follows the pins.** Opened with Mail focused, Niri places it right of Mail. The next refresh puts the Group back second, and the new window third.
 8. **Whole state files.** `spaces.json`, `groups.json` and `session.json` parse, and no temporary file is left in the state folder. `session.json` holds the five apps in the same columns and the Group. At the end the real state folder, settings file and desktop entries are put back byte for byte, and `flow-shell` runs.
 
