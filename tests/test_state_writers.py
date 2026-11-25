@@ -24,7 +24,7 @@ WRITES = {
 }
 
 
-LEGACY = {"version": 1, "pins": [{"id": "p", "app_id": "a", "label": "A", "window_id": 7}]}
+LEGACY = [{"id": "p", "app_id": "a", "label": "A", "window_id": 7}]  # a version-1 file: a bare list of pins
 
 
 class DurableWriteTest(unittest.TestCase):
@@ -75,7 +75,7 @@ class DurableWriteTest(unittest.TestCase):
 
     def test_the_rollback_copy_is_whole_and_durable_before_its_original_is_converted(self):
         target = self.folder() / "spaces.json"
-        seen = self.record(lambda path: pin_store.write(path, LEGACY["pins"], {}, 1), target, LEGACY)
+        seen = self.record(lambda path: pin_store.write(path, LEGACY, {}, 1), target, LEGACY)
         rollback = target.parent / "spaces.v1.json"
         self.assertEqual(json.loads(rollback.read_text()), LEGACY)
         self.assertEqual([event for event in seen if event[0] == "rename"],
@@ -85,6 +85,21 @@ class DurableWriteTest(unittest.TestCase):
         self.assertIn(self.identity(target.parent, folder=True), seen[copied + 1:converted],
                       "the copy's name made durable before the original is replaced")
         self.assertEqual(json.loads(target.read_text())["version"], 2)
+
+    def test_without_its_rollback_copy_the_original_is_not_converted(self):
+        target = self.folder() / "spaces.json"
+        target.write_text(json.dumps(LEGACY))
+        before, replace = target.read_bytes(), os.replace
+
+        def refused(source, destination):
+            if Path(destination).name == "spaces.v1.json":
+                raise OSError("No space left on device")
+            return replace(source, destination)
+
+        with patch("os.replace", refused), self.assertRaises(OSError):
+            pin_store.write(target, LEGACY, {}, 1)
+        self.assertEqual(target.read_bytes(), before)
+        self.assertEqual(sorted(p.name for p in target.parent.iterdir()), ["spaces.json"])
 
 
 if __name__ == "__main__":
