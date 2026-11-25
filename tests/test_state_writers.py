@@ -1,7 +1,7 @@
 """Flow's state writers make each new file durable: its contents synced before the rename, and the folder synced
 after it, so a power cut cannot bring back the file from before a write that had finished. The rollback copy of a
 version-1 pin file is made the same way, and is durable before the original is converted. A temporary file that a
-writer killed outright left is removed by the next write under Flow's locks, and only then."""
+writer killed outright left is removed by a later write once it is an hour old, and only then."""
 
 import json
 import os
@@ -113,7 +113,42 @@ class DurableWriteTest(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in target.parent.iterdir()), ["spaces.json"])
 
 
-# Children that write the state folder as Flow's callers do: under its locks, or (``bare``) without them.
+LABEL = "Café ✓ 日本 \"q\" \\ 🎉"  # not ASCII, and JSON escapes
+
+
+class FormatTest(unittest.TestCase):
+    """Each writer's bytes are what its readers and restore.save's no-op check compare against: JSON with non-ASCII
+    kept, encoded as UTF-8."""
+
+    def test_each_writer_writes_non_ascii_text_as_utf8_json(self):
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, folder, True)
+        groups_data = [{"id": "g", "label": LABEL, "members": ["a", "b"]}]
+        groups.write(folder / "groups.json", groups_data)
+        pins = [{"id": "p", "app_id": "a", "label": LABEL}]
+        pin_store.write(folder / "spaces.json", pins, {}, 2)
+        snapshot = {"version": 1, "session": None, "windows": [{"app_id": "a", "label": LABEL}], "groups": []}
+        restore.write_snapshot(folder / "session.json", snapshot)
+        expected = {"groups.json": {"version": 1, "groups": groups_data},
+                    "spaces.json": {"version": 2, "displays": {}, "pins": pins},
+                    "session.json": snapshot}
+        for name, data in expected.items():
+            with self.subTest(name=name):
+                self.assertEqual((folder / name).read_bytes(), json.dumps(data, ensure_ascii=False).encode("utf-8"))
+        self.assertEqual(groups.load(folder)[0]["label"], LABEL)
+        self.assertEqual(pin_store.read(folder / "spaces.json")[0][0]["label"], LABEL)
+
+    def test_the_rollback_copy_keeps_the_originals_mode(self):
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, folder, True)
+        target = folder / "spaces.json"
+        target.write_text(json.dumps(LEGACY))
+        target.chmod(0o640)
+        pin_store.write(target, LEGACY, {}, 1)
+        self.assertEqual(stat.S_IMODE(os.stat(folder / "spaces.v1.json").st_mode), 0o640)
+
+
+# A child that writes the state folder as Flow's callers do, under its locks.
 LOCKED = """import sys
 from pathlib import Path
 import groups, pin_store, restore
@@ -121,17 +156,8 @@ state = Path(sys.argv[1])
 with restore.flow_locks(state):
     {write}
 """
-BARE = """import sys
-from pathlib import Path
-import groups, pin_store
-state = Path(sys.argv[1])
-{write}
-"""
 WRITE_GROUPS = "groups.write(state / 'groups.json', [{'id': 'g', 'label': 'New', 'members': ['a', 'b']}])"
 WRITE_PINS = "pin_store.write(state / 'spaces.json', [], {}, 2)"
-
-
-LINUX_LOCKS = unittest.skipUnless(Path("/proc/locks").exists(), "who holds a lock: /proc/locks, Linux's")
 
 
 class LeftBehindTest(unittest.TestCase):
@@ -140,95 +166,73 @@ class LeftBehindTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.state = self.tmp / "flow"
         self.state.mkdir()
-        (self.state / "session.lock").touch()
-        (self.state / "spaces.lock").touch()
         self.env = dict(os.environ, PYTHONPATH=str(SESSION), XDG_STATE_HOME=str(self.tmp))
 
-    def child(self, script, write, **env):
-        return subprocess.Popen([sys.executable, "-c", script.format(write=write), str(self.state)],
+    def child(self, write, **env):
+        return subprocess.Popen([sys.executable, "-c", LOCKED.format(write=write), str(self.state)],
                                 env=dict(self.env, **env), stderr=subprocess.PIPE, text=True)
 
     def left(self):
         return sorted(p.name for p in self.state.iterdir() if p.name.startswith(state_files.TEMP_PREFIX))
 
-    def killed_mid_write(self):
-        """A writer SIGKILLed between its synced temporary file and the rename; the file it left."""
-        flag = self.tmp / "paused"
-        writer = self.child(LOCKED, WRITE_GROUPS, FLOW_TEST_PAUSE=f"groups.write={flag}")
+    def paused(self, flag, writer):
         end = time.monotonic() + 20
         while not flag.exists():
             self.assertIsNone(writer.poll(), "the writer ended before its pause")
             self.assertLess(time.monotonic(), end, "the writer never paused")
             time.sleep(0.01)
+
+    def test_a_sweep_removes_writers_temporary_files_once_stale_and_nothing_else(self):
+        now = time.time()
+        stale = [state_files.TEMP_PREFIX + "a1b2c3", state_files.TEMP_PREFIX + "x"]
+        fresh = [state_files.TEMP_PREFIX + "live"]
+        kept = ["spaces.json", "groups.json", "spaces.lock", "tmpk3_x9qz0", "notes"]
+        for name in stale + fresh + kept:
+            (self.state / name).write_text("{}")
+            age = state_files.STALE + 1 if name in stale + kept else state_files.STALE - 60
+            os.utime(self.state / name, (now - age, now - age))
+        (self.state / (state_files.TEMP_PREFIX + "folder")).mkdir()  # not a file: left, and no error
+        os.utime(self.state / (state_files.TEMP_PREFIX + "folder"), (now - 2 * state_files.STALE,) * 2)
+        with patch("sys.stderr"):
+            self.assertEqual(sorted(state_files.sweep(self.state, now)), sorted(stale))
+        self.assertEqual(sorted(p.name for p in self.state.iterdir()),
+                         sorted(fresh + kept + [state_files.TEMP_PREFIX + "folder"]))
+
+    def test_the_next_write_removes_what_a_killed_writer_left_once_stale_and_says_so(self):
+        flag = self.tmp / "paused"
+        writer = self.child(WRITE_GROUPS, FLOW_TEST_PAUSE=f"groups.write={flag}")
+        self.paused(flag, writer)
         writer.send_signal(signal.SIGKILL)
         writer.communicate(timeout=10)
-        self.assertEqual(len(self.left()), 1, "the killed writer left its temporary file")
-        return self.left()
-
-    def test_a_sweep_removes_writers_temporary_files_and_nothing_else(self):
-        temporary = [state_files.TEMP_PREFIX + "a1b2c3", state_files.TEMP_PREFIX + "x"]
-        kept = ["spaces.json", "groups.json", "spaces.lock", "tmpk3_x9qz0", "notes"]
-        for name in temporary + kept:
-            (self.state / name).write_text("{}")
-        (self.state / (state_files.TEMP_PREFIX + "folder")).mkdir()  # not a file: left, and no error
-        with patch("sys.stderr"):
-            self.assertEqual(sorted(state_files.sweep(self.state)), sorted(temporary))
-        self.assertEqual(sorted(p.name for p in self.state.iterdir()),
-                         sorted(kept + ["session.lock", state_files.TEMP_PREFIX + "folder"]))
-
-    @LINUX_LOCKS
-    def test_the_next_write_under_the_locks_removes_what_a_killed_writer_left_and_says_so(self):
-        name = self.killed_mid_write()[0]
-        writer = self.child(LOCKED, WRITE_PINS)
-        _, err = writer.communicate(timeout=30)
-        self.assertEqual(writer.returncode, 0, err)
+        left = self.left()
+        self.assertEqual(len(left), 1, "the killed writer left its temporary file")
+        again = self.child(WRITE_PINS)
+        _, err = again.communicate(timeout=30)
+        self.assertEqual(again.returncode, 0, err)
+        self.assertEqual(self.left(), left, "a fresh one may be another writer's: kept")
+        old = time.time() - state_files.STALE - 1
+        os.utime(self.state / left[0], (old, old))
+        again = self.child(WRITE_PINS)
+        _, err = again.communicate(timeout=30)
+        self.assertEqual(again.returncode, 0, err)
         self.assertEqual(self.left(), [])
-        self.assertIn(f"removed {name}", err)
+        self.assertIn(f"removed {left[0]}", err)
 
-    def test_this_process_holds_the_lock_only_as_proc_locks_lists_it(self):
-        lock = self.state / "spaces.lock"
-        info = os.stat(lock)
-        held = f"{os.major(info.st_dev):02x}:{os.minor(info.st_dev):02x}:{info.st_ino}"
-        listing = self.tmp / "locks"
-        cases = {f"1: FLOCK  ADVISORY  WRITE {os.getpid()} {held} 0 EOF\n": True,
-                 f"1: FLOCK  ADVISORY  WRITE {os.getpid() + 1} {held} 0 EOF\n": False,  # another process holds it
-                 f"1: FLOCK  ADVISORY  WRITE 99 {held} 0 EOF\n1: -> FLOCK  ADVISORY  WRITE {os.getpid()} {held} 0 EOF\n": False,
-                 f"1: POSIX  ADVISORY  WRITE {os.getpid()} {held} 0 EOF\n": False,
-                 "": False}
-        for text, expected in cases.items():
-            with self.subTest(text=text):
-                listing.write_text(text)
-                self.assertIs(state_files.holding_lock(self.state, str(listing)), expected)
-        self.assertFalse(state_files.holding_lock(self.state, str(self.tmp / "no-such-listing")))
-        self.assertFalse(state_files.holding_lock(self.tmp / "missing", str(listing)))
-
-    @LINUX_LOCKS
-    def test_a_write_without_the_locks_removes_nothing(self):
-        left = self.killed_mid_write()
-        writer = self.child(BARE, WRITE_PINS)
-        _, err = writer.communicate(timeout=30)
-        self.assertEqual(writer.returncode, 0, err)
-        self.assertEqual(self.left(), left)
-
-    @LINUX_LOCKS
-    def test_a_write_beside_the_one_in_progress_leaves_it_alone(self):
-        """A writer paused before its rename, under the locks; meanwhile a second one waits on the locks, and a
-        third writes without them. The first must still rename its temporary file into place."""
+    def test_a_write_beside_one_in_progress_leaves_it_alone(self):
+        """A writer paused before its rename; another write meanwhile, which does not wait on the locks (as a
+        writer that skipped them would not). The first must still rename its temporary file into place."""
         flag = self.tmp / "paused"
-        first = self.child(LOCKED, "import pause_point; pause_point.PAUSE = 1.0\n    " + WRITE_GROUPS,
+        first = self.child("import pause_point; pause_point.PAUSE = 5.0\n    " + WRITE_GROUPS,
                            FLOW_TEST_PAUSE=f"groups.write={flag}")
-        end = time.monotonic() + 20
-        while not flag.exists():
-            self.assertIsNone(first.poll(), "the first writer ended before its pause")
-            self.assertLess(time.monotonic(), end, "the first writer never paused")
-            time.sleep(0.01)
-        second = self.child(LOCKED, WRITE_PINS)
-        third = self.child(BARE, WRITE_PINS)
-        _, third_err = third.communicate(timeout=30)
-        _, first_err = first.communicate(timeout=30)
-        _, second_err = second.communicate(timeout=30)
-        self.assertEqual(first.returncode, 0, f"the first writer did not finish its write: {first_err}")
-        self.assertEqual((second.returncode, third.returncode), (0, 0), second_err + third_err)
+        self.paused(flag, first)
+        beside = subprocess.run([sys.executable, "-c", "import sys, pin_store; from pathlib import Path; "
+                                 "pin_store.write(Path(sys.argv[1]) / 'spaces.json', [], {}, 2)", str(self.state)],
+                                env=self.env, stderr=subprocess.PIPE, text=True, timeout=30)
+        self.assertEqual(beside.returncode, 0, beside.stderr)
+        self.assertIsNone(first.poll(), "the first writer was still paused while the other one wrote")
+        self.assertEqual(len(self.left()), 1, "the first writer's temporary file was left alone")
+        _, err = first.communicate(timeout=30)
+        self.assertEqual(first.returncode, 0, f"the first writer did not finish its write: {err}")
         self.assertEqual(json.loads((self.state / "groups.json").read_text())["groups"][0]["label"], "New")
         self.assertEqual(self.left(), [])
 

@@ -56,7 +56,7 @@ def read(path):
     """Return (pins, displays, version) without changing anything; reject unknown formats."""
     if not path.exists():
         return [], {}, 2
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(data, list):
         pins, displays, version = data, {}, 1
     elif isinstance(data, dict) and data.get("version") == 2:

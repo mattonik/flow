@@ -1138,7 +1138,7 @@ def live_order(group, workspace, windows, pins, groups):
 
 def saved_groups(path):
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         groups = data.get("groups", []) if isinstance(data, dict) else []
         if not isinstance(groups, list):
             return []

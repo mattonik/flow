@@ -1,43 +1,29 @@
-"""How Flow writes a file in its state folder: whole or not at all, and durably.
+"""How Flow writes a file in its state folder: whole or not at all, durably, and as UTF-8.
 
-Every caller holds Flow's locks (session.lock, then spaces.lock) while it writes: spaces.py's refresh and
-actions, and flow-recovery's saves, restores and renames; ``NamedTemporaryFile`` has no other call site in
-session/. So while this process holds spaces.lock, a temporary file in the folder is one that a writer killed
-outright (SIGKILL, a power cut) left, and each write removes those first. A write without the lock removes nothing.
+A writer killed outright (SIGKILL, a power cut) between its temporary file and the rename leaves that file behind.
+Each write first removes such files that are over ``STALE`` old: a write takes milliseconds, so none that old is in
+use. A clock that jumps forward by more than that during a write could make a live one look old: that write then
+fails, and the file it would have replaced stays whole.
 """
 import os
 import sys
+import time
 
 TEMP_PREFIX = ".flow-write-"
+STALE = 3600.0  # s
 
 
-def holding_lock(folder, locks="/proc/locks"):
-    """Whether this process holds spaces.lock in ``folder``, as /proc/locks lists flock holders. Another process's
-    hold says nothing about this writer's: it may be writing without the lock beside a writer that has it. Without
-    /proc/locks (not Linux) it says no, and nothing is removed."""
-    try:
-        info = os.stat(os.path.join(folder, "spaces.lock"))
-        with open(locks) as listing:
-            lines = listing.read().splitlines()
-    except OSError:  # no lock file, so never taken here; or no /proc/locks
-        return False
-    held = f"{os.major(info.st_dev):02x}:{os.minor(info.st_dev):02x}:{info.st_ino}"
-    for line in lines:
-        fields = line.split()
-        # "1: FLOCK  ADVISORY  WRITE 1234 fe:02:393322 0 EOF"; a waiter's line has "->" after the number
-        if len(fields) >= 6 and fields[1] == "FLOCK" and fields[5] == held and fields[4] == str(os.getpid()):
-            return True
-    return False
-
-
-def sweep(folder):
-    """Remove the temporary files writers left in ``folder``, and say so on stderr; the names removed. Only while
-    spaces.lock is held."""
-    removed = []
+def sweep(folder, now=None):
+    """Remove the temporary files writers left in ``folder`` over STALE ago, and say so on stderr; the names
+    removed."""
+    removed, now = [], time.time() if now is None else now
     for name in os.listdir(folder):
         if name.startswith(TEMP_PREFIX):
+            path = os.path.join(folder, name)
             try:
-                os.unlink(os.path.join(folder, name))
+                if now - os.lstat(path).st_mtime <= STALE:
+                    continue  # perhaps another writer's, being written
+                os.unlink(path)
             except OSError:  # gone meanwhile, or a folder by that name: not this write's to fail on
                 continue
             removed.append(name)
@@ -51,8 +37,7 @@ def replace_durably(path, data, pause=None, like=None):
     ``like``: a file whose mode and times the new one takes."""
     import shutil, tempfile  # here, not above: flow-spaces runs after every burst of Niri events and mostly only reads
     folder = path.parent
-    if holding_lock(folder):
-        sweep(folder)
+    sweep(folder)
     with tempfile.NamedTemporaryFile("wb", dir=folder, prefix=TEMP_PREFIX, delete=False) as tmp:
         try:
             tmp.write(data)

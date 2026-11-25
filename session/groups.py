@@ -110,7 +110,7 @@ def load(directory):
     path = directory / "groups.json"
     marker = directory / "groups.initialized"
     if path.exists():
-        result = validate(json.loads(path.read_text()))
+        result = validate(json.loads(path.read_text(encoding="utf-8")))
         if not marker.exists():
             mark_initialized(directory)
         return result
@@ -118,7 +118,7 @@ def load(directory):
         raise ValueError("Group registry is missing; state was not changed")
     snapshot = directory / "session.json"
     if snapshot.exists():
-        data = json.loads(snapshot.read_text())
+        data = json.loads(snapshot.read_text(encoding="utf-8"))
         if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("windows"), list):
             raise ValueError("Invalid saved session; Groups were not migrated")
         groups = validate({"version": 1, "groups": data.get("groups", [])})
