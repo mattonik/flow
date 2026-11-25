@@ -3,6 +3,8 @@
 import json
 import os
 
+from state_files import TEMP_PREFIX
+
 
 def sync_directory(directory):
     fd = os.open(directory, os.O_RDONLY)
@@ -103,7 +105,7 @@ def write(path, groups):
     import tempfile  # here, not above: flow-spaces runs after every burst of Niri events and mostly only reads
     data = {"version": 1, "groups": groups}
     validate(data)
-    with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as tmp:
+    with tempfile.NamedTemporaryFile("w", dir=path.parent, prefix=TEMP_PREFIX, delete=False) as tmp:
         try:
             json.dump(data, tmp, ensure_ascii=False)
             tmp.flush()

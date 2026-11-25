@@ -15,6 +15,8 @@ that connector is seen. Version 1 files are copied to ``spaces.v1.json`` before 
 import json
 import os
 
+from state_files import TEMP_PREFIX
+
 
 def _text(value):
     return value.strip() if isinstance(value, str) and value.strip() else None
@@ -77,7 +79,7 @@ def _replace_durably(path, data, pause=None, like=None):
     """Put ``data`` (bytes) at ``path`` whole or not at all, and durably: a synced temporary file renamed into place,
     then the folder synced. ``like``: a file whose mode and times the new one takes."""
     import shutil, tempfile  # here, not above: flow-spaces runs after every burst of Niri events and mostly only reads
-    with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as tmp:
+    with tempfile.NamedTemporaryFile("wb", dir=path.parent, prefix=TEMP_PREFIX, delete=False) as tmp:
         try:
             tmp.write(data)
             tmp.flush()

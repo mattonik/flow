@@ -13,6 +13,7 @@ import uuid
 import groups as group_store
 import pin_store
 import orphan_io
+import state_files
 from launching import app_command
 
 MAX_MEMBERS = group_store.MAX_MEMBERS
@@ -1793,6 +1794,7 @@ def _run_locked(state, op, arg, reshape=True):
     path = state / "spaces.json"
     with (state / "spaces.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        state_files.sweep(state)  # no writer is mid-write while this lock is held
         pins, displays, version = pin_store.read(path)
         before = json.dumps([pins, displays, version], sort_keys=True)
         workspace, windows, outputs, workspaces = full_state()

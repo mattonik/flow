@@ -670,7 +670,11 @@ The proof is in `tests/test_pause_point.py`, deterministic and in CI:
 
 The guest loop with the change is a smoke check, not the proof. That debug copy counted second SIGTERMs with a handler that logged and returned where the shipped one ignores, and saw them in 9 of 30 kills. All 30 kills left no temporary file. At the roughly 2 failures in 29 kills seen before, 30 clean kills would still happen by chance about one time in eight.
 
-**Not fixed, outside a restart's reach:** a writer killed by SIGKILL leaves its temporary file in the state folder; nothing removes it later. The smoke's SIGKILLs hit the shell, whose controller dies by SIGTERM; only the controller-alone case SIGKILLs a controller, outside a write.
+**Temporary files a writer killed outright leaves (2026-11-25).** A writer killed by SIGKILL, or by a power cut, between its temporary file and the rename leaves that file in the state folder, and nothing removed it later. The writers now name their temporary files with a prefix of their own (`.flow-write-`, `session/state_files.py`). `spaces.py` removes such files each time it takes `spaces.lock`, which every refresh (the controller's included) and every action does. It also removes `tmp` plus eight characters, tempfile's own names from before the prefix. Every writer of the state folder holds `spaces.lock` while it writes, so a file found under the lock is never one being written; the next refresh after a crash clears it. `tests/test_state_writers.py` checks four things:
+- each writer's temporary file carries the prefix;
+- the sweep removes those files and nothing else;
+- on Linux, end to end: a writer SIGKILLed at its pause leaves its file, and a real `spaces.py refresh` removes it;
+- without the sweep in `spaces.py`, without a writer's prefix, or with a sweep that takes every file, one of them fails (run in the guest).
 
 ### Under a stream of compositor events (2026-11-22)
 

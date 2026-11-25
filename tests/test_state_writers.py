@@ -5,9 +5,12 @@ version-1 pin file is made the same way, and is durable before the original is c
 import json
 import os
 from pathlib import Path
+import signal
 import stat
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -15,6 +18,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "session"))
 import groups
 import pin_store
 import restore
+import state_files
+from test_orphan_io import NIRI_ANSWERS
+from test_niri_query import FakeNiri
+
+SESSION = Path(__file__).resolve().parents[1] / "session"
 
 WRITES = {
     "groups.json": lambda path: groups.write(path, [{"id": "g", "label": "Kept", "members": ["a", "b"]}]),
@@ -35,6 +43,7 @@ class DurableWriteTest(unittest.TestCase):
         so the file synced before it is the one now in place only if both match, with all its bytes written."""
         target.write_text(json.dumps(before))
         seen, fsync, replace = [], os.fsync, os.replace
+        self.temporary = []
 
         def synced(fd):
             info = os.fstat(fd)
@@ -45,6 +54,7 @@ class DurableWriteTest(unittest.TestCase):
 
         def renamed(source, destination):
             seen.append(("rename", Path(destination).name))
+            self.temporary.append(Path(source).name)
             return replace(source, destination)
 
         with patch("os.fsync", synced), patch("os.replace", renamed):
@@ -72,6 +82,7 @@ class DurableWriteTest(unittest.TestCase):
                               "the new file, all its bytes written, synced before the rename")
                 self.assertIn(self.identity(target.parent, folder=True), seen[rename + 1:],
                               "its folder synced after the rename")
+                self.assertTrue(all(name.startswith(state_files.TEMP_PREFIX) for name in self.temporary), self.temporary)
 
     def test_the_rollback_copy_is_whole_and_durable_before_its_original_is_converted(self):
         target = self.folder() / "spaces.json"
@@ -100,6 +111,49 @@ class DurableWriteTest(unittest.TestCase):
             pin_store.write(target, LEGACY, {}, 1)
         self.assertEqual(target.read_bytes(), before)
         self.assertEqual(sorted(p.name for p in target.parent.iterdir()), ["spaces.json"])
+
+
+class LeftBehindTest(unittest.TestCase):
+    def test_a_sweep_removes_writers_temporary_files_and_nothing_else(self):
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, folder, True)
+        temporary = [state_files.TEMP_PREFIX + "a1b2c3", "tmpk3_x9qz0"]  # Flow's prefix; tempfile's old name
+        kept = ["spaces.json", "groups.json", "session.lock", "tmpnotes.txt", "tmpABCDEFGH", "tmp1234567", "notes"]
+        for name in temporary + kept:
+            (folder / name).write_text("{}")
+        (folder / (state_files.TEMP_PREFIX + "folder")).mkdir()  # not a file: left, and no error
+        self.assertEqual(sorted(state_files.sweep(folder)), sorted(temporary))
+        self.assertEqual(sorted(p.name for p in folder.iterdir()), sorted(kept + [state_files.TEMP_PREFIX + "folder"]))
+        self.assertEqual(state_files.sweep(folder / "missing"), [])
+
+    @unittest.skipUnless(Path("/proc/sys/kernel/random/boot_id").exists(), "needs Linux's boot ID")
+    def test_a_refresh_removes_what_a_writer_killed_by_sigkill_left(self):
+        """A writer SIGKILLed between its synced temporary file and the rename leaves the file; the next
+        flow-spaces refresh, which takes spaces.lock as the controller's refresh does, removes it."""
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, tmp, True)
+        state = tmp / "state" / "flow"
+        state.mkdir(parents=True)
+        flag = tmp / "state" / "paused"
+        env = dict(os.environ, PYTHONPATH=str(SESSION), XDG_STATE_HOME=str(tmp / "state"),
+                   FLOW_TEST_PAUSE=f"groups.write={flag}")
+        writer = subprocess.Popen([sys.executable, "-c", "import sys, groups; from pathlib import Path; "
+                                   "groups.write(Path(sys.argv[1]), [])", str(state / "groups.json")], env=env)
+        end = time.monotonic() + 20
+        while not flag.exists() and time.monotonic() < end:
+            time.sleep(0.01)
+        writer.send_signal(signal.SIGKILL)
+        writer.wait(timeout=10)
+        left = [p.name for p in state.iterdir() if state_files.left_behind(p.name)]
+        self.assertEqual(len(left), 1, "the killed writer left its temporary file")
+        niri = FakeNiri(str(tmp / "niri.sock"), NIRI_ANSWERS)
+        self.addCleanup(niri.close)
+        del env["FLOW_TEST_PAUSE"]
+        answer = subprocess.run([sys.executable, str(SESSION / "spaces.py"), "refresh"],
+                                env=dict(env, NIRI_SOCKET=str(tmp / "niri.sock")), text=True,
+                                stdout=subprocess.PIPE, timeout=30)
+        self.assertEqual((answer.returncode, json.loads(answer.stdout).get("error")), (0, None))
+        self.assertEqual([p.name for p in state.iterdir() if state_files.left_behind(p.name)], [])
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ import spaces
 import groups as group_store
 import pin_store
 import orphan_io
+from state_files import TEMP_PREFIX
 from launching import app_command
 
 
@@ -218,7 +219,7 @@ def automatic(op, path, wait=True, pause=True):
 
 def write_snapshot(path, data):
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as tmp:
+    with tempfile.NamedTemporaryFile("w", dir=path.parent, prefix=TEMP_PREFIX, delete=False) as tmp:
         try:
             json.dump(data, tmp, ensure_ascii=False)
             tmp.flush()
