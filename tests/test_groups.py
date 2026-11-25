@@ -156,11 +156,17 @@ class GroupRegistryTest(unittest.TestCase):
             self.assertTrue(ident)
             self.assertEqual(snapshot.read_bytes(), original)
             self.assertEqual(groups.load(state)[0]["id"], ident)
-            with patch.dict(os.environ, {"XDG_STATE_HOME": directory}), \
-                 patch.object(sys, "argv", ["flow-recovery", "rename-group", ident, "Writing"]), \
-                 contextlib.redirect_stdout(io.StringIO()):
-                restore.main()
+            def rename(label):
+                with patch.dict(os.environ, {"XDG_STATE_HOME": directory}), \
+                     patch.object(sys, "argv", ["flow-recovery", "rename-group", ident, label]), \
+                     contextlib.redirect_stdout(io.StringIO()):
+                    restore.main()
+            rename("  Writing  ")  # trimmed, as groups.rename does
             self.assertEqual(invoke("refresh")["spaces"][0]["label"], "Writing")
+            registry = (state / "groups.json").read_bytes()
+            with self.assertRaises(ValueError):
+                rename(" ")
+            self.assertEqual((state / "groups.json").read_bytes(), registry)
             pin = invoke("pin-group", ident)["pins"][0]
             self.assertEqual((pin["label"], pin["group_id"]), ("Writing", ident))
             invoke("unpin", pin["id"])
