@@ -2,7 +2,7 @@
 
 Each writer is paused by session/pause_point.py where a kill hurts most: its new content written and synced to
 a temporary file, the rename not yet done. A process stopped there by SIGTERM (as the controller is when its shell
-dies: setpriv --pdeathsig TERM, and a handler that exits) or SIGKILL must leave the old file byte for byte, and
+dies: setpriv --pdeathsig TERM, and a handler that exits, once) or SIGKILL must leave the old file byte for byte, and
 after SIGTERM no temporary file either. A writer that wrote in place would leave it cut short at the same point.
 """
 
@@ -117,6 +117,34 @@ class InterruptedWriteTest(unittest.TestCase):
         for point in CALLS:
             with self.subTest(point=point):
                 self.interrupt(point, signal.SIGKILL)
+
+
+# A second SIGTERM while the first one's exit unwinds through a finally: the kernel's parent-death signal comes
+# again on each reparenting. The finally must still finish.
+TWICE = """import os, signal, sys, time
+from pathlib import Path
+import flow_controller
+flow_controller.exit_on_sigterm()
+done = Path(sys.argv[1])
+try:
+    os.kill(os.getpid(), signal.SIGTERM)
+    time.sleep(5)
+finally:
+    os.kill(os.getpid(), signal.SIGTERM)
+    time.sleep(0.2)
+    done.write_text("finished")
+"""
+
+
+class RepeatedSigtermTest(unittest.TestCase):
+    def test_a_second_sigterm_does_not_cut_the_exit_short(self):
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, folder, True)
+        done = folder / "done"
+        child = subprocess.run([sys.executable, "-c", TWICE, str(done)], env=dict(os.environ, PYTHONPATH=str(SESSION)),
+                               timeout=30)
+        self.assertEqual(child.returncode, 0)
+        self.assertEqual(done.read_text() if done.exists() else None, "finished")
 
 
 if __name__ == "__main__":

@@ -537,8 +537,15 @@ def listen(runtime, wait=True):
 
 def exit_on_sigterm():
     """SIGTERM (the shell's death, through pdeathsig) exits through ``finally``: a write in flight removes its
-    temporary file, and main() closes its socket before it releases its lock."""
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    temporary file, and main() closes its socket before it releases its lock.
+
+    Only the first: the kernel sends the parent-death signal again each time the controller is reparented, and a
+    multithreaded shell that dies thread by thread can reparent it more than once. A second SIGTERM raising again
+    inside a ``finally`` would cut it short, and leave a temporary file in the state folder."""
+    def exit_once(*_):
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, exit_once)
 
 
 def main():
