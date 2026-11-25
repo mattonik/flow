@@ -36,7 +36,7 @@ PY
   FLOW_APP_SCOPES="${MUT_SCOPES:-1}" PATH="$work/bin:$PATH" quickshell -p "$work/shell/shell.qml" >/dev/null 2>&1 &
   shell_pid=$!
   for _ in $(seq 60); do
-    quickshell ipc -p "$work/shell/shell.qml" call desk search_state 2>/dev/null | grep -q closed && return 0
+    quickshell ipc -p "$work/shell/shell.qml" call desk search_state 2>/dev/null | grep -q closed && { sleep 5; return 0; }  # let its startup refresh settle
     sleep 0.5
   done
   echo "the mutant shell did not start"; exit 1
