@@ -221,20 +221,6 @@ def write_snapshot(path, data):
     state_files.replace_durably(path, json.dumps(data, ensure_ascii=False).encode(), pause="session.write")
 
 
-def rename_group(path, group_id, label):
-    label = label.strip()
-    if not label or len(label) > 80:
-        raise ValueError("Group name must be between 1 and 80 characters")
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("windows"), list) or not isinstance(data.get("groups"), list):
-        raise ValueError("Invalid saved session")
-    matches = [g for g in data["groups"] if isinstance(g, dict) and g.get("id") == group_id]
-    if len(matches) != 1:
-        raise ValueError("Saved Group no longer exists or is ambiguous")
-    matches[0]["label"] = label
-    write_snapshot(path, data)
-
-
 def pinned_apps(pins):
     if not isinstance(pins, list) or any(not isinstance(pin, dict) or not isinstance(pin.get("app_id"), str)
             or ("members" in pin and not group_store.valid_members(pin["members"])) for pin in pins):
