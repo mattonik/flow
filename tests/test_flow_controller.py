@@ -496,13 +496,35 @@ class ControllerTest(ControllerCase):
 
 
 
+class Clock:
+    """The controller's clock in AutoSaveTest: ``monotonic()`` moves only as the test runs the loop, so when a save
+    comes, measured on it, does not depend on how busy the machine is. Everything else is ``time``'s."""
+
+    def __init__(self, now):
+        self.now = now
+
+    def monotonic(self):
+        return self.now
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
 class AutoSaveTest(ControllerCase):
     """Automatic session saving, with restore.automatic faked: when the controller saves and whom it tells.
 
-    What should happen is waited for (up to a few seconds); only what should not is watched for a fixed time."""
+    Its times are the controller's clock (``Clock``), moved STEP at a time as the test runs the loop. What should
+    happen is waited for, up to a deadline in real time (the fake Niri answers from a thread of its own); what
+    should not is watched for a stretch of the controller's clock."""
+
+    STEP = 0.01
 
     def setUp(self):
         super().setUp()
+        self.clock = Clock(time.monotonic())  # the controller was made on the real clock: start from there
+        patcher = patch.object(fc, "time", self.clock)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         for name, value in (("AUTO_SAVE_WAIT", 0.2), ("AUTO_SAVE_EVERY", 0.8), ("AUTO_SAVE_RETRY", 0.15),
                             ("SAFETY", 0.3)):
             patcher = patch.object(fc, name, value)
@@ -514,7 +536,7 @@ class AutoSaveTest(ControllerCase):
 
         def save(op, path, wait=True, pause=True):
             self.assertEqual((op, path, wait), ("auto-save", self.tmp / "state/session.json", False))
-            self.saved.append((time.monotonic(), pause))
+            self.saved.append((self.clock.now, pause))
             answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
             if isinstance(answer, BaseException):
                 raise answer
@@ -522,29 +544,60 @@ class AutoSaveTest(ControllerCase):
         patcher = patch.object(restore, "automatic", side_effect=save)
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.refreshed = []  # when each refresh ran, on the controller's clock
+        refresh = self.controller.refresh
+
+        def recorded(now):
+            ran = refresh(now)
+            if ran:
+                self.refreshed.append(now)
+            return ran
+        self.controller.refresh = recorded
 
     def focus(self, ident):
         self.niri.send({"WindowFocusChanged": {"id": ident}})
 
+    def messages(self, seconds):
+        """Run the controller for ``seconds`` of its clock, a STEP at a time: each turn reads what has arrived and
+        does what is due at the clock's time. What this client received meanwhile."""
+        end = self.clock.now + seconds - 1e-9
+        while self.clock.now < end:
+            self.controller.turn(0.001)
+            self.clock.now += self.STEP
+            try:
+                self.received += self.client.recv(1 << 20)
+            except BlockingIOError:
+                pass
+        *lines, self.received = self.received.split(b"\n")
+        return [json.loads(line) for line in lines]
+
     def run_for(self, seconds):
         self.told += [m["auto_saved"] for m in self.messages(seconds) if "auto_saved" in m]
 
-    def until(self, test, timeout=3.0):
+    def until(self, test, timeout=30.0):
+        """Run the loop until ``test()`` holds; a deadline in real time, as it only guards against a hang."""
         end = time.monotonic() + timeout
-        while not test() and time.monotonic() < end:
-            self.run_for(0.02)
-        self.assertTrue(test(), "timed out")
+        while True:
+            self.run_for(self.STEP)
+            if test():
+                return
+            if time.monotonic() >= end:
+                self.fail(f"the controller did not get there within {timeout} s; saved {self.saved}, told {self.told}")
+
+    def settled(self):
+        """Watch, and run until Niri's first two events are read and the refresh they ask for has run."""
+        self.ask({"watch": True})
+        self.until(lambda: self.controller.stats["events"] >= 2 and self.controller.stats["refreshes"] >= 2
+                   and self.controller.coalescer.due() is None)
 
     def started(self):
         """The shell's way: watch first, Niri's first events and their refresh, then ask for saving."""
-        self.ask({"watch": True})
-        self.run_for(1.0)
+        self.settled()
         self.ask({"auto_save": True})
         self.until(lambda: len(self.saved) == 1)
 
     def test_nothing_is_saved_until_a_client_asks(self):
-        self.ask({"watch": True})
-        self.run_for(0.4)
+        self.settled()
         self.focus(8)
         self.run_for(1.0)
         self.assertEqual(self.saved, [])
@@ -569,10 +622,12 @@ class AutoSaveTest(ControllerCase):
         self.run_for(1.0)  # idle again: once more after a change is all
         self.assertEqual(len(self.saved), 2)
         self.focus(7)
-        changed = time.monotonic()
+        changed = self.clock.now
         self.until(lambda: len(self.saved) == 3)
-        # An interval after the last save: due at the wait's end. The refresh comes up to MIN_INTERVAL after the
-        # previous one, then the wait.
+        # An interval after the last save: due the wait after the first refresh since the change, which comes up to
+        # MIN_INTERVAL after the previous one.
+        answered = next(when for when in self.refreshed if when > changed)
+        self.assertAlmostEqual(self.saved[2][0] - answered, fc.AUTO_SAVE_WAIT, delta=self.STEP + 1e-9)
         self.assertLess(self.saved[2][0] - changed, fc.MIN_INTERVAL + fc.AUTO_SAVE_WAIT + 0.15)
 
     def test_with_the_event_stream_down_its_refreshes_call_for_saves(self):
