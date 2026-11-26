@@ -361,6 +361,7 @@ class Smoke:
         if {k: v for k, v in while_shown["windows"].items()} != before["work"]["windows"]:
             raise Failure(f"{label}: windows changed while it was shown: {diff_dicts(before['work']['windows'], while_shown['windows'])}")
         shown_shots = self.shots()
+        self.save(f"shown-{slug(label)}", shown_shots)  # evidence, and for docs/screenshots
         back()
         wait_for(lambda: not self.surfaces() and not read("overview-state")["is_open"],
                  lambda: f"{label}: to return ({sorted(self.surfaces())})")
