@@ -27,6 +27,17 @@
       search = lib.findFirst (p: lib.getName p == "flow-search") (throw "no flow-search") config.environment.systemPackages;
     in assert wrappers != [ ]; assert config.services.gnome.at-spi2-core.enable; pkgs.runCommand "flow-module-check" { } ''
       ${lib.getExe config.programs.niri.package} validate -c ${niriConfig}
+      # With Reduce motion the user's include points at niri-still.kdl: Niri must accept it there too, or it would refuse
+      # every reload, appearance changes included, while the setting is on.
+      mkdir -p $TMPDIR/motion/.config/flow
+      ln -s ${config.environment.etc."flow".source}/niri-still.kdl $TMPDIR/motion/.config/flow/niri-motion.kdl
+      HOME=$TMPDIR/motion ${lib.getExe config.programs.niri.package} validate -c ${niriConfig}
+      # The check above means something only if Niri reads that include at all: a broken file there must fail.
+      mkdir -p $TMPDIR/broken/.config/flow
+      printf 'animations { not-a-setting; }\n' > $TMPDIR/broken/.config/flow/niri-motion.kdl
+      if HOME=$TMPDIR/broken ${lib.getExe config.programs.niri.package} validate -c ${niriConfig}; then
+        echo "Niri did not read ~/.config/flow/niri-motion.kdl"; exit 1
+      fi
       HOME=$TMPDIR PATH=/no-such ${search}/bin/flow-search --json > rows.json
       ${lib.getExe pkgs.python3} -c 'import json; rows = json.load(open("rows.json")); assert rows and rows[0]["kind"] == "settings", rows'
       mkdir -p $TMPDIR/Documents/.notes && touch "$TMPDIR/Documents/.notes/Quarterly report.txt"
