@@ -61,7 +61,21 @@ class ShellAutoSaveTest(unittest.TestCase):
         handler = handler[:handler.index("\n                    }\n")]
         self.assertRegex(handler, r"if \(result\.set_aside\) \{\s*root\.recoverySetAside = result\.set_aside\s*root\.showToast\(")
         # Kept in Settings for the shell's life, as the first automatic save soon replaces recoveryMessage.
-        self.assertRegex(SHELL, r'Text \{ id: recoveryAside; visible: root\.recoverySetAside !== ""')
+        self.assertRegex(SHELL, r'Text \{ id: recoveryAside; visible: root\.recoverySetAside !== ""; text: [^;]*root\.recoverySetAside')
+
+    def test_a_set_aside_session_is_reopened_from_its_own_file(self):
+        # Not by renaming it to session.json, which the next automatic save would replace before Restore read it.
+        button = SHELL[SHELL.index("FlowButton { id: reopenAside;"):]
+        button = button[:button.index("\n")]
+        self.assertIn('visible: root.recoverySetAside !== "";', button)
+        self.assertIn("onClicked: root.reopenSetAside()", button)
+        reopen = SHELL[SHELL.index("function reopenSetAside() {"):]
+        reopen = reopen[:reopen.index("\n    }\n")]
+        self.assertIn('recoveryProcess.command = ["flow-recovery", "restore", recoverySetAside]', reopen)
+        self.assertNotIn("session.json", SHELL[SHELL.index("Text { id: recoveryAside;"):][:400])
+        # Restore with a file argument is not an automatic command, so automatic saving waits while it runs.
+        self.assertIn('recoveryWorking: recoveryProcess.running && !String(recoveryProcess.command[1]).startsWith("auto-")', SHELL)
+        self.assertIn('if (recoveryProcess.command[1] === "restore" && recoveryProcess.command.length > 2 && !result.error) root.recoverySetAside = ""', SHELL)
 
     def test_the_controller_is_told_on_connecting_and_on_every_change(self):
         self.assertRegex(SHELL, r"if \(connected\) \{ write\('\{\"watch\": true, \"auto_save\": ' \+ root\.autoSaveWanted \+ '\}\\n'\)")

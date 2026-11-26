@@ -214,24 +214,31 @@ class RecoveryTest(unittest.TestCase):
             restore.automatic("auto-seen", path)  # a later shell with the setting off leaves the marker alone
             self.assertEqual(marker.read_text(), "ready")
 
-    def test_automatic_start_reopens_at_a_late_first_start(self):
-        # A first shell start long after Niri started (a slow boot) still reopens the saved session: what counts
-        # is the marker, not the clock. The wall clock ten minutes on and a socket made now are only for a clock
-        # window like the one this replaced: put back, it fails here.
+    def test_automatic_start_at_a_late_first_start(self):
+        # A first shell start long after Niri started has no marker either. With no window open yet (a slow boot)
+        # it reopens the saved session: the wall clock ten minutes on and a socket made now are for a clock window
+        # like the one the marker replaced, which, put back, fails here. With a window open past ten minutes it is
+        # work under way (a shell that failed at login and was started later): nothing reopened, the session kept.
         saved = json.dumps({"version": 1, "reopen_at_login": True, "windows": []})
-        with tempfile.TemporaryDirectory() as directory:
-            socket = Path(directory) / "niri.wayland-1.4242.sock"
-            socket.write_text("")
-            with patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory, "NIRI_SOCKET": str(socket)}), \
-                    patch.object(restore.spaces, "session_id", return_value="session"), \
-                    patch.object(restore.time, "time", return_value=time.time() + 600), \
-                    patch.object(restore.subprocess, "run",
-                                 return_value=Mock(returncode=0, stdout='{"message":"Restored 2 windows."}')) as run:
-                path = Path(directory) / "session.json"
-                path.write_text(saved)
-                self.assertNotIn("error", restore.automatic("auto-start", path))
-                self.assertEqual(run.call_count, 1)
-                self.assertEqual(path.read_text(), saved)
+        for open_apps, restores in (([], True), (["foot"], False)):
+            with self.subTest(open_apps=open_apps), tempfile.TemporaryDirectory() as directory:
+                socket = Path(directory) / "niri.wayland-1.4242.sock"
+                socket.write_text("")
+                with patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory, "NIRI_SOCKET": str(socket)}), \
+                        patch.object(restore.spaces, "session_id", return_value="session"), \
+                        patch.object(restore.time, "time", return_value=time.time() + 600), \
+                        patch.object(restore, "niri_age", return_value=3600), \
+                        patch.object(restore.spaces, "query",
+                                     return_value=([], [window(n, app, n) for n, app in enumerate(open_apps, 1)])), \
+                        patch.object(restore.subprocess, "run",
+                                     return_value=Mock(returncode=0, stdout='{"message":"Restored 2 windows."}')) as run:
+                    path = Path(directory) / "session.json"
+                    path.write_text(saved)
+                    answer = restore.automatic("auto-start", path)
+                    self.assertNotIn("error", answer)
+                    self.assertEqual(run.call_count, 1 if restores else 0)
+                    self.assertEqual((path.exists(), [p.read_text() for p in asides(directory)]),
+                                     (True, []) if restores else (False, [saved]))
 
     def test_automatic_start_does_not_reopen_a_snapshot_from_before_it_reopened_sessions(self):
         # A Save session from before automatic recovery was on by default, possibly long ago, kept aside.
@@ -327,6 +334,51 @@ class RecoveryTest(unittest.TestCase):
             path = Path(directory) / "session.json"
             restore.save(path, {"id": 1, "active_window_id": 1}, [window(1, "one", 1)])
             self.assertIs(json.loads(path.read_text())["reopen_at_login"], True)
+
+    def test_restore_reopens_a_set_aside_session_in_place(self):
+        # Settings' Reopen passes the set-aside file: Restore reads it there and checks it, not session.json, for
+        # changes while it reopens, so an automatic save of the windows already open (session.json rewritten) does
+        # not stop it, and nothing ever writes over the file.
+        aside_data = {"version": 1, "windows": [{"app_id": "one", "column": 1}]}
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            path = state / "session.json"
+            path.write_text(json.dumps({"version": 1, "reopen_at_login": True, "windows": []}))
+            aside = state / restore.SET_ASIDE.format("20261126T102642Z-00")
+            aside.write_text(json.dumps(aside_data))
+            seen = {}
+
+            def fake_restore(data, workspace, windows, dirs, launch, get_snapshot, action, **kwargs):
+                seen["data"] = data
+                path.write_text("an automatic save of the windows already open")
+                get_snapshot()  # the check before each launch
+                return [], 1
+
+            with patch.object(restore, "state_path", return_value=path), \
+                    patch.object(sys, "argv", ["flow-recovery", "restore", str(aside)]), \
+                    patch.object(restore.spaces, "snapshot", return_value=({"id": 1, "output": "Virtual-1"}, [])), \
+                    patch.object(restore.spaces, "session_id", return_value="session"), \
+                    patch.object(restore, "focused_display", return_value=(None, set())), \
+                    patch.object(restore, "groups_unchanged_or_focused", return_value=True), \
+                    patch.object(restore, "pins_unchanged_or_rebound", return_value=True), \
+                    patch.object(restore, "restore", side_effect=fake_restore), \
+                    contextlib.redirect_stdout(io.StringIO()) as out:
+                restore.main()
+            self.assertEqual(json.loads(out.getvalue()), {"message": "Restored 1 windows."})
+            self.assertEqual(seen["data"], aside_data)
+            self.assertEqual(aside.read_text(), json.dumps(aside_data))
+
+    def test_restore_reads_only_a_set_aside_file_beside_the_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state" / "session.json"
+            path.parent.mkdir()
+            elsewhere = Path(directory) / restore.SET_ASIDE.format("20261126T102642Z-00")
+            for name in (str(path), str(path.with_name("spaces.json")), str(elsewhere),
+                         str(path.parent / ".." / elsewhere.name)):
+                with self.subTest(name=name), self.assertRaises(ValueError):
+                    restore.set_aside_source(path, name)
+            beside = path.with_name(elsewhere.name)
+            self.assertEqual(restore.set_aside_source(path, str(beside)), beside)
 
     def test_the_command_line_runs_auto_seen(self):
         with patch.object(sys, "argv", ["flow-recovery", "auto-seen"]), \

@@ -205,6 +205,17 @@ def set_aside(path):
     return str(aside)
 
 
+def set_aside_source(path, name):
+    """The set-aside file ``name`` beside ``path`` for Restore to read, so reopening it never goes through
+    session.json, which the next automatic save replaces."""
+    source = path.with_name(Path(name).name)
+    prefix, suffix = SET_ASIDE.split("{}")
+    if str(Path(name).resolve()) != str(source.resolve()) or not (
+            source.name.startswith(prefix) and source.name.endswith(suffix)):
+        raise ValueError("Name a saved session that automatic recovery set aside")
+    return source
+
+
 def set_aside_answer(message, path):
     """``message``, with the saved session set aside and where: ``set_aside`` for the shell's notice."""
     aside = set_aside(path)
@@ -274,7 +285,7 @@ def automatic(op, path, wait=True, pause=True):
     The marker belongs to one Niri instance (``spaces.session_id``: boot, socket path, inode and creation). A
     shell writes it at its first start in that instance whatever the setting: ``auto-start`` (on), or
     ``auto-seen`` (off: ``off``). So ``auto-start`` reopens the saved session only at a Niri instance's first
-    shell start, however late that comes. A shell started again finds the marker: ``ready``, ``blocked`` (a
+    shell start; a first start past UNDER_WAY_AFTER with windows open is work under way (below). A shell started again finds the marker: ``ready``, ``blocked`` (a
     pause, with its reason: ``"paused": true``, the user was told when it came) or ``off`` (recovery switched on
     since, by hand: nothing is reopened into the windows already there). A shell of a version from before the
     marker wrote none, but every snapshot it wrote lacks ``reopen_at_login``, and none of those is reopened:
@@ -1050,6 +1061,9 @@ def main():
     if op == "status":
         print(json.dumps({"saved": path.exists()}))
         return
+    if op == "restore" and len(sys.argv) > 3:
+        raise ValueError("Restore reads session.json or one set-aside saved session")
+    source = set_aside_source(path, sys.argv[2]) if op == "restore" and len(sys.argv) == 3 else path
     if op in ("save", "rename-group", "restore"):
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         with (path.parent / "session.lock").open("a") as lock:
@@ -1069,7 +1083,7 @@ def main():
                     print(json.dumps({"message": "Group renamed"}))
                 else:
                     workspace, windows = spaces.snapshot()
-                    original_snapshot = path.read_bytes()
+                    original_snapshot = source.read_bytes()
                     data = json.loads(original_snapshot)
                     dirs = (os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share"), *os.environ.get("XDG_DATA_DIRS", "/run/current-system/sw/share:/usr/share").split(":"))
                     pins_path = path.parent / "spaces.json"
@@ -1090,7 +1104,7 @@ def main():
                         now_pins = pin_store.read(pins_path)[0]
                         pinned_apps(now_pins)
                         current = spaces.snapshot()
-                        if (path.read_bytes() != original_snapshot or not groups_unchanged_or_focused(registered, now_groups, *current)
+                        if (source.read_bytes() != original_snapshot or not groups_unchanged_or_focused(registered, now_groups, *current)
                                 or not pins_unchanged_or_rebound(pins, now_pins, session, current[1], current[0], now_groups)):
                             raise ValueError("Session, Groups or pinned spaces changed; session recovery stopped")
                         return current
