@@ -328,10 +328,6 @@ class Apps:
 
     def __init__(self, tmp):
         self.tmp, self.processes, self.own = Path(tmp), [], set()
-        self.iso = {name: str(self.tmp / "app-home" / name) for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME",
-                                                                          "XDG_CACHE_HOME", "XDG_STATE_HOME")}
-        for folder in self.iso.values():
-            Path(folder).mkdir(parents=True, exist_ok=True)
         self.start_workspace = focused_workspace()
         output = self.start_workspace["output"]
         busy = {w["workspace_id"] for w in windows().values()}
@@ -342,10 +338,20 @@ class Apps:
         wait_for(lambda: focused_workspace()["id"] == self.workspace["id"], "the test's workspace")
         self.output = read("outputs")[output]["logical"]
 
+    def fresh_home(self):
+        """Configuration, data, cache and state folders of their own for one app start: a second Kate started on
+        the first one's folders showed its welcome page instead of the file it was given."""
+        home = self.tmp / "app-home" / uuid.uuid4().hex[:8]
+        folders = {name: str(home / name.lower()) for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+                                                                "XDG_STATE_HOME")}
+        for folder in folders.values():
+            Path(folder).mkdir(parents=True)
+        return folders
+
     def start(self, command, app_id=None, title=None, env=None, isolated=True, timeout=30):
         """Starts an app and waits for its first new window (matching ``app_id``/``title`` when given)."""
         before = set(windows())
-        full_env = {**os.environ, **(self.iso if isolated else {}), **(env or {})}
+        full_env = {**os.environ, **(self.fresh_home() if isolated else {}), **(env or {})}
         process = subprocess.Popen(list(map(str, command)), env=full_env, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.DEVNULL, stderr=open(self.tmp / "apps.log", "a"),
                                    start_new_session=True)
