@@ -22,5 +22,5 @@ eval "$(systemctl --user show-environment \
 for name in kate kolourpaint gnome-text-editor xterm wl-clipboard; do PATH="$roots/$name/bin:$PATH"; done
 export PATH
 exec 9>/tmp/floe-screen.lock
-flock -w 1800 9 || { echo "screen lock busy" >&2; exit 1; }
+flock -w "${FLOW_LOCK_WAIT:-1800}" 9 || { echo "screen lock busy" >&2; exit 1; }
 exec python3 tests/niri_portals_smoke.py "$@"
