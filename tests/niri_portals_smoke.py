@@ -1163,6 +1163,8 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
 
     def check_screenshot_gimp(self):
         state = self.state
+        for path in state.new_screenshots():  # an earlier check's: put back at the end anyway
+            path.unlink()
         colour, marker = self.marker()
         out = self.tmp / "gimp-shot.png"
 
