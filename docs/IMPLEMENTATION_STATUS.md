@@ -774,6 +774,50 @@ A NEMESIS review of the first version led to the swap, absolute columns in check
 
 Not covered: the variants above as committed scripts, pins on other displays after a restart, the shortcut typed on a real keyboard, apps that take longer than recovery's 15 s or open several windows, a side-by-side Group after a real restart, a log out with no other session open (which stops the user manager too), and real hardware.
 
+### F-007 acceptance: work survives Desk and Overview (2026-11-26)
+
+The spec's line is "App windows survive reveal/return; focus, IDs and positions preserved, even if animation initially simple". Spec §5 commits that revealing Desk is not minimising, closing, suspending or reorganising; §5.2's transition grammar is a hypothesis. F-007 passes when every check below holds for every route and state below, in the guest, on the installed shell built from the change's tree.
+
+**Three surfaces show the same work:** Flow's Desk, Flow's Overview (this display's spaces in a row) and Niri's own overview (the live windows, zoomed out), which Flow keeps in the Spaces switcher and on the touchpad.
+
+**Routes.** Each case is one way in and one way out:
+
+| Surface | In | Out, unchanged | Out, to a chosen space |
+|---|---|---|---|
+| Desk | Super+H; the Island's *floe.*; Super+O or Up or the home indicator from Overview; the Platform API's ShowDesk | Super+H; Escape; *floe.*; Desk's home indicator; *Return to work* | a pin's card; Super+number; *Spaces*, then a space |
+| Flow's Overview | Super+O; a tap or a swipe up on the home indicator; Desk's *Overview*; ShowOverview | Escape; Enter or *Open selected* on the space it opened on; a wheel notch, then Escape | Left/Right, Home or End, then Enter; a click on another card, then on it again |
+| Niri's overview | a four-finger swipe up on the touchpad; the switcher's *Live overview* | the swipe down; Escape | — |
+
+Keys are pressed on a real keyboard (a uinput device that Niri reads through libinput, as it reads a laptop's own), so they reach Niri's own bindings, which run the installed configuration's commands. Earlier smokes ran those commands themselves, because keys sent through Niri's virtual keyboard never reach its bindings. The touchpad is a uinput touchpad of the same kind, so the four-finger swipe goes through libinput's gesture recogniser to Niri's own gesture. The pointer is `tests/pointer.py`'s, aimed at the shell's own items.
+
+**States**, each with the routes it needs:
+1. **One display, the full row:** pin 1 (one app, half the screen wide), pin 2 (a stacked Group of two apps, half), a side-by-side Group of two apps, an unpinned app three quarters wide, and an app on the workspace below. Focus on the side-by-side Group's second app, so the view starts away from the row's start. Every route above.
+2. **A Layer open and focused** over the unpinned app.
+3. **Focus on the workspace below**, where Desk and Overview show that workspace's one space.
+4. **Two displays**, the second connected through sysfs, each with its own windows, pin and focus. Desk and Flow's Overview from each display, and Niri's overview over both.
+5. **A window opens while Desk is shown, and one closes.**
+6. **A toggle while a transition runs:** Super+H again during Desk's 220 ms rise; Super+O again while Overview is still taking its snapshot; a four-finger swipe down during Niri's opening. Several in a row.
+7. **Reduce motion on.**
+
+**Checks**, after each return:
+1. **Windows.** Every test window is open with the same Niri ID, workspace, output, column, row, size, floating state and floating place. The focused output, the focused window, each output's active workspace and each workspace's active window are the same, except where the route chose a space: then focus is on that space's window, and only that changed.
+2. **Scroll position.** A settled screenshot of each output is the same, pixel for pixel, as before the reveal, below the Island's 44 px tab (its clock moves). Where the route chose a space, it is the same as focusing that window directly from the same start. Niri reports no view offset; the screen is where it shows.
+3. **Flow's state.** `spaces.json` and `groups.json` keep their bytes, and the shell's `spaces_view` is the same (but for which space is active, where the route chose one); `spaces_error` is empty.
+4. **Pins.** Super+1 and Super+2, pressed on the keyboard, reach pin 1 and pin 2's last focused member; on the second display, Super+Alt with its display digit and 1 reaches its pin.
+5. **Nothing left open.** No shell surface is open, Niri's overview is closed, and Niri's layer surfaces are the ones there were before (no Desk or Overview surface left mapped, nowhere a keyboard grab).
+6. **While shown,** windows have not moved either (check 1 without focus, read during the reveal).
+7. **The real state** (`~/.local/state/flow`, settings, appearance, recovery markers, Niri's include links) is the same, byte for byte, after the run, and `flow-shell` runs.
+
+For state 5 the reference is Niri without Flow: the window that opens or closes while Desk is shown must leave the row, focus and screen as the same open or close does with Desk closed. Desk stays open meanwhile and keeps the keyboard.
+
+**Visual transition, in checkable terms:**
+- **It finishes.** Within 1 s of the request the screen stops changing (two screenshots 0.15 s apart are the same) and shows the surface whole: Desk's content at full opacity and in place (`desk_motion`), Overview open, Niri's overview open.
+- **Nothing is left half drawn.** Check 2 and check 5: the work view after a return is the work view before it.
+- **A toggle mid-transition counts.** In state 6 each toggle is taken: the surface ends as the number of toggles says, its layer surface is mapped or gone accordingly, and the screen is the work view again. None is ignored or retried.
+- **Reduce motion is respected.** Screenshots taken as fast as `grim` allows from the request on: with Reduce motion, every frame showing the surface is its final frame, for Desk and for Niri's overview; with it off, at least one is not (so the sampler can see motion at all).
+
+**What the guest cannot show, and why F-007 does not need it.** *Physical touch* is F-016's (spec phase 3 and §17's tablet row). Flow binds no touch gesture of its own beyond the home indicator, which takes a finger as a pointer. *A real touchpad's* noise, palm rejection and acceleration: the uinput touchpad moves four fingers in step. *Spatial transitions of real app textures* (§2: "may require upstream Niri changes"): the spec's test allows "animation initially simple", and §5.2 asks early builds for simple transitions or Niri's own overview. *Real hardware* and an accelerated renderer.
+
 ### Automatic recovery on by default (2026-11-26)
 
 Automatic session recovery was off by default from its start (2026-11-14) with no reason recorded: the commit has no description and no review, and the README and milestones only call it opt-in and experimental. It is now on by default, so F-003 passes as shipped.
