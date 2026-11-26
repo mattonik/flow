@@ -2680,14 +2680,16 @@ ShellRoot {
             // For open_took: the first frame shown with every card, each card on screen with its snapshot.
             Connections {
                 target: overviewFocus.Window.window
+                // Overview is drawn once a frame shows every card with its snapshot (images load asynchronously): until
+                // then Desk, or the work view's bands, stay. That frame is also where open_took ends.
                 function onFrameSwapped() {
-                    if (spacesOverview.visible && !root.overviewDrawn) root.overviewDrawn = true
-                    if (!root.openStarted.overview || !spacesOverview.visible || overviewRow.count !== root.displaySpaces.length) return
+                    if (!spacesOverview.visible || overviewRow.count !== root.displaySpaces.length) return
                     for (let i = 0; i < overviewRow.count; i++) {
                         const card = overviewRow.itemAtIndex(i)
                         if (card && !card.pictured) return
                     }
-                    root.openEnds("overview")
+                    if (!root.overviewDrawn) root.overviewDrawn = true
+                    if (root.openStarted.overview) root.openEnds("overview")
                 }
             }
             Keys.onEscapePressed: root.closeSpacesOverview()

@@ -769,6 +769,7 @@ class Smoke:
         desk_again = self.settled(output)
         to_overview = self.frames(lambda: self.click(self.control("desk", "Overview")), output)
         wait_for(self.overview_open, "Overview from Desk")
+        overview_again = self.settled(output)
         self.keys("esc")
         wait_for(lambda: not self.surfaces(), "Overview to close")
         self.settled(output)
@@ -787,6 +788,10 @@ class Smoke:
         print(f"{tag}: frames equal to the work view {sum(1 for f in desk if not differ(f, work))}, to Desk's "
               f"{sum(1 for f in desk if not differ(f, desk_end))}, of {len(desk)}; order "
               + "".join("w" if not differ(f, work) else "d" if not differ(f, desk_end) else "?" for f in desk), flush=True)
+        print(f"{tag}: Desk to Overview " + "".join("d" if not differ(f, desk_again) else "o" if not differ(f, overview_again)
+                                                    else "w" if not differ(f, work) else "?" for f in to_overview), flush=True)
+        for n, frame in enumerate(f for f in to_overview if not differ(f, work)):
+            self.save(f"between-{tag}-{n}", {output: frame})
         print(f"{tag}: Overview to Desk " + "".join("o" if not differ(f, overview) else "d" if not differ(f, desk_again)
                                                     else "w" if not differ(f, work) else "?" for f in to_desk), flush=True)
         return {"return_midway": sum(1 for f in back if differ(f, desk_end) and differ(f, work)), "return_frames": len(back),

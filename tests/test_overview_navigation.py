@@ -142,7 +142,9 @@ class ScreenTest(unittest.TestCase):
                 self.assertNotIn("root.spacesOverviewOpen", visible)
         swap = block_after("function onFrameSwapped() { if (deskWindow.visible", CODE)
         self.assertIn("root.deskDrawn = true", swap)
-        self.assertIn("if (spacesOverview.visible && !root.overviewDrawn) root.overviewDrawn = true", CODE)
+        overview_swap = block_after("function onFrameSwapped() {\n                    if (!spacesOverview.visible", CODE)
+        # Drawn means every card is pictured: the flag comes after the loop that returns on a card still loading.
+        self.assertLess(overview_swap.index("if (card && !card.pictured) return"), overview_swap.index("root.overviewDrawn = true"))
         # Drawn means a frame was swapped, not that the window was shown.
         self.assertNotRegex(block_after("id: deskWindow\n", CODE).split("Connections")[0], r"deskDrawn = true")
 
