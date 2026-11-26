@@ -367,6 +367,8 @@ class Smoke:
         if {k: v for k, v in while_shown["windows"].items()} != before["work"]["windows"]:
             raise Failure(f"{label}: windows changed while it was shown: {diff_dicts(before['work']['windows'], while_shown['windows'])}")
         grabs = [l for l in self.layers() if l[3] == "Exclusive"]
+        if self.surfaces() & {"desk", "overview"} and not grabs:
+            raise Failure(f"{label}: Desk or Overview is open, but no layer surface holds the keyboard")
         if any(l[1] != before["work"]["focused_output"] for l in grabs):
             raise Failure(f"{label}: shown on another display than the focused {before['work']['focused_output']}: {grabs}")
         output = before["work"]["focused_output"]
@@ -772,14 +774,22 @@ class Smoke:
         to_desk = self.frames(lambda: self.keys("super", "o"), output)
         wait_for(self.desk_open, "Desk after Super+O again")
         desk_again = self.settled(output)
+        self.keys("esc")
+        wait_for(lambda: not self.surfaces(), "Desk to close")
+        self.keys("super", "o")
+        wait_for(self.overview_open, "Overview")
+        self.settled(output)
+        to_desk_h = self.frames(lambda: self.keys("super", "h"), output)  # toggle, another route from Overview to Desk
+        wait_for(self.desk_open, "Desk after Super+H from Overview")
+        self.settled(output)
         to_overview = self.frames(lambda: self.click(self.control("desk", "Overview")), output)
         wait_for(self.overview_open, "Overview from Desk")
         overview_again = self.settled(output)
         self.keys("esc")
         wait_for(lambda: not self.surfaces(), "Overview to close")
         self.settled(output)
-        between = sum(1 for f in to_desk if not differ(f, work)) + sum(1 for f in to_overview if not differ(f, work))
-        between_bare = len([f for f in to_desk if differ(f, overview) and differ(f, desk_again)])
+        between = sum(1 for frames in (to_desk, to_desk_h, to_overview) for f in frames if not differ(f, work))
+        between_bare = len([f for f in to_desk + to_desk_h if differ(f, overview) and differ(f, desk_again)])
         live = self.frames(lambda: niri("action", "open-overview"), output)
         live_end = self.settled(output)
         niri("action", "close-overview")
@@ -805,8 +815,10 @@ class Smoke:
         self.save(f"to-overview-{tag}-end", {output: overview_again})
         print(f"{tag}: Overview to Desk " + "".join("o" if not differ(f, overview) else "d" if not differ(f, desk_again)
                                                     else "w" if not differ(f, work) else "?" for f in to_desk), flush=True)
+        print(f"{tag}: Overview to Desk by Super+H " + "".join("o" if not differ(f, overview) else "d" if not differ(f, desk_again)
+                                                               else "w" if not differ(f, work) else "?" for f in to_desk_h), flush=True)
         return {"return_midway": sum(1 for f in back if differ(f, desk_end) and differ(f, work)), "return_frames": len(back),
-                "between": between, "to_desk_midway": between_bare, "to_desk_frames": len(to_desk),
+                "between": between, "to_desk_midway": between_bare, "to_desk_frames": len(to_desk) + len(to_desk_h),
                 "desk": len(self.in_between(desk, work, desk_end)), "desk_frames": len(desk),
                 "niri": len(self.in_between(live, work, live_end)), "niri_frames": len(live)}
 
@@ -836,9 +848,9 @@ class Smoke:
         if still["desk"] or still["niri"]:
             raise Failure(f"With Reduce motion, frames were caught midway (Desk {still['desk']} of {still['desk_frames']}, "
                           f"Niri's overview {still['niri']} of {still['niri_frames']})")
-        self.step(f"the work never showed between Overview and Desk, either way ({moving['to_desk_frames']} and "
-                  f"{still['to_desk_frames']} screenshots from Overview to Desk); with Reduce motion every one was Overview's "
-                  "or Desk's settled frame")
+        self.step(f"the work never showed between Overview and Desk, either way: from Overview by Super+O and by Super+H, "
+                  f"and from Desk by its Overview ({moving['to_desk_frames']} and {still['to_desk_frames']} screenshots from "
+                  "Overview to Desk); with Reduce motion every one from Overview to Desk was Overview's or Desk's settled frame")
         self.step(f"returning from Desk by Escape, {moving['return_midway']} of {moving['return_frames']} screenshots (motion on) "
                   f"and {still['return_midway']} of {still['return_frames']} (Reduce motion) were the work without its whole "
                   "work indicator; the rest Desk's or the work's settled frame")
@@ -885,8 +897,9 @@ class Smoke:
                 self.keys("super", "leftalt", "1")
                 wait_for(lambda: self.work()["focused"] == "x", f"Super+Alt+{self.external}, 1 to reach Virtual-2's pin after {label}")
             self.step(f"after each, Super+Alt+{self.external} then 1 reached Virtual-2's pin")
-            # Super+H the moment focus crosses to the other display, before the shell's next refresh (0.15 to 0.6 s):
-            # Desk must still open there. Each case above waited for the shell first.
+            # Super+H the moment focus crosses to the other display, without waiting for the shell as each case above does:
+            # Desk must open there. A real key takes about 0.4 s to open Desk, and the shell's refresh after a focus change
+            # usually lands first, so this does not reach a late refresh; Desk keeps no screen of its own for that.
             for attempt in range(3):
                 for name, output in (("y", "Virtual-2"), ("e", "Virtual-1")):
                     niri("action", "focus-window", "--id", self.wid(name))
@@ -897,7 +910,7 @@ class Smoke:
                         raise Failure(f"Super+H right after focus moved to {output} (attempt {attempt + 1}) showed Desk on {grabs}")
                     k("esc")
                     wait_for(lambda: not self.surfaces(), "Desk to close")
-            self.step("Super+H pressed the moment focus moved to the other display, before the shell refreshed, opened Desk "
+            self.step("Super+H pressed the moment focus moved to the other display, without waiting for the shell, opened Desk "
                       "on that display, both ways, three times")
             self.close("x")
             self.close("y")
@@ -933,7 +946,29 @@ def slug(text):
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:60]
 
 
+def niri_links(home):
+    """Niri's include links in ``home``'s ~/.config/flow, by path: what the installed shell points at Flow's files."""
+    return {p: os.readlink(p) for p in (Path(home) / ".config/flow").glob("niri-*.kdl") if p.is_symlink()}
+
+
+def put_back_links(home, links):
+    """Make ``home``'s Niri include links exactly ``links`` again: each replaced by a rename, so Niri never reads a
+    missing include, and any link the run added removed."""
+    for path in niri_links(home):
+        if path not in links:
+            path.unlink()
+    for path, target in links.items():
+        if not path.is_symlink() or os.readlink(path) != target:
+            temporary = path.with_name(path.name + ".f007")
+            temporary.unlink(missing_ok=True)
+            temporary.symlink_to(target)
+            temporary.replace(path)
+
+
 def main():
+    # A timeout or a dropped ssh ends the run through finally, which puts the real links back.
+    for number in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(number, lambda *_: sys.exit(1))
     parser = argparse.ArgumentParser()
     parser.add_argument("--part", action="append", choices=PARTS)
     parser.add_argument("--out", default=os.path.expanduser("~/flow-f007/out"))
@@ -943,7 +978,7 @@ def main():
         raise Failure("Stop the installed shell first (systemctl --user stop flow-shell)")
     # The shell under test is /etc/flow's, which points Niri's include links in the real ~/.config/flow from its own
     # (isolated) settings: Reduce motion has to reach the user's Niri to be tested. They are put back as they were.
-    links = {p: os.readlink(p) for p in (Path.home() / ".config/flow").glob("niri-*.kdl") if p.is_symlink()}
+    links = niri_links(Path.home())
     real_state = Path.home() / ".local/state/flow"
     real = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in real_state.glob("*") if p.is_file()}
     if read("overview-state")["is_open"]:
@@ -962,6 +997,10 @@ def main():
             failure = exc
         finally:
             try:
+                put_back_links(Path.home(), links)  # first, so nothing below can skip it
+            except OSError as exc:
+                failure = failure or exc
+            try:
                 niri("action", "close-overview")  # a failure while it was open must not leave it open
             except subprocess.SubprocessError:
                 pass
@@ -978,15 +1017,6 @@ def main():
                 niri("action", "focus-workspace", start_workspace["idx"])
             except subprocess.SubprocessError:
                 pass
-            for path in (Path.home() / ".config/flow").glob("niri-*.kdl"):
-                if path.is_symlink() and path not in links:
-                    path.unlink()
-            for path, target in links.items():
-                if not path.is_symlink() or os.readlink(path) != target:
-                    temporary = path.with_name(path.name + ".f007")
-                    temporary.unlink(missing_ok=True)
-                    temporary.symlink_to(target)
-                    temporary.replace(path)
         if failure:
             raise failure
     after = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in real_state.glob("*") if p.is_file()}

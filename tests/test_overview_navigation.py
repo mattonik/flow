@@ -79,8 +79,30 @@ class IndicatorTest(unittest.TestCase):
 
 
 
-# QML with its // comments removed: a commented-out line must not satisfy a check.
-CODE = re.sub(r"(?m)//.*$", "", SHELL)
+# QML with its // comments removed: a commented-out line must not satisfy a check. A comment starts a line or follows
+# whitespace, so "file://" in a string stays.
+CODE = re.sub(r"(?m)(^|(?<=\s))//.*$", "", SHELL)
+
+
+def window(ident):
+    """The top-level lines of the PanelWindow whose id is ``ident`` (its own properties, not its children's)."""
+    at = CODE.index(f"id: {ident}\n")
+    start = CODE.rindex("PanelWindow {", 0, at)
+    depth, lines, line = 0, [], ""
+    for ch in CODE[start:]:
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        if ch == "\n":
+            if depth == 1:
+                lines.append(line.strip())
+            line = ""
+        elif depth == 1 and ch not in "{}":
+            line += ch
+    return [l for l in lines if l]
 
 
 class ReadOnlyTest(unittest.TestCase):
@@ -94,10 +116,13 @@ class ReadOnlyTest(unittest.TestCase):
         self.assertIn("overviewIndex", names)
         for name in names:
             with self.subTest(name=name):
-                self.assertIsNone(re.search(rf"\broot\.{name}\s*=(?![=>])", CODE), f"root.{name} is assigned")
+                # =, +=, -= and the like, and ++ or -- either side: QML refuses each on a read-only property.
+                change = r"\s*(?:[-+*/%]?=(?![=>])|\+\+|--)"
+                self.assertIsNone(re.search(rf"\broot\.{name}{change}|(?:\+\+|--)root\.{name}\b", CODE),
+                                  f"root.{name} is assigned")
                 # Unqualified, as from a handler in the property's own scope; a local ``const``/``let``/``var`` of the
                 # same name is a declaration, not an assignment.
-                assigned = [m for m in re.finditer(rf"(?<![\w.]){name}\s*=(?![=>])", CODE)
+                assigned = [m for m in re.finditer(rf"(?<![\w.]){name}{change}|(?:\+\+|--){name}\b", CODE)
                             if not re.search(r"\b(const|let|var)\s+$", CODE[:m.start()][-12:])]
                 self.assertEqual(assigned, [], f"{name} is assigned")
 
@@ -115,47 +140,53 @@ class ReadOnlyTest(unittest.TestCase):
 
 
 class ScreenTest(unittest.TestCase):
-    """Where the shell's surfaces map, and what shows between them. Source checks only (no QML runner in CI); the guest
-    smoke checks the behaviour on two displays and frame by frame."""
+    """Where the shell's surfaces map, and what shows between them. Source checks only: CI has no QML runner, so the
+    timing (the holds, their 0.6 s limit, a drawn frame) rests on tests/niri_desk_overview_smoke.py in the guest, which
+    checks it frame by frame and on two displays. These check that each piece is where it acts."""
 
     def test_the_work_views_bands_are_on_the_focused_displays_screen(self):
         self.assertIn("readonly property var workScreen: Quickshell.screens.find(screen => screen.name === displayOutput) || null", CODE)
         self.assertIn('displayOutput = result.display ? result.display.output || "" : ""', CODE)
         for ident in ("homeIndicator", "workIndicatorWindow", "workIsland", "appMenuTrigger"):
             with self.subTest(window=ident):
-                self.assertIn("screen: root.workScreen", block_after(f"id: {ident}\n", CODE).split("\n")[1])
+                self.assertIn("screen: root.workScreen", window(ident))
 
     def test_desk_and_overview_map_where_focus_is(self):
-        # A screen from the refresh is up to 0.6 s late: Desk would open on the display the user just left.
+        # A screen from the refresh can be late: Desk would open on the display the user just left.
         for ident in ("deskWindow", "spacesOverview"):
             with self.subTest(window=ident):
-                self.assertNotIn("screen:", block_after(f"id: {ident}\n", CODE).split("\n")[1])
+                self.assertFalse([line for line in window(ident) if line.startswith("screen:")], window(ident))
 
     def test_the_work_view_stays_until_desk_or_overview_has_drawn(self):
-        self.assertIn("readonly property bool workCovered: (deskOpen && deskDrawn) || (spacesOverviewOpen && overviewDrawn) "
-                      "|| deskHeld || overviewHeld", CODE)
+        covered = re.search(r"readonly property bool workCovered: (.*)", CODE).group(1).strip()
+        self.assertEqual(covered, "(deskOpen && deskDrawn) || (spacesOverviewOpen && overviewDrawn) || deskHeld || overviewHeld")
         for ident in ("homeIndicator", "workIndicatorWindow", "workIsland", "appMenuTrigger"):
             with self.subTest(window=ident):
-                visible = next(line for line in block_after(f"id: {ident}\n", CODE).split("\n") if "visible:" in line)
+                visible = next(line for line in window(ident) if line.startswith("visible:"))
                 self.assertIn("!root.workCovered", visible)
                 self.assertNotIn("root.deskOpen", visible)
                 self.assertNotIn("root.spacesOverviewOpen", visible)
-        swap = block_after("function onFrameSwapped() { if (deskWindow.visible", CODE)
-        self.assertIn("root.deskDrawn = true", swap)
-        overview_swap = block_after("function onFrameSwapped() {\n                    if (!spacesOverview.visible", CODE)
-        # Drawn means every card is pictured: the flag comes after the loop that returns on a card still loading.
-        self.assertLess(overview_swap.index("if (card && !card.pictured) return"), overview_swap.index("root.overviewDrawn = true"))
-        # Drawn means a frame was swapped, not that the window was shown.
-        self.assertNotRegex(block_after("id: deskWindow\n", CODE).split("Connections")[0], r"deskDrawn = true")
+        self.assertIn("function onFrameSwapped() { if (deskWindow.visible && !root.deskDrawn) root.deskDrawn = true }", CODE)
+        overview_swap = block_after("function onFrameSwapped() {\n                    if (spacesOverview.visible", CODE)
+        self.assertEqual(overview_swap.split("\n")[1].strip(), "if (spacesOverview.visible && !root.overviewDrawn) root.overviewDrawn = true")
+        self.assertFalse([line for line in window("deskWindow") if "deskDrawn = true" in line])
 
     def test_between_overview_and_desk_the_one_going_stays_until_the_one_coming_has_drawn(self):
-        self.assertIn("visible: root.deskOpen || root.deskHeld", CODE)
-        self.assertIn("visible: root.spacesOverviewOpen || root.overviewHeld", CODE)
+        self.assertIn("visible: root.deskOpen || root.deskHeld", window("deskWindow"))
+        self.assertIn("visible: root.spacesOverviewOpen || root.overviewHeld", window("spacesOverview"))
         self.assertIn("onDeskDrawnChanged: if (deskDrawn) overviewHeld = false", CODE)
         self.assertIn("onOverviewDrawnChanged: if (overviewDrawn) deskHeld = false", CODE)
-        reveal = block_after("function revealDeskFromOverview() {", CODE)
-        self.assertLess(reveal.index("overviewHeld = true"), reveal.index("closeSpacesOverview()"))
-        self.assertIn('if (modelData === "Overview") { root.deskHeld = true; root.openSpacesOverview() }', CODE)
+        # Held where the change is made, so every route between them holds: Super+H from Overview, Super+O again, the
+        # home indicator, Desk's Overview, search's Overview, the IPC.
+        toggle = block_after("function toggleDesk() {", CODE)
+        self.assertLess(toggle.index("if (!deskOpen && spacesOverviewOpen) holdOverview()"), toggle.index("spacesOverviewOpen = false"))
+        opening = block_after("function openSpacesOverview() {", CODE)
+        self.assertLess(opening.index("if (deskOpen) holdDesk()"), opening.index("deskOpen = false"))
+        self.assertIn("else toggleDesk()", block_after("function revealDeskFromOverview() {", CODE))
+        self.assertNotIn("Held = true", CODE.replace("function holdDesk() { deskHeld = true", "").replace(
+            "function holdOverview() { overviewHeld = true", ""))
+        search = block_after("function runSearchResult(result) {", CODE)
+        self.assertIn('result.value === "overview"))) deskOpen = false', search)
 
 
 if __name__ == "__main__":

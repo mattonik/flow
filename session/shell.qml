@@ -755,10 +755,15 @@ ShellRoot {
     onDeskOpenChanged: if (!deskOpen) overviewHeld = false
     onSpacesOverviewOpenChanged: if (!spacesOverviewOpen && !overviewPending) deskHeld = false
     onOverviewPendingChanged: if (!overviewPending && !spacesOverviewOpen) deskHeld = false
-    Timer { running: root.deskHeld || root.overviewHeld; interval: 600; onTriggered: { root.deskHeld = false; root.overviewHeld = false } }
+    // Held where the change is made, whoever asks for it (a key, a button, search, the IPC): toggleDesk from Overview,
+    // openSpacesOverview from Desk. Never longer than 0.6 s from the latest hold.
+    function holdDesk() { deskHeld = true; holdTimer.restart() }
+    function holdOverview() { overviewHeld = true; holdTimer.restart() }
+    Timer { id: holdTimer; interval: 600; onTriggered: { root.deskHeld = false; root.overviewHeld = false } }
     property int overviewAgainWhilePending: 0
     function toggleDesk() {
         if (deskOpen && deskEnter.running) deskTogglesMidRise += 1
+        if (!deskOpen && spacesOverviewOpen) holdOverview()   // Overview to Desk: Overview stays until Desk has drawn
         overviewPending = false
         spacesOverviewOpen = false   // one surface at a time
         notificationsOpen = false
@@ -839,6 +844,7 @@ ShellRoot {
     function openSpacesOverview() {
         // Only the plain work view shows the space itself; from Desk or a panel the screen shows them instead.
         const plain = workViewOnly
+        if (deskOpen) holdDesk()   // Desk to Overview: Desk stays until Overview has drawn
         notificationsOpen = false
         quickSettingsOpen = false
         switcherOpen = false
@@ -877,9 +883,8 @@ ShellRoot {
     }
     // "Again to reveal your desk": the same gesture or key that opened Overview goes one level further.
     function revealDeskFromOverview() {
-        if (spacesOverviewOpen && !deskOpen) overviewHeld = true
-        closeSpacesOverview()
-        if (!deskOpen) toggleDesk()
+        if (deskOpen) closeSpacesOverview()
+        else toggleDesk()   // which closes Overview, held until Desk has drawn
     }
     function toggleSpacesOverview() {
         // Again while Overview is still opening (taking its snapshot) is again all the same: on to Desk. Ignored, a
@@ -1142,7 +1147,7 @@ ShellRoot {
         if (result.confirm && Date.now() - searchArmedAt < 500) return
         searchArmed = ""
         searchOpen = false
-        if (result.kind !== "settings" && !(result.kind === "action" && result.value === "desk")) deskOpen = false
+        if (result.kind !== "settings" && !(result.kind === "action" && (result.value === "desk" || result.value === "overview"))) deskOpen = false
         if (result.kind === "app" || result.kind === "file" || result.kind === "command") openSearchResult(result)
         else if (result.kind === "pin") spaceAction("focus", result.value)
         else if (result.kind === "window") spaceAction("focus-window", result.value)
@@ -2538,7 +2543,7 @@ ShellRoot {
                                     }
                                     Accessible.name: modelData === "Shortcuts" ? "Show keyboard shortcuts" : modelData
                                     onClicked: {
-                                        if (modelData === "Overview") { root.deskHeld = true; root.openSpacesOverview() }
+                                        if (modelData === "Overview") root.openSpacesOverview()
                                         else if (modelData === "Spaces") root.toggleSwitcher()
                                         else if (modelData === "Shortcuts") {
                                             root.deskOpen = false
@@ -2681,16 +2686,14 @@ ShellRoot {
             // For open_took: the first frame shown with every card, each card on screen with its snapshot.
             Connections {
                 target: overviewFocus.Window.window
-                // Overview is drawn once a frame shows every card with its snapshot (images load asynchronously): until
-                // then Desk, or the work view's bands, stay. That frame is also where open_took ends.
                 function onFrameSwapped() {
-                    if (!spacesOverview.visible || overviewRow.count !== root.displaySpaces.length) return
+                    if (spacesOverview.visible && !root.overviewDrawn) root.overviewDrawn = true
+                    if (!root.openStarted.overview || !spacesOverview.visible || overviewRow.count !== root.displaySpaces.length) return
                     for (let i = 0; i < overviewRow.count; i++) {
                         const card = overviewRow.itemAtIndex(i)
                         if (card && !card.pictured) return
                     }
-                    if (!root.overviewDrawn) root.overviewDrawn = true
-                    if (root.openStarted.overview) root.openEnds("overview")
+                    root.openEnds("overview")
                 }
             }
             Keys.onEscapePressed: root.closeSpacesOverview()
