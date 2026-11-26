@@ -31,10 +31,12 @@ Checks, in order (names for ``--only``):
   then the page's track ends and Niri lists no cast.
 - ``dnd-file``: a file dragged from Files (Nautilus) onto the page arrives with its name and content.
 - ``dnd-text``: text dragged from Kate onto the page arrives as ``text/plain``.
-- ``clipboard-text``: text copied and pasted around GNOME Text Editor (GTK 4, Wayland), Kate (Qt 6, Wayland) and
-  xterm (X11, through xwayland-satellite): each saves or writes what it pasted to a file the test reads.
-- ``clipboard-image``: an image copied and pasted around KolourPaint (Qt, Wayland), Firefox (GTK, Wayland) and
-  Firefox on X11 (``MOZ_ENABLE_WAYLAND=0``): each pasted image has the colour the copy had.
+- ``clipboard-text``: text copied in GNOME Text Editor (GTK 4, Wayland) is pasted and saved in Kate (Qt 6,
+  Wayland); Kate's is pasted in xterm (X11, through xwayland-satellite), which writes it to a file; xterm's is read
+  by Firefox's page (GTK 3, Wayland).
+- ``clipboard-image``: an image copied in KolourPaint (Qt, Wayland) is pasted into Firefox's page (GTK, Wayland);
+  the page's is pasted and saved in KolourPaint and read by Firefox on X11 (``MOZ_ENABLE_WAYLAND=0``); that one's is
+  read by the Wayland page. Each image has the colour its copy had.
 - ``chooser-pointer``: the same, answered with the pointer where Nautilus draws its buttons (the close button, the
   file, Open, Save). It fails today where the shell's work indicator covers the chooser's Open and Save (see
   ``edges``), and says so.
@@ -480,9 +482,10 @@ if (mode === 'cast') {
       report({kind: 'copied'}); } catch (e) { report({kind: 'copy-failed', message: String(e)}); } };
   element('bottom', q.get('read') ? 'Read the clipboard' : 'Paste here', 'half').onclick = async () => {
     if (!q.get('read')) return;
-    try { const types = []; for (const item of await navigator.clipboard.read()) for (const t of item.types) {
-        types.push(t); if (t === 'image/png') await post('/blob', await item.getType(t)); }
-      report({kind: 'read', types}); } catch (e) { report({kind: 'read-failed', message: String(e)}); } };
+    try { const types = []; let text = null; for (const item of await navigator.clipboard.read()) for (const t of item.types) {
+        types.push(t); if (t === 'image/png') await post('/blob', await item.getType(t));
+        if (t === 'text/plain') text = await (await item.getType(t)).text(); }
+      report({kind: 'read', types, text}); } catch (e) { report({kind: 'read-failed', message: String(e)}); } };
   document.onpaste = async e => { e.preventDefault(); const types = [];
     for (const item of e.clipboardData.items) { types.push(item.type); if (item.type === 'image/png') await post('/blob', item.getAsFile()); }
     report({kind: 'paste', types}); };
@@ -1131,7 +1134,7 @@ gi.require_version("Gimp", "3.0")
 from gi.repository import Gimp, Gio
 procedure = Gimp.get_pdb().lookup_procedure("plug-in-screenshot")
 config = procedure.create_config()
-config.set_property("run-mode", Gimp.RunMode.NONINTERACTIVE)
+config.set_property("run-mode", Gimp.RunMode.WITH_LAST_VALS)
 config.set_property("shoot-type", "screen")
 result = procedure.run(config)
 print("GIMP-STATUS", result.index(0).value_nick, flush=True)
@@ -1141,9 +1144,9 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
 """
 
     def gimp_shot(self, out):
-        """GIMP 3's screenshot plug-in, the one File > Create > Screenshot runs, as a batch call: on Wayland it
-        asks the Screenshot portal with ``interactive: true`` whatever its run mode
-        (plug-ins/screenshot/screenshot-freedesktop.c)."""
+        """GIMP 3's screenshot plug-in, the one File > Create > Screenshot runs, as a batch call with its last
+        values (it refuses the non-interactive run mode when the portal is its backend, before asking): on Wayland it
+        asks the Screenshot portal with ``interactive: true`` (plug-ins/screenshot/screenshot-freedesktop.c)."""
         home = self.tmp / "gimp-home"
         env = {**os.environ, "XDG_CONFIG_HOME": str(home / "config"), "XDG_CACHE_HOME": str(home / "cache"),
                "XDG_DATA_HOME": str(home / "data")}
@@ -1185,6 +1188,8 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
         before = set(windows())
         thread, result = self.gimp_shot(out)
         dialog, _, take = self.access_dialog(before)
+        # A user may take a while: longer than D-Bus's default call timeout (25 s), which failed the request once.
+        time.sleep(30)
         self.pointer.click(take)
         thread.join(120)
         check(status(result) == "success" and "GIMP-SAVED" in result.get("output", "") and out.exists(),
@@ -1193,7 +1198,8 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
         check(hits >= 0.95 * points, f"Only {hits} of {points} points of GIMP's screenshot show this run's colour")
         self.apps.close_window(marker)
         self.passed("screenshot-gimp", f"GIMP 3's screenshot asked for consent; Cancel gave it {cancelled} and no "
-                                       f"file; Take Screenshot gave it the live screen ({hits}/{points} points)")
+                                       f"file; Take Screenshot, clicked after 30 s, gave it the live screen "
+                                       f"({hits}/{points} points)")
 
     # ScreenCast -------------------------------------------------------------------------------------------------
 
@@ -1313,7 +1319,13 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
         out = subprocess.run(["wl-paste", "-n"], stdout=subprocess.PIPE, timeout=10)
         return out.stdout
 
+    # Keys go to Wayland apps only, and only before an X11 window has had focus in a check: after one, wtype's chords
+    # reach a Wayland app wrong (GNOME Text Editor's Ctrl+A and Ctrl+C left "c" on the clipboard; KolourPaint's Ctrl+V
+    # opened an empty image), a virtual-keyboard artifact a real keyboard does not have. So the X11 steps come last,
+    # and the copy from X11 is read by a page with the pointer.
+
     def check_clipboard_text(self):
+        pages = self.need_pages()
         a, b, c = (f"clip{n}{uuid.uuid4().hex[:12]}" for n in "abc")
         gtk_file, qt_file, x11_file = self.tmp / "gtk.txt", self.tmp / "qt.txt", self.tmp / "x11.txt"
         gtk_file.write_text(a)
@@ -1321,11 +1333,7 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
         gtk = self.apps.start(["gnome-text-editor", "--standalone", gtk_file], app_id="org.gnome.TextEditor",
                               env={"GSETTINGS_BACKEND": "keyfile"})[1]
         qt = self.apps.start(["kate", "-n", qt_file], app_id="org.kde.kate", title="qt.txt")[1]
-        size = len(b)
-        x11 = self.apps.start(["xterm", "-fa", "Monospace", "-fs", "14", "-xrm", "XTerm*selectToClipboard: true",
-                               "-e", "sh", "-c", f"stty -icanon -echo; head -c {size} > {x11_file}; echo {c}; sleep 900"],
-                              app_id="XTerm")[1]
-        for w in (gtk, qt, x11):
+        for w in (gtk, qt):
             self.apps.focus(w, "100%")
 
         # GTK 4 → Qt.
@@ -1341,21 +1349,29 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
         keys(b)
         keys("ctrl+a", "ctrl+c")
         wait_for(lambda: self.wayland_clipboard().decode().strip() == b, "Kate's copy")
-        self.apps.focus(x11)
+        size = len(b)
+        x11 = self.apps.start(["xterm", "-fa", "Monospace", "-fs", "14", "-xrm", "XTerm*selectToClipboard: true",
+                               "-e", "sh", "-c", f"stty -icanon -echo; head -c {size} > {x11_file}; echo {c}; sleep 900"],
+                              app_id="XTerm")[1]
+        self.apps.focus(x11, "100%")
         self.pointer.click(self.apps.at(0.5, 0.5), button="middle")
         wait_for(lambda: x11_file.exists() and x11_file.read_text() == b,
                  lambda: f"xterm's paste ({x11_file.read_text() if x11_file.exists() else None!r})")
 
-        # X11 → GTK 4: xterm prints c on its first line once the paste is read; a double click there copies it.
+        # X11 → GTK: xterm prints c on its first line once the paste is read; a double click there copies it, and
+        # Firefox's page reads it.
         time.sleep(0.5)
         self.shot("clipboard-xterm")
         self.pointer.run(("move", *self.apps.at(60 / 1280, 40 / 800)), ("wait", 50), "click", ("wait", 60), "click")
         wait_for(lambda: self.wayland_clipboard().decode().strip() == c, "xterm's copy to reach Wayland")
-        self.apps.focus(gtk)
-        keys("ctrl+a", "ctrl+v", "ctrl+s")
-        wait_for(lambda: gtk_file.read_text().strip() == c, lambda: f"GNOME Text Editor to save the paste ({gtk_file.read_text()!r})")
-        self.passed("clipboard-text", "text copied in GNOME Text Editor was pasted in Kate, Kate's in xterm (X11), "
-                                      "and xterm's in GNOME Text Editor; each saved what it pasted")
+        self.need_firefox(mode="clip", copy="000000", read=1)
+        pages.drain()
+        self.pointer.click(self.apps.at(0.5, 0.75))
+        read_event = pages.wait(["read", "read-failed"])
+        check(read_event["kind"] == "read" and (read_event.get("text") or "").strip() == c,
+              f"Firefox read {read_event}, not xterm's copy")
+        self.passed("clipboard-text", "text copied in GNOME Text Editor was pasted and saved in Kate, Kate's pasted in "
+                                      "xterm (X11), and xterm's read by Firefox (GTK)")
 
     def check_clipboard_image(self):
         pages = self.need_pages()
@@ -1369,13 +1385,16 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
             image = Image(pages.blobs[count - 1].read_bytes())
             return (image.width, image.height), image.pixel(60, 45)
 
+        def offered():
+            return subprocess.run(["wl-paste", "-l"], stdout=subprocess.PIPE, timeout=10).stdout
+
         # Qt → GTK: KolourPaint copies, Firefox's page gets the paste.
         kp = self.apps.start(["kolourpaint", src], app_id="org.kde.kolourpaint", title="copy-from")[1]
         self.apps.focus(kp, "100%")
+        time.sleep(2.5)  # its document loaded
         keys("ctrl+a", "ctrl+c")
-        wait_for(lambda: b"image/png" in subprocess.run(["wl-paste", "-l"], stdout=subprocess.PIPE, timeout=10).stdout,
-                 "KolourPaint's copy")
-        page = self.need_firefox(mode="clip", copy=colour_hex(c2))
+        wait_for(lambda: b"image/png" in offered(), "KolourPaint's copy")
+        self.need_firefox(mode="clip", copy=colour_hex(c2))
         pages.drain()
         count = len(pages.blobs) + 1
         self.pointer.click(self.apps.at(0.5, 0.75))
@@ -1386,26 +1405,10 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
               f"Firefox got {paste}: {size}, colour {got}, not {c1}")
         self.apps.close_window(kp)
 
-        # GTK → X11: the Wayland page copies, Firefox on X11 reads.
-        self.pointer.click(self.apps.at(0.5, 0.25))
-        pages.wait(["copied", "copy-failed"])
-        x11 = firefox(self.apps, "x11", pages.url(mode="clip", copy=colour_hex(c3), read=1), x11=True)
-        self.apps.focus(x11, "100%")
-        time.sleep(2)
-        pages.drain()
-        count = len(pages.blobs) + 1
-        self.pointer.click(self.apps.at(0.5, 0.75))
-        read_event = pages.wait(["read", "read-failed"])
-        check(read_event["kind"] == "read" and "image/png" in read_event["types"], f"Firefox on X11 read {read_event}")
-        size, got = blob_colour(count)
-        check(size == (120, 90) and close(got, c2), f"Firefox on X11 read {size}, colour {got}, not {c2}")
-
-        # X11 → Qt: Firefox on X11 copies, KolourPaint pastes and saves.
+        # GTK → Qt: the page copies, KolourPaint pastes and saves.
         self.pointer.click(self.apps.at(0.5, 0.25))
         copied = pages.wait(["copied", "copy-failed"])
-        check(copied["kind"] == "copied", f"Firefox on X11 could not copy: {copied}")
-        wait_for(lambda: b"TIMESTAMP" in subprocess.run(["wl-paste", "-l"], stdout=subprocess.PIPE, timeout=10).stdout,
-                 "the X11 copy to reach Wayland (xwayland-satellite's offer)")
+        check(copied["kind"] == "copied", f"Firefox could not copy: {copied}")
         kp = self.apps.start(["kolourpaint", dst], app_id="org.kde.kolourpaint", title="paste-into")[1]
         self.apps.focus(kp, "100%")
         time.sleep(2.5)  # its document loaded: a paste before that opens it as a new, unnamed image
@@ -1419,12 +1422,38 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
                 image = Image(dst.read_bytes())
             except (ValueError, zlib.error, struct.error, TypeError):
                 return None
-            return close(image.pixel(60, 45), c3) and image
+            return close(image.pixel(60, 45), c2) and image
         image = wait_for(saved, lambda: "KolourPaint to save the pasted image", 15)
         self.apps.close_window(kp)
-        self.passed("clipboard-image", f"an image copied in KolourPaint was pasted in Firefox, Firefox's read by "
-                                       f"Firefox on X11, and that one's pasted in KolourPaint ({image.width}×{image.height}), "
-                                       "each with the colour the copy had")
+
+        # GTK → X11: Firefox on X11 reads what the Wayland page copied.
+        x11 = firefox(self.apps, "x11", pages.url(mode="clip", copy=colour_hex(c3), read=1), x11=True)
+        self.apps.focus(x11, "100%")
+        time.sleep(2)
+        pages.drain()
+        count = len(pages.blobs) + 1
+        self.pointer.click(self.apps.at(0.5, 0.75))
+        read_event = pages.wait(["read", "read-failed"])
+        check(read_event["kind"] == "read" and "image/png" in read_event["types"], f"Firefox on X11 read {read_event}")
+        size, got = blob_colour(count)
+        check(size == (120, 90) and close(got, c2), f"Firefox on X11 read {size}, colour {got}, not {c2}")
+
+        # X11 → GTK: Firefox on X11 copies, the Wayland page reads it.
+        self.pointer.click(self.apps.at(0.5, 0.25))
+        copied = pages.wait(["copied", "copy-failed"])
+        check(copied["kind"] == "copied", f"Firefox on X11 could not copy: {copied}")
+        wait_for(lambda: b"TIMESTAMP" in offered(), "the X11 copy to reach Wayland (xwayland-satellite's offer)")
+        self.need_firefox(mode="clip", copy="000000", read=1)
+        pages.drain()
+        count = len(pages.blobs) + 1
+        self.pointer.click(self.apps.at(0.5, 0.75))
+        read_event = pages.wait(["read", "read-failed"])
+        size, got = blob_colour(count)
+        check(read_event["kind"] == "read" and size == (120, 90) and close(got, c3),
+              f"Firefox read {read_event}: {size}, colour {got}, not {c3}")
+        self.passed("clipboard-image", "an image copied in KolourPaint was pasted in Firefox; Firefox's pasted and "
+                                       f"saved in KolourPaint ({image.width}×{image.height}) and read by Firefox on "
+                                       "X11; that one's copy read by Firefox: each with the colour the copy had")
 
     # Backends ---------------------------------------------------------------------------------------------------
 

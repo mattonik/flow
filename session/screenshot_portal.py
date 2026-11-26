@@ -71,10 +71,11 @@ class Backend:
             info = None
         return (info.get_display_name() if info else "") or app_id
 
-    def call(self, target, method, args, reply_type, done):
+    def call(self, target, method, args, reply_type, done, timeout=-1):
+        """``timeout`` in ms, D-Bus's default (25 s) unless given; ``GLib.MAXINT`` waits as long as it takes."""
         name, path, interface = target
         self.connection.call(name, path, interface, method, args, self.GLib.VariantType(reply_type),
-                             self.Gio.DBusCallFlags.NONE, -1, None, done)
+                             self.Gio.DBusCallFlags.NONE, timeout, None, done)
 
     def request(self, handle, invocation, close=None):
         """The Request object the broker may Close while the user decides; ``answer`` replies once."""
@@ -140,7 +141,7 @@ class Backend:
             self.GLib.timeout_add(AFTER_DIALOG_MS, take)
         self.call(ACCESS, "AccessDialog", self.GLib.Variant("(osssssa{sv})", (
             dialog, app_id, parent_window, text["title"], text["subtitle"], text["body"], dialog_options)),
-            "(ua{sv})", decided)
+            "(ua{sv})", decided, timeout=self.GLib.MAXINT)  # the user decides: no time limit (D-Bus's 25 s failed one)
 
     def pick_color(self, handle, app_id, parent_window, options, invocation):
         answer = self.request(handle, invocation)
