@@ -478,9 +478,11 @@ ShellRoot {
     // Connected displays in screen order: {key, label, name, number, current}; number 0 is Main.
     property var displays: []
     property string displayName: ""
-    // The focused display's screen. The work view's Island and indicators, Desk and Overview are put there: a layer
-    // surface without a screen goes wherever the compositor's focus is when it maps, so after Desk opened on the second
-    // display and closed, the Island and indicators had moved there from the first (seen in the guest, F-007).
+    // The focused display's screen, from the last refresh. The work view's Island, indicators and app-menu trigger are put
+    // there: a layer surface without a screen goes wherever the compositor's focus is when it maps, so after Desk opened
+    // on the second display and closed, the Island and indicators had moved there from the first (seen in the guest,
+    // F-007). So they follow the display the work indicator describes, a refresh (0.15 to 0.6 s) after focus moves.
+    // Desk and Overview keep no screen of their own: they map where Niri's focus is as they open, which is never late.
     property string displayOutput: ""
     readonly property var workScreen: Quickshell.screens.find(screen => screen.name === displayOutput) || null
     // Super+Alt, display digit, then space digit: the display digit waits here for the space digit.
@@ -742,6 +744,17 @@ ShellRoot {
     // Reduce motion, five frames (about 110 ms) of that came before Desk in the guest.
     property bool deskDrawn: false
     property bool overviewDrawn: false
+    // Between Overview and Desk, the one going stays on screen until the one coming has drawn its first frame, so the
+    // work never shows between them.
+    property bool deskHeld: false
+    property bool overviewHeld: false
+    readonly property bool workCovered: (deskOpen && deskDrawn) || (spacesOverviewOpen && overviewDrawn) || deskHeld || overviewHeld
+    onDeskDrawnChanged: if (deskDrawn) overviewHeld = false
+    onOverviewDrawnChanged: if (overviewDrawn) deskHeld = false
+    onDeskOpenChanged: if (!deskOpen) overviewHeld = false
+    onSpacesOverviewOpenChanged: if (!spacesOverviewOpen && !overviewPending) deskHeld = false
+    onOverviewPendingChanged: if (!overviewPending && !spacesOverviewOpen) deskHeld = false
+    Timer { running: root.deskHeld || root.overviewHeld; interval: 600; onTriggered: { root.deskHeld = false; root.overviewHeld = false } }
     property int overviewAgainWhilePending: 0
     function toggleDesk() {
         if (deskOpen && deskEnter.running) deskTogglesMidRise += 1
@@ -863,6 +876,7 @@ ShellRoot {
     }
     // "Again to reveal your desk": the same gesture or key that opened Overview goes one level further.
     function revealDeskFromOverview() {
+        if (spacesOverviewOpen && !deskOpen) overviewHeld = true
         closeSpacesOverview()
         if (!deskOpen) toggleDesk()
     }
@@ -2029,9 +2043,8 @@ ShellRoot {
     // shortcut: Desk content settles in (220 ms fade and rise) but apps do not move away; add the spatial
     // transition when compositor integration supports it.
     PanelWindow {
-        visible: root.deskOpen
+        visible: root.deskOpen || root.deskHeld
         id: deskWindow
-        screen: root.workScreen
         anchors { top: true; bottom: true; left: true; right: true }
         color: floeTheme.canvas
         exclusionMode: ExclusionMode.Ignore
@@ -2524,7 +2537,7 @@ ShellRoot {
                                     }
                                     Accessible.name: modelData === "Shortcuts" ? "Show keyboard shortcuts" : modelData
                                     onClicked: {
-                                        if (modelData === "Overview") root.openSpacesOverview()
+                                        if (modelData === "Overview") { root.deskHeld = true; root.openSpacesOverview() }
                                         else if (modelData === "Spaces") root.toggleSwitcher()
                                         else if (modelData === "Shortcuts") {
                                             root.deskOpen = false
@@ -2546,7 +2559,7 @@ ShellRoot {
         id: homeIndicator
         screen: root.workScreen
         // Desk and Overview carry their own (a surface opened later stacks above this one).
-        visible: !root.deskDrawn && !root.overviewDrawn && !root.switcherOpen && !root.appMenuOpen && !root.searchOpen
+        visible: !root.workCovered && !root.switcherOpen && !root.appMenuOpen && !root.searchOpen
         anchors.bottom: true
         implicitWidth: 126; implicitHeight: 24
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
@@ -2559,7 +2572,7 @@ ShellRoot {
         // or a finger, next to Super+Left/Right and the wheel.
         id: workIndicatorWindow
         screen: root.workScreen
-        visible: !root.deskDrawn && !root.switcherOpen && !root.overviewDrawn && !root.appMenuOpen && !root.searchOpen && (!!root.activeSpace || !!root.activeLayer)
+        visible: !root.workCovered && !root.switcherOpen && !root.appMenuOpen && !root.searchOpen && (!!root.activeSpace || !!root.activeLayer)
         anchors { bottom: true; right: true }
         // Where the bottom controls and this indicator cannot share a row, it rises above them: below 560 px,
         // or below 900 px for an active Layer's wider controls.
@@ -2647,8 +2660,7 @@ ShellRoot {
         // snapshot (openSpacesOverview). Left/Right or the wheel choose, Enter or a click returns to it,
         // Up or the home indicator goes on to Desk, Escape returns to work unchanged.
         id: spacesOverview
-        screen: root.workScreen
-        visible: root.spacesOverviewOpen
+        visible: root.spacesOverviewOpen || root.overviewHeld
         anchors { top: true; bottom: true; left: true; right: true }
         color: floeTheme.canvas
         exclusionMode: ExclusionMode.Ignore
@@ -3568,7 +3580,8 @@ ShellRoot {
     // shortcut: only published accessibility menus are shown; add toolkit-specific bridges when verified.
     PanelWindow {
         id: appMenuTrigger
-        visible: root.appMenuAvailable && !root.deskOpen && !root.overviewOpen && !root.appMenuOpen
+        screen: root.workScreen
+        visible: root.appMenuAvailable && !root.workCovered && !root.overviewOpen && !root.appMenuOpen
         anchors { top: true; left: true }
         implicitWidth: 220; implicitHeight: 44
         // On the Island's row, flush with the top edge as the tab is, 8px right of the centred tab: the button
@@ -3869,7 +3882,7 @@ ShellRoot {
     PanelWindow {
         id: workIsland
         screen: root.workScreen
-        visible: !root.deskDrawn && !root.overviewDrawn
+        visible: !root.workCovered
         anchors.top: true
         implicitWidth: workIslandContent.implicitWidth; implicitHeight: workIslandContent.implicitHeight
         color: "transparent"

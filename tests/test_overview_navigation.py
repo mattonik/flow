@@ -78,46 +78,83 @@ class IndicatorTest(unittest.TestCase):
             self.assertIn(f'onClicked: root.spaceAction("navigate", "{direction}")', button, direction)
 
 
-if __name__ == "__main__":
-    unittest.main()
+
+# QML with its // comments removed: a commented-out line must not satisfy a check.
+CODE = re.sub(r"(?m)//.*$", "", SHELL)
 
 
 class ReadOnlyTest(unittest.TestCase):
     """QML refuses an assignment to a read-only property at run time (a TypeError in the log), so a handler that
-    makes one does nothing: Overview's Home and End, and a click on a card that is not selected, did nothing that way
-    until 2026-11-26. The selection is a space (``overviewSpaceId``), set through ``selectOverview``."""
+    makes one does nothing: Overview's Home and End, and a click on a card that is not selected, did nothing that way.
+    The selection is a space (``overviewSpaceId``), set through ``selectOverview``. Source checks only: CI has no QML
+    runner; tests/niri_desk_overview_smoke.py drives the keys and the click in the guest."""
 
     def test_no_handler_assigns_to_a_read_only_property_of_the_shell(self):
-        names = re.findall(r"readonly property [\w<>.]+ (\w+)\s*:", SHELL)
+        names = re.findall(r"readonly property [\w<>.]+ (\w+)\s*:", CODE)
         self.assertIn("overviewIndex", names)
         for name in names:
             with self.subTest(name=name):
-                self.assertIsNone(re.search(rf"\broot\.{name}\s*=(?!=)", SHELL), f"root.{name} is assigned")
+                self.assertIsNone(re.search(rf"\broot\.{name}\s*=(?![=>])", CODE), f"root.{name} is assigned")
+                # Unqualified, as from a handler in the property's own scope; a local ``const``/``let``/``var`` of the
+                # same name is a declaration, not an assignment.
+                assigned = [m for m in re.finditer(rf"(?<![\w.]){name}\s*=(?![=>])", CODE)
+                            if not re.search(r"\b(const|let|var)\s+$", CODE[:m.start()][-12:])]
+                self.assertEqual(assigned, [], f"{name} is assigned")
 
     def test_home_end_and_a_card_click_choose_through_select_overview(self):
-        keys = block_after("Keys.onPressed: event => {", SHELL[SHELL.index("id: spacesOverview"):])
+        keys = block_after("Keys.onPressed: event => {", CODE[CODE.index("id: spacesOverview"):])
         self.assertIn("root.selectOverview(0)", keys)
         self.assertIn("root.selectOverview(root.displaySpaces.length - 1)", keys)
-        self.assertIn(": root.selectOverview(spaceCard.index)", SHELL)
+        self.assertIn(": root.selectOverview(spaceCard.index)", CODE)
+
+    def test_super_o_again_while_overview_opens_goes_on_to_desk(self):
+        toggle = block_after("function toggleSpacesOverview() {", CODE)
+        pending = next(line for line in toggle.splitlines() if "if (overviewPending)" in line)
+        self.assertIn("revealDeskFromOverview()", pending)
+        self.assertLess(pending.index("revealDeskFromOverview()"), pending.index("return"))
 
 
 class ScreenTest(unittest.TestCase):
-    """The work view's Island and indicators, Desk and Overview are on the focused display's screen, named by the
-    refresh's display output, not wherever the compositor's focus was when each last mapped (F-007)."""
+    """Where the shell's surfaces map, and what shows between them. Source checks only (no QML runner in CI); the guest
+    smoke checks the behaviour on two displays and frame by frame."""
 
-    def test_the_work_surfaces_desk_and_overview_are_on_the_focused_displays_screen(self):
-        self.assertIn("readonly property var workScreen: Quickshell.screens.find(screen => screen.name === displayOutput) || null", SHELL)
-        self.assertIn('displayOutput = result.display ? result.display.output || "" : ""', SHELL)
-        for ident in ("deskWindow", "homeIndicator", "workIndicatorWindow", "spacesOverview", "workIsland"):
+    def test_the_work_views_bands_are_on_the_focused_displays_screen(self):
+        self.assertIn("readonly property var workScreen: Quickshell.screens.find(screen => screen.name === displayOutput) || null", CODE)
+        self.assertIn('displayOutput = result.display ? result.display.output || "" : ""', CODE)
+        for ident in ("homeIndicator", "workIndicatorWindow", "workIsland", "appMenuTrigger"):
             with self.subTest(window=ident):
-                self.assertIn("screen: root.workScreen", block_after(f"id: {ident}\n").split("\n")[1])
+                self.assertIn("screen: root.workScreen", block_after(f"id: {ident}\n", CODE).split("\n")[1])
+
+    def test_desk_and_overview_map_where_focus_is(self):
+        # A screen from the refresh is up to 0.6 s late: Desk would open on the display the user just left.
+        for ident in ("deskWindow", "spacesOverview"):
+            with self.subTest(window=ident):
+                self.assertNotIn("screen:", block_after(f"id: {ident}\n", CODE).split("\n")[1])
 
     def test_the_work_view_stays_until_desk_or_overview_has_drawn(self):
-        for ident in ("homeIndicator", "workIndicatorWindow", "workIsland"):
+        self.assertIn("readonly property bool workCovered: (deskOpen && deskDrawn) || (spacesOverviewOpen && overviewDrawn) "
+                      "|| deskHeld || overviewHeld", CODE)
+        for ident in ("homeIndicator", "workIndicatorWindow", "workIsland", "appMenuTrigger"):
             with self.subTest(window=ident):
-                visible = next(line for line in block_after(f"id: {ident}\n").split("\n") if "visible:" in line)
-                self.assertIn("!root.deskDrawn", visible)
-                self.assertIn("!root.overviewDrawn", visible)
+                visible = next(line for line in block_after(f"id: {ident}\n", CODE).split("\n") if "visible:" in line)
+                self.assertIn("!root.workCovered", visible)
                 self.assertNotIn("root.deskOpen", visible)
-        self.assertIn("if (deskWindow.visible && !root.deskDrawn) root.deskDrawn = true", SHELL)
-        self.assertIn("if (spacesOverview.visible && !root.overviewDrawn) root.overviewDrawn = true", SHELL)
+                self.assertNotIn("root.spacesOverviewOpen", visible)
+        swap = block_after("function onFrameSwapped() { if (deskWindow.visible", CODE)
+        self.assertIn("root.deskDrawn = true", swap)
+        self.assertIn("if (spacesOverview.visible && !root.overviewDrawn) root.overviewDrawn = true", CODE)
+        # Drawn means a frame was swapped, not that the window was shown.
+        self.assertNotRegex(block_after("id: deskWindow\n", CODE).split("Connections")[0], r"deskDrawn = true")
+
+    def test_between_overview_and_desk_the_one_going_stays_until_the_one_coming_has_drawn(self):
+        self.assertIn("visible: root.deskOpen || root.deskHeld", CODE)
+        self.assertIn("visible: root.spacesOverviewOpen || root.overviewHeld", CODE)
+        self.assertIn("onDeskDrawnChanged: if (deskDrawn) overviewHeld = false", CODE)
+        self.assertIn("onOverviewDrawnChanged: if (overviewDrawn) deskHeld = false", CODE)
+        reveal = block_after("function revealDeskFromOverview() {", CODE)
+        self.assertLess(reveal.index("overviewHeld = true"), reveal.index("closeSpacesOverview()"))
+        self.assertIn('if (modelData === "Overview") { root.deskHeld = true; root.openSpacesOverview() }', CODE)
+
+
+if __name__ == "__main__":
+    unittest.main()

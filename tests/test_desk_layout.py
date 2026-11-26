@@ -27,7 +27,7 @@ def block_at(start):
 
 
 def desk_window():
-    return block_at(SHELL.index("PanelWindow {\n        visible: root.deskOpen\n"))
+    return block_at(SHELL.index("PanelWindow {\n        visible: root.deskOpen || root.deskHeld\n"))
 
 
 def child(block, marker):
@@ -58,7 +58,7 @@ class DeskRoutesTest(unittest.TestCase):
         foot = child(desk_window(), "id: deskFoot")
         self.assertIn('model: ["Overview", "Spaces", "Shortcuts", "Return to work"]', foot)
         handler = foot[foot.index("onClicked: {"):]
-        self.assertIn('if (modelData === "Overview") root.openSpacesOverview()', handler)
+        self.assertIn('if (modelData === "Overview") { root.deskHeld = true; root.openSpacesOverview() }', handler)
         self.assertIn('else if (modelData === "Spaces") root.toggleSwitcher()', handler)
         shortcuts = handler[handler.index('else if (modelData === "Shortcuts") {'):]
         self.assertLess(shortcuts.index("root.deskOpen = false"), shortcuts.index("} else root.deskOpen = false"))
