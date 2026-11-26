@@ -26,7 +26,9 @@
              config.systemd.user.services.flow-api.serviceConfig.ExecStart ];
       search = lib.findFirst (p: lib.getName p == "flow-search") (throw "no flow-search") config.environment.systemPackages;
       # The portal backends Flow intends (ADR-0005, F-012), as the broker will read them: GTK's file chooser, whose
-      # buttons Flow's work indicator does not cover; GNOME's screen casting, which needs PipeWire.
+      # buttons Flow's work indicator does not cover; GNOME's screen casting, which needs PipeWire (NixOS's
+      # graphical-desktop module, which Niri's session enables, turns it on by default; Quick Settings' volume needs
+      # WirePlumber too).
       portals = config.environment.etc."xdg/xdg-desktop-portal/niri-portals.conf".text;
       portalNames = map (p: lib.getName p) config.xdg.portal.extraPortals;
     in assert wrappers != [ ]; assert config.services.gnome.at-spi2-core.enable;

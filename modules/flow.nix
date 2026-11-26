@@ -158,9 +158,6 @@ in {
     # reaches the indicator's Close or Make space instead. GTK's chooser has them in its header bar. Nautilus stays
     # Flow's file manager, reached over D-Bus as before (services.dbus.packages, below).
     programs.niri.useNautilus = lib.mkDefault false;
-    # Screen sharing reaches apps as a PipeWire stream (the ScreenCast portal), and Quick Settings' volume uses
-    # WirePlumber: neither works without PipeWire, which Niri's module leaves to the machine.
-    services.pipewire.enable = lib.mkDefault true;
     security.pam.services.swaylock = {};
     hardware.graphics.enable = true;
     fonts.packages = with pkgs; [
