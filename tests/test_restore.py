@@ -335,10 +335,11 @@ class RecoveryTest(unittest.TestCase):
             restore.save(path, {"id": 1, "active_window_id": 1}, [window(1, "one", 1)])
             self.assertIs(json.loads(path.read_text())["reopen_at_login"], True)
 
-    def reopen_set_aside(self, missing=(), empty=True):
+    def reopen_set_aside(self, missing=(), empty=True, registered=()):
         """Settings' Reopen it run through the command line against a fake Niri: the user's foot and firefox on
         workspace 1 (focused), workspace 2 after it on the display empty unless ``empty`` is false. The set-aside
-        session lists the same two apps; ``missing`` have no desktop entry. Returns the printed answer, the Niri
+        session lists the same two apps; ``missing`` have no desktop entry; ``registered`` are the Groups now
+        registered. Returns the printed answer, the Niri
         actions, the windows and the file's bytes before and after; session.json is rewritten at each launch,
         as an automatic save of the work would."""
         world = {"focused": 1, "windows": [
@@ -394,6 +395,7 @@ class RecoveryTest(unittest.TestCase):
                     patch.object(restore.spaces, "desktop_file",
                                  side_effect=lambda app, _dirs: None if app in missing else Path(f"/apps/{app}.desktop")), \
                     patch.object(restore.spaces, "session_id", return_value="session"), \
+                    patch.object(restore.group_store, "load", return_value=list(registered)), \
                     patch.object(restore.subprocess, "run", side_effect=run), \
                     patch.object(restore, "focused_display", return_value=(None, set())), \
                     patch.object(restore, "groups_unchanged_or_focused", return_value=True), \
@@ -414,6 +416,13 @@ class RecoveryTest(unittest.TestCase):
         self.assertEqual(sorted((w["app_id"], w["layout"]["pos_in_scrolling_layout"][0])
                                 for w in windows if w["workspace_id"] == 2), [("firefox", 1), ("foot", 2)])
         self.assertEqual(after, before)  # read in place, kept; session.json rewritten meanwhile did not stop it
+
+    def test_a_set_aside_session_is_reopened_beside_groups_registered_since(self):
+        # A side-by-side Group the session does not mention (made after it was saved) is not its to restore: as
+        # an import, only the Groups it saved are passed, or every Reopen would refuse it as incomplete.
+        group = {"id": "g", "label": "Work", "members": ["one", "two"], "layout": "side-by-side"}
+        answer, _, _, _, _ = self.reopen_set_aside(registered=[group])
+        self.assertIs(answer["complete"], True)
 
     def test_a_set_aside_session_reopened_in_part_is_not_complete(self):
         answer, _, _, _, _ = self.reopen_set_aside(missing=("foot",))
