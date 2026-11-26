@@ -1339,17 +1339,19 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
         a, b, c = (f"clip{n}{uuid.uuid4().hex[:12]}" for n in "abc")
         qt_file, x11_file = self.tmp / "qt.txt", self.tmp / "x11.txt"
         qt_file.write_text("")
-        qt = self.apps.start(["kate", "-n", qt_file], app_id="org.kde.kate", title="qt.txt")[1]
-        self.apps.focus(qt, "100%")
 
-        # GTK → Qt: the page copies, Kate pastes and saves.
+        # GTK → Qt: the page copies, Kate pastes and saves. Kate opens after the copy and takes its keys before focus
+        # moves: keys sent once focus has come back to a window were lost now and then in the guest.
         page = self.need_firefox(mode="clip", text=a, read=1)
         pages.drain()
         self.pointer.click(self.apps.at(0.5, 0.25))
         copied = pages.wait(["copied", "copy-failed"])
         check(copied["kind"] == "copied", f"Firefox could not copy: {copied}")
         wait_for(lambda: self.wayland_clipboard().decode().strip() == a, "Firefox's copy")
-        self.apps.focus(qt)
+        qt = self.apps.start(["kate", "-n", qt_file], app_id="org.kde.kate", title="qt.txt")[1]
+        wait_for(lambda: windows()[qt["id"]]["is_focused"], "Kate to have focus")
+        niri("action", "set-column-width", "100%")
+        time.sleep(1.5)
         keys("ctrl+a", "ctrl+v", "ctrl+s")
         wait_for(lambda: qt_file.read_text().strip() == a, lambda: f"Kate to save the paste ({qt_file.read_text()!r})")
 
