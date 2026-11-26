@@ -27,6 +27,26 @@ class ScreenshotPortalTest(unittest.TestCase):
         self.assertEqual((text["deny_label"], text["grant_label"]), ("Cancel", "Take Screenshot"))
         self.assertTrue(portal.consent("")["subtitle"].startswith("An app "))
 
+    def test_an_app_without_a_desktop_entry_is_named_by_its_id(self):
+        class Info:
+            @staticmethod
+            def new(name):
+                if name == "org.example.Known.desktop":
+                    return type("Found", (), {"get_display_name": lambda self: "Known App"})()
+                raise TypeError("constructor returned NULL")  # PyGObject's answer to GDesktopAppInfo's NULL
+
+        class Gio:
+            DesktopAppInfo = Info
+
+        class GLib:
+            class Error(Exception):
+                pass
+        backend = portal.Backend.__new__(portal.Backend)
+        backend.Gio, backend.GLib = Gio, GLib
+        self.assertEqual(backend.app_name("io.github.mattonik.PortalProbe"), "io.github.mattonik.PortalProbe")
+        self.assertEqual(backend.app_name("org.example.Known"), "Known App")
+        self.assertEqual(backend.app_name(""), "")
+
     def test_answer_codes_are_the_portal_spec(self):
         self.assertEqual((portal.SUCCESS, portal.CANCELLED, portal.OTHER), (0, 1, 2))
 

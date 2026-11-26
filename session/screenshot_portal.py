@@ -61,10 +61,15 @@ class Backend:
         self.request_info = Gio.DBusNodeInfo.new_for_xml(REQUEST_XML).interfaces[0]
 
     def app_name(self, app_id):
+        """The app's name from its desktop entry, else its ID: a sideloaded Flatpak may have no entry, and PyGObject
+        raises TypeError for the NULL that GDesktopAppInfo then returns."""
         if not app_id:
             return ""
-        info = self.Gio.DesktopAppInfo.new(app_id + ".desktop")
-        return info.get_display_name() if info else app_id
+        try:
+            info = self.Gio.DesktopAppInfo.new(app_id + ".desktop")
+        except (TypeError, self.GLib.Error):
+            info = None
+        return (info.get_display_name() if info else "") or app_id
 
     def call(self, target, method, args, reply_type, done):
         name, path, interface = target

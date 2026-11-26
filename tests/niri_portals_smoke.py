@@ -628,10 +628,10 @@ class Probe:
             raise Failed("PortalProbe exited")
         return json.loads(line)
 
-    def send(self, timeout=30, **command):
+    def send(self, wait=30, **command):
         self.process.stdin.write(json.dumps(command) + "\n")
         self.process.stdin.flush()
-        return self.answer(timeout)
+        return self.answer(wait)
 
     def request(self, interface, method, args, timeout=120):
         """Sends a portal request from the sandbox and returns (a thread's) answer once it comes."""
