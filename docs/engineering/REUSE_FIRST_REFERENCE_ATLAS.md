@@ -164,6 +164,8 @@ Focus is the **hardware/kernel/graphics boot path** on Apple Silicon; website pu
 
 LiberNT is a Windows NT-compatible operating-system effort descended from ReactOS, targeting modern NT/Windows compatibility and several architectures. It is **not** a Linux desktop environment, a drop-in Windows compatibility layer for NixOS, or a candidate compositor/shell for Flow. Its kernel, driver, testing and clean-room compatibility strategy may be intellectually useful when studying compatibility, but **not** an MVP dependency or codebase to graft into Linux.
 
+For macOS applications, see the separate [PureDarwin and Darling research note](MACOS_COMPATIBILITY_RESEARCH_2026-11.md). Both remain research inputs, not verified Floe compatibility.
+
 ### 2.12 Luma, device convergence and adjacent references (**C/D**)
 
 **Luma:** https://simplyluma.com/  
