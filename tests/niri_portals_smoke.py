@@ -1534,12 +1534,12 @@ def main():
                             smoke.shot(f"failed-{name}")
                         except RuntimeError:
                             pass
-                    # What the failed check left open (a dialog still waiting, its apps) would take the next one's
-                    # keys and clicks: close every window that appeared during it.
-                    for wid in set(windows()) - before:
-                        smoke.apps.close_window({"id": wid})
-                    if smoke.firefox and smoke.firefox["id"] not in windows():
-                        smoke.firefox = None
+                # Each check starts from the windows the previous one found: what one left open (a dialog still
+                # waiting, an app with focus to come back to) took the next one's keys and clicks in the guest.
+                for wid in set(windows()) - before:
+                    smoke.apps.close_window({"id": wid})
+                if smoke.firefox and smoke.firefox["id"] not in windows():
+                    smoke.firefox = None
         finally:
             if smoke:
                 smoke.monitor.stop() if hasattr(smoke, "monitor") else None
