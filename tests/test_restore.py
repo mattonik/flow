@@ -184,6 +184,35 @@ class RecoveryTest(unittest.TestCase):
             self.assertIn("ready", restore.automatic("auto-start", path)["message"])
             self.assertEqual(run.call_count, 1)
 
+    def test_automatic_start_at_login_restores_only_near_the_start_of_the_niri_session(self):
+        # The shell runs auto-start --login. A shell first starting later in a session with no marker, as when an
+        # upgrade switched recovery on and restarted it, must not restore into the windows already open; tools and
+        # tests that run auto-start without --login still restore.
+        for login, age, restores in ((True, 600, False), (True, 5, True), (False, 600, True)):
+            with self.subTest(login=login, age=age), tempfile.TemporaryDirectory() as directory, \
+                    patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \
+                    patch.object(restore.spaces, "session_id", return_value="session"), \
+                    patch.object(restore, "niri_started", return_value=time.time() - age), \
+                    patch.object(restore.subprocess, "run",
+                                 return_value=Mock(returncode=0, stdout='{"message":"Restored 2 windows."}')) as run:
+                path = Path(directory) / "session.json"
+                path.write_text("saved")
+                answer = restore.automatic("auto-start", path, login=login)
+                self.assertNotIn("error", answer)
+                self.assertEqual(run.call_count, 1 if restores else 0)
+                self.assertEqual(path.read_text(), "saved")
+                marker = next(Path(directory).glob("flow-recovery-*[0-9a-f]"))
+                self.assertEqual(marker.read_text(), "ready")
+
+    def test_automatic_start_says_a_pause_from_earlier_in_the_session_was_already_told(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \
+                patch.object(restore.spaces, "session_id", return_value="session"):
+            path = Path(directory) / "session.json"
+            restore.automatic("auto-pause", path)
+            answer = restore.automatic("auto-start", path, login=True)
+            self.assertTrue(answer.get("paused"))
+            self.assertIn("paused", answer["error"])
+
     def test_automatic_recovery_preserves_snapshot_after_partial_restore(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \
                 patch.object(restore.spaces, "session_id", return_value="session"), \
@@ -668,6 +697,27 @@ class RecoveryTest(unittest.TestCase):
                                                 pinned={"notes", "mail"}, pinned_groups=pins)
                 self.assertEqual((report, count), (expected, 4))
                 self.assertNotIn("move-column-to-index", [call.args[1] for call in actions.call_args_list])
+
+    def test_single_window_recovery_accepts_reordered_pins_that_appear_after_the_focus(self):
+        # The first look finds no pinned app here (both still on their way, on another workspace); after the first
+        # focus they are here, already in their new pin order. Judged as at the top of the loop: restored.
+        saved = {"version": 1, "windows": [{"app_id": "mail", "column": 1}, {"app_id": "notes", "column": 2},
+                                           {"app_id": "files", "column": 3}, {"app_id": "scratch", "column": 4}]}
+        pins = [{"app_id": "notes"}, {"app_id": "mail"}]
+        ws = {"id": 1, "active_window_id": 3}
+        here = [window(2, "notes", 1), window(1, "mail", 2), window(3, "files", 3), window(4, "scratch", 4)]
+        away = [w | {"workspace_id": 2} if w["app_id"] in ("notes", "mail") else w for w in here]
+        looks = []
+
+        def snapshot():
+            looks.append(1)
+            return ws, (away if len(looks) == 1 else here)
+        actions = Mock()
+        report, count = restore.restore(saved, ws, here, [], Mock(), snapshot, actions,
+                                        pinned={"notes", "mail"}, pinned_groups=pins)
+        self.assertEqual((report, count), ([], 4))
+        self.assertEqual([c.args[1] for c in actions.call_args_list if c.args[1] != "focus-window"], [])
+        self.assertGreaterEqual(len(looks), 2)
 
     def test_single_window_recovery_counts_only_this_displays_pins(self):
         # Notes is pinned to another display, so here only Mail leads: Files and Notes must follow it in their

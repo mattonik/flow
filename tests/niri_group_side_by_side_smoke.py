@@ -18,7 +18,7 @@ import sys
 import time
 import uuid
 
-from isolated_state import IsolatedState
+from isolated_state import IsolatedState, shell_config
 
 CODE = Path(__file__).resolve().parents[1] / "session"
 
@@ -376,7 +376,8 @@ def main():
                 raise RuntimeError("Automatic layout smoke test requires an unrotated display")
             niri("action", "focus-window", "--id", ids[2])
             # FLOW_SHELL selects a development shell; its flow-spaces must come first on PATH.
-            shell = subprocess.Popen(["quickshell", "-p", os.environ.get("FLOW_SHELL", "/etc/flow/shell.qml")], env=cli_env,
+            shell = subprocess.Popen(["quickshell", "-p", os.environ.get("FLOW_SHELL", "/etc/flow/shell.qml")],
+                                     env=dict(cli_env, XDG_CONFIG_HOME=shell_config(tmp)),
                                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             try:
                 niri("output", original["output"], "transform", "90")

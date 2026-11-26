@@ -36,6 +36,19 @@ class ShellAutoSaveTest(unittest.TestCase):
         for opens in ("deskOpen", "settingsOpen", "reveal("):
             self.assertNotIn(opens, body)
 
+    def test_the_shell_reopens_the_saved_session_only_at_login(self):
+        # restore.automatic's --login gate: a shell started later in a session restores nothing.
+        self.assertIn('recoveryProcess.command = ["flow-recovery", "auto-start", "--login"]', SHELL)
+        self.assertNotIn('["flow-recovery", "auto-start"]', SHELL)
+
+    def test_a_pause_from_earlier_in_the_session_is_told_in_a_toast_not_on_the_desk(self):
+        handler = SHELL[SHELL.index('if (recoveryProcess.command[1] === "auto-start" || recoveryProcess.command[1] === "auto-ready") {'):]
+        handler = handler[:handler.index("\n                    }\n")]
+        paused = re.search(r"if \(result\.error && result\.paused\) (.+)\n", handler).group(1)
+        self.assertIn("showToast(", paused)
+        self.assertNotIn("deskOpen", paused)
+        self.assertRegex(handler, r"else if \(result\.error\) \{ root\.deskOpen = true")
+
     def test_the_controller_is_told_on_connecting_and_on_every_change(self):
         self.assertRegex(SHELL, r"if \(connected\) \{ write\('\{\"watch\": true, \"auto_save\": ' \+ root\.autoSaveWanted \+ '\}\\n'\)")
         handler = SHELL[SHELL.index("onAutoSaveWantedChanged:"):]

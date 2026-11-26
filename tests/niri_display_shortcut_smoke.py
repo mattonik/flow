@@ -17,7 +17,7 @@ import sys
 import time
 import uuid
 
-from isolated_state import IsolatedState
+from isolated_state import IsolatedState, shell_config
 
 
 def niri(*args):
@@ -99,7 +99,7 @@ def main():
             if set(names) != {"Main", "External 1"} or names["Main"]["label"] == names["External 1"]["label"]:
                 raise RuntimeError(f"Displays were not numbered Main and External 1: {names}")
             steps.append("displays numbered Main and External 1 in screen order")
-            shell_process = subprocess.Popen(["quickshell", "-p", shell], env=env, stdin=subprocess.DEVNULL,
+            shell_process = subprocess.Popen(["quickshell", "-p", shell], env=dict(env, XDG_CONFIG_HOME=shell_config(tmp)), stdin=subprocess.DEVNULL,
                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             def ready():
                 if shell_process.poll() is not None:

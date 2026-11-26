@@ -18,7 +18,7 @@ import subprocess
 import sys
 import time
 
-from isolated_state import IsolatedState
+from isolated_state import IsolatedState, shell_config
 
 CODE = Path(__file__).resolve().parents[1] / "session"
 NAME = "io.github.mattonik.Flow1"
@@ -67,8 +67,8 @@ def main():
         env = dict(os.environ, XDG_STATE_HOME=tmp, PYTHONPATH=str(CODE), XDG_RUNTIME_DIR=str(runtime),
                    WAYLAND_DISPLAY=wayland if wayland.startswith("/") else str(real_runtime / wayland))
 
-        def start(*command, **kw):
-            process = subprocess.Popen(list(command), env=env, text=True, **kw)
+        def start(*command, environment=None, **kw):
+            process = subprocess.Popen(list(command), env=environment or env, text=True, **kw)
             processes.append(process)
             return process
 
@@ -95,7 +95,8 @@ def main():
             service = start(python, str(CODE / "flow_api.py"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             wait_for(lambda: owner() == service.pid, lambda: f"this checkout's service to own the name ({owner()})")
             wait_for(lambda: published.exists(), "the service to publish its activity file")
-            start("quickshell", "-p", shell, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            start("quickshell", "-p", shell, environment=dict(env, XDG_CONFIG_HOME=shell_config(tmp)),
+                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                   stderr=subprocess.DEVNULL)
             wait_for(lambda: shown() == [], "the development shell with no activities", timeout=20)
 

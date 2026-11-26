@@ -25,7 +25,7 @@ import sys
 import time
 import uuid
 
-from isolated_state import IsolatedState
+from isolated_state import IsolatedState, shell_config
 
 
 def niri(*args):
@@ -134,7 +134,7 @@ def main():
             spaces("refresh")  # record the focused Group app, as any refresh does, before the baseline
 
             def start():
-                process = subprocess.Popen(["quickshell", "-p", shell], env=env, stdin=subprocess.DEVNULL,
+                process = subprocess.Popen(["quickshell", "-p", shell], env=dict(env, XDG_CONFIG_HOME=shell_config(tmp)), stdin=subprocess.DEVNULL,
                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
                 def ready():

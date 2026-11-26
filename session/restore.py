@@ -182,11 +182,26 @@ def save_locked(path, checked=False, if_changed=False, reading=None):
             (" " + "; ".join(warnings) if warnings else ""), "written": path.read_bytes() != before}
 
 
-def automatic(op, path, wait=True, pause=True):
+# How long after the Niri session started a shell's ``auto-start --login`` may still reopen the saved session.
+LOGIN_WINDOW = 120
+
+
+def niri_started():
+    """When this Niri session started: its socket's creation, as ``spaces.session_id`` names the session."""
+    return os.stat(os.environ.get("NIRI_SOCKET", "")).st_ctime
+
+
+def automatic(op, path, wait=True, pause=True, login=False):
     """An automatic-recovery step. Without ``wait``, recovery's or Flow's locks held elsewhere raise
     BlockingIOError (the resident controller saves this way, and tries again later). Without ``pause``, a save
     that refuses what is there says so (``"refused": true``) and leaves recovery ready: the controller tries
-    once more before it pauses, as what it refused may not last (a second terminal for a quick command)."""
+    once more before it pauses, as what it refused may not last (a second terminal for a quick command).
+
+    ``auto-start`` with ``login``, as the shell runs it, reopens the saved session only at the start of a Niri
+    session. A shell starting later in one with no marker (recovery switched on by an upgrade that restarted the
+    shell, or a shell stopped since login) must not restore into the windows already there: recovery is ready,
+    and the next automatic save replaces the saved session with what is open. A pause from earlier in the
+    session says ``"paused": true``: the user was told when it came."""
     runtime = Path(os.environ["XDG_RUNTIME_DIR"])
     marker = runtime / ("flow-recovery-" + hashlib.sha256(spaces.session_id().encode()).hexdigest())
     with marker.with_suffix(".lock").open("a") as lock:
@@ -200,7 +215,12 @@ def automatic(op, path, wait=True, pause=True):
             return {"message": "Automatic session recovery is ready."}
         if op == "auto-start":
             if state:
-                return {"message": "Automatic session recovery is ready."} if state == "ready" else {"error": "Automatic saving is paused; review and save the session."}
+                return {"message": "Automatic session recovery is ready."} if state == "ready" else {
+                    "error": "Automatic saving is paused; review and save the session.", "paused": True}
+            if login and time.time() - niri_started() > LOGIN_WINDOW:
+                marker.write_text("ready")
+                return {"message": "Automatic session recovery is ready. It started during this session, so "
+                                   "nothing was reopened; it saves this session from now on."}
             marker.write_text("blocked")
             if path.exists():
                 result = subprocess.run([sys.executable, __file__, "restore"], capture_output=True, text=True)
@@ -926,7 +946,10 @@ def main():
         print(json.dumps(import_snapshot(path.parent, data, sys.argv[3], spaces.data_dirs())))
         return
     if op in ("auto-start", "auto-save", "auto-ready", "auto-pause"):
-        print(json.dumps(automatic(op, path)))
+        login = sys.argv[2:] == ["--login"] and op == "auto-start"
+        if sys.argv[2:] and not login:
+            raise ValueError("Only auto-start takes an option: --login")
+        print(json.dumps(automatic(op, path, login=login)))
         return
     if op == "status":
         print(json.dumps({"saved": path.exists()}))

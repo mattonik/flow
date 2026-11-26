@@ -9,6 +9,7 @@ then fails if the folder came back, or such a process appeared, a second later.
 
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import sys
@@ -84,3 +85,21 @@ class IsolatedState:
         if leftover:
             print(f"Left behind: {', '.join(leftover)}", file=sys.stderr)
         return leftover
+
+
+def shell_config(tmp):
+    """A configuration folder in ``tmp`` for a development shell: the user's Flow settings and appearance, with
+    automatic recovery switched off. It is on by default, and a shell on the user's own configuration would run
+    it against the user's recovery marker (opening Settings when it is paused) or save the smoke's windows. Set
+    it as the shell's ``XDG_CONFIG_HOME`` only; the apps a smoke opens keep the user's configuration."""
+    real = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    config = Path(tmp) / "shell-config"
+    config.mkdir(exist_ok=True)
+    for name in ("flow-settings.ini", "floe-appearance.ini"):
+        if (real / name).is_file():
+            shutil.copy2(real / name, config / name)
+    settings = config / "flow-settings.ini"
+    text = re.sub(r"(?m)^sessionRecovery=.*\n?", "", settings.read_text() if settings.exists() else "")
+    off = "[General]\nsessionRecovery=false\n"
+    settings.write_text(text.replace("[General]\n", off, 1) if "[General]\n" in text else off + text)
+    return str(config)

@@ -419,6 +419,10 @@ ShellRoot {
     }
     property string recoveryMessage: ""
     property bool autoRecoveryBlocked: true
+    // Why automatic saving is paused, kept apart from recoveryMessage, which the next recovery command replaces
+    // (a Group rename, say). Settings shows it while the pause lasts.
+    property string recoveryPauseReason: ""
+    onAutoRecoveryBlockedChanged: if (!autoRecoveryBlocked) recoveryPauseReason = ""
     property string renameGroupId: ""
     property bool switcherOpen: false
     onSwitcherOpenChanged: if (!switcherOpen) renameGroupId = ""
@@ -601,7 +605,11 @@ ShellRoot {
                     if (recoveryProcess.command[1] === "save" && root.recoveryToast) { root.recoveryToast = false; root.showToast(root.recoveryMessage) }
                     if (recoveryProcess.command[1] === "auto-start" || recoveryProcess.command[1] === "auto-ready") {
                         root.autoRecoveryBlocked = !!result.error
-                        if (result.error) { root.deskOpen = true; root.settingsOpen = true; Qt.callLater(function() { root.reveal(recoveryStatus) }) }
+                        if (result.error) root.recoveryPauseReason = result.error
+                        // A pause from earlier in this session (a shell restart since): said, as when it came.
+                        // A recovery that ran and could not finish opens Settings: it runs at login, before work.
+                        if (result.error && result.paused) root.showToast("Automatic saving is paused. Open Settings to review the session")
+                        else if (result.error) { root.deskOpen = true; root.settingsOpen = true; Qt.callLater(function() { root.reveal(recoveryStatus) }) }
                     }
                     if (recoveryProcess.command[1] === "save" && !result.error && recoveryPreferences.sessionRecovery) autoReadyTimer.restart()
                     if (recoveryProcess.command[1] === "rename-group") {
@@ -619,7 +627,7 @@ ShellRoot {
         onTriggered: {
             if (!recoveryPreferences.sessionRecovery) return
             if (recoveryProcess.running || spacesProcess.running) { restart(); return }
-            recoveryProcess.command = ["flow-recovery", "auto-start"]; recoveryProcess.running = true
+            recoveryProcess.command = ["flow-recovery", "auto-start", "--login"]; recoveryProcess.running = true
         }
     }
     Timer {
@@ -644,6 +652,7 @@ ShellRoot {
         recoveryMessage = result.error || result.message || "Recovery unavailable"
         if (!result.error) return
         autoRecoveryBlocked = true
+        recoveryPauseReason = result.error
         // Said, not shown: the pause comes while the user works (two windows of one app is enough), so the Desk
         // stays closed. Settings holds the reason and Save session.
         showToast("Automatic saving paused. Open Settings to review the session")
@@ -1713,7 +1722,8 @@ ShellRoot {
         function recovery_state(): string {
             return JSON.stringify({ setting: recoveryPreferences.sessionRecovery, paused: root.autoRecoveryBlocked,
                                     working: root.recoveryWorking, saving: root.autoSaveWanted,
-                                    message: root.recoveryMessage, connected: controller.connected })
+                                    message: root.recoveryMessage, pause_reason: root.recoveryPauseReason,
+                                    connected: controller.connected })
         }
         // What the shell last read from flow-spaces: pins with their windows, spaces with their Group layout, Layers.
         function spaces_view(): string {
@@ -2400,6 +2410,7 @@ ShellRoot {
                             FlowButton { id: saveSession; implicitHeight: 44; text: "Save session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: root.startSaveSession(false) }
                             FlowButton { id: restoreSession; implicitHeight: 44; variant: "quiet"; text: "Restore session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: { if (recoveryProcess.running) { root.recoveryMessage = "Wait for automatic recovery to finish"; return } root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
                         }
+                        Text { id: recoveryPause; visible: recoveryPreferences.sessionRecovery && root.autoRecoveryBlocked && root.recoveryPauseReason !== "" && root.recoveryPauseReason !== root.recoveryMessage; text: root.recoveryPauseReason; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
                         Text { id: recoveryStatus; visible: root.recoveryMessage !== ""; text: root.recoveryMessage; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
                     }
                     Item {

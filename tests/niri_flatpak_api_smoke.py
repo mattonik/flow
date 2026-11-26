@@ -31,7 +31,7 @@ import threading
 import time
 import uuid
 
-from isolated_state import IsolatedState
+from isolated_state import IsolatedState, shell_config
 
 ROOT = Path(__file__).resolve().parents[1]
 CODE = ROOT / "session"
@@ -237,7 +237,8 @@ def main():
             # file for the same name on every bus, and that service must not answer in this one's place.
             wait_for(lambda: pid_of(NAME) == service.pid, lambda: f"this checkout's service to own the name "
                                                                   f"({pid_of(NAME)})")
-            start("quickshell", "-p", shell, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            start("quickshell", "-p", shell, environment=dict(env, XDG_CONFIG_HOME=shell_config(tmp)),
+                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                   stderr=subprocess.DEVNULL)
             wait_for(lambda: ipc("desk_state") == "closed", "the development shell", timeout=20)
 

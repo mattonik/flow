@@ -23,7 +23,8 @@ Checked:
 - a window joining another's column with focus unchanged, which changes only the spaces: saved;
 - a second window of one app (recovery cannot tell them apart) closed again after the save that found it: no
   pause, and saving goes on; one that stays: saving pauses at the next save, a toast and Settings say so with
-  the Desk left closed, and a change after it is not saved.
+  the Desk left closed, and a change after it is not saved; a shell restart while it is paused says so again
+  in a toast, keeps the reason, and leaves the Desk closed.
 
 Automatic saves are the controller's (it reports them on its socket), or main's ``flow-recovery auto-save`` runs.
 
@@ -300,6 +301,33 @@ def main():
                 time.sleep(SAVE_EVERY + 5)
                 after = saves(paused + 0.5)
                 check("paused: automatic saves after a change", len(after), "0", len(after) == 0)
+
+                # A shell restart while paused (an upgrade, a crash): told again in a toast, the Desk left closed.
+                shell_process.terminate()
+                shell_process.wait(timeout=10)
+                shell_process = subprocess.Popen(["quickshell", "-p", shell], env=env, stdin=subprocess.DEVNULL,
+                                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                seen = {"toast": "", "desk": set()}
+
+                def restarted():
+                    toast = ipc("toast")
+                    seen["toast"] = seen["toast"] or (toast if toast.startswith("Automatic saving is paused") else "")
+                    if ipc("desk_state"):
+                        seen["desk"].add(ipc("desk_state"))
+                    return seen["toast"]
+                try:
+                    wait_for(restarted, "the restarted shell's toast", timeout=20)
+                except RuntimeError:
+                    pass
+                for _ in range(10):
+                    restarted()
+                    time.sleep(0.2)
+                state = json.loads(ipc("recovery_state") or "{}")
+                told = (bool(seen["toast"]) and seen["desk"] == {"closed"} and state.get("paused")
+                        and state.get("pause_reason", "").startswith("Automatic saving is paused"))
+                check("a shell restart while paused: a toast, the reason kept, the Desk closed",
+                      f"toast {seen['toast']!r}, desk {sorted(seen['desk'])}, reason {state.get('pause_reason')!r}",
+                      "True", told)
         finally:
             if sock:
                 sock.close()
