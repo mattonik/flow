@@ -187,9 +187,21 @@ PAUSED = "Automatic saving is paused; review and save the session."
 # Where automatic recovery puts a saved session it does not reopen, so a save cannot replace it unseen: one file
 # each time, named by when, so a second set-aside never replaces the first.
 SET_ASIDE = "session-before-automatic-recovery-{}.json"
-# Beside a set-aside file once Reopen it opened anything from it, with how it went: a second reopen would open
-# those apps twice, and the shell that knew it may have restarted since.
+# Beside a set-aside file once Reopen it tried to open anything from it, with how it went: a second reopen would
+# open those apps twice, and the shell that knew it may have restarted since. Its first line is the state:
+# ``started`` (written before the first launch: a reopen that never finished, or whose last word could not be
+# written), ``complete``, ``partial`` or ``stopped``; the second says how, for the user.
 REOPENED = ".reopened"
+
+
+def write_record(record, state, how=""):
+    """Write a set-aside file's reopen record; False if it could not be written (a full disk, say)."""
+    try:
+        record.write_text(f"{state}\n{how}\n", encoding="utf-8")
+        return True
+    except OSError as exc:
+        print(f"flow-recovery: could not record the reopen in {record}: {exc}", file=sys.stderr)
+        return False
 
 
 def pause_marker(marker, reason=""):
@@ -219,10 +231,15 @@ def set_aside_source(path, name):
         raise ValueError(f"Name a saved session that automatic recovery set aside in {path.parent}")
     record = source.with_name(source.name + REOPENED)
     if record.exists():
-        how = record.read_text(encoding="utf-8").strip()
-        rest = ("" if how.startswith("reopened") and how.split()[1:2] == how.split()[3:4] else
-                "; open the rest yourself, as reopening it again would open the others twice")
-        raise ValueError(f"{source.name} was reopened already ({how}){rest}. To try again anyway, remove {record}")
+        state, _, how = record.read_text(encoding="utf-8").strip().partition("\n")
+        again = f". To try again anyway, remove {record}"
+        if state == "complete":
+            raise ValueError(f"{source.name} was reopened already ({how}){again}")
+        if state in ("partial", "stopped"):
+            raise ValueError(f"{source.name} was reopened already ({how}); open the rest yourself, as reopening it "
+                             f"again would open the others twice{again}")
+        raise ValueError(f"{source.name} may be open in part: a reopen of it started and did not say how it "
+                         f"ended; check your workspaces before opening the rest{again}")
     return source
 
 
@@ -1124,10 +1141,11 @@ def main():
                     if data.get("display") and data["display"] != display and data["display"] in connected:
                         raise ValueError("This session was saved on another connected display; "
                                          "focus that display to restore it")
-                    started_from = workspace
+                    started_from, before = workspace, set()
                     if here:
                         # Work is open (that is why it was set aside): reopened on the display's empty workspace.
                         workspaces, windows = spaces.query("Workspaces", "Windows")
+                        before = {w.get("id") for w in windows}
                         target = empty_workspace(workspace, windows, workspaces, "reopened")
                         if target["id"] != workspace["id"]:
                             spaces.command("action", "focus-workspace", target["idx"])
@@ -1150,16 +1168,32 @@ def main():
                             raise ValueError("Session, Groups or pinned spaces changed; session recovery stopped")
                         return current
             launched = []  # tried: a launch that failed may still open its app
+            started = []  # launches gio reported done: their windows may land anywhere, or late
             record = source.with_name(source.name + REOPENED)
 
             def launch(desktop):
                 current, _ = checked_state()
                 if current["id"] != workspace["id"]:
                     raise ValueError("Workspace changed; session recovery stopped")
-                if here and not launched:
-                    record.write_text("stopped while reopening\n", encoding="utf-8")
+                if here and not launched and not write_record(record, "started", "a reopen started"):
+                    raise ValueError(f"Could not record the reopen beside {source.name}; nothing was reopened")
                 launched.append(desktop)
                 subprocess.run(app_command(["gio", "launch", str(desktop)]), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                started.append(desktop)
+
+            def opened_anything():
+                """Whether a saved app has a window that was not there before the reopen, on any workspace: a
+                launch gio reported failed may still open one, so it is waited for, briefly."""
+                apps = {e.get("app_id") for e in data["windows"] if isinstance(e, dict)}
+                for attempt in range(7):
+                    try:
+                        if any(w.get("id") not in before and w.get("app_id") in apps for w in spaces.snapshot()[1]):
+                            return True
+                    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+                        return True  # cannot tell: kept as opened
+                    if attempt < 6:
+                        time.sleep(0.5)
+                return False
             # A set-aside session may predate Groups registered since: only those it saved are its own, as an
             # import passes only the Groups it created.
             saved_ids = {g.get("id") for g in data.get("groups") or [] if isinstance(g, dict)}
@@ -1167,30 +1201,32 @@ def main():
                 report, count = restore(data, workspace, windows, dirs, launch, checked_state, spaces.command,
                                         pinned=pinned_apps(pins), session=session, pinned_groups=pins,
                                         registered=[g for g in registered if g.get("id") in saved_ids] if here else registered,
-                                        display=display, here=here)
+                                        display=display, here=here, wait=time.sleep)
             except Exception as exc:  # noqa: BLE001 — for a reopen, whatever stopped it is told with what opened
                 if not here:
                     raise
+                why = (str(exc) or type(exc).__name__).rstrip(".")
                 if launched:
-                    record.write_text(f"stopped: {exc}\n", encoding="utf-8")
+                    write_record(record, "stopped", f"stopped: {why}")
                 else:  # refused before opening anything: the user back where they were
                     back_to(started_from, workspace)
-                # Settings offers Reopen it again only if nothing opened: a second run would open those twice.
-                print(json.dumps({"error": (str(exc) or type(exc).__name__).rstrip(".") + ".",
-                                  "launched": len(launched)}))
+                # Settings offers Reopen it again only if nothing was tried: a second run would open those twice.
+                print(json.dumps({"error": why + ".", "launched": len(launched)}))
                 sys.exit(1)
             done = (f"Reopened {count} of {len(data['windows'])} windows on an empty workspace." if here
                     else f"Restored {count} windows.")
-            if here and launched and not count and not any(w.get("workspace_id") == workspace["id"]
-                                                           for w in spaces.snapshot()[1]):
-                # Every launch failed and nothing came: not reopened, so it may be tried again.
-                record.unlink(missing_ok=True)
-                launched.clear()
-            if here and launched:
+            if here and launched and not started and not opened_anything():
+                # Every launch failed and no window came, anywhere: not reopened, so it may be tried again. A
+                # launch gio reported done keeps the record, wherever or however late its window comes.
                 try:
-                    record.write_text(done.removesuffix(" on an empty workspace.").lower() + "\n", encoding="utf-8")
-                except OSError:  # the record from before the first launch still refuses a second reopen
+                    record.unlink(missing_ok=True)
+                    launched.clear()
+                except OSError:
                     pass
+            if here and launched:
+                # If this cannot be written, ``started`` stays, and still refuses a second reopen.
+                write_record(record, "partial" if report else "complete",
+                             done.removesuffix(" on an empty workspace.").lower())
             elif here:
                 back_to(started_from, workspace)
             # Complete: every saved window is back. Settings offers a set-aside session until then, or until
