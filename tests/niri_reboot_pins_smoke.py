@@ -473,6 +473,10 @@ def prepare(run, mail):
     record["phase"] = "backed up"  # from here on put-back restores
     write_record(run, record)
 
+    # This session's marker may say paused (a put-back leaves the real recovery paused in a new session): the test's
+    # own recovery must start afresh on its empty state. Put-back restores the markers on the same boot.
+    for name in record["markers"]:
+        (runtime() / name).unlink(missing_ok=True)
     shutil.rmtree(state, ignore_errors=True)
     state.mkdir(mode=0o700, parents=True)
     # On while the test sets up; each restart takes it out again (without_recovery_key), so the default decides.

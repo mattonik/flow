@@ -281,7 +281,7 @@ The better place for automatic saving is the controller, which holds the exact s
 | A space whose picture is over a minute old: snapshots when it settles | 1 | 1 | 0 ✗ (age not compared) |
 | A window joining another's column, focus unchanged, the first save dying: saved by the next (under 63 s) | 55.2 s | 56.9 s | never ✗ (spaces' changes not noted, or a change marked saved when its save began) |
 
-Main fails two of the nine checks, and this change passes all of them. Each fix, neutralised with its symbols kept, fails its own check (two at a time where they touch different checks; marking a change saved when its save begins also defeats the Niri-event rule). The handlers for pins, other pins and displays are not covered: a save checks against the pins but records none, and a move to another display changes the spaces too. Automatic recovery is still off by default, and the performance smoke runs with it off, so its numbers are unchanged.
+Main fails two of the nine checks, and this change passes all of them. Each fix, neutralised with its symbols kept, fails its own check (two at a time where they touch different checks; marking a change saved when its save begins also defeats the Niri-event rule). The handlers for pins, other pins and displays are not covered: a save checks against the pins but records none, and a move to another display changes the spaces too. Automatic recovery was off by default then; since 2026-11-26 it is on, and the performance smoke switches it off in its own settings, so its numbers are unchanged.
 
 ## Automatic saving in the controller (2026-11-23)
 
