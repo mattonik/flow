@@ -18,6 +18,19 @@ restore = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(restore)
 
 
+def full_disk(*states):
+    """Writes of a reopen record in one of ``states`` fail as on a full disk: the file is created and emptied
+    first, and then the data is refused."""
+    write = Path.write_text
+
+    def failing(self, text, *args, **kwargs):
+        if restore.REOPENED in self.name and text.startswith(states):
+            self.open("w").close()
+            raise OSError(28, "No space left on device")
+        return write(self, text, *args, **kwargs)
+    return patch.object(Path, "write_text", failing)
+
+
 def asides(directory):
     """The saved sessions recovery set aside in ``directory``, by name: oldest first."""
     return sorted(Path(directory).glob("session-before-automatic-recovery-*.json"))
@@ -337,19 +350,24 @@ class RecoveryTest(unittest.TestCase):
             self.assertIs(json.loads(path.read_text())["reopen_at_login"], True)
 
     def reopen_set_aside(self, missing=(), empty=True, registered=(), aside_session=None, focus_moves=True,
-                         groups=(), leave_after_launch=False, crowded_on_focus=False, reopened_before=False,
-                         other_display=False, killed_at_launch=False, user_away_on_focus=False, gio_fails=False,
-                         broken_after_launch=False):
+                         groups=(), leave_after_launch=False, crowded_on_focus=False, record_before=None,
+                         other_display=False, killed_at_launch=False, user_away_on_focus=False, gio_fails=(),
+                         broken_after_launch=None, lands_on=None, slow=False, runs=1, race=False):
         """Settings' Reopen it run through the command line against a fake Niri: the user's foot and firefox on
         workspace 1 (focused), workspace 2 after it on the display empty unless ``empty`` is false. The set-aside
         session lists the same two apps; ``missing`` have no desktop entry; ``registered`` are the Groups now
         registered, ``groups`` those the session saved; ``aside_session`` is the session it was saved in (with the
         work's window IDs); ``focus_moves`` false, Niri ignores focus-workspace; ``leave_after_launch``, the user goes back to the
         work after the first launch; ``crowded_on_focus``, a window lands on workspace 2 as it is focused;
-        ``reopened_before``, the file was reopened once already; ``other_display``, it was saved on another
+        ``record_before``, the record a reopen before left beside the file; ``other_display``, it was saved on another
         connected display; ``killed_at_launch``, the reopen is killed as its first app starts;
-        ``user_away_on_focus``, the user goes back to workspace 1 as 2 is focused; ``gio_fails``, every launch
-        fails and nothing opens; ``broken_after_launch``, a bug (TypeError) stops it once one app started.
+        ``user_away_on_focus``, the user goes back to workspace 1 as 2 is focused; ``gio_fails``, the apps whose
+        launch fails (``leave_after_launch`` then applies after it too); ``race``, another reopen records itself
+        as the empty workspace is focused; ``lands_on``, the workspace launched
+        windows land on (else the focused one); ``slow``, launches work but no window has come by the end;
+        ``broken_after_launch``, the error a bug raises once one app
+        started; ``runs``, how many times it is run in a row, in the same state and Niri (``self.answers``
+        holds each answer, ``self.launches`` how many apps each run launched). Waits take no time.
         ``self.record`` is then what the reopen wrote beside the file, ``self.exit_code`` its
         exit status. Returns the printed answer, the Niri
         actions, the windows and the file's bytes before and after; session.json is rewritten at each launch,
@@ -376,6 +394,8 @@ class RecoveryTest(unittest.TestCase):
                 world["focused"] = args[0]
                 if user_away_on_focus and args[0] == 2:
                     world["focused"] = 1
+                if race and args[0] == 2:
+                    record.write_text("started\nanother reopen\n")
                 if crowded_on_focus and args[0] == 2:
                     world["windows"].append({"id": 30, "app_id": "late", "workspace_id": 2,
                                              "layout": {"pos_in_scrolling_layout": [1, 1]}})
@@ -389,17 +409,25 @@ class RecoveryTest(unittest.TestCase):
                 for column, w in enumerate(columns, 1):
                     w["layout"]["pos_in_scrolling_layout"] = [column, 1]
 
+        launches = []
+
         def run(argv, **kwargs):  # gio launch: the app opens on the focused workspace, at its end
+            launches.append(argv[-1])
             if killed_at_launch:
                 raise KeyboardInterrupt  # as a signal would end it: no answer, no last word on disk
-            if gio_fails:
+            app = Path(argv[-1]).stem
+            if app in gio_fails:
+                if leave_after_launch:
+                    world["focused"] = 1
                 raise subprocess.CalledProcessError(1, argv)
             if broken_after_launch and any(w["workspace_id"] == 2 for w in world["windows"]):
-                raise TypeError("a bug")
-            app = Path(argv[-1]).stem
+                raise broken_after_launch
             path.write_text("an automatic save of the work")
-            world["windows"].append({"id": 20 + len(world["windows"]), "app_id": app, "workspace_id": world["focused"],
-                                     "layout": {"pos_in_scrolling_layout": [len(on(world["focused"])) + 1, 1]}})
+            if slow:
+                return Mock(returncode=0)
+            ws = lands_on or world["focused"]
+            world["windows"].append({"id": 20 + len(world["windows"]), "app_id": app, "workspace_id": ws,
+                                     "layout": {"pos_in_scrolling_layout": [len(on(ws)) + 1, 1]}})
             if leave_after_launch:
                 world["focused"] = 1
             return Mock(returncode=0)
@@ -419,8 +447,8 @@ class RecoveryTest(unittest.TestCase):
             aside.write_text(json.dumps(aside_data))
             before = aside.read_bytes()
             record = aside.with_name(aside.name + restore.REOPENED)
-            if reopened_before:
-                record.write_text("reopened 2 of 2 windows\n")
+            if record_before is not None:
+                record.write_text(record_before)
             with patch.object(restore, "state_path", return_value=path), \
                     patch.object(sys, "argv", ["flow-recovery", "restore", str(aside)]), \
                     patch.object(restore.spaces, "query", side_effect=lambda *_: (workspaces(), world["windows"])), \
@@ -436,16 +464,27 @@ class RecoveryTest(unittest.TestCase):
                                  return_value=("mine", {"mine", "other"}) if other_display else (None, set())), \
                     patch.object(restore, "groups_unchanged_or_focused", return_value=True), \
                     patch.object(restore, "pins_unchanged_or_rebound", return_value=True), \
+                    patch.object(restore.time, "sleep"), \
                     contextlib.redirect_stdout(io.StringIO()) as out:
-                self.exit_code = 0
-                try:
-                    restore.main()
-                except SystemExit as exc:  # an error after the move to the empty workspace, printed with what opened
-                    self.exit_code = exc.code
-                except KeyboardInterrupt:
-                    self.exit_code = "killed"
+                self.answers, self.launches = [], []
+                for attempt in range(runs):
+                    out.seek(0)
+                    out.truncate()
+                    self.exit_code, so_far = 0, len(launches)
+                    try:
+                        restore.main()
+                    except SystemExit as exc:  # an error after the move to the empty workspace, printed with what opened
+                        self.exit_code = exc.code
+                    except KeyboardInterrupt:
+                        self.exit_code = "killed"
+                    except ValueError as exc:
+                        if attempt == runs - 1 and runs == 1:
+                            raise
+                        out.write(json.dumps({"error": str(exc)}))  # as __main__ answers a refusal
+                    self.answers.append(json.loads(out.getvalue() or "{}"))
+                    self.launches.append(len(launches) - so_far)
             self.record = record.read_text() if record.exists() else None
-            return json.loads(out.getvalue() or "{}"), actions, world["windows"], before, aside.read_bytes()
+            return self.answers[-1], actions, world["windows"], before, aside.read_bytes()
 
     def test_reopening_a_set_aside_session_leaves_the_work_alone(self):
         # The session was set aside because work is open, mostly in the apps it lists: reopened on the display's
@@ -499,24 +538,36 @@ class RecoveryTest(unittest.TestCase):
         self.assertEqual(answer, {"error": "Workspace changed; session recovery stopped.", "launched": 1})
         self.assertEqual(self.exit_code, 1)
         self.assertEqual([a for a in actions if a[0] == "focus-workspace"], [("focus-workspace", 2)])
-        self.assertEqual(self.record, "stopped: Workspace changed; session recovery stopped\n")
+        self.assertEqual(self.record, "stopped\nstopped: Workspace changed; session recovery stopped\n")
 
     def test_a_set_aside_session_reopened_once_is_not_reopened_again(self):
         # On disk, as the shell that knew may have restarted, and the command line knows nothing else.
         answer, _, _, _, _ = self.reopen_set_aside()
-        self.assertEqual(self.record, "reopened 2 of 2 windows\n")
+        self.assertEqual(self.record, "complete\nreopened 2 of 2 windows\n")
         self.reopen_set_aside(missing=("foot",))
-        self.assertEqual(self.record, "reopened 1 of 2 windows\n")
-        with self.assertRaisesRegex(ValueError, r"reopened already \(reopened 2 of 2 windows\)\. To try again anyway, "
-                                                r"remove .*\.reopened$"):
-            self.reopen_set_aside(reopened_before=True)
-        self.assertEqual(self.niri_actions, [])
+        self.assertEqual(self.record, "partial\nreopened 1 of 2 windows\n")
+        for record, said in (("complete\nreopened 2 of 2 windows\n", r"reopened already \(reopened 2 of 2 windows\)\. "),
+                             ("partial\nreopened 1 of 2 windows\n",
+                              r"reopened already \(reopened 1 of 2 windows\); open the rest yourself, .*twice\. "),
+                             ("stopped\nstopped: Workspace changed\n",
+                              r"reopened already \(stopped: Workspace changed\); open the rest yourself"),
+                             ("started\na reopen started\n", r"may be open in part: .*check your workspaces"),
+                             # One line, as dd8a386 wrote it: read from its sentence.
+                             ("reopened 2 of 2 windows\n", r"reopened already \(reopened 2 of 2 windows\)\. "),
+                             ("reopened 1 of 2 windows\n", r"reopened already \(reopened 1 of 2 windows\); open the rest"),
+                             ("stopped: Workspace changed\n", r"reopened already \(stopped: Workspace changed\); open the rest"),
+                             ("stopped while reopening\n", r"may be open in part"),
+                             ("", r"may be open in part")):  # empty: a power cut before its data reached the disk
+            with self.subTest(record=record), \
+                    self.assertRaisesRegex(ValueError, said + r".*To try again anyway, remove .*\.reopened$"):
+                self.reopen_set_aside(record_before=record)
+            self.assertEqual(self.niri_actions, [])
 
     def test_a_reopen_killed_as_it_launches_is_recorded_before_the_launch(self):
         # Killed with the first app starting, it never answers: the record written before that launch still stops
         # a second reopen from opening it twice.
         self.reopen_set_aside(killed_at_launch=True)
-        self.assertEqual((self.exit_code, self.record), ("killed", "stopped while reopening\n"))
+        self.assertEqual((self.exit_code, self.record), ("killed", "started\na reopen started\n"))
 
     def test_a_refused_reopen_leaves_a_user_who_moved_on_where_they_are(self):
         # The user went back to their work themselves as the empty workspace was focused: refused, and not moved.
@@ -526,29 +577,121 @@ class RecoveryTest(unittest.TestCase):
 
     def test_a_reopen_whose_every_launch_failed_is_not_recorded(self):
         # Nothing opened: not taken for a reopen, so it is offered and may be tried again, and the user is put back.
-        answer, actions, _, _, _ = self.reopen_set_aside(gio_fails=True)
+        answer, actions, _, _, _ = self.reopen_set_aside(gio_fails=("foot", "firefox"))
         self.assertEqual((answer["launched"], answer["complete"]), (0, False))
         self.assertIn("firefox: launch failed", answer["message"])
         self.assertIsNone(self.record)
         self.assertEqual([a for a in actions if a[0] == "focus-workspace"], [("focus-workspace", 2), ("focus-workspace", 1)])
 
     def test_a_reopen_stopped_by_any_error_after_a_launch_says_what_it_opened(self):
-        answer, _, _, _, _ = self.reopen_set_aside(broken_after_launch=True)
+        answer, _, _, _, _ = self.reopen_set_aside(broken_after_launch=TypeError("a bug"))
         self.assertEqual(answer, {"error": "a bug.", "launched": 2})
-        self.assertEqual(self.record, "stopped: a bug\n")
+        self.assertEqual(self.record, "stopped\nstopped: a bug\n")
+        # An error with no message is named by its type, in the answer and the record alike.
+        answer, _, _, _, _ = self.reopen_set_aside(broken_after_launch=TypeError())
+        self.assertEqual((answer["error"], self.record), ("TypeError.", "stopped\nstopped: TypeError\n"))
 
     def test_a_reopen_whose_last_record_cannot_be_written_still_answers_that_it_reopened(self):
-        # The record from before the first launch stays, and refuses a second reopen.
-        write = Path.write_text
-
-        def failing(self, text, *args, **kwargs):
-            if self.name.endswith(restore.REOPENED) and text.startswith("reopened"):
-                raise OSError(28, "No space left on device")
-            return write(self, text, *args, **kwargs)
-        with patch.object(Path, "write_text", failing):
+        # The record from before the first launch stays whole, and refuses a second reopen.
+        with full_disk("complete", "partial"):
             answer, _, _, _, _ = self.reopen_set_aside()
         self.assertEqual((answer["complete"], answer["launched"]), (True, 2))
-        self.assertEqual(self.record, "stopped while reopening\n")
+        self.assertEqual(self.record, "started\na reopen started\n")
+
+    def test_a_reopen_whose_apps_open_elsewhere_keeps_its_record(self):
+        # Launched, but the windows land on another workspace (a window rule) or too late to be matched: nothing
+        # restored here, yet they opened, so it is not offered again and a second run is refused.
+        answer, actions, windows, _, _ = self.reopen_set_aside(lands_on=3)
+        self.assertEqual((answer["complete"], answer["launched"]), (False, 2))
+        self.assertEqual(self.record, "partial\nreopened 0 of 2 windows\n")
+        self.assertEqual(sorted(w["app_id"] for w in windows if w["workspace_id"] == 3), ["firefox", "foot"])
+
+    def test_reopening_twice_opens_nothing_the_second_time_when_the_first_opened_elsewhere_or_late(self):
+        # The regression in dd8a386: launched, but nothing restored on the empty workspace (windows on another
+        # workspace, or not come yet), the record was removed and a second reopen opened every app again.
+        for case in ({"lands_on": 3}, {"slow": True}):
+            with self.subTest(**case):
+                self.reopen_set_aside(runs=2, **case)
+                self.assertEqual(self.launches, [2, 0])
+                self.assertIn("reopened already", self.answers[1]["error"])
+
+    def test_a_reopen_whose_apps_are_slow_to_open_keeps_its_record(self):
+        # Launched, and no window yet anywhere when it ends: they may still come, so it is not offered again.
+        answer, actions, _, _, _ = self.reopen_set_aside(slow=True)
+        self.assertEqual((answer["complete"], answer["launched"]), (False, 2))
+        self.assertEqual(self.record, "partial\nreopened 0 of 2 windows\n")
+        self.assertEqual([a for a in actions if a[0] == "focus-workspace"], [("focus-workspace", 2)])  # left there
+
+    def test_a_reopen_stopped_with_every_launch_failed_is_not_recorded(self):
+        # Stopped (the user went back to the work) after launches that all failed: nothing opened, so it may be
+        # tried again, and the user is left where they went.
+        answer, actions, _, _, _ = self.reopen_set_aside(gio_fails=("foot", "firefox"), leave_after_launch=True)
+        self.assertEqual(answer, {"error": "Workspace changed; session recovery stopped.", "launched": 0})
+        self.assertIsNone(self.record)
+        self.assertEqual([a for a in actions if a[0] == "focus-workspace"], [("focus-workspace", 2)])
+
+    def test_a_reopen_started_meanwhile_elsewhere_is_left_to_it(self):
+        # Another reopen of the file (Settings and the command line at once) recorded itself after this one's
+        # check: this one opens nothing, and leaves the other's record.
+        # Nor moves the user off the workspace that one is opening apps on, which would stop it.
+        answer, actions, _, _, _ = self.reopen_set_aside(race=True)
+        self.assertEqual(self.launches, [0])
+        self.assertEqual((answer["launched"], answer["recorded"]), (0, True))
+        self.assertIn("Another reopen of", answer["error"])
+        self.assertEqual(self.record, "started\nanother reopen\n")
+        self.assertEqual([a for a in actions if a[0] == "focus-workspace"], [("focus-workspace", 2)])
+
+    def test_a_reopen_with_one_launch_failed_keeps_its_record(self):
+        answer, _, _, _, _ = self.reopen_set_aside(gio_fails=("foot",))
+        self.assertEqual((answer["complete"], answer["launched"]), (False, 2))
+        self.assertTrue(self.record.startswith("partial\n"))
+
+    def test_a_reopen_whose_stop_cannot_be_recorded_still_says_what_it_opened(self):
+        with full_disk("stopped"):
+            answer, _, _, _, _ = self.reopen_set_aside(leave_after_launch=True)
+        self.assertEqual(answer, {"error": "Workspace changed; session recovery stopped.", "launched": 1})
+        self.assertEqual(self.record, "started\na reopen started\n")  # still refuses a second reopen
+
+    def test_a_reopen_that_cannot_record_itself_opens_nothing(self):
+        # And leaves no record (not an empty one, which would refuse every later try).
+        with full_disk("started"):
+            answer, actions, _, _, _ = self.reopen_set_aside()
+        self.assertEqual((answer["launched"], self.record), (0, None))
+        self.assertIn("Could not record the reopen", answer["error"])
+        self.assertEqual([a for a in actions if a[0] == "focus-workspace"], [("focus-workspace", 2), ("focus-workspace", 1)])
+
+    def test_a_refused_reopen_says_through_the_command_line_that_the_file_is_recorded(self):
+        # So Settings stops offering Reopen it, which can only be refused now (after a shell restart, say).
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "flow"
+            state.mkdir()
+            aside = state / restore.SET_ASIDE.format("20261126T102642Z-00")
+            aside.write_text('{"version": 1, "windows": []}')
+            aside.with_name(aside.name + restore.REOPENED).write_text("complete\nreopened 2 of 2 windows\n")
+            result = subprocess.run([sys.executable, str(Path(__file__).parents[1] / "session/restore.py"), "restore",
+                                     str(aside)], capture_output=True, text=True, timeout=60,
+                                    env={**os.environ, "XDG_STATE_HOME": directory})
+            answer = json.loads(result.stdout)
+            self.assertEqual((result.returncode, answer.get("recorded")), (1, True), result.stderr)
+            self.assertIn("reopened already (reopened 2 of 2 windows)", answer["error"])
+
+    def test_a_record_write_that_the_system_refuses_leaves_the_record_as_it_was(self):
+        # For real: a child that may write no byte (a full disk's EFBIG/ENOSPC), the record before kept whole.
+        import resource
+        child = ("import sys; sys.path.insert(0, sys.argv[1]); import restore; from pathlib import Path; "
+                 "print(restore.write_record(Path(sys.argv[2]), sys.argv[3], 'how', first=sys.argv[3] == 'started'))")
+        for before, state in ((None, "started"), ("started\na reopen started\n", "complete")):
+            with self.subTest(before=before), tempfile.TemporaryDirectory() as directory:
+                record = Path(directory) / ("x.json" + restore.REOPENED)
+                if before:
+                    record.write_text(before)
+                result = subprocess.run(
+                    [sys.executable, "-c", child, str(Path(__file__).parents[1] / "session"), str(record), state],
+                    capture_output=True, text=True, timeout=60,
+                    preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0)))
+                self.assertEqual(result.stdout.strip(), "False", result.stderr)
+                self.assertEqual(record.read_text() if record.exists() else None, before)
+                self.assertEqual(sorted(p.name for p in Path(directory).iterdir()), [record.name] if before else [])
 
     def test_a_set_aside_session_from_another_connected_display_is_refused_where_the_user_is(self):
         with self.assertRaisesRegex(ValueError, "saved on another connected display"):

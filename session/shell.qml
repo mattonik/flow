@@ -648,7 +648,8 @@ ShellRoot {
                     if (recoveryProcess.command[1] === "save" && !result.error && recoveryPreferences.sessionRecovery) autoReadyTimer.restart()
                     if (recoveryProcess.command[1] === "restore" && recoveryProcess.command.length > 2) {
                         if (result.complete) root.recoverySetAside = ""
-                        else if (result.launched) root.recoverySetAsideLeft = result.error || result.message
+                        else if (result.launched || result.recorded) root.recoverySetAsideLeft = result.recorded ? result.error
+                            : "Reopening " + root.recoverySetAside + " did not bring everything back (" + (result.error || result.message).replace(/\.$/, "") + "). Apps that started may still open. Open the rest yourself: reopening it again would open those twice. Once you have checked your workspaces, remove " + root.recoverySetAside + ".reopened to try again."
                     }
                     if (recoveryProcess.command[1] === "rename-group") {
                         root.spacesError = result.error || ""
@@ -2493,7 +2494,7 @@ ShellRoot {
                             FlowButton { id: restoreSession; implicitHeight: 44; variant: "quiet"; text: "Restore session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: { if (recoveryProcess.running) { root.recoveryMessage = "Wait for automatic recovery to finish"; return } root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
                         }
                         Text { id: recoveryPause; visible: recoveryPreferences.sessionRecovery && root.autoRecoveryBlocked && root.recoveryPauseReason !== "" && root.recoveryPauseReason !== root.recoveryMessage; text: root.recoveryPauseReason; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
-                        Text { id: recoveryAside; visible: root.recoverySetAside !== ""; text: root.recoverySetAsideLeft ? "Reopened in part from " + root.recoverySetAside + " (" + root.recoverySetAsideLeft.replace(/\.$/, "") + "). Open the rest yourself: reopening it again would open the others twice." : "Not reopened when the shell started: the saved session is kept as " + root.recoverySetAside + "."; textFormat: Text.PlainText; color: floeTheme.textMuted; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 14; font.family: floeTheme.interfaceFont }
+                        Text { id: recoveryAside; visible: root.recoverySetAside !== ""; text: root.recoverySetAsideLeft ? root.recoverySetAsideLeft : "Not reopened when the shell started: the saved session is kept as " + root.recoverySetAside + "."; textFormat: Text.PlainText; color: floeTheme.textMuted; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 14; font.family: floeTheme.interfaceFont }
                         FlowButton { id: reopenAside; visible: root.recoverySetAside !== "" && root.recoverySetAsideLeft === ""; implicitHeight: 44; variant: "quiet"; text: "Reopen it"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: root.reopenSetAside() }
                         Text { id: recoveryStatus; visible: root.recoveryMessage !== ""; text: root.recoveryMessage; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
                     }

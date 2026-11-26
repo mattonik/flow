@@ -1,7 +1,7 @@
 # ADR-0005: XDG portals for Niri
 
-**Status:** Accepted direction; runtime validation pending  
-**Date:** 2026-11-13
+**Status:** Accepted; amended 2026-11-26 after F-012's runtime tests (Screenshot → Flow's own backend)  
+**Date:** 2026-11-13, amended 2026-11-26
 
 ## Decision
 
@@ -51,6 +51,57 @@ Using `/Applications/UTM.app/Contents/MacOS/utmctl` without opening or manipulat
 Using absolute guest command paths and the logged-in user's session environment, `systemctl --user is-active xdg-desktop-portal.service` returned `active`, and `busctl --user status org.freedesktop.portal.Desktop` showed an owner running xdg-desktop-portal 1.22.1 as that user. `busctl --user tree` showed the desktop portal object. The GTK and GNOME portal services were also active.
 
 A disposable unsandboxed Gio client requested `FileChooser.OpenFile`. The Nautilus chooser appeared and Escape returned response code 1. A second request provided a NUL-terminated temporary directory, and keyboard selection returned success and exactly the URI of the disposable test file. The first probe omitted the required NUL terminator and opened Home instead; the corrected request opened the test directory. The cancel probe did not record whether the returned URI array was empty. These checks do not establish sandbox permissions, file reading, save, capture, or touch behavior. Continue with a sandboxed app and the other interactive scenarios above.
+
+## Amendment after F-012's tests (2026-11-26)
+
+`tests/niri_portals_smoke.py` exercised every portal F-012 names in the guest (see *F-012 acceptance* in
+`docs/IMPLEMENTATION_STATUS.md`). Niri's defaults are kept but for Screenshot. The choosers also found a Flow bug,
+which is fixed apart.
+
+- **FileChooser stays GNOME's (Nautilus's chooser).** Its Open and Save buttons sit at the bottom right of its
+  window, where Flow's work indicator sits over every window (*03 / 03*, or *Layer · Files · Make space · Close* over
+  a floating dialog such as Firefox's upload), so a click on Save reaches the indicator, and over Firefox's upload
+  dialog it would hit *Close*. That is Flow's bug, not the backend's: the island and the home indicator cover
+  apps' controls the same way, and any app's bottom-right buttons are covered. A band reserved for the
+  indicators was tried and dropped: the spec has the island float over content, not take a strip of the screen.
+  The fix, apart from this change, is indicators that get out of the way: they fade and let clicks through while
+  the pointer is over the part of the window they cover, and come back on edge hover or the usual shortcut. Until
+  it lands, the choosers work by keyboard and their primary buttons do not take a click. GTK's chooser
+  (`programs.niri.useNautilus = false`) was tried and works by pointer, with its buttons in the header bar, but it
+  only moves the problem: the island covers the middle of its Name field, it is GTK 3 and apart from Files (Flow's
+  file manager, which the GNOME chooser is), and with the overlap fixed in the shell there is no reason left to
+  leave Niri's default.
+- **Screenshot → Flow** (`session/screenshot_portal.py`, `org.freedesktop.impl.portal.desktop.flow`). GNOME's
+  backend answers `interactive: true` by calling `org.gnome.Shell.Screenshot.InteractiveScreenshot`, which Niri
+  26.04 does not implement (it has `Screenshot` and `PickColor`), so every interactive request failed with answer 2.
+  Common tools send it: GIMP 3 always ([screenshot-freedesktop.c](https://gitlab.gnome.org/GNOME/gimp/-/blob/c03dfa417c20f31561327df9637c2c730b1c51ca/plug-ins/screenshot/screenshot-freedesktop.c#L187)),
+  ksnip in every mode but full screen, and Flathub's OCR and QR tools (Gradia, Decoder, Frog, TextSnatcher).
+  Flameshot sends `false`; Firefox, OBS, Krita, Inkscape and LibreOffice do not use the interface; GTK's and Qt's
+  colour pickers use PickColor. Niri has no implementation in a release or a pull request
+  ([niri#1983](https://github.com/niri-wm/niri/issues/1983), open; [niri#4820](https://github.com/niri-wm/niri/pull/4820)
+  lays groundwork). Of the existing backends, GTK's dropped Screenshot in 1.15.0, KDE's needs KWin, and
+  `xdg-desktop-portal-wlr` would answer on Niri (grim and slurp) but saves every screenshot to the fixed path
+  `/tmp/out.png`, shared between requests and readable by other local users under the default umask. So the
+  rejection of a Flow-authored backend above no longer holds, for this one interface. Flow's asks through GTK's
+  Access dialog (*Take Screenshot* or *Cancel*, naming the app as the broker passes it) for every interactive
+  request, and for any other the broker did not check: the broker skips its own permission check while it has not
+  read the backend's version, after the backend left the bus for one, so only `permission_store_checked` lets a
+  request through without a dialog. It captures with grim, the whole layout and every display, into a new file under
+  `~/Pictures/Screenshots` that it creates itself (mode 0600, never an existing file). Niri's own D-Bus `Screenshot`
+  was the first choice and was dropped: it refuses more than one display, never replies when its folder is missing,
+  writes wherever Niri's `screenshot-path` says (`/tmp/screenshot.png` when that is null, the defect that ruled out
+  `xdg-desktop-portal-wlr`), and hands concurrent callers each other's results. Area and window choices are not
+  offered: Niri's own screenshot UI reports nothing on D-Bus when the user cancels it, which would leave the request
+  waiting. PickColor goes to Niri's picker; a cancelled pick answers 1. Every request is answered once, whatever
+  fails, and nothing is captured once the broker has closed it. The search for an upstream fix was of Niri's issues,
+  pull requests and discussions on GitHub, and `src/dbus/gnome_shell_screenshot.rs` on main, on 2026-11-26.
+  Retire it once Niri implements `InteractiveScreenshot`.
+- **PipeWire.** Screen casting needs it, and NixOS's `graphical-desktop` module, which Niri's session enables,
+  turns it on by default (a Flow `mkDefault true` would be a no-op, and `false` conflicts with it). Flow's module
+  check asserts it, with WirePlumber, and the portal routing above.
+
+Kept as Niri's module chose them: FileChooser and ScreenCast (GNOME; Niri's Mutter ScreenCast API offers DMA-BUF
+buffers only), Access and Notification (GTK), Secret (GNOME Keyring).
 
 ## References
 
