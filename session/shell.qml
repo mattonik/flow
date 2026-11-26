@@ -731,6 +731,11 @@ ShellRoot {
     }
     // Toggles that came while a transition was still running, for tests/niri_desk_overview_smoke.py: each must count.
     property int deskTogglesMidRise: 0
+    // Desk and Overview are on screen: shown, and their first frame drawn. The work view's Island and indicators stay
+    // until then (Desk and Overview are mapped above them), so the screen never shows work without them first: with
+    // Reduce motion, five frames (about 110 ms) of that came before Desk in the guest.
+    property bool deskDrawn: false
+    property bool overviewDrawn: false
     property int overviewAgainWhilePending: 0
     function toggleDesk() {
         if (deskOpen && deskEnter.running) deskTogglesMidRise += 1
@@ -2025,7 +2030,11 @@ ShellRoot {
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: root.notificationsOpen || root.quickSettingsOpen || root.searchOpen ? WlrKeyboardFocus.None : WlrKeyboardFocus.Exclusive
-        onVisibleChanged: if (visible && root.motionQuick) deskEnter.restart()
+        onVisibleChanged: { if (!visible) root.deskDrawn = false; else if (root.motionQuick) deskEnter.restart() }
+        Connections {
+            target: deskContent.Window.window
+            function onFrameSwapped() { if (deskWindow.visible && !root.deskDrawn) root.deskDrawn = true }
+        }
         ParallelAnimation {
             id: deskEnter
             NumberAnimation { target: deskContent; property: "opacity"; from: 0; to: 1; duration: 220; easing.type: Easing.BezierSpline; easing.bezierCurve: root.standardCurve }
@@ -2529,7 +2538,7 @@ ShellRoot {
         // beneath (Flow's columns reach the screen's edge).
         id: homeIndicator
         // Desk and Overview carry their own (a surface opened later stacks above this one).
-        visible: !root.deskOpen && !root.spacesOverviewOpen && !root.switcherOpen && !root.appMenuOpen && !root.searchOpen
+        visible: !root.deskDrawn && !root.overviewDrawn && !root.switcherOpen && !root.appMenuOpen && !root.searchOpen
         anchors.bottom: true
         implicitWidth: 126; implicitHeight: 24
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
@@ -2541,7 +2550,7 @@ ShellRoot {
         // It stays in Overview, where its arrows and position are the way along the row for a pointer
         // or a finger, next to Super+Left/Right and the wheel.
         id: workIndicatorWindow
-        visible: !root.deskOpen && !root.switcherOpen && !root.spacesOverviewOpen && !root.appMenuOpen && !root.searchOpen && (!!root.activeSpace || !!root.activeLayer)
+        visible: !root.deskDrawn && !root.switcherOpen && !root.overviewDrawn && !root.appMenuOpen && !root.searchOpen && (!!root.activeSpace || !!root.activeLayer)
         anchors { bottom: true; right: true }
         // Where the bottom controls and this indicator cannot share a row, it rises above them: below 560 px,
         // or below 900 px for an active Layer's wider controls.
@@ -2642,7 +2651,7 @@ ShellRoot {
         readonly property real bandTop: 44
         readonly property real bandBottom: 44
         readonly property real cardHeight: cardWidth * Math.max(0.3, (height - bandTop - bandBottom) / Math.max(1, width))
-        onVisibleChanged: if (visible) { overviewRow.positionViewAtIndex(root.overviewIndex, ListView.Center); overviewFocus.forceActiveFocus() }
+        onVisibleChanged: if (visible) { overviewRow.positionViewAtIndex(root.overviewIndex, ListView.Center); overviewFocus.forceActiveFocus() } else root.overviewDrawn = false
         FocusScope {
             id: overviewFocus
             anchors.fill: parent; focus: true
@@ -2650,6 +2659,7 @@ ShellRoot {
             Connections {
                 target: overviewFocus.Window.window
                 function onFrameSwapped() {
+                    if (spacesOverview.visible && !root.overviewDrawn) root.overviewDrawn = true
                     if (!root.openStarted.overview || !spacesOverview.visible || overviewRow.count !== root.displaySpaces.length) return
                     for (let i = 0; i < overviewRow.count; i++) {
                         const card = overviewRow.itemAtIndex(i)
@@ -3848,7 +3858,7 @@ ShellRoot {
     }
     PanelWindow {
         id: workIsland
-        visible: !root.deskOpen && !root.spacesOverviewOpen
+        visible: !root.deskDrawn && !root.overviewDrawn
         anchors.top: true
         implicitWidth: workIslandContent.implicitWidth; implicitHeight: workIslandContent.implicitHeight
         color: "transparent"

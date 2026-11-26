@@ -737,6 +737,14 @@ class Smoke:
         niri("action", "close-overview")
         wait_for(lambda: not self.niri_open(), "Niri's overview to close")
         self.settled(output)
+        tag = "still" if self.reduce_motion else "moving"
+        for n, frame in enumerate(self.in_between(desk, work, desk_end)[:4]):
+            self.save(f"midway-{tag}-desk-{n}", {output: frame})
+        self.save(f"midway-{tag}-desk-end", {output: desk_end})
+        self.save(f"midway-{tag}-work", {output: work})
+        print(f"{tag}: frames equal to the work view {sum(1 for f in desk if not differ(f, work))}, to Desk's "
+              f"{sum(1 for f in desk if not differ(f, desk_end))}, of {len(desk)}; order "
+              + "".join("w" if not differ(f, work) else "d" if not differ(f, desk_end) else "?" for f in desk), flush=True)
         return {"desk": len(self.in_between(desk, work, desk_end)), "desk_frames": len(desk),
                 "niri": len(self.in_between(live, work, live_end)), "niri_frames": len(live)}
 
