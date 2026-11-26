@@ -137,7 +137,7 @@ def run(*command, timeout=120, **kw):
     return process.stdout
 
 
-NAMED_KEYS = {"Return", "Escape", "Tab", "BackSpace"}
+NAMED_KEYS = {"Return", "Escape", "Tab", "BackSpace", "Home", "End", "Up", "Down", "Left", "Right"}
 
 
 def keys(*steps):
