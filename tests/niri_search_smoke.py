@@ -107,6 +107,8 @@ def main():
         runtime.mkdir(mode=0o700)
         stand_in.mkdir()
         (tmp / "rows").write_text(json.dumps(ROWS))
+        (tmp / "config").mkdir()
+        (tmp / "config" / "flow-settings.ini").write_text("[General]\nsessionRecovery=false\n")  # automatic recovery is on by default; not this smoke's subject
         (stand_in / "flow-search").write_text(STAND_IN.format(dir=tmp))
         (stand_in / "flow-search").chmod(0o755)
         opened = tmp / "opened"

@@ -243,6 +243,7 @@ def run(shell, bus, steps, problems):
             path.mkdir()
         # Reduced motion: every surface is drawn at rest when it is captured.
         (config / "floe-appearance.ini").write_text("[General]\nreduceMotion=true\n")
+        (config / "flow-settings.ini").write_text("[General]\nsessionRecovery=false\n")  # automatic recovery is on by default; not this smoke's subject
         (runtime / "flow-activities.json").write_text(json.dumps({"version": 1, "activities": [
             {"id": "a1", "owner": "Photos", "title": "Copy photos", "progress": 0.4, "detail": ""}]}))
         sink = tmp / "sink"

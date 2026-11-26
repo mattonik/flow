@@ -77,7 +77,7 @@ def main():
         runtime.mkdir(mode=0o700)
         for folder in (bin_dir, config, data / "applications", titles):
             folder.mkdir(parents=True)
-        (config / "flow-settings.ini").write_text("[General]\nautoRecovery=true\n")
+        (config / "flow-settings.ini").write_text("[General]\nsessionRecovery=true\n")
         for name in SPACES:
             (data / "applications" / f"flow-bg-{name}.desktop").write_text(
                 f"[Desktop Entry]\nType=Application\nName=Background {name}\nExec=foot --app-id flow-bg-{name}\n")

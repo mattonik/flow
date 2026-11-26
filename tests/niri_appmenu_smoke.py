@@ -146,7 +146,7 @@ def main():
         tmp = Path(tmp)
         for sub in ("config", "home", "app-config", "data", "cache", "shots"):
             (tmp / sub).mkdir()
-        (tmp / "config" / "flow-settings.ini").write_text("[General]\nappMenuEnabled=true\n")
+        (tmp / "config" / "flow-settings.ini").write_text("[General]\nappMenuEnabled=true\nsessionRecovery=false\n")  # automatic recovery is on by default; not this smoke's subject
         apps_bin = ":".join(f"{root}/bin" for root in roots.values())
         apps_share = ":".join(f"{root}/share" for root in roots.values())
         env = dict(os.environ, XDG_STATE_HOME=str(tmp), XDG_CONFIG_HOME=str(tmp / "config"),

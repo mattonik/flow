@@ -75,6 +75,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix="flow-banner-") as tmp:
         runtime = Path(tmp) / "runtime"
         runtime.mkdir(mode=0o700)
+        (Path(tmp) / "config").mkdir()
+        (Path(tmp) / "config" / "flow-settings.ini").write_text("[General]\nsessionRecovery=false\n")  # automatic recovery is on by default; not this smoke's subject
         env = dict(os.environ, XDG_STATE_HOME=tmp, XDG_CONFIG_HOME=str(Path(tmp) / "config"), XDG_RUNTIME_DIR=str(runtime),
                    WAYLAND_DISPLAY=wayland if wayland.startswith("/") else str(real_runtime / wayland))
 

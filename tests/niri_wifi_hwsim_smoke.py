@@ -313,6 +313,8 @@ def check(shell, bus, lab, steps, shots, problems):
         (stub_bin / "nmcli").write_text(NMCLI_STUB)
         (stub_bin / "nmcli").chmod(0o755)
         state_file.write_text("@real")
+        (Path(tmp) / "config").mkdir()
+        (Path(tmp) / "config" / "flow-settings.ini").write_text("[General]\nsessionRecovery=false\n")  # automatic recovery is on by default; not this smoke's subject
         env = dict(os.environ, XDG_STATE_HOME=tmp, XDG_CONFIG_HOME=str(Path(tmp) / "config"), XDG_RUNTIME_DIR=str(runtime),
                    WAYLAND_DISPLAY=wayland if wayland.startswith("/") else str(real_runtime / wayland),
                    PATH=f"{stub_bin}:{os.environ['PATH']}", FLOW_NMCLI_STATE=str(state_file),

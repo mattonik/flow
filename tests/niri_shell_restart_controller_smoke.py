@@ -559,7 +559,7 @@ def development(args):
         runtime.mkdir(mode=0o700)
         (config).mkdir()
         # Without appMenuEnabled, the key declared before it: each restart must keep automatic recovery on.
-        (config / "flow-settings.ini").write_text("[General]\nautoRecovery=true\n")
+        (config / "flow-settings.ini").write_text("[General]\nsessionRecovery=true\n")
         wayland = os.environ.get("WAYLAND_DISPLAY", "wayland-1")
         env = dict(os.environ, XDG_STATE_HOME=str(tmp), XDG_RUNTIME_DIR=str(runtime), XDG_CONFIG_HOME=str(config),
                    XDG_DATA_HOME=str(data),

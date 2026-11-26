@@ -84,6 +84,7 @@ def main():
         runtime = root / "runtime"
         runtime.mkdir(mode=0o700)
         (root / "config").mkdir()
+        (root / "config" / "flow-settings.ini").write_text("[General]\nsessionRecovery=false\n")  # automatic recovery is on by default; not this smoke's subject
         bin_dir = root / "bin"
         bin_dir.mkdir()
         grim = os.environ.get("FLOW_GRIM")
