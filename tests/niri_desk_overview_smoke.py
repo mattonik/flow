@@ -425,13 +425,13 @@ class Smoke:
             ("Overview: Super+O, then Escape", lambda: k("super", "o"), lambda: k("esc"), None),
             ("Overview: the home indicator, then Enter", lambda: ui.tap_home("home"), lambda: k("enter"), None),
             ("Overview: a swipe up the home indicator, then Open selected", lambda: ui.swipe_home(),
-             lambda: ui.click(ui.control("overview", "Open selected")), None),
+             lambda: ui.click(ui.control("overview", "↗  Open selected")), None),
             ("Overview: the Platform API's ShowOverview, then Escape", lambda: ui.ipc("overview_open"), lambda: k("esc"), None),
             ("Overview: Super+O, then Right and Enter", lambda: k("super", "o"), lambda: (k("right"), k("enter")), "f"),
             ("Overview: Super+O, then Home and Enter", lambda: k("super", "o"), lambda: (k("home"), k("enter")), "a"),
             ("Overview: Super+O, then End and Enter", lambda: k("super", "o"), lambda: (k("end"), k("enter")), "f"),
-            ("Overview: Super+O, then a click on the first card and a click to open it", lambda: k("super", "o"),
-             lambda: ui.click_card(-2), "a"),
+            ("Overview: Super+O, then a click on the next card and a click to open it", lambda: k("super", "o"),
+             lambda: ui.click_card(1), "f"),
             ("Overview: Super+O, a wheel notch, then Escape", lambda: k("super", "o"),
              lambda: (ui.pointer.scroll(center(ui.target("overview_row")), 1), time.sleep(0.4), k("esc")), None),
         ]
@@ -445,6 +445,9 @@ class Smoke:
             ("Overview, its home indicator to Desk, then Desk's", lambda: k("super", "o"),
              lambda: (ui.tap_home("overview_home"), wait_for(self.desk_open, "Desk after Overview's home indicator"),
                       ui.tap_home("desk_home"))),
+            ("Overview, Your desk, then Return to work", lambda: k("super", "o"),
+             lambda: (ui.click(ui.control("overview", "↓  Your desk")), wait_for(self.desk_open, "Desk after Your desk"),
+                      ui.click(ui.control("desk", "Return to work")))),
             ("Desk, its Overview, then Escape", lambda: (k("super", "h"), wait_for(self.desk_open, "Desk"),
                                                          ui.click(ui.control("desk", "Overview"))), lambda: k("esc")),
         ]
@@ -841,6 +844,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (Failure, OSError, KeyError, StopIteration, subprocess.SubprocessError, ValueError) as exc:
+    except (RuntimeError, OSError, KeyError, StopIteration, subprocess.SubprocessError, ValueError) as exc:
         print(f"F-007 Desk/Overview test failed: {exc}", file=sys.stderr)
         sys.exit(1)
