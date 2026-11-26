@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import time
@@ -214,24 +215,31 @@ class RecoveryTest(unittest.TestCase):
             restore.automatic("auto-seen", path)  # a later shell with the setting off leaves the marker alone
             self.assertEqual(marker.read_text(), "ready")
 
-    def test_automatic_start_reopens_at_a_late_first_start(self):
-        # A first shell start long after Niri started (a slow boot) still reopens the saved session: what counts
-        # is the marker, not the clock. The wall clock ten minutes on and a socket made now are only for a clock
-        # window like the one this replaced: put back, it fails here.
+    def test_automatic_start_at_a_late_first_start(self):
+        # A first shell start long after Niri started has no marker either. With no window open yet (a slow boot)
+        # it reopens the saved session: the wall clock ten minutes on and a socket made now are for a clock window
+        # like the one the marker replaced, which, put back, fails here. With a window open past ten minutes it is
+        # work under way (a shell that failed at login and was started later): nothing reopened, the session kept.
         saved = json.dumps({"version": 1, "reopen_at_login": True, "windows": []})
-        with tempfile.TemporaryDirectory() as directory:
-            socket = Path(directory) / "niri.wayland-1.4242.sock"
-            socket.write_text("")
-            with patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory, "NIRI_SOCKET": str(socket)}), \
-                    patch.object(restore.spaces, "session_id", return_value="session"), \
-                    patch.object(restore.time, "time", return_value=time.time() + 600), \
-                    patch.object(restore.subprocess, "run",
-                                 return_value=Mock(returncode=0, stdout='{"message":"Restored 2 windows."}')) as run:
-                path = Path(directory) / "session.json"
-                path.write_text(saved)
-                self.assertNotIn("error", restore.automatic("auto-start", path))
-                self.assertEqual(run.call_count, 1)
-                self.assertEqual(path.read_text(), saved)
+        for open_apps, restores in (([], True), (["foot"], False)):
+            with self.subTest(open_apps=open_apps), tempfile.TemporaryDirectory() as directory:
+                socket = Path(directory) / "niri.wayland-1.4242.sock"
+                socket.write_text("")
+                with patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory, "NIRI_SOCKET": str(socket)}), \
+                        patch.object(restore.spaces, "session_id", return_value="session"), \
+                        patch.object(restore.time, "time", return_value=time.time() + 600), \
+                        patch.object(restore, "niri_age", return_value=3600), \
+                        patch.object(restore.spaces, "query",
+                                     return_value=([], [window(n, app, n) for n, app in enumerate(open_apps, 1)])), \
+                        patch.object(restore.subprocess, "run",
+                                     return_value=Mock(returncode=0, stdout='{"message":"Restored 2 windows."}')) as run:
+                    path = Path(directory) / "session.json"
+                    path.write_text(saved)
+                    answer = restore.automatic("auto-start", path)
+                    self.assertNotIn("error", answer)
+                    self.assertEqual(run.call_count, 1 if restores else 0)
+                    self.assertEqual((path.exists(), [p.read_text() for p in asides(directory)]),
+                                     (True, []) if restores else (False, [saved]))
 
     def test_automatic_start_does_not_reopen_a_snapshot_from_before_it_reopened_sessions(self):
         # A Save session from before automatic recovery was on by default, possibly long ago, kept aside.
@@ -327,6 +335,269 @@ class RecoveryTest(unittest.TestCase):
             path = Path(directory) / "session.json"
             restore.save(path, {"id": 1, "active_window_id": 1}, [window(1, "one", 1)])
             self.assertIs(json.loads(path.read_text())["reopen_at_login"], True)
+
+    def reopen_set_aside(self, missing=(), empty=True, registered=(), aside_session=None, focus_moves=True,
+                         groups=(), leave_after_launch=False, crowded_on_focus=False, reopened_before=False,
+                         other_display=False, killed_at_launch=False, user_away_on_focus=False, gio_fails=False,
+                         broken_after_launch=False):
+        """Settings' Reopen it run through the command line against a fake Niri: the user's foot and firefox on
+        workspace 1 (focused), workspace 2 after it on the display empty unless ``empty`` is false. The set-aside
+        session lists the same two apps; ``missing`` have no desktop entry; ``registered`` are the Groups now
+        registered, ``groups`` those the session saved; ``aside_session`` is the session it was saved in (with the
+        work's window IDs); ``focus_moves`` false, Niri ignores focus-workspace; ``leave_after_launch``, the user goes back to the
+        work after the first launch; ``crowded_on_focus``, a window lands on workspace 2 as it is focused;
+        ``reopened_before``, the file was reopened once already; ``other_display``, it was saved on another
+        connected display; ``killed_at_launch``, the reopen is killed as its first app starts;
+        ``user_away_on_focus``, the user goes back to workspace 1 as 2 is focused; ``gio_fails``, every launch
+        fails and nothing opens; ``broken_after_launch``, a bug (TypeError) stops it once one app started.
+        ``self.record`` is then what the reopen wrote beside the file, ``self.exit_code`` its
+        exit status. Returns the printed answer, the Niri
+        actions, the windows and the file's bytes before and after; session.json is rewritten at each launch,
+        as an automatic save of the work would."""
+        world = {"focused": 1, "windows": [
+            {"id": 10, "app_id": "foot", "workspace_id": 1, "layout": {"pos_in_scrolling_layout": [1, 1]}},
+            {"id": 11, "app_id": "firefox", "workspace_id": 1, "layout": {"pos_in_scrolling_layout": [2, 1]}}]}
+        if not empty:
+            world["windows"].append({"id": 12, "app_id": "editor", "workspace_id": 2,
+                                     "layout": {"pos_in_scrolling_layout": [1, 1]}})
+        actions = self.niri_actions = []  # kept for a test whose reopen raises
+
+        def workspaces():
+            return [{"id": n, "idx": n, "output": "Virtual-1", "is_focused": n == world["focused"],
+                     "active_window_id": None} for n in (1, 2)]
+
+        def on(ws):
+            return sorted((w for w in world["windows"] if w["workspace_id"] == ws),
+                          key=lambda w: w["layout"]["pos_in_scrolling_layout"][0])
+
+        def command(_kind, action, *args):
+            actions.append((action, *args))
+            if action == "focus-workspace" and focus_moves:
+                world["focused"] = args[0]
+                if user_away_on_focus and args[0] == 2:
+                    world["focused"] = 1
+                if crowded_on_focus and args[0] == 2:
+                    world["windows"].append({"id": 30, "app_id": "late", "workspace_id": 2,
+                                             "layout": {"pos_in_scrolling_layout": [1, 1]}})
+            elif action == "focus-window":
+                world["focused_window"] = args[1]
+            elif action == "move-column-to-index":
+                columns = on(world["focused"])
+                moving = next(w for w in columns if w["id"] == world["focused_window"])
+                columns.remove(moving)
+                columns.insert(args[0] - 1, moving)
+                for column, w in enumerate(columns, 1):
+                    w["layout"]["pos_in_scrolling_layout"] = [column, 1]
+
+        def run(argv, **kwargs):  # gio launch: the app opens on the focused workspace, at its end
+            if killed_at_launch:
+                raise KeyboardInterrupt  # as a signal would end it: no answer, no last word on disk
+            if gio_fails:
+                raise subprocess.CalledProcessError(1, argv)
+            if broken_after_launch and any(w["workspace_id"] == 2 for w in world["windows"]):
+                raise TypeError("a bug")
+            app = Path(argv[-1]).stem
+            path.write_text("an automatic save of the work")
+            world["windows"].append({"id": 20 + len(world["windows"]), "app_id": app, "workspace_id": world["focused"],
+                                     "layout": {"pos_in_scrolling_layout": [len(on(world["focused"])) + 1, 1]}})
+            if leave_after_launch:
+                world["focused"] = 1
+            return Mock(returncode=0)
+
+        aside_data = {"version": 1, "windows": [{"app_id": "firefox", "column": 1, "window_id": 11},
+                                                {"app_id": "foot", "column": 2, "window_id": 10}]}
+        if aside_session:
+            aside_data["session"] = aside_session
+        if groups:
+            aside_data["groups"] = list(groups)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.json"
+            path.write_text(json.dumps({"version": 1, "reopen_at_login": True, "windows": []}))
+            aside = path.with_name(restore.SET_ASIDE.format("20261126T102642Z-00"))
+            if other_display:
+                aside_data["display"] = "other"
+            aside.write_text(json.dumps(aside_data))
+            before = aside.read_bytes()
+            record = aside.with_name(aside.name + restore.REOPENED)
+            if reopened_before:
+                record.write_text("reopened 2 of 2 windows\n")
+            with patch.object(restore, "state_path", return_value=path), \
+                    patch.object(sys, "argv", ["flow-recovery", "restore", str(aside)]), \
+                    patch.object(restore.spaces, "query", side_effect=lambda *_: (workspaces(), world["windows"])), \
+                    patch.object(restore.spaces, "snapshot",
+                                 side_effect=lambda: (next(w for w in workspaces() if w["is_focused"]), world["windows"])), \
+                    patch.object(restore.spaces, "command", side_effect=command), \
+                    patch.object(restore.spaces, "desktop_file",
+                                 side_effect=lambda app, _dirs: None if app in missing else Path(f"/apps/{app}.desktop")), \
+                    patch.object(restore.spaces, "session_id", return_value="session"), \
+                    patch.object(restore.group_store, "load", return_value=list(registered)), \
+                    patch.object(restore.subprocess, "run", side_effect=run), \
+                    patch.object(restore, "focused_display",
+                                 return_value=("mine", {"mine", "other"}) if other_display else (None, set())), \
+                    patch.object(restore, "groups_unchanged_or_focused", return_value=True), \
+                    patch.object(restore, "pins_unchanged_or_rebound", return_value=True), \
+                    contextlib.redirect_stdout(io.StringIO()) as out:
+                self.exit_code = 0
+                try:
+                    restore.main()
+                except SystemExit as exc:  # an error after the move to the empty workspace, printed with what opened
+                    self.exit_code = exc.code
+                except KeyboardInterrupt:
+                    self.exit_code = "killed"
+            self.record = record.read_text() if record.exists() else None
+            return json.loads(out.getvalue() or "{}"), actions, world["windows"], before, aside.read_bytes()
+
+    def test_reopening_a_set_aside_session_leaves_the_work_alone(self):
+        # The session was set aside because work is open, mostly in the apps it lists: reopened on the display's
+        # empty workspace, each app launched there, the user's own windows of them neither taken for it nor moved.
+        answer, actions, windows, before, after = self.reopen_set_aside()
+        self.assertEqual(answer, {"message": "Reopened 2 of 2 windows on an empty workspace.", "complete": True,
+                                  "launched": 2})
+        self.assertEqual(actions[0], ("focus-workspace", 2))
+        self.assertFalse([a for a in actions if a[0] == "focus-window" and a[-1] in (10, 11)])
+        self.assertEqual([(w["id"], w["workspace_id"], w["layout"]["pos_in_scrolling_layout"]) for w in windows[:2]],
+                         [(10, 1, [1, 1]), (11, 1, [2, 1])])
+        self.assertEqual(sorted((w["app_id"], w["layout"]["pos_in_scrolling_layout"][0])
+                                for w in windows if w["workspace_id"] == 2), [("firefox", 1), ("foot", 2)])
+        self.assertEqual(after, before)  # read in place, kept; session.json rewritten meanwhile did not stop it
+
+    def test_a_set_aside_session_is_reopened_beside_groups_registered_since(self):
+        # A side-by-side Group the session does not mention (made after it was saved) is not its to restore: as
+        # an import, only the Groups it saved are passed, or every Reopen would refuse it as incomplete.
+        group = {"id": "g", "label": "Work", "members": ["one", "two"], "layout": "side-by-side"}
+        answer, _, _, _, _ = self.reopen_set_aside(registered=[group])
+        self.assertIs(answer["complete"], True)
+
+    def test_a_set_aside_session_from_this_instance_is_not_matched_to_the_work_by_window_id(self):
+        # Set aside in this Niri instance (recovery switched on during it): its window IDs are the work's own.
+        answer, actions, windows, _, _ = self.reopen_set_aside(aside_session="session")
+        self.assertEqual((answer["complete"], answer["launched"]), (True, 2))
+        self.assertEqual([(w["id"], w["workspace_id"]) for w in windows[:2]], [(10, 1), (11, 1)])
+
+    def test_a_set_aside_session_is_not_reopened_onto_a_workspace_that_did_not_come_empty(self):
+        # Niri did not move focus: refused, nothing launched, and the user left where they were.
+        with self.assertRaisesRegex(ValueError, "did not come into focus empty; nothing was reopened"):
+            self.reopen_set_aside(focus_moves=False)
+        # Focused, but a window landed there first: refused, and the user is put back on workspace 1.
+        with self.assertRaisesRegex(ValueError, "did not come into focus empty"):
+            self.reopen_set_aside(crowded_on_focus=True)
+        self.assertEqual(self.niri_actions, [("focus-workspace", 2), ("focus-workspace", 1)])
+
+    def test_a_refused_reopen_puts_the_user_back(self):
+        # Refused by restore before anything opened (a Group of the session mid-change): back on workspace 1.
+        group = {"id": "g", "label": "Work", "members": ["firefox", "foot"], "layout": "side-by-side",
+                 "pending_layout": "stacked"}
+        answer, actions, _, _, _ = self.reopen_set_aside(registered=[group], groups=[group])
+        self.assertEqual(answer["launched"], 0)
+        self.assertIn("error", answer)
+        self.assertEqual([a for a in actions if a[0] == "focus-workspace"], [("focus-workspace", 2), ("focus-workspace", 1)])
+
+    def test_a_reopen_stopped_after_a_launch_says_what_it_opened(self):
+        # The user went back to the work after the first app opened: stopped, the launch counted, so Settings does
+        # not offer a second run that would open it twice; and the user is not moved again.
+        answer, actions, _, _, _ = self.reopen_set_aside(leave_after_launch=True)
+        self.assertEqual(answer, {"error": "Workspace changed; session recovery stopped.", "launched": 1})
+        self.assertEqual(self.exit_code, 1)
+        self.assertEqual([a for a in actions if a[0] == "focus-workspace"], [("focus-workspace", 2)])
+        self.assertEqual(self.record, "stopped: Workspace changed; session recovery stopped\n")
+
+    def test_a_set_aside_session_reopened_once_is_not_reopened_again(self):
+        # On disk, as the shell that knew may have restarted, and the command line knows nothing else.
+        answer, _, _, _, _ = self.reopen_set_aside()
+        self.assertEqual(self.record, "reopened 2 of 2 windows\n")
+        self.reopen_set_aside(missing=("foot",))
+        self.assertEqual(self.record, "reopened 1 of 2 windows\n")
+        with self.assertRaisesRegex(ValueError, r"reopened already \(reopened 2 of 2 windows\)\. To try again anyway, "
+                                                r"remove .*\.reopened$"):
+            self.reopen_set_aside(reopened_before=True)
+        self.assertEqual(self.niri_actions, [])
+
+    def test_a_reopen_killed_as_it_launches_is_recorded_before_the_launch(self):
+        # Killed with the first app starting, it never answers: the record written before that launch still stops
+        # a second reopen from opening it twice.
+        self.reopen_set_aside(killed_at_launch=True)
+        self.assertEqual((self.exit_code, self.record), ("killed", "stopped while reopening\n"))
+
+    def test_a_refused_reopen_leaves_a_user_who_moved_on_where_they_are(self):
+        # The user went back to their work themselves as the empty workspace was focused: refused, and not moved.
+        with self.assertRaisesRegex(ValueError, "did not come into focus empty"):
+            self.reopen_set_aside(user_away_on_focus=True)
+        self.assertEqual(self.niri_actions, [("focus-workspace", 2)])
+
+    def test_a_reopen_whose_every_launch_failed_is_not_recorded(self):
+        # Nothing opened: not taken for a reopen, so it is offered and may be tried again, and the user is put back.
+        answer, actions, _, _, _ = self.reopen_set_aside(gio_fails=True)
+        self.assertEqual((answer["launched"], answer["complete"]), (0, False))
+        self.assertIn("firefox: launch failed", answer["message"])
+        self.assertIsNone(self.record)
+        self.assertEqual([a for a in actions if a[0] == "focus-workspace"], [("focus-workspace", 2), ("focus-workspace", 1)])
+
+    def test_a_reopen_stopped_by_any_error_after_a_launch_says_what_it_opened(self):
+        answer, _, _, _, _ = self.reopen_set_aside(broken_after_launch=True)
+        self.assertEqual(answer, {"error": "a bug.", "launched": 2})
+        self.assertEqual(self.record, "stopped: a bug\n")
+
+    def test_a_reopen_whose_last_record_cannot_be_written_still_answers_that_it_reopened(self):
+        # The record from before the first launch stays, and refuses a second reopen.
+        write = Path.write_text
+
+        def failing(self, text, *args, **kwargs):
+            if self.name.endswith(restore.REOPENED) and text.startswith("reopened"):
+                raise OSError(28, "No space left on device")
+            return write(self, text, *args, **kwargs)
+        with patch.object(Path, "write_text", failing):
+            answer, _, _, _, _ = self.reopen_set_aside()
+        self.assertEqual((answer["complete"], answer["launched"]), (True, 2))
+        self.assertEqual(self.record, "stopped while reopening\n")
+
+    def test_a_set_aside_session_from_another_connected_display_is_refused_where_the_user_is(self):
+        with self.assertRaisesRegex(ValueError, "saved on another connected display"):
+            self.reopen_set_aside(other_display=True)
+        self.assertEqual(self.niri_actions, [])  # refused before any move to the empty workspace
+
+    def test_a_reopen_that_opened_nothing_puts_the_user_back(self):
+        answer, actions, _, _, _ = self.reopen_set_aside(missing=("foot", "firefox"))
+        self.assertEqual((answer["launched"], answer["complete"]), (0, False))
+        self.assertEqual([a for a in actions if a[0] == "focus-workspace"], [("focus-workspace", 2), ("focus-workspace", 1)])
+        self.assertIsNone(self.record)
+
+    def test_a_set_aside_session_passes_the_groups_it_saved(self):
+        group = {"id": "g", "label": "Work", "members": ["firefox", "foot"]}
+        with patch.object(restore, "restore", wraps=restore.restore) as run:
+            self.reopen_set_aside(registered=[group, {"id": "h", "label": "Other", "members": ["a", "b"]}],
+                                  groups=[group])
+        self.assertEqual(run.call_args.kwargs["registered"], [group])
+
+    def test_a_set_aside_session_reopened_in_part_is_not_complete(self):
+        answer, _, _, _, _ = self.reopen_set_aside(missing=("foot",))
+        self.assertEqual((answer["complete"], answer["launched"]), (False, 1))  # Settings offers it no more
+        self.assertIn("foot: no matching installed application", answer["message"])
+
+    def test_a_set_aside_session_is_not_reopened_without_an_empty_workspace(self):
+        with self.assertRaisesRegex(ValueError, "no empty workspace; nothing was reopened"):
+            self.reopen_set_aside(empty=False)
+
+    def test_restore_reads_only_a_set_aside_file_beside_the_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state" / "session.json"
+            path.parent.mkdir()
+            elsewhere = Path(directory) / restore.SET_ASIDE.format("20261126T102642Z-00")
+            for name in (str(path), str(path.with_name("spaces.json")), str(elsewhere),
+                         str(path.parent / ".." / elsewhere.name)):
+                with self.subTest(name=name), self.assertRaises(ValueError):
+                    restore.set_aside_source(path, name)
+            beside = path.with_name(elsewhere.name)
+            self.assertEqual(restore.set_aside_source(path, str(beside)), beside)
+            self.assertEqual(restore.set_aside_source(path, beside.name), beside)  # a bare name: beside session.json
+            link = path.with_name(restore.SET_ASIDE.format("20261126T102643Z-00"))
+            link.symlink_to(path)
+            with self.assertRaises(ValueError):
+                restore.set_aside_source(path, str(link))
+
+    def test_restore_takes_at_most_one_file(self):
+        with patch.object(sys, "argv", ["flow-recovery", "restore", "a", "b"]), \
+                self.assertRaisesRegex(ValueError, "one set-aside saved session"):
+            restore.main()
 
     def test_the_command_line_runs_auto_seen(self):
         with patch.object(sys, "argv", ["flow-recovery", "auto-seen"]), \
@@ -932,6 +1203,33 @@ class RecoveryTest(unittest.TestCase):
         self.assertEqual((report, count), ([], 2))
         action.assert_any_call("action", "consume-window-into-column")
         action.assert_called_with("action", "focus-window", "--id", 2)
+
+    def test_a_set_aside_session_reopened_here_reforms_its_groups_beside_the_same_apps_as_work(self):
+        # Reopened (``here``) on workspace 2 while the user works in the same apps on workspace 1: recovery reads
+        # only workspace 2, so the stacked and the side-by-side Group re-form from the windows just opened there.
+        def here(ident, app, column):
+            return {**window(ident, app, column), "workspace_id": 2}
+        work = [window(11, "one", 1), window(12, "two", 2)]
+        ws = {"id": 2, "active_window_id": 2}
+        stacked = {"version": 1, "windows": [{"app_id": "one", "column": 1},
+                                             {"app_id": "two", "column": 1, "focused": True}]}
+        reopened = [here(1, "one", 1), here(2, "two", 2)]
+        action = Mock(side_effect=NiriActions(ws, reopened))
+        report, count = restore.restore(stacked, ws, reopened + work, [], Mock(), lambda: (ws, reopened + work),
+                                        action, here=True)
+        self.assertEqual((report, count), ([], 2))
+        action.assert_any_call("action", "consume-window-into-column")
+        self.assertEqual([w["layout"]["pos_in_scrolling_layout"] for w in work], [[1, 1], [2, 1]])
+        group = {"id": "g", "label": "Work", "members": ["one", "two"], "layout": "side-by-side"}
+        side = {"version": 1, "groups": [group], "windows": [{"app_id": "one", "column": 1},
+                                                              {"app_id": "two", "column": 2}]}
+        reopened = [here(1, "one", 1), here(2, "two", 2)]
+        actions = Mock()
+        report, count = restore.restore(side, ws, reopened + work, [], Mock(), lambda: (ws, reopened + work), actions,
+                                        session="current", registered=[group], here=True)
+        self.assertEqual((report, count), ([], 2))
+        actions.assert_any_call("action", "set-window-width", "--id", 1, "50%")
+        self.assertNotIn(11, [a for call in actions.call_args_list for a in call.args])
 
     def test_restores_mixed_group_and_singleton_column_order_with_extra_window(self):
         ws = {"id": 1, "active_window_id": 4}

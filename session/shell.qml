@@ -422,9 +422,24 @@ ShellRoot {
     // Why automatic saving is paused, kept apart from recoveryMessage, which the next recovery command replaces
     // (a Group rename, say). Settings shows it while the pause lasts.
     property string recoveryPauseReason: ""
-    // A saved session recovery set aside instead of reopening it, shown in Settings for this shell's life: the first
-    // automatic save soon replaces recoveryMessage, and Restore session reads only session.json.
+    // A saved session recovery set aside instead of reopening it, shown in Settings for this shell's life (the first
+    // automatic save soon replaces recoveryMessage), with Reopen, which restores from that file itself: a copy put
+    // back as session.json would be replaced by the next automatic save before Restore session read it.
     property string recoverySetAside: ""
+    // What a Reopen it that opened something left out: the line says so, and Reopen it is not offered again,
+    // since a second run would open what the first did twice.
+    property string recoverySetAsideLeft: ""
+    // Settings' Reopen it, and tests/niri_set_aside_reopen_smoke.py: restores from the set-aside file itself, on
+    // the display's empty workspace (the work is open), and is offered until every window is back ("complete").
+    // Not an automatic command, so automatic saving waits while it runs (recoveryWorking).
+    function reopenSetAside() {
+        const busy = recoveryProcess.running ? "Wait for session recovery to finish" : spacesWorking ? "Wait for the current action" : ""
+        if (busy) { recoveryMessage = busy; return }
+        if (!recoverySetAside || recoverySetAsideLeft) return
+        recoveryMessage = "Reopening applications…"
+        recoveryProcess.command = ["flow-recovery", "restore", recoverySetAside]
+        recoveryProcess.running = true
+    }
     onAutoRecoveryBlockedChanged: if (!autoRecoveryBlocked) recoveryPauseReason = ""
     property string renameGroupId: ""
     property bool switcherOpen: false
@@ -612,6 +627,7 @@ ShellRoot {
                         // Nothing was reopened, and the saved session was moved aside: said, as the user expected it back.
                         if (result.set_aside) {
                             root.recoverySetAside = result.set_aside
+                            root.recoverySetAsideLeft = ""
                             root.showToast("Nothing was reopened; the saved session was kept aside. See Settings")
                         }
                         // A pause from earlier in this session (a shell restart since): said, as when it came.
@@ -622,6 +638,10 @@ ShellRoot {
                         else if (result.error) { root.deskOpen = true; root.settingsOpen = true; Qt.callLater(function() { root.reveal(recoveryStatus) }) }
                     }
                     if (recoveryProcess.command[1] === "save" && !result.error && recoveryPreferences.sessionRecovery) autoReadyTimer.restart()
+                    if (recoveryProcess.command[1] === "restore" && recoveryProcess.command.length > 2) {
+                        if (result.complete) root.recoverySetAside = ""
+                        else if (result.launched) root.recoverySetAsideLeft = result.error || result.message
+                    }
                     if (recoveryProcess.command[1] === "rename-group") {
                         root.spacesError = result.error || ""
                         if (!result.error) root.renameGroupId = ""
@@ -1736,7 +1756,14 @@ ShellRoot {
             return JSON.stringify({ setting: recoveryPreferences.sessionRecovery, paused: root.autoRecoveryBlocked,
                                     working: root.recoveryWorking, saving: root.autoSaveWanted,
                                     message: root.recoveryMessage, pause_reason: root.recoveryPauseReason,
-                                    connected: controller.connected })
+                                    set_aside: root.recoverySetAside, connected: controller.connected })
+        }
+        // Settings' Reopen it, and Settings scrolled to it, for tests/niri_set_aside_reopen_smoke.py.
+        function reopen_set_aside(): void { root.reopenSetAside() }
+        function show_set_aside(): void {
+            if (!root.deskOpen) root.toggleDesk()
+            root.settingsOpen = true
+            Qt.callLater(function() { root.reveal(reopenAside) })
         }
         // What the shell last read from flow-spaces: pins with their windows, spaces with their Group layout, Layers.
         function spaces_view(): string {
@@ -2425,7 +2452,8 @@ ShellRoot {
                             FlowButton { id: restoreSession; implicitHeight: 44; variant: "quiet"; text: "Restore session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: { if (recoveryProcess.running) { root.recoveryMessage = "Wait for automatic recovery to finish"; return } root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
                         }
                         Text { id: recoveryPause; visible: recoveryPreferences.sessionRecovery && root.autoRecoveryBlocked && root.recoveryPauseReason !== "" && root.recoveryPauseReason !== root.recoveryMessage; text: root.recoveryPauseReason; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
-                        Text { id: recoveryAside; visible: root.recoverySetAside !== ""; text: "Not reopened at login: the saved session is kept as " + root.recoverySetAside + ". Rename it to session.json beside it, then Restore session, to reopen it."; textFormat: Text.PlainText; color: floeTheme.textMuted; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 14; font.family: floeTheme.interfaceFont }
+                        Text { id: recoveryAside; visible: root.recoverySetAside !== ""; text: root.recoverySetAsideLeft ? "Reopened in part from " + root.recoverySetAside + " (" + root.recoverySetAsideLeft.replace(/\.$/, "") + "). Open the rest yourself: reopening it again would open the others twice." : "Not reopened when the shell started: the saved session is kept as " + root.recoverySetAside + "."; textFormat: Text.PlainText; color: floeTheme.textMuted; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 14; font.family: floeTheme.interfaceFont }
+                        FlowButton { id: reopenAside; visible: root.recoverySetAside !== "" && root.recoverySetAsideLeft === ""; implicitHeight: 44; variant: "quiet"; text: "Reopen it"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: root.reopenSetAside() }
                         Text { id: recoveryStatus; visible: root.recoveryMessage !== ""; text: root.recoveryMessage; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
                     }
                     Item {

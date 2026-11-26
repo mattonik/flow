@@ -187,6 +187,9 @@ PAUSED = "Automatic saving is paused; review and save the session."
 # Where automatic recovery puts a saved session it does not reopen, so a save cannot replace it unseen: one file
 # each time, named by when, so a second set-aside never replaces the first.
 SET_ASIDE = "session-before-automatic-recovery-{}.json"
+# Beside a set-aside file once Reopen it opened anything from it, with how it went: a second reopen would open
+# those apps twice, and the shell that knew it may have restarted since.
+REOPENED = ".reopened"
 
 
 def pause_marker(marker, reason=""):
@@ -203,6 +206,35 @@ def set_aside(path):
         n += 1
     path.replace(aside)
     return str(aside)
+
+
+def set_aside_source(path, name):
+    """The set-aside file ``name`` beside ``path`` for Restore to read, so reopening it never goes through
+    session.json, which the next automatic save replaces."""
+    given = Path(name)
+    source = path.with_name(given.name)
+    prefix, suffix = SET_ASIDE.split("{}")
+    beside = given.parent == Path() or given.parent.resolve() == path.parent.resolve()
+    if not beside or source.is_symlink() or not (source.name.startswith(prefix) and source.name.endswith(suffix)):
+        raise ValueError(f"Name a saved session that automatic recovery set aside in {path.parent}")
+    record = source.with_name(source.name + REOPENED)
+    if record.exists():
+        how = record.read_text(encoding="utf-8").strip()
+        rest = ("" if how.startswith("reopened") and how.split()[1:2] == how.split()[3:4] else
+                "; open the rest yourself, as reopening it again would open the others twice")
+        raise ValueError(f"{source.name} was reopened already ({how}){rest}. To try again anyway, remove {record}")
+    return source
+
+
+def back_to(workspace, target):
+    """Focus ``workspace`` again after a set-aside reopen that moved the user to ``target`` and opened nothing,
+    if they are still there (not if they went elsewhere meanwhile)."""
+    try:
+        now = spaces.snapshot()[0]
+        if workspace["id"] != target["id"] and now["id"] == target["id"]:
+            spaces.command("action", "focus-workspace", workspace["idx"])
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        pass
 
 
 def set_aside_answer(message, path):
@@ -274,9 +306,10 @@ def automatic(op, path, wait=True, pause=True):
     The marker belongs to one Niri instance (``spaces.session_id``: boot, socket path, inode and creation). A
     shell writes it at its first start in that instance whatever the setting: ``auto-start`` (on), or
     ``auto-seen`` (off: ``off``). So ``auto-start`` reopens the saved session only at a Niri instance's first
-    shell start, however late that comes. A shell started again finds the marker: ``ready``, ``blocked`` (a
-    pause, with its reason: ``"paused": true``, the user was told when it came) or ``off`` (recovery switched on
-    since, by hand: nothing is reopened into the windows already there). A shell of a version from before the
+    shell start, and a first start past UNDER_WAY_AFTER with windows open is work under way (below). A shell
+    started again finds the marker: ``ready``, ``blocked`` (a pause, with its reason: ``"paused": true``, the
+    user was told when it came) or ``off`` (recovery switched on since, by hand: nothing is reopened into the
+    windows already there). A shell of a version from before the
     marker wrote none, but every snapshot it wrote lacks ``reopen_at_login``, and none of those is reopened:
     the upgrade's restart mid-session, or its first login, reopens nothing. With no marker, windows open
     (``work_under_way``) in an instance past UNDER_WAY_AFTER on the boot clock mean it is under way: a rollback
@@ -491,7 +524,11 @@ def save(path, workspace, windows, session=None, pins=(), registered=None, displ
 
 
 def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=time.sleep, pinned=(), session=None,
-            pinned_groups=(), registered=None, display=None):
+            pinned_groups=(), registered=None, display=None, here=False):
+    """Reopen ``data``'s windows on ``workspace``; the report and how many were restored. A saved app is taken as
+    restored by an open window of it, anywhere. With ``here`` (a set-aside session reopened on an empty workspace,
+    while the user's work is open elsewhere) recovery sees only ``workspace``'s windows, in every reading: a saved
+    app or Group is matched only there, so the work is never taken for it or moved."""
     side_groups = [g for g in registered or [] if g.get("layout") == "side-by-side"]
     if (any(g.get("pending_layout") for g in registered or []) or
             any(not valid_side_pins(g, pinned_groups) or
@@ -531,6 +568,8 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
     original = workspace.get("active_window_id")
     workspace_id = workspace["id"]
     workspace_changed = False
+    if here:
+        windows = [w for w in windows if w.get("workspace_id") == workspace_id]
 
     def checked_snapshot():
         nonlocal workspace_changed
@@ -538,7 +577,7 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
         if current["id"] != workspace_id:
             workspace_changed = True
             raise ValueError("Workspace changed; session recovery stopped")
-        return current, live
+        return current, [w for w in live if w.get("workspace_id") == workspace_id] if here else live
 
     def column_members(window, current, live):
         position = window and window.get("layout", {}).get("pos_in_scrolling_layout")
@@ -555,6 +594,7 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 and {w["id"] for w in column_members(members[0], current, live)} == set(member_ids))
 
     same_session = bool(session and data.get("session") == session)
+
     for entry in entries:
         app_id = entry["app_id"]
         if not app_id:
@@ -905,14 +945,14 @@ def import_plan(state, data, dirs):
                     "workspaces": workspaces, "display": display}
 
 
-def empty_workspace(workspace, windows, workspaces):
+def empty_workspace(workspace, windows, workspaces, done="imported"):
     """The focused display's empty workspace: the focused one when it is empty, else Niri's last one there."""
     used = {w.get("workspace_id") for w in windows}
     if workspace["id"] not in used:
         return workspace
     mine = sorted((w for w in workspaces if w.get("output") == workspace.get("output")), key=lambda w: w["idx"])
     if not mine or mine[-1]["id"] in used:
-        raise ValueError("This display has no empty workspace; nothing was imported")
+        raise ValueError(f"This display has no empty workspace; nothing was {done}")
     return mine[-1]
 
 
@@ -1050,6 +1090,10 @@ def main():
     if op == "status":
         print(json.dumps({"saved": path.exists()}))
         return
+    if op == "restore" and len(sys.argv) > 3:
+        raise ValueError("Restore reads session.json or one set-aside saved session")
+    source = set_aside_source(path, sys.argv[2]) if op == "restore" and len(sys.argv) == 3 else path
+    here = source != path
     if op in ("save", "rename-group", "restore"):
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         with (path.parent / "session.lock").open("a") as lock:
@@ -1069,7 +1113,7 @@ def main():
                     print(json.dumps({"message": "Group renamed"}))
                 else:
                     workspace, windows = spaces.snapshot()
-                    original_snapshot = path.read_bytes()
+                    original_snapshot = source.read_bytes()
                     data = json.loads(original_snapshot)
                     dirs = (os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share"), *os.environ.get("XDG_DATA_DIRS", "/run/current-system/sw/share:/usr/share").split(":"))
                     pins_path = path.parent / "spaces.json"
@@ -1080,6 +1124,17 @@ def main():
                     if data.get("display") and data["display"] != display and data["display"] in connected:
                         raise ValueError("This session was saved on another connected display; "
                                          "focus that display to restore it")
+                    started_from = workspace
+                    if here:
+                        # Work is open (that is why it was set aside): reopened on the display's empty workspace.
+                        workspaces, windows = spaces.query("Workspaces", "Windows")
+                        target = empty_workspace(workspace, windows, workspaces, "reopened")
+                        if target["id"] != workspace["id"]:
+                            spaces.command("action", "focus-workspace", target["idx"])
+                        workspace, windows = spaces.snapshot()
+                        if workspace["id"] != target["id"] or any(w.get("workspace_id") == target["id"] for w in windows):
+                            back_to(started_from, target)
+                            raise ValueError("The empty workspace did not come into focus empty; nothing was reopened")
         if op == "restore":
             def checked_state():
                 with (path.parent / "session.lock").open("a") as lock:
@@ -1090,19 +1145,58 @@ def main():
                         now_pins = pin_store.read(pins_path)[0]
                         pinned_apps(now_pins)
                         current = spaces.snapshot()
-                        if (path.read_bytes() != original_snapshot or not groups_unchanged_or_focused(registered, now_groups, *current)
+                        if (source.read_bytes() != original_snapshot or not groups_unchanged_or_focused(registered, now_groups, *current)
                                 or not pins_unchanged_or_rebound(pins, now_pins, session, current[1], current[0], now_groups)):
                             raise ValueError("Session, Groups or pinned spaces changed; session recovery stopped")
                         return current
+            launched = []  # tried: a launch that failed may still open its app
+            record = source.with_name(source.name + REOPENED)
+
             def launch(desktop):
                 current, _ = checked_state()
                 if current["id"] != workspace["id"]:
                     raise ValueError("Workspace changed; session recovery stopped")
+                if here and not launched:
+                    record.write_text("stopped while reopening\n", encoding="utf-8")
+                launched.append(desktop)
                 subprocess.run(app_command(["gio", "launch", str(desktop)]), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            report, count = restore(data, workspace, windows, dirs, launch, checked_state, spaces.command,
-                                    pinned=pinned_apps(pins), session=session, pinned_groups=pins, registered=registered,
-                                    display=display)
-            print(json.dumps({"message": f"Restored {count} windows." + (" " + "; ".join(report) if report else "")}))
+            # A set-aside session may predate Groups registered since: only those it saved are its own, as an
+            # import passes only the Groups it created.
+            saved_ids = {g.get("id") for g in data.get("groups") or [] if isinstance(g, dict)}
+            try:
+                report, count = restore(data, workspace, windows, dirs, launch, checked_state, spaces.command,
+                                        pinned=pinned_apps(pins), session=session, pinned_groups=pins,
+                                        registered=[g for g in registered if g.get("id") in saved_ids] if here else registered,
+                                        display=display, here=here)
+            except Exception as exc:  # noqa: BLE001 — for a reopen, whatever stopped it is told with what opened
+                if not here:
+                    raise
+                if launched:
+                    record.write_text(f"stopped: {exc}\n", encoding="utf-8")
+                else:  # refused before opening anything: the user back where they were
+                    back_to(started_from, workspace)
+                # Settings offers Reopen it again only if nothing opened: a second run would open those twice.
+                print(json.dumps({"error": (str(exc) or type(exc).__name__).rstrip(".") + ".",
+                                  "launched": len(launched)}))
+                sys.exit(1)
+            done = (f"Reopened {count} of {len(data['windows'])} windows on an empty workspace." if here
+                    else f"Restored {count} windows.")
+            if here and launched and not count and not any(w.get("workspace_id") == workspace["id"]
+                                                           for w in spaces.snapshot()[1]):
+                # Every launch failed and nothing came: not reopened, so it may be tried again.
+                record.unlink(missing_ok=True)
+                launched.clear()
+            if here and launched:
+                try:
+                    record.write_text(done.removesuffix(" on an empty workspace.").lower() + "\n", encoding="utf-8")
+                except OSError:  # the record from before the first launch still refuses a second reopen
+                    pass
+            elif here:
+                back_to(started_from, workspace)
+            # Complete: every saved window is back. Settings offers a set-aside session until then, or until
+            # anything was launched.
+            print(json.dumps({"message": done + (" " + "; ".join(report) if report else ""), "complete": not report,
+                              "launched": len(launched)}))
         return
     raise ValueError("Unknown recovery action")
 
