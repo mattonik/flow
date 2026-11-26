@@ -36,6 +36,7 @@ import importlib.util
 from isolated_state import IsolatedState
 from niri_performance_smoke import niri, read, wait_for
 
+sys.path.insert(0, str(Path(__file__).parents[1] / "session"))  # for niri_age and its bound, as installed
 spec = importlib.util.spec_from_file_location("restore", Path(__file__).parents[1] / "session/restore.py")
 restore = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(restore)
