@@ -336,13 +336,13 @@ class RecoveryTest(unittest.TestCase):
             self.assertIs(json.loads(path.read_text())["reopen_at_login"], True)
 
     def reopen_set_aside(self, missing=(), empty=True, registered=(), aside_session=None, focus_moves=True,
-                         groups=(), leave_after_launch=False):
+                         groups=(), leave_after_launch=False, crowded_on_focus=False):
         """Settings' Reopen it run through the command line against a fake Niri: the user's foot and firefox on
         workspace 1 (focused), workspace 2 after it on the display empty unless ``empty`` is false. The set-aside
         session lists the same two apps; ``missing`` have no desktop entry; ``registered`` are the Groups now
         registered, ``groups`` those the session saved; ``aside_session`` is the session it was saved in (with the
         work's window IDs); ``focus_moves`` false, Niri ignores focus-workspace; ``leave_after_launch``, the user goes back to the
-        work after the first launch. Returns the printed answer, the Niri
+        work after the first launch; ``crowded_on_focus``, a window lands on workspace 2 as it is focused. Returns the printed answer, the Niri
         actions, the windows and the file's bytes before and after; session.json is rewritten at each launch,
         as an automatic save of the work would."""
         world = {"focused": 1, "windows": [
@@ -351,7 +351,7 @@ class RecoveryTest(unittest.TestCase):
         if not empty:
             world["windows"].append({"id": 12, "app_id": "editor", "workspace_id": 2,
                                      "layout": {"pos_in_scrolling_layout": [1, 1]}})
-        actions = []
+        actions = self.niri_actions = []  # kept for a test whose reopen raises
 
         def workspaces():
             return [{"id": n, "idx": n, "output": "Virtual-1", "is_focused": n == world["focused"],
@@ -365,6 +365,9 @@ class RecoveryTest(unittest.TestCase):
             actions.append((action, *args))
             if action == "focus-workspace" and focus_moves:
                 world["focused"] = args[0]
+                if crowded_on_focus and args[0] == 2:
+                    world["windows"].append({"id": 30, "app_id": "late", "workspace_id": 2,
+                                             "layout": {"pos_in_scrolling_layout": [1, 1]}})
             elif action == "focus-window":
                 world["focused_window"] = args[1]
             elif action == "move-column-to-index":
@@ -448,6 +451,10 @@ class RecoveryTest(unittest.TestCase):
         # Niri did not move focus: refused, nothing launched, and the user left where they were.
         with self.assertRaisesRegex(ValueError, "did not come into focus empty; nothing was reopened"):
             self.reopen_set_aside(focus_moves=False)
+        # Focused, but a window landed there first: refused, and the user is put back on workspace 1.
+        with self.assertRaisesRegex(ValueError, "did not come into focus empty"):
+            self.reopen_set_aside(crowded_on_focus=True)
+        self.assertEqual(self.niri_actions, [("focus-workspace", 2), ("focus-workspace", 1)])
 
     def test_a_refused_reopen_puts_the_user_back(self):
         # Refused by restore before anything opened (a Group of the session mid-change): back on workspace 1.
