@@ -360,6 +360,9 @@ class Smoke:
         while_shown = self.work()
         if {k: v for k, v in while_shown["windows"].items()} != before["work"]["windows"]:
             raise Failure(f"{label}: windows changed while it was shown: {diff_dicts(before['work']['windows'], while_shown['windows'])}")
+        grabs = [l for l in self.layers() if l[3] == "Exclusive"]
+        if any(l[1] != before["work"]["focused_output"] for l in grabs):
+            raise Failure(f"{label}: shown on another display than the focused {before['work']['focused_output']}: {grabs}")
         shown_shots = self.shots()
         self.save(f"shown-{slug(label)}", shown_shots)  # evidence, and for docs/screenshots
         back()
@@ -380,7 +383,7 @@ class Smoke:
             self.compare(label, before, after)
         self.pins_reach(label)
         self.step(f"{label}: same windows, columns, widths, workspaces, focus{' (moved to ' + focus + ')' if focus else ''}, "
-                  "state files, layers and screen; Super+1 and Super+2 reached their pins")
+                  "state files, layers and screen; shown on the focused display; Super+1 and Super+2 reached their pins")
         return shown_shots
 
     def reference(self, home, focus):
