@@ -347,10 +347,18 @@ def verify(how, record, session):
     group = mine[0]
     check(f"{how}: the Group keeps its ID, name and member order", group_identity(group) == record["group"],
           f"{group_identity(group)} (before: {record['group']})")
-    bound = group.get("bound") or {}
-    check(f"{how}: the Group is bound to the new windows in this Niri session",
-          bound.get("session") == session and bound.get("windows") == {APPS["studio"]: ids["studio"],
-                                                                     APPS["notes"]: ids["notes"]}, json.dumps(bound))
+    # The refresh after recovery binds the Group to its new windows; it may come a moment after recovery reports.
+    wanted = {APPS["studio"]: ids["studio"], APPS["notes"]: ids["notes"]}
+
+    def bound_here():
+        found = next((g for g in load("groups.json")["groups"] if g["id"] == group_id), {}).get("bound") or {}
+        return found if found.get("session") == session and found.get("windows") == wanted else None
+    try:
+        bound = wait_for(bound_here, f"{how}: the Group bound to its new windows", timeout=15)
+    except Failed:
+        bound = None
+    check(f"{how}: the Group is bound to the new windows in this Niri session", bound is not None,
+          json.dumps(bound or next((g for g in load("groups.json")["groups"] if g["id"] == group_id), {}).get("bound")))
 
     pins = load("spaces.json")["pins"]
     check(f"{how}: the same two pins, in the same order", [pin_identity(p) for p in pins] == record["pins"],
