@@ -36,10 +36,13 @@ class ShellAutoSaveTest(unittest.TestCase):
         for opens in ("deskOpen", "settingsOpen", "reveal("):
             self.assertNotIn(opens, body)
 
-    def test_the_shell_reopens_the_saved_session_only_at_login(self):
-        # restore.automatic's --login gate: a shell started later in a session restores nothing.
-        self.assertIn('recoveryProcess.command = ["flow-recovery", "auto-start", "--login"]', SHELL)
-        self.assertNotIn('["flow-recovery", "auto-start"]', SHELL)
+    def test_every_shell_start_marks_the_niri_instance_whatever_the_setting(self):
+        # restore.automatic reopens only at an instance's first shell start; a start with recovery off counts.
+        timer = SHELL[SHELL.index("id: autoStartTimer"):]
+        timer = timer[:timer.index("\n    }\n")]
+        self.assertIn("Component.onCompleted: start()", timer)
+        self.assertIn('recoveryPreferences.sessionRecovery ? "auto-start" : "auto-seen"', timer)
+        self.assertNotIn("if (!recoveryPreferences.sessionRecovery) return", timer)
 
     def test_a_pause_from_earlier_in_the_session_is_told_in_a_toast_not_on_the_desk(self):
         handler = SHELL[SHELL.index('if (recoveryProcess.command[1] === "auto-start" || recoveryProcess.command[1] === "auto-ready") {'):]

@@ -621,13 +621,16 @@ ShellRoot {
             }
         }
     }
+    // At each start, whatever the setting: auto-start when it is on, auto-seen when it is off. Either marks this
+    // Niri instance as having had a shell, so a shell started again in it (a crash, an upgrade, the setting
+    // switched on by hand) never reopens the saved session into the windows already open (restore.automatic).
     Timer {
         id: autoStartTimer; interval: 3000
-        Component.onCompleted: if (recoveryPreferences.sessionRecovery) start()
+        Component.onCompleted: start()
         onTriggered: {
-            if (!recoveryPreferences.sessionRecovery) return
             if (recoveryProcess.running || spacesProcess.running) { restart(); return }
-            recoveryProcess.command = ["flow-recovery", "auto-start", "--login"]; recoveryProcess.running = true
+            recoveryProcess.command = ["flow-recovery", recoveryPreferences.sessionRecovery ? "auto-start" : "auto-seen"]
+            recoveryProcess.running = true
         }
     }
     Timer {

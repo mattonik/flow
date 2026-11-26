@@ -3,7 +3,6 @@
 import contextlib
 import json
 import os
-import re
 import fcntl
 import hashlib
 from collections import Counter
@@ -183,30 +182,9 @@ def save_locked(path, checked=False, if_changed=False, reading=None):
             (" " + "; ".join(warnings) if warnings else ""), "written": path.read_bytes() != before}
 
 
-# How long after the Niri session started a shell's ``auto-start --login`` may still reopen the saved session.
-LOGIN_WINDOW = 120
-
-
 PAUSED = "Automatic saving is paused; review and save the session."
 # Where automatic recovery puts a saved session it does not reopen, so a save cannot replace it unseen.
 SET_ASIDE = "session-before-automatic-recovery.json"
-
-
-def niri_age(proc=Path("/proc")):
-    """Seconds since this Niri session started, on the boot clock, which a wall-clock jump after login (no RTC,
-    NTP, a VM resumed late) does not move: Niri's process start (its PID is in the socket's name,
-    ``niri.<display>.<pid>.sock``) against the uptime. The socket's creation by the wall clock otherwise."""
-    socket = os.environ.get("NIRI_SOCKET", "")
-    pid = re.search(r"\.(\d+)\.sock$", socket)
-    if pid:
-        try:
-            stat = (proc / pid.group(1) / "stat").read_text()
-            if stat[stat.index("(") + 1:stat.rindex(")")].startswith("niri"):
-                started = int(stat[stat.rindex(")") + 2:].split()[19]) / os.sysconf("SC_CLK_TCK")  # field 22
-                return float((proc / "uptime").read_text().split()[0]) - started
-        except (OSError, ValueError, IndexError):
-            pass
-    return time.time() - os.stat(socket).st_ctime
 
 
 def pause_marker(marker, reason=""):
@@ -233,18 +211,21 @@ def from_before_reopening(path):
     return isinstance(data, dict) and data.get("reopen_at_login") is not True
 
 
-def automatic(op, path, wait=True, pause=True, login=False):
+def automatic(op, path, wait=True, pause=True):
     """An automatic-recovery step. Without ``wait``, recovery's or Flow's locks held elsewhere raise
     BlockingIOError (the resident controller saves this way, and tries again later). Without ``pause``, a save
     that refuses what is there says so (``"refused": true``) and leaves recovery ready: the controller tries
     once more before it pauses, as what it refused may not last (a second terminal for a quick command).
 
-    ``auto-start`` with ``login``, as the shell runs it, reopens the saved session only at the start of a Niri
-    session. A shell starting later in one with no marker (recovery switched on by an upgrade that restarted the
-    shell, or a shell stopped since login) must not restore into the windows already there: recovery is ready.
-    Nor is a snapshot reopened that was written before snapshots said they may be (``reopen_at_login``). Either
-    way the saved session is set aside (SET_ASIDE), so the next automatic save does not replace it unseen. A
-    pause from earlier in the session says ``"paused": true`` with its reason: the user was told when it came."""
+    The marker belongs to one Niri instance (``spaces.session_id``: boot, socket path, inode and creation). A
+    shell writes it at its first start in that instance whatever the setting: ``auto-start`` (on), or
+    ``auto-seen`` (off: ``off``). So ``auto-start`` reopens the saved session only at a Niri instance's first
+    shell start, however late that comes. A shell started again finds the marker: ``ready``, ``blocked`` (a
+    pause, with its reason: ``"paused": true``, the user was told when it came) or ``off`` (recovery switched on
+    since, by hand: nothing is reopened into the windows already there). A shell of a version from before the
+    marker wrote none, but every snapshot it wrote lacks ``reopen_at_login``, and none of those is reopened:
+    the upgrade's restart mid-session, or its first login, reopens nothing. Whenever recovery does not reopen a
+    saved session it sets it aside (SET_ASIDE), so the next automatic save does not replace it unseen."""
     runtime = Path(os.environ["XDG_RUNTIME_DIR"])
     marker = runtime / ("flow-recovery-" + hashlib.sha256(spaces.session_id().encode()).hexdigest())
     with marker.with_suffix(".lock").open("a") as lock:
@@ -256,14 +237,18 @@ def automatic(op, path, wait=True, pause=True, login=False):
         if op == "auto-ready":
             marker.write_text("ready")
             return {"message": "Automatic session recovery is ready."}
+        if op == "auto-seen":
+            if not state:
+                marker.write_text("off")
+            return {"message": "Automatic session recovery is off."}
         if op == "auto-start":
+            if state == "off":
+                marker.write_text("ready")
+                return {"message": "Automatic session recovery is ready. It was switched on during this session, so "
+                                   "nothing was reopened; it saves this session from now on." + set_aside(path)}
             if state:
                 return {"message": "Automatic session recovery is ready."} if state == "ready" else {
                     "error": reason or PAUSED, "paused": True}
-            if login and niri_age() > LOGIN_WINDOW:
-                marker.write_text("ready")
-                return {"message": "Automatic session recovery is ready. It started during this session, so "
-                                   "nothing was reopened; it saves this session from now on." + set_aside(path)}
             if path.exists() and from_before_reopening(path):
                 marker.write_text("ready")
                 return {"message": "Automatic session recovery is ready. The saved session is from before it "
@@ -996,11 +981,8 @@ def main():
             return
         print(json.dumps(import_snapshot(path.parent, data, sys.argv[3], spaces.data_dirs())))
         return
-    if op in ("auto-start", "auto-save", "auto-ready", "auto-pause"):
-        login = sys.argv[2:] == ["--login"] and op == "auto-start"
-        if sys.argv[2:] and not login:
-            raise ValueError("Only auto-start takes an option: --login")
-        print(json.dumps(automatic(op, path, login=login)))
+    if op in ("auto-start", "auto-save", "auto-ready", "auto-pause", "auto-seen"):
+        print(json.dumps(automatic(op, path)))
         return
     if op == "status":
         print(json.dumps({"saved": path.exists()}))

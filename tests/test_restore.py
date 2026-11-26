@@ -187,29 +187,44 @@ class RecoveryTest(unittest.TestCase):
             self.assertIn("ready", restore.automatic("auto-start", path)["message"])
             self.assertEqual(run.call_count, 1)
 
-    def test_automatic_start_at_login_restores_only_near_the_start_of_the_niri_session(self):
-        # The shell runs auto-start --login. A shell first starting later in a session with no marker, as when an
-        # upgrade switched recovery on and restarted it, must not restore into the windows already open, and
-        # sets the saved session aside so the next save does not replace it; tools and tests that run
-        # auto-start without --login still restore.
+    def test_automatic_start_reopens_only_at_a_niri_instances_first_shell_start(self):
+        # A shell's first start in a Niri instance writes its marker whatever the setting (auto-start when on,
+        # auto-seen when off). A shell started again 10 s later, with recovery switched on since, finds "off" and
+        # reopens nothing into the windows already open; the saved session is set aside, not replaced unseen.
         saved = json.dumps({"version": 1, "reopen_at_login": True, "windows": []})
-        for login, age, restores in ((True, 600, False), (True, 5, True), (False, 600, True)):
-            with self.subTest(login=login, age=age), tempfile.TemporaryDirectory() as directory, \
-                    patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \
+                patch.object(restore.spaces, "session_id", return_value="session"), \
+                patch.object(restore.subprocess, "run",
+                             return_value=Mock(returncode=0, stdout='{"message":"Restored 2 windows."}')) as run:
+            path = Path(directory) / "session.json"
+            path.write_text(saved)
+            self.assertIn("off", restore.automatic("auto-seen", path)["message"])
+            answer = restore.automatic("auto-start", path)
+            self.assertNotIn("error", answer)
+            run.assert_not_called()
+            self.assertEqual((path.exists(), path.with_name(restore.SET_ASIDE).read_text()), (False, saved))
+            marker = next(Path(directory).glob("flow-recovery-*[0-9a-f]"))
+            self.assertEqual(marker.read_text(), "ready")
+            restore.automatic("auto-seen", path)  # a later shell with the setting off leaves the marker alone
+            self.assertEqual(marker.read_text(), "ready")
+
+    def test_automatic_start_reopens_at_a_late_first_start(self):
+        # A first shell start long after Niri started (a slow boot) still reopens the saved session: what counts
+        # is the marker, not the clock. Ten minutes on the wall clock and the socket's creation in the past.
+        saved = json.dumps({"version": 1, "reopen_at_login": True, "windows": []})
+        with tempfile.TemporaryDirectory() as directory:
+            socket = Path(directory) / "niri.wayland-1.4242.sock"
+            socket.write_text("")
+            with patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory, "NIRI_SOCKET": str(socket)}), \
                     patch.object(restore.spaces, "session_id", return_value="session"), \
-                    patch.object(restore, "niri_age", return_value=age), \
+                    patch.object(restore.time, "time", return_value=time.time() + 600), \
                     patch.object(restore.subprocess, "run",
                                  return_value=Mock(returncode=0, stdout='{"message":"Restored 2 windows."}')) as run:
                 path = Path(directory) / "session.json"
                 path.write_text(saved)
-                answer = restore.automatic("auto-start", path, login=login)
-                self.assertNotIn("error", answer)
-                self.assertEqual(run.call_count, 1 if restores else 0)
-                aside = path.with_name(restore.SET_ASIDE)
-                self.assertEqual((path.exists(), aside.exists()), (restores, not restores))
-                self.assertEqual((path if restores else aside).read_text(), saved)
-                marker = next(Path(directory).glob("flow-recovery-*[0-9a-f]"))
-                self.assertEqual(marker.read_text(), "ready")
+                self.assertNotIn("error", restore.automatic("auto-start", path))
+                self.assertEqual(run.call_count, 1)
+                self.assertEqual(path.read_text(), saved)
 
     def test_automatic_start_does_not_reopen_a_snapshot_from_before_it_reopened_sessions(self):
         # A Save session from before automatic recovery was on by default, possibly long ago, kept aside.
@@ -218,12 +233,11 @@ class RecoveryTest(unittest.TestCase):
             with self.subTest(data=data), tempfile.TemporaryDirectory() as directory, \
                     patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \
                     patch.object(restore.spaces, "session_id", return_value="session"), \
-                    patch.object(restore, "niri_age", return_value=5), \
-                    patch.object(restore.subprocess, "run",
+                                        patch.object(restore.subprocess, "run",
                                  return_value=Mock(returncode=0, stdout='{"message":"Restored 0 windows."}')) as run:
                 path = Path(directory) / "session.json"
                 path.write_text(json.dumps(data))
-                answer = restore.automatic("auto-start", path, login=True)
+                answer = restore.automatic("auto-start", path)
                 self.assertNotIn("error", answer)
                 self.assertEqual(run.call_count, 1 if restores else 0)
                 self.assertEqual(path.with_name(restore.SET_ASIDE).exists(), not restores)
@@ -236,34 +250,12 @@ class RecoveryTest(unittest.TestCase):
             restore.save(path, {"id": 1, "active_window_id": 1}, [window(1, "one", 1)])
             self.assertIs(json.loads(path.read_text())["reopen_at_login"], True)
 
-    def test_niri_age_is_read_on_the_boot_clock(self):
-        # Niri's start from /proc against the uptime; a socket whose PID is not Niri's falls back to its ctime.
-        ticks = os.sysconf("SC_CLK_TCK")
-        with tempfile.TemporaryDirectory() as directory:
-            proc = Path(directory) / "proc"
-            (proc / "4242").mkdir(parents=True)
-            fields = ["S"] + ["0"] * 18 + [str(100 * ticks)] + ["0"] * 10  # field 22: started 100 s after boot
-            (proc / "4242" / "stat").write_text("4242 (niri) " + " ".join(fields))
-            (proc / "uptime").write_text("400.00 800.00\n")
-            socket = Path(directory) / "niri.wayland-1.4242.sock"
-            socket.write_text("")
-            with patch.dict("os.environ", {"NIRI_SOCKET": str(socket)}):
-                self.assertAlmostEqual(restore.niri_age(proc), 300.0)
-                (proc / "4242" / "stat").write_text("4242 (python3) " + " ".join(fields))
-                self.assertLess(restore.niri_age(proc), 60)  # the socket file was just made
-
-    def test_the_command_line_passes_login_to_auto_start_only(self):
-        for argv, login in ((["auto-start", "--login"], True), (["auto-start"], False)):
-            with self.subTest(argv=argv), patch.object(sys, "argv", ["flow-recovery", *argv]), \
-                    patch.object(restore, "automatic", return_value={}) as automatic, \
-                    contextlib.redirect_stdout(io.StringIO()):
-                restore.main()
-                self.assertEqual(automatic.call_args.kwargs.get("login"), login)
-        with patch.object(sys, "argv", ["flow-recovery", "auto-save", "--login"]), \
-                patch.object(restore, "automatic", return_value={}) as automatic:
-            with self.assertRaises(ValueError):
-                restore.main()
-            automatic.assert_not_called()
+    def test_the_command_line_runs_auto_seen(self):
+        with patch.object(sys, "argv", ["flow-recovery", "auto-seen"]), \
+                patch.object(restore, "automatic", return_value={}) as automatic, \
+                contextlib.redirect_stdout(io.StringIO()):
+            restore.main()
+        self.assertEqual(automatic.call_args.args[0], "auto-seen")
 
     def test_automatic_start_says_a_pause_from_earlier_in_the_session_was_already_told(self):
         # With its reason, which a shell started again later shows in Settings.
@@ -271,12 +263,12 @@ class RecoveryTest(unittest.TestCase):
                 patch.object(restore.spaces, "session_id", return_value="session"):
             path = Path(directory) / "session.json"
             restore.automatic("auto-pause", path)
-            answer = restore.automatic("auto-start", path, login=True)
+            answer = restore.automatic("auto-start", path)
             self.assertTrue(answer.get("paused"))
             self.assertEqual(answer["error"], restore.PAUSED)
             marker = next(Path(directory).glob("flow-recovery-*[0-9a-f]"))
             restore.pause_marker(marker, "app: multiple windows need manual recovery after restart")
-            answer = restore.automatic("auto-start", path, login=True)
+            answer = restore.automatic("auto-start", path)
             self.assertEqual((answer.get("paused"), answer["error"]),
                              (True, "app: multiple windows need manual recovery after restart"))
 
