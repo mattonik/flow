@@ -1879,7 +1879,8 @@ ShellRoot {
                     // Where the layer sits on its screen follows from its anchors and margins.
                     const place = { anchors: [window.anchors.top, window.anchors.bottom, window.anchors.left, window.anchors.right],
                                     margins: [window.margins.top, window.margins.bottom, window.margins.left, window.margins.right] }
-                    for (let i = first; i < found.length; i++) found[i].place = place
+                    const screen = window.screen ? [window.screen.x, window.screen.y, window.screen.width, window.screen.height] : null
+                    for (let i = first; i < found.length; i++) { found[i].place = place; found[i].screen = screen }
                 }
             return JSON.stringify(found)
         }
@@ -2653,8 +2654,8 @@ ShellRoot {
             Keys.onReturnPressed: root.chooseOverviewSpace(root.overviewIndex)
             Keys.onEnterPressed: root.chooseOverviewSpace(root.overviewIndex)
             Keys.onPressed: event => {
-                if (event.key === Qt.Key_Home) { root.overviewIndex = 0; event.accepted = true }
-                else if (event.key === Qt.Key_End) { root.overviewIndex = Math.max(0, root.displaySpaces.length - 1); event.accepted = true }
+                if (event.key === Qt.Key_Home) { root.selectOverview(0); event.accepted = true }
+                else if (event.key === Qt.Key_End) { root.selectOverview(root.displaySpaces.length - 1); event.accepted = true }
             }
             SystemIsland {
                 id: overviewIsland
@@ -2776,7 +2777,7 @@ ShellRoot {
                         MouseArea {
                             anchors.fill: parent; hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: spaceCard.selected ? root.chooseOverviewSpace(spaceCard.index) : (root.overviewIndex = spaceCard.index)
+                            onClicked: spaceCard.selected ? root.chooseOverviewSpace(spaceCard.index) : root.selectOverview(spaceCard.index)
                             onDoubleClicked: root.chooseOverviewSpace(spaceCard.index)
                         }
                         Accessible.role: Accessible.Button

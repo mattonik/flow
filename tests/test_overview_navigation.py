@@ -80,3 +80,22 @@ class IndicatorTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReadOnlyTest(unittest.TestCase):
+    """QML refuses an assignment to a read-only property at run time (a TypeError in the log), so a handler that
+    makes one does nothing: Overview's Home and End, and a click on a card that is not selected, did nothing that way
+    until 2026-11-26. The selection is a space (``overviewSpaceId``), set through ``selectOverview``."""
+
+    def test_no_handler_assigns_to_a_read_only_property_of_the_shell(self):
+        names = re.findall(r"readonly property [\w<>.]+ (\w+)\s*:", SHELL)
+        self.assertIn("overviewIndex", names)
+        for name in names:
+            with self.subTest(name=name):
+                self.assertIsNone(re.search(rf"\broot\.{name}\s*=(?!=)", SHELL), f"root.{name} is assigned")
+
+    def test_home_end_and_a_card_click_choose_through_select_overview(self):
+        keys = block_after("Keys.onPressed: event => {", SHELL[SHELL.index("id: spacesOverview"):])
+        self.assertIn("root.selectOverview(0)", keys)
+        self.assertIn("root.selectOverview(root.displaySpaces.length - 1)", keys)
+        self.assertIn(": root.selectOverview(spaceCard.index)", SHELL)
