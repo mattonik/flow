@@ -84,6 +84,12 @@ class MonitorTest(unittest.TestCase):
             monitor.log = Path(tmp) / "monitor.log"
             monitor.log.write_text(log)
             self.assertEqual(monitor.calls(), [("FileChooser", "OpenFile", ":1.72"), ("ScreenCast", "Start", ":1.69")])
+            monitor.log.write_text(log + "method call time=1.3 sender=:1.72 -> destination=:1.900 serial=2 "
+                                   "path=/org/freedesktop/portal/desktop; interface=org.freedesktop.impl.portal.FileChooser; "
+                                   "member=OpenFile\n")
+            # The GNOME backend handing the chooser to Nautilus is not the broker's call.
+            self.assertEqual(monitor.calls(":1.64"), [("FileChooser", "OpenFile", ":1.72"), ("ScreenCast", "Start", ":1.69")])
+            self.assertEqual(len(monitor.calls()), 3)
 
     def test_reads_what_the_consent_dialog_was_told(self):
         log = (

@@ -689,14 +689,22 @@ class Monitor:
             stdout=open(self.log, "w"), stderr=subprocess.DEVNULL)
         time.sleep(1)
 
-    def calls(self):
-        """``[(interface, method, destination unique name)]`` from the monitor's log."""
+    def calls(self, sender=None):
+        """``[(interface, method, destination)]`` from the monitor's log, only those ``sender`` made when given: a
+        backend calls others too (GNOME's FileChooser hands the dialog to Nautilus over the same interface)."""
         found = []
         for line in self.log.read_text(errors="replace").splitlines():
-            match = re.search(r"destination=(\S+) .*interface=org\.freedesktop\.impl\.portal\.(\w+); member=(\w+)", line)
-            if match:
-                found.append((match.group(2), match.group(3), match.group(1)))
+            match = re.search(r"sender=(\S+) -> destination=(\S+) .*interface=org\.freedesktop\.impl\.portal\.(\w+); "
+                              r"member=(\w+)", line)
+            if match and sender in (None, match.group(1)):
+                found.append((match.group(3), match.group(4), match.group(2)))
         return found
+
+    @staticmethod
+    def broker():
+        """The portal broker's unique bus name."""
+        return json.loads(busctl("call", "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+                                 "GetNameOwner", "s", "org.freedesktop.portal.Desktop"))["data"][0]
 
     def access_dialogs(self):
         """The text each AccessDialog call carried (the backend's consent dialogs), one string per call."""
@@ -795,8 +803,8 @@ class Smoke:
         self.chooser(by_pointer=True)
 
     def chooser(self, by_pointer):
-        """Nautilus's chooser, answered by keyboard (``by_pointer`` False: Escape, the path typed in its location
-        bar and Return, Return on the suggested name) or with the pointer (its close button; the file, then Open;
+        """Nautilus's chooser, answered by keyboard (``by_pointer`` False: Escape; Home and Return, which open the
+        folder's first file; Return on the suggested name) or with the pointer (its close button; the file, then Open;
         Save), where it draws them."""
         name = "chooser-pointer" if by_pointer else "chooser"
         probe = self.need_probe()
@@ -841,7 +849,8 @@ class Smoke:
                 self.shot("chooser-open-pointer")
                 at = click(window, "primary")
             else:
-                keys("ctrl+l", str(folder / "chosen.txt"))
+                # The first file of the folder (Home), opened (Return).
+                keys("Home")
                 self.shot("chooser-open")
                 keys("Return")
             thread.join(15)
@@ -923,7 +932,7 @@ class Smoke:
                 time.sleep(0.6)
                 at = click(window, "primary")
             else:
-                keys("ctrl+l", str(folder / "chosen.txt"), "Return")
+                keys("Home", "Return")
             try:
                 upload = pages.wait(["upload"], timeout=15)
             except Failed:
@@ -1298,8 +1307,10 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
 
     # Clipboard --------------------------------------------------------------------------------------------------
 
-    def wayland_clipboard(self, mime="text/plain"):
-        out = subprocess.run(["wl-paste", "-n", "-t", mime], stdout=subprocess.PIPE, timeout=10)
+    def wayland_clipboard(self):
+        """The clipboard's text, as wl-paste picks it from what the owner offers (GTK 4 offers only
+        ``text/plain;charset=utf-8``)."""
+        out = subprocess.run(["wl-paste", "-n"], stdout=subprocess.PIPE, timeout=10)
         return out.stdout
 
     def check_clipboard_text(self):
@@ -1397,7 +1408,7 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
                  "the X11 copy to reach Wayland (xwayland-satellite's offer)")
         kp = self.apps.start(["kolourpaint", dst], app_id="org.kde.kolourpaint", title="paste-into")[1]
         self.apps.focus(kp, "100%")
-        time.sleep(1)
+        time.sleep(2.5)  # its document loaded: a paste before that opens it as a new, unnamed image
         keys("ctrl+v")
         time.sleep(1)
         self.shot("clipboard-image-kolourpaint")
@@ -1420,7 +1431,7 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
     def check_backends(self):
         owners = Monitor.owners()
         seen = {}
-        for interface, method, destination in self.monitor.calls():
+        for interface, method, destination in self.monitor.calls(Monitor.broker()):
             seen.setdefault(interface, set()).add(owners.get(destination, destination))
         wrong = {i: sorted(b) for i, b in seen.items() if i in INTENDED and b != {INTENDED[i]}}
         missing = [i for i in INTENDED if i not in seen and self.ran_for(i)]
@@ -1468,6 +1479,7 @@ def main():
             smoke.ran = []
             for name in chosen:
                 smoke.ran.append(name)
+                before = set(windows())
                 try:
                     if name == "screenshot":
                         smoke.check_screenshot(state)
@@ -1484,6 +1496,12 @@ def main():
                             smoke.shot(f"failed-{name}")
                         except RuntimeError:
                             pass
+                    # What the failed check left open (a dialog still waiting, its apps) would take the next one's
+                    # keys and clicks: close every window that appeared during it.
+                    for wid in set(windows()) - before:
+                        smoke.apps.close_window({"id": wid})
+                    if smoke.firefox and smoke.firefox["id"] not in windows():
+                        smoke.firefox = None
         finally:
             if smoke:
                 smoke.monitor.stop() if hasattr(smoke, "monitor") else None
