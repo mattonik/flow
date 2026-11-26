@@ -59,7 +59,8 @@ class ShellAutoSaveTest(unittest.TestCase):
     def test_a_saved_session_set_aside_is_told_in_a_toast(self):
         handler = SHELL[SHELL.index('if (recoveryProcess.command[1] === "auto-start" || recoveryProcess.command[1] === "auto-ready") {'):]
         handler = handler[:handler.index("\n                    }\n")]
-        self.assertRegex(handler, r"if \(result\.set_aside\) \{\s*root\.recoverySetAside = result\.set_aside\s*root\.showToast\(")
+        self.assertRegex(handler, r"if \(result\.set_aside\) \{\s*root\.recoverySetAside = result\.set_aside\s*"
+                                  r"root\.recoverySetAsideLeft = \"\"\s*root\.showToast\(")
         # Kept in Settings for the shell's life, as the first automatic save soon replaces recoveryMessage.
         self.assertRegex(SHELL, r'Text \{ id: recoveryAside; visible: root\.recoverySetAside !== ""; text: [^;]*root\.recoverySetAside')
 
@@ -68,13 +69,17 @@ class ShellAutoSaveTest(unittest.TestCase):
         # Whole lines and the whole function, as text: an early return, a guard dropped or the button disabled
         # fails here. What it does is run by tests/niri_set_aside_reopen_smoke.py in the guest; CI cannot.
         lines = [line.strip() for line in SHELL.splitlines()]
-        self.assertIn('FlowButton { id: reopenAside; visible: root.recoverySetAside !== ""; implicitHeight: 44; variant: "quiet"; text: "Reopen it"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: root.reopenSetAside() }', lines)
-        self.assertIn('    function reopenSetAside() {\n        const busy = recoveryProcess.running ? "Wait for session recovery to finish" : spacesWorking ? "Wait for the current action" : ""\n        if (busy) { recoveryMessage = busy; return }\n        if (!recoverySetAside) return\n        recoveryMessage = "Reopening applications…"\n        recoveryProcess.command = ["flow-recovery", "restore", recoverySetAside]\n        recoveryProcess.running = true\n    }', SHELL)
-        # Offered until every window is back: a reopen in part, or one that reopened nothing, keeps it.
+        self.assertIn('FlowButton { id: reopenAside; visible: root.recoverySetAside !== "" && root.recoverySetAsideLeft === ""; implicitHeight: 44; variant: "quiet"; text: "Reopen it"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: root.reopenSetAside() }', lines)
+        self.assertIn('Text { id: recoveryAside; visible: root.recoverySetAside !== ""; text: root.recoverySetAsideLeft ? "Reopened in part from " + root.recoverySetAside + ": " + root.recoverySetAsideLeft + " Open the rest yourself; reopening it again would open the others twice." : "Not reopened when the shell started: the saved session is kept as " + root.recoverySetAside + "."; textFormat: Text.PlainText; color: floeTheme.textMuted; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 14; font.family: floeTheme.interfaceFont }', lines)
+        self.assertIn('    function reopenSetAside() {\n        const busy = recoveryProcess.running ? "Wait for session recovery to finish" : spacesWorking ? "Wait for the current action" : ""\n        if (busy) { recoveryMessage = busy; return }\n        if (!recoverySetAside || recoverySetAsideLeft) return\n        recoveryMessage = "Reopening applications…"\n        recoveryProcess.command = ["flow-recovery", "restore", recoverySetAside]\n        recoveryProcess.running = true\n    }', SHELL)
+        # Withdrawn once every window is back; once anything opened, Reopen it is not offered again (a second
+        # run would open those twice) and the line says what was left out. Cleared nowhere else.
         handler = SHELL[SHELL.index("        id: recoveryProcess"):]
         handler = handler[:handler.index("\n    }\n")]
-        self.assertIn('if (recoveryProcess.command[1] === "restore" && recoveryProcess.command.length > 2 && result.complete) root.recoverySetAside = ""', [line.strip() for line in handler.splitlines()])
-        self.assertNotIn("session.json", SHELL[SHELL.index("Text { id: recoveryAside;"):][:400])
+        self.assertIn('if (recoveryProcess.command[1] === "restore" && recoveryProcess.command.length > 2) {\n                        if (result.complete) root.recoverySetAside = ""\n                        else if (result.launched) root.recoverySetAsideLeft = result.error || result.message\n                    }', handler)
+        self.assertEqual(SHELL.count('recoverySetAside = ""'), 1)
+        self.assertEqual(len(re.findall(r"recoverySetAsideLeft = (?!\"\")", SHELL)), 1)
+        self.assertNotIn("session.json", next(line for line in lines if line.startswith("Text { id: recoveryAside;")))
         # Restore with a file argument is not an automatic command, so automatic saving waits while it runs.
         self.assertIn('recoveryWorking: recoveryProcess.running && !String(recoveryProcess.command[1]).startsWith("auto-")', SHELL)
         # The smoke's way in: the same function, and the path the shell holds.

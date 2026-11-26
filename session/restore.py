@@ -217,6 +217,15 @@ def set_aside_source(path, name):
     return source
 
 
+def back_to(workspace, now):
+    """Focus ``workspace`` again if a set-aside reopen moved the user off it and opened nothing."""
+    if workspace["id"] != now["id"]:
+        try:
+            spaces.command("action", "focus-workspace", workspace["idx"])
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+
+
 def set_aside_answer(message, path):
     """``message``, with the saved session set aside and where: ``set_aside`` for the shell's notice."""
     aside = set_aside(path)
@@ -506,8 +515,9 @@ def save(path, workspace, windows, session=None, pins=(), registered=None, displ
 def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=time.sleep, pinned=(), session=None,
             pinned_groups=(), registered=None, display=None, here=False):
     """Reopen ``data``'s windows on ``workspace``; the report and how many were restored. A saved app is taken as
-    restored by an open window of it, anywhere; with ``here`` (a set-aside session reopened on an empty workspace,
-    while the user's work is open elsewhere), only by one on ``workspace``, so the work is never moved."""
+    restored by an open window of it, anywhere. With ``here`` (a set-aside session reopened on an empty workspace,
+    while the user's work is open elsewhere) recovery sees only ``workspace``'s windows, in every reading: a saved
+    app or Group is matched only there, so the work is never taken for it or moved."""
     side_groups = [g for g in registered or [] if g.get("layout") == "side-by-side"]
     if (any(g.get("pending_layout") for g in registered or []) or
             any(not valid_side_pins(g, pinned_groups) or
@@ -547,6 +557,8 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
     original = workspace.get("active_window_id")
     workspace_id = workspace["id"]
     workspace_changed = False
+    if here:
+        windows = [w for w in windows if w.get("workspace_id") == workspace_id]
 
     def checked_snapshot():
         nonlocal workspace_changed
@@ -554,7 +566,7 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
         if current["id"] != workspace_id:
             workspace_changed = True
             raise ValueError("Workspace changed; session recovery stopped")
-        return current, live
+        return current, [w for w in live if w.get("workspace_id") == workspace_id] if here else live
 
     def column_members(window, current, live):
         position = window and window.get("layout", {}).get("pos_in_scrolling_layout")
@@ -572,9 +584,6 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
 
     same_session = bool(session and data.get("session") == session)
 
-    def ours(window):
-        return not here or window.get("workspace_id") == workspace_id
-
     for entry in entries:
         app_id = entry["app_id"]
         if not app_id:
@@ -582,12 +591,12 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
             continue
         window_id = entry.get("window_id")
         exact = [w for w in windows if same_session and isinstance(window_id, int) and not isinstance(window_id, bool)
-                 and window_ids[window_id] == 1 and ours(w)
+                 and window_ids[window_id] == 1
                  and w.get("id") == window_id and w.get("app_id") == app_id]
         if app_counts[app_id] != 1 and len(exact) != 1:
             report.append(f"{app_id}: multiple saved windows require manual recovery")
             continue
-        matches = exact or [w for w in windows if w.get("app_id") == app_id and ours(w)]
+        matches = exact or [w for w in windows if w.get("app_id") == app_id]
         if len(matches) > 1:
             report.append(f"{app_id}: multiple running windows require manual recovery")
             continue
@@ -604,7 +613,7 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
             for _ in range(30):
                 wait(0.5)
                 workspace, windows = checked_snapshot()
-                matches = [w for w in windows if w.get("app_id") == app_id and ours(w)]
+                matches = [w for w in windows if w.get("app_id") == app_id]
                 if matches:
                     break
         valid_group_window = (id(entry) in group_ids and len(matches) == 1
@@ -1095,15 +1104,6 @@ def main():
                     workspace, windows = spaces.snapshot()
                     original_snapshot = source.read_bytes()
                     data = json.loads(original_snapshot)
-                    if here:
-                        # Work is open (that is why it was set aside): reopened on the display's empty workspace.
-                        workspaces, windows = spaces.query("Workspaces", "Windows")
-                        target = empty_workspace(workspace, windows, workspaces, "reopened")
-                        if target["id"] != workspace["id"]:
-                            spaces.command("action", "focus-workspace", target["idx"])
-                        workspace, windows = spaces.snapshot()
-                        if workspace["id"] != target["id"] or any(w.get("workspace_id") == target["id"] for w in windows):
-                            raise ValueError("The empty workspace did not come into focus empty; nothing was reopened")
                     dirs = (os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share"), *os.environ.get("XDG_DATA_DIRS", "/run/current-system/sw/share:/usr/share").split(":"))
                     pins_path = path.parent / "spaces.json"
                     pins = pin_store.read(pins_path)[0]
@@ -1113,6 +1113,17 @@ def main():
                     if data.get("display") and data["display"] != display and data["display"] in connected:
                         raise ValueError("This session was saved on another connected display; "
                                          "focus that display to restore it")
+                    started_from = workspace
+                    if here:
+                        # Work is open (that is why it was set aside): reopened on the display's empty workspace.
+                        workspaces, windows = spaces.query("Workspaces", "Windows")
+                        target = empty_workspace(workspace, windows, workspaces, "reopened")
+                        if target["id"] != workspace["id"]:
+                            spaces.command("action", "focus-workspace", target["idx"])
+                        workspace, windows = spaces.snapshot()
+                        if workspace["id"] != target["id"] or any(w.get("workspace_id") == target["id"] for w in windows):
+                            back_to(started_from, workspace)
+                            raise ValueError("The empty workspace did not come into focus empty; nothing was reopened")
         if op == "restore":
             def checked_state():
                 with (path.parent / "session.lock").open("a") as lock:
@@ -1127,22 +1138,36 @@ def main():
                                 or not pins_unchanged_or_rebound(pins, now_pins, session, current[1], current[0], now_groups)):
                             raise ValueError("Session, Groups or pinned spaces changed; session recovery stopped")
                         return current
+            launched = []
+
             def launch(desktop):
                 current, _ = checked_state()
                 if current["id"] != workspace["id"]:
                     raise ValueError("Workspace changed; session recovery stopped")
+                launched.append(desktop)
                 subprocess.run(app_command(["gio", "launch", str(desktop)]), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             # A set-aside session may predate Groups registered since: only those it saved are its own, as an
             # import passes only the Groups it created.
             saved_ids = {g.get("id") for g in data.get("groups") or [] if isinstance(g, dict)}
-            report, count = restore(data, workspace, windows, dirs, launch, checked_state, spaces.command,
-                                    pinned=pinned_apps(pins), session=session, pinned_groups=pins,
-                                    registered=[g for g in registered if g.get("id") in saved_ids] if here else registered,
-                                    display=display, here=here)
+            try:
+                report, count = restore(data, workspace, windows, dirs, launch, checked_state, spaces.command,
+                                        pinned=pinned_apps(pins), session=session, pinned_groups=pins,
+                                        registered=[g for g in registered if g.get("id") in saved_ids] if here else registered,
+                                        display=display, here=here)
+            except (ValueError, OSError, subprocess.SubprocessError) as exc:
+                if not here:
+                    raise
+                if not launched:  # refused before opening anything: the user back where they were
+                    back_to(started_from, workspace)
+                # Settings offers Reopen it again only if nothing opened: a second run would open those twice.
+                print(json.dumps({"error": str(exc), "launched": len(launched)}))
+                sys.exit(1)
             done = (f"Reopened {count} of {len(data['windows'])} windows on an empty workspace." if here
                     else f"Restored {count} windows.")
-            # Complete: every saved window is back; Settings offers a set-aside session until then.
-            print(json.dumps({"message": done + (" " + "; ".join(report) if report else ""), "complete": not report}))
+            # Complete: every saved window is back. Settings offers a set-aside session until then, or until
+            # anything was launched.
+            print(json.dumps({"message": done + (" " + "; ".join(report) if report else ""), "complete": not report,
+                              "launched": len(launched)}))
         return
     raise ValueError("Unknown recovery action")
 
