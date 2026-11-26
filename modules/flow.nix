@@ -108,6 +108,29 @@ let
     Exec=${flowApi}/bin/flow-api
     SystemdService=flow-api.service
   '';
+  # Flow's Screenshot portal backend (session/screenshot_portal.py, ADR-0005): GNOME's answers an interactive
+  # request with a call Niri does not implement. D-Bus starts it when the portal broker first asks.
+  screenshotPortal = pkgs.writeShellScriptBin "flow-screenshot-portal" ''
+    export PYTHONPATH="${sessionPython}"
+    export GI_TYPELIB_PATH="${apiTypelibs}"
+    export PATH="${pkgs.grim}/bin:$PATH"
+    exec ${apiPython}/bin/python3 -P -m screenshot_portal
+  '';
+  screenshotPortalFiles = pkgs.runCommand "flow-screenshot-portal-files" { } ''
+    mkdir -p $out/share/xdg-desktop-portal/portals $out/share/dbus-1/services
+    cat > $out/share/xdg-desktop-portal/portals/flow.portal <<EOF
+    [portal]
+    DBusName=org.freedesktop.impl.portal.desktop.flow
+    Interfaces=org.freedesktop.impl.portal.Screenshot;
+    UseIn=niri
+    EOF
+    cat > $out/share/dbus-1/services/org.freedesktop.impl.portal.desktop.flow.service <<EOF
+    [D-BUS Service]
+    Name=org.freedesktop.impl.portal.desktop.flow
+    Exec=${screenshotPortal}/bin/flow-screenshot-portal
+    SystemdService=flow-screenshot-portal.service
+    EOF
+  '';
   wifiSettings = pkgs.writeShellScriptBin "flow-wifi-settings" ''
     export XDG_CURRENT_DESKTOP=GNOME
     export XDG_DATA_DIRS="${pkgs.gnome-control-center}/share:''${XDG_DATA_DIRS:-/run/current-system/sw/share:/usr/share}"
@@ -153,6 +176,28 @@ in {
   options.services.flow.enable = lib.mkEnableOption "the experimental Flow session";
   config = lib.mkIf cfg.enable {
     programs.niri.enable = true;
+    # Screenshot: Flow's own backend, above; the rest stays as Niri's module chose it. The broker reads this when
+    # it starts: after the first switch to it, Screenshot reaches Flow's backend from the next login.
+    xdg.portal.extraPortals = [ screenshotPortalFiles ];
+    xdg.portal.config.niri."org.freedesktop.impl.portal.Screenshot" = "flow";
+    # Flow adds one key to Niri's portal configuration; without Niri's own keys (if Niri's module ever ships its
+    # niri-portals.conf as a package again, which this configuration would shadow) there would be no default and no
+    # Access backend, and the broker would offer no Screenshot, FileChooser or ScreenCast.
+    assertions = [{
+      assertion = let niri = config.xdg.portal.config.niri; in niri ? default && niri ? "org.freedesktop.impl.portal.Access";
+      message = "Flow sets xdg.portal.config.niri's Screenshot key: Niri's default and Access keys must be set beside it.";
+    }];
+    systemd.user.services.flow-screenshot-portal = {
+      description = "Flow's Screenshot portal backend";
+      partOf = [ "graphical-session.target" ];
+      after = [ "graphical-session.target" ];
+      serviceConfig = {
+        Type = "dbus";
+        BusName = "org.freedesktop.impl.portal.desktop.flow";
+        ExecStart = "${screenshotPortal}/bin/flow-screenshot-portal";
+        Restart = "on-failure";
+      };
+    };
     security.pam.services.swaylock = {};
     hardware.graphics.enable = true;
     fonts.packages = with pkgs; [
