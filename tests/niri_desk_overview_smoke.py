@@ -36,7 +36,7 @@ from uinput import Devices
 # work indicators' band below, whose text Qt draws with grayscale antialiasing one time and subpixel the next (seen in
 # the guest: the same "03 / 04", with coloured fringes after Desk closed). The shell's surfaces are checked by Niri's layer
 # list and the shell's own state instead.
-BAND = 44
+BAND = 44  # physical rows: the guest's outputs are at scale 1
 PARTS = ("desk", "overview", "niri", "layer", "workspace", "open-close", "mid-transition", "reduced-motion", "displays")
 
 
@@ -195,15 +195,16 @@ class Smoke:
     def grab(self, output):
         return subprocess.run(["grim", "-t", "ppm", "-o", output, "-"], stdout=subprocess.PIPE, check=True, timeout=10).stdout
 
-    def settled(self, output, timeout=4):
-        """A screenshot of ``output`` once two in a row, 0.15 s apart, are the same below the Island's band."""
-        last, end = self.grab(output), time.monotonic() + timeout
+    def settled(self, output, timeout=4, since=False):
+        """A screenshot of ``output`` once two in a row, 0.15 s apart, are the same between the shell's bands. With
+        ``since``, also when the first of the two was taken (``time.monotonic()``): when the screen stopped changing."""
+        last, taken, end = self.grab(output), time.monotonic(), time.monotonic() + timeout
         while time.monotonic() < end:
             time.sleep(0.15)
-            now = self.grab(output)
+            now, at = self.grab(output), time.monotonic()
             if differ(last, now) == 0:
-                return now
-            last = now
+                return (taken, now) if since else now
+            last, taken = now, at
         raise Failure(f"{output} did not stop changing within {timeout} s")
 
     def shots(self):
@@ -255,15 +256,19 @@ class Smoke:
             problems.append(f"shell surfaces still open: {sorted(after['surfaces'])}")
         if after["layers"] != before["layers"]:
             problems.append(f"Niri's layer surfaces differ: {before['layers']} → {after['layers']}")
-        if not focus and after["view"] != before["view"]:
-            problems.append("the shell's spaces_view changed")
+        error = self.ipc("spaces_error")
+        if error:
+            problems.append(f"spaces_error says {error!r}")
+        unmarked = lambda view: {**view, "spaces": [{**space, "active": None} for space in view.get("spaces", [])]} if view else view
+        if (after["view"] if not focus else unmarked(after["view"])) != (before["view"] if not focus else unmarked(before["view"])):
+            problems.append("the shell's spaces_view changed" + (" (which space is active aside)" if focus else ""))
         if same_screen:
             for output in before["shots"]:
                 count = differ(before["shots"][output], after["shots"].get(output, b""))
                 if count:
                     self.save(f"{slug(label)}-before", {output: before["shots"][output]})
                     self.save(f"{slug(label)}-after", {output: after["shots"][output]})
-                    problems.append(f"{output}'s screen differs from before in {count} pixels below the Island")
+                    problems.append(f"{output}'s screen differs from before in {count} pixels between the shell's bands")
         if problems:
             raise Failure(f"{label}: " + "; ".join(problems))
 
@@ -356,6 +361,7 @@ class Smoke:
         time.sleep(0.3)
         before = self.capture()
         reveal()
+        asked = time.monotonic()  # the key, click or call that asked for it has been sent
         wait_for(lambda: shown(), lambda: f"{label}: the surface to show ({sorted(self.surfaces())})")
         while_shown = self.work()
         if {k: v for k, v in while_shown["windows"].items()} != before["work"]["windows"]:
@@ -363,7 +369,11 @@ class Smoke:
         grabs = [l for l in self.layers() if l[3] == "Exclusive"]
         if any(l[1] != before["work"]["focused_output"] for l in grabs):
             raise Failure(f"{label}: shown on another display than the focused {before['work']['focused_output']}: {grabs}")
-        shown_shots = self.shots()
+        output = before["work"]["focused_output"]
+        first, steady = self.settled(output, since=True)
+        if first - asked > 1.0:
+            raise Failure(f"{label}: the screen settled {first - asked:.2f} s after the request, not within 1 s")
+        shown_shots = {o: steady if o == output else self.settled(o) for o in self.outputs()}
         self.save(f"shown-{slug(label)}", shown_shots)  # evidence, and for docs/screenshots
         back()
         wait_for(lambda: not self.surfaces() and not read("overview-state")["is_open"],
@@ -394,7 +404,10 @@ class Smoke:
         return self.shots()
 
     def desk_open(self):
-        return "desk" in self.surfaces() and not self.json("desk_motion").get("entering")
+        """Desk open and whole: its rise done, its content at full opacity and in place."""
+        motion = self.json("desk_motion") or {}
+        return ("desk" in self.surfaces() and not motion.get("entering") and motion.get("opacity") == 1
+                and motion.get("shift") == 0)
 
     def overview_open(self):
         return self.surfaces() == {"overview"}
@@ -474,7 +487,7 @@ class Smoke:
                                                          ui.click(ui.control("desk", "Overview"))), lambda: k("esc")),
         ]
         for label, reveal, back in chains:
-            self.case(label, reveal, lambda: bool(self.surfaces()), back)
+            self.case(label, reveal, self.overview_open, back)  # each reveal ends in Overview
 
     def swipe_home(self):
         start = self.pointer.hover(lambda: self.target("home"), "the home indicator")
@@ -690,9 +703,12 @@ class Smoke:
 
         before = self.capture()
         self.devices.swipe(4, 0, -1600, steps=8)
+        opened = self.niri_open()  # the quick swipe was taken: the overview is opening
         self.devices.swipe(4, 0, 1600, steps=8)
         time.sleep(1)
         niri_after = read("overview-state")["is_open"]
+        if not opened:
+            raise Failure("A quick four-finger swipe up did not open Niri's overview, so the interruption was not tested")
         niri("action", "toggle-overview")
         time.sleep(0.05)
         niri("action", "toggle-overview")
@@ -736,6 +752,20 @@ class Smoke:
         self.keys("esc")
         wait_for(lambda: not self.surfaces(), "Desk to close")
         self.settled(output)
+        # Overview to Desk and back, and the returns: the work must never show between two surfaces.
+        self.keys("super", "o")
+        wait_for(self.overview_open, "Overview")
+        overview = self.settled(output)
+        to_desk = self.frames(lambda: self.keys("super", "o"), output)
+        wait_for(self.desk_open, "Desk after Super+O again")
+        desk_again = self.settled(output)
+        to_overview = self.frames(lambda: self.click(self.control("desk", "Overview")), output)
+        wait_for(self.overview_open, "Overview from Desk")
+        self.keys("esc")
+        wait_for(lambda: not self.surfaces(), "Overview to close")
+        self.settled(output)
+        between = sum(1 for f in to_desk if not differ(f, work)) + sum(1 for f in to_overview if not differ(f, work))
+        between_bare = len([f for f in to_desk if differ(f, overview) and differ(f, desk_again)])
         live = self.frames(lambda: niri("action", "open-overview"), output)
         live_end = self.settled(output)
         niri("action", "close-overview")
@@ -749,7 +779,10 @@ class Smoke:
         print(f"{tag}: frames equal to the work view {sum(1 for f in desk if not differ(f, work))}, to Desk's "
               f"{sum(1 for f in desk if not differ(f, desk_end))}, of {len(desk)}; order "
               + "".join("w" if not differ(f, work) else "d" if not differ(f, desk_end) else "?" for f in desk), flush=True)
-        return {"desk": len(self.in_between(desk, work, desk_end)), "desk_frames": len(desk),
+        print(f"{tag}: Overview to Desk " + "".join("o" if not differ(f, overview) else "d" if not differ(f, desk_again)
+                                                    else "w" if not differ(f, work) else "?" for f in to_desk), flush=True)
+        return {"between": between, "to_desk_midway": between_bare, "to_desk_frames": len(to_desk),
+                "desk": len(self.in_between(desk, work, desk_end)), "desk_frames": len(desk),
                 "niri": len(self.in_between(live, work, live_end)), "niri_frames": len(live)}
 
     def part_reduced_motion(self):
@@ -769,9 +802,18 @@ class Smoke:
             self.stop_shell()
             self.start_shell(reduce_motion=False)
             time.sleep(1.5)
+        if moving["between"] or still["between"]:
+            raise Failure(f"The work showed between Overview and Desk (motion on {moving['between']}, Reduce motion "
+                          f"{still['between']} frames)")
+        if still["to_desk_midway"]:
+            raise Failure(f"With Reduce motion, {still['to_desk_midway']} of {still['to_desk_frames']} frames from Overview to "
+                          "Desk were neither")
         if still["desk"] or still["niri"]:
             raise Failure(f"With Reduce motion, frames were caught midway (Desk {still['desk']} of {still['desk_frames']}, "
                           f"Niri's overview {still['niri']} of {still['niri_frames']})")
+        self.step(f"the work never showed between Overview and Desk, either way ({moving['to_desk_frames']} and "
+                  f"{still['to_desk_frames']} screenshots from Overview to Desk); with Reduce motion every one was Overview's "
+                  "or Desk's settled frame")
         self.step(f"Reduce motion: no frame midway for Desk ({still['desk_frames']} screenshots) or Niri's overview "
                   f"({still['niri_frames']}); with it off, {moving['desk']} of {moving['desk_frames']} and {moving['niri']} of "
                   f"{moving['niri_frames']} were caught midway")
@@ -815,6 +857,20 @@ class Smoke:
                 self.keys("super", "leftalt", "1")
                 wait_for(lambda: self.work()["focused"] == "x", f"Super+Alt+{self.external}, 1 to reach Virtual-2's pin after {label}")
             self.step(f"after each, Super+Alt+{self.external} then 1 reached Virtual-2's pin")
+            # Super+H the moment focus crosses to the other display, before the shell's next refresh (0.15 to 0.6 s):
+            # Desk must still open there. Each case above waited for the shell first.
+            for attempt in range(3):
+                for name, output in (("y", "Virtual-2"), ("e", "Virtual-1")):
+                    niri("action", "focus-window", "--id", self.wid(name))
+                    k("super", "h")
+                    wait_for(self.desk_open, f"Desk right after focus moved to {output}", timeout=3)
+                    grabs = [l for l in self.layers() if l[3] == "Exclusive"]
+                    if [l[1] for l in grabs] != [output]:
+                        raise Failure(f"Super+H right after focus moved to {output} (attempt {attempt + 1}) showed Desk on {grabs}")
+                    k("esc")
+                    wait_for(lambda: not self.surfaces(), "Desk to close")
+            self.step("Super+H pressed the moment focus moved to the other display, before the shell refreshed, opened Desk "
+                      "on that display, both ways, three times")
             self.close("x")
             self.close("y")
         finally:
@@ -857,6 +913,9 @@ def main():
     shell = os.environ.get("FLOW_SHELL", "/etc/flow/shell.qml")
     if subprocess.run(["systemctl", "--user", "is-active", "--quiet", "flow-shell"]).returncode == 0:
         raise Failure("Stop the installed shell first (systemctl --user stop flow-shell)")
+    # The shell under test is /etc/flow's, which points Niri's include links in the real ~/.config/flow from its own
+    # (isolated) settings: Reduce motion has to reach the user's Niri to be tested. They are put back as they were.
+    links = {p: os.readlink(p) for p in (Path.home() / ".config/flow").glob("niri-*.kdl") if p.is_symlink()}
     real_state = Path.home() / ".local/state/flow"
     real = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in real_state.glob("*") if p.is_file()}
     if read("overview-state")["is_open"]:
@@ -891,6 +950,15 @@ def main():
                 niri("action", "focus-workspace", start_workspace["idx"])
             except subprocess.SubprocessError:
                 pass
+            for path in (Path.home() / ".config/flow").glob("niri-*.kdl"):
+                if path.is_symlink() and path not in links:
+                    path.unlink()
+            for path, target in links.items():
+                if not path.is_symlink() or os.readlink(path) != target:
+                    temporary = path.with_name(path.name + ".f007")
+                    temporary.unlink(missing_ok=True)
+                    temporary.symlink_to(target)
+                    temporary.replace(path)
         if failure:
             raise failure
     after = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in real_state.glob("*") if p.is_file()}

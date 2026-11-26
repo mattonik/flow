@@ -25,14 +25,19 @@ was_active=$(systemctl --user is-active flow-shell)
 systemctl --user stop flow-shell
 python3 tests/niri_desk_overview_smoke.py "$@" 9>&-
 status=$?
+# Read before the installed shell starts again: it would point Niri's links back from the real settings itself.
+during=$(sums)
 [ "$was_active" = active ] && systemctl --user start flow-shell
 sleep 5
 after=$(sums)
-if [ "$before" != "$after" ]; then
-    echo "The real Flow state, settings, appearance, markers or Niri links changed:" >&2
-    diff <(echo "$before") <(echo "$after") >&2
+changed() {
+    echo "The real Flow state, settings, appearance, markers or Niri links changed, $1:" >&2
+    diff <(echo "$before") <(echo "$2") >&2
     status=1
-else
-    echo "The real Flow state, settings, appearance, recovery markers and Niri links are unchanged; flow-shell $(systemctl --user is-active flow-shell)"
+}
+[ "$before" = "$during" ] || changed "before the installed shell started again" "$during"
+[ "$before" = "$after" ] || changed "after the installed shell started again" "$after"
+if [ "$before" = "$during" ] && [ "$before" = "$after" ]; then
+    echo "The real Flow state, settings, appearance, recovery markers and Niri links are unchanged, before and after the installed shell started again; flow-shell $(systemctl --user is-active flow-shell)"
 fi
 exit $status
