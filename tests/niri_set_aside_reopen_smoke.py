@@ -109,19 +109,19 @@ def main():
 
             shell_process = subprocess.Popen(["quickshell", "-p", shell], env=env, stdin=subprocess.DEVNULL,
                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            seen = {"toast": ""}
-
-            def set_aside():
-                toast = ipc("toast")
-                seen["toast"] = seen["toast"] or (toast if toast.startswith("Nothing was reopened") else "")
-                return state().get("set_aside") or None
+            # The toast lasts 1.8 s and comes with the set-aside, so it is watched alone, then the path read.
             try:
-                aside = Path(wait_for(set_aside, "the shell to set the saved session aside", timeout=30))
+                toast = wait_for(lambda: (t := ipc("toast")).startswith("Nothing was reopened") and t,
+                                 "the set-aside toast", timeout=30)
+            except RuntimeError:
+                toast = ""
+            try:
+                aside = Path(wait_for(lambda: state().get("set_aside"), "the shell to name the set-aside", timeout=10))
             except RuntimeError:
                 aside = None
             kept = bool(aside) and aside.parent == session.parent and aside.exists() and aside.read_bytes() == saved_bytes
             check("first start into work: the saved session set aside, named by the shell, a toast",
-                  f"{aside}, toast {seen['toast']!r}", kept and bool(seen["toast"]) and not windows_of("flow-sa-one"))
+                  f"{aside}, toast {toast!r}", kept and bool(toast) and not windows_of("flow-sa-one"))
             if not kept:
                 return 1
 
@@ -141,6 +141,8 @@ def main():
             if os.environ.get("FLOW_SCREENSHOT") and shutil.which("grim"):
                 ipc("show_set_aside")
                 time.sleep(1.5)
+                ipc("show_set_aside")  # again, laid out now: the first scroll ran as the Desk was still opening
+                time.sleep(1)
                 subprocess.run(["grim", "-o", output, os.environ["FLOW_SCREENSHOT"]], check=False)
                 ipc("leave")
                 time.sleep(1)
