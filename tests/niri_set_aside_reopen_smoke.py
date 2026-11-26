@@ -17,7 +17,10 @@ Checked:
 - automatic saving then writes session.json with the work window (what replaced a set-aside renamed back to
   session.json, as Settings once advised);
 - Reopen it reopens both saved terminals on the display's empty workspace from the set-aside file, leaves the
-  work window where it was, keeps the file, and the shell no longer offers it.
+  work window where it was, keeps the file, and the shell no longer offers it;
+- with the shell stopped, a set-aside session of one app whose window comes 20 s after its launch (after
+  Restore's 15 s wait), reopened twice from the command line: the first run opens it, the second is refused,
+  and one window of it is open 25 s after the window came (the regression in dd8a386 opened a second).
 
 Prints one JSON line per check and a final ``{"result": ...}``; exits 1 if any check failed.
 """
@@ -73,6 +76,9 @@ def main():
         for name in ("one", "work"):
             (data / "applications" / f"flow-sa-{name}.desktop").write_text(
                 f"[Desktop Entry]\nType=Application\nName=Set aside {name}\nExec=foot --app-id flow-sa-{name}\n")
+        (data / "applications" / "flow-sa-slow.desktop").write_text(
+            "[Desktop Entry]\nType=Application\nName=Set aside slow\n"
+            "Exec=sh -c 'sleep 20; exec foot --app-id flow-sa-slow'\n")
         wayland = os.environ.get("WAYLAND_DISPLAY", "wayland-1")
         env = dict(os.environ, XDG_STATE_HOME=str(tmp), XDG_RUNTIME_DIR=str(runtime), XDG_CONFIG_HOME=str(config),
                    XDG_DATA_HOME=str(data),
@@ -175,6 +181,23 @@ def main():
                   elsewhere == ["flow-sa-one", "flow-sa-work"] and work.get("workspace_id") == empty["id"]
                   and work["layout"]["pos_in_scrolling_layout"] == work_at and aside.read_bytes() == saved_bytes
                   and after.get("set_aside") == "" and after.get("message", "").startswith("Reopened 2 of 2"))
+
+            # Reopened twice, the window late: the second run must open nothing. No shell, so no automatic save.
+            shell_process.terminate()
+            shell_process.wait(timeout=10)
+            shell_process = None
+            slow = session.with_name(restore.SET_ASIDE.format("20990101T000000Z-00"))
+            slow.write_text(json.dumps({"version": 1, "windows": [{"app_id": "flow-sa-slow", "column": 1}]}))
+            first, second = recovery("restore", str(slow)), recovery("restore", str(slow))
+            try:
+                wait_for(lambda: windows_of("flow-sa-slow") or None, "the late window", timeout=40)
+            except RuntimeError:
+                pass
+            time.sleep(25)  # a second launch from the second run would have its window by now
+            late = windows_of("flow-sa-slow")
+            check("reopened twice from the command line, its window late: the second run opens nothing",
+                  f"first {first}, second {second}, {len(late)} window(s)",
+                  first.get("launched") == 1 and "reopened already" in second.get("error", "") and len(late) == 1)
         finally:
             if shell_process:
                 shell_process.terminate()
@@ -189,14 +212,14 @@ def main():
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     process.kill()
-            for window in windows_of("flow-sa-one") + windows_of("flow-sa-work"):  # some opened by Reopen, not here
+            for window in windows_of("flow-sa-one") + windows_of("flow-sa-work") + windows_of("flow-sa-slow"):
                 if window.get("pid"):
                     try:
                         os.kill(window["pid"], signal.SIGTERM)
                     except ProcessLookupError:
                         pass
             niri("action", "focus-workspace", start_workspace["idx"])
-    ok = all(results) and len(results) == 3
+    ok = all(results) and len(results) == 4
     print(json.dumps({"result": "pass" if ok else "fail"}))
     return 0 if ok else 1
 
