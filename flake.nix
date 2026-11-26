@@ -26,15 +26,14 @@
              config.systemd.user.services.flow-api.serviceConfig.ExecStart
              config.systemd.user.services.flow-screenshot-portal.serviceConfig.ExecStart ];
       search = lib.findFirst (p: lib.getName p == "flow-search") (throw "no flow-search") config.environment.systemPackages;
-      # The portal backends Flow intends (ADR-0005, F-012), as the broker will read them: GTK's file chooser, whose
-      # buttons Flow's work indicator does not cover; GNOME's screen casting, which needs PipeWire (NixOS's
+      # The portal backends Flow intends (ADR-0005, F-012), as the broker will read them: GNOME's (Nautilus's file
+      # chooser, screen casting through Niri) before GTK's; screen casting needs PipeWire (NixOS's
       # graphical-desktop module, which Niri's session enables, turns it on by default; Quick Settings' volume needs
       # WirePlumber too).
       portals = config.environment.etc."xdg/xdg-desktop-portal/niri-portals.conf".text;
       portalNames = map (p: lib.getName p) config.xdg.portal.extraPortals;
     in assert wrappers != [ ]; assert config.services.gnome.at-spi2-core.enable;
-      assert lib.hasInfix "org.freedesktop.impl.portal.FileChooser=gtk\n" portals;
-      assert lib.hasInfix "default=gnome;gtk\n" portals;
+      assert lib.hasInfix "default=gnome;gtk\n" portals && !(lib.hasInfix "FileChooser=" portals);
       assert lib.hasInfix "org.freedesktop.impl.portal.Screenshot=flow\n" portals;
       assert builtins.elem "flow-screenshot-portal-files" portalNames;
       assert builtins.elem "xdg-desktop-portal-gnome" portalNames && builtins.elem "xdg-desktop-portal-gtk" portalNames;

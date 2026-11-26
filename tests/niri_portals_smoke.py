@@ -10,10 +10,16 @@ given more than once); ``--shots DIR`` keeps a screenshot (grim) of each dialog 
 
 Checks, in order (names for ``--only``):
 
+- ``edges``: Firefox's page has buttons at its window's bottom left, middle and right corner; each takes a click.
+  The shell's home and work indicators sit in a band along the bottom that Niri keeps windows out of
+  (``bottomBand`` in ``session/shell.qml``); before it, the work indicator covered every window's bottom right
+  corner, where dialogs put Open and Save.
 - ``chooser``: PortalProbe (``tests/flatpak/portal_probe.py``), a Flatpak with no filesystem access, asks
-  FileChooser to open a file and to save one. The test types the file's name and clicks the dialog's Open or Save
-  where its backend draws it. The probe reads and writes the chosen file through the document portal and nothing
-  else: not the file beside it, not the original path, not the home folder. Cancel answers 1.
+  FileChooser to open a file and to save one, in Nautilus's chooser (GNOME's backend). The test clicks the file
+  and the dialog's Open or Save where Nautilus draws them, at the bottom right, clear of the indicators' band. The probe reads and writes the chosen file through the document portal and nothing
+  else: not the file beside it, not the original path, not the home folder. Cancel answers 1. Firefox's upload
+  button, through the portal as a Flatpak Firefox asks, opens the chooser floating over Firefox, and the chosen
+  file reaches the page.
 - ``screenshot``: PortalProbe asks Screenshot for the screen. Its consent dialog (the Access backend) is denied
   once (answer 2, no file, and the next request is refused without asking), then allowed: the file the probe
   gets is the live screen, at the output's size, showing a window of a colour picked for this run. An interactive
@@ -29,8 +35,9 @@ Checks, in order (names for ``--only``):
 - ``clipboard-image``: an image copied and pasted around KolourPaint (Qt, Wayland), Firefox (GTK, Wayland) and
   Firefox on X11 (``MOZ_ENABLE_WAYLAND=0``): each pasted image has the colour the copy had.
 - ``backends``: every portal request above reached the backend Flow intends (from a D-Bus monitor of the
-  ``org.freedesktop.impl.portal.*`` calls): FileChooser and Access the GTK backend, Screenshot Flow's own
-  (``session/screenshot_portal.py``), ScreenCast the GNOME one. PipeWire and WirePlumber run.
+  ``org.freedesktop.impl.portal.*`` calls): FileChooser and ScreenCast the GNOME backend, Access the GTK one,
+  Screenshot Flow's own
+  (``session/screenshot_portal.py``). PipeWire and WirePlumber run.
 
 X11 windows get no keys: xwayland-satellite does not take wtype's virtual keymap, so xterm and Firefox on X11 are
 driven by the pointer only (a middle click pastes, a double click copies, page buttons copy and read).
@@ -70,10 +77,10 @@ from pointer import Pointer  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 PROBE = "io.github.mattonik.PortalProbe"
 RUNTIME, BRANCH = "org.freedesktop.Platform", "25.08"
-CHECKS = ["chooser", "screenshot", "screencast", "dnd-file", "dnd-text", "clipboard-text", "clipboard-image",
+CHECKS = ["edges", "chooser", "screenshot", "screencast", "dnd-file", "dnd-text", "clipboard-text", "clipboard-image",
           "backends"]
 # The backend Flow intends for each interface the checks use (modules/flow.nix, ADR-0005).
-INTENDED = {"FileChooser": "gtk", "Access": "gtk", "Screenshot": "flow", "ScreenCast": "gnome"}
+INTENDED = {"FileChooser": "gnome", "Access": "gtk", "Screenshot": "flow", "ScreenCast": "gnome"}
 PERMISSIONS = ("org.freedesktop.impl.portal.PermissionStore", "/org/freedesktop/impl/portal/PermissionStore",
                "org.freedesktop.impl.portal.PermissionStore")
 DOCUMENTS = ("org.freedesktop.portal.Documents", "/org/freedesktop/portal/documents", "org.freedesktop.portal.Documents")
@@ -123,10 +130,16 @@ def run(*command, timeout=120, **kw):
     return process.stdout
 
 
+NAMED_KEYS = {"Return", "Escape", "Tab", "BackSpace"}
+
+
 def keys(*steps):
-    """wtype, to the focused Wayland window: ``"ctrl+a"`` presses a chord, anything else is typed as text."""
+    """wtype, to the focused Wayland window: ``"ctrl+a"`` presses a chord, ``"Return"`` (and the other names in
+    ``NAMED_KEYS``) that key, anything else is typed as text."""
     for step in steps:
-        if re.fullmatch(r"(ctrl|shift|alt)(\+(ctrl|shift|alt))*\+\S+", step):
+        if step in NAMED_KEYS:
+            args = ["-k", step]
+        elif re.fullmatch(r"(ctrl|shift|alt)(\+(ctrl|shift|alt))*\+\S+", step):
             *mods, key = step.split("+")
             args = [a for m in mods for a in ("-M", m)] + (["-k", key] if len(key) > 1 else [key]) \
                 + [a for m in reversed(mods) for a in ("-m", m)]
@@ -438,6 +451,18 @@ if (mode === 'cast') {
   zone.ondrop = async e => { e.preventDefault(); const dt = e.dataTransfer, files = [];
     for (const f of dt.files) files.push({name: f.name, text: await f.text()});
     report({kind: 'drop', types: [...dt.types], files, text: dt.types.includes('text/plain') ? dt.getData('text/plain') : null}); };
+} else if (mode === 'upload') {
+  const label = document.createElement('label'); label.id = 'all'; label.textContent = 'Upload a file';
+  label.style.background = bg; document.body.appendChild(label);
+  const input = document.createElement('input'); input.type = 'file';
+  input.style.cssText = 'position: fixed; inset: 0; opacity: 0; width: 100vw; height: 100vh'; label.appendChild(input);
+  input.onchange = async () => { const files = []; for (const f of input.files) files.push({name: f.name, text: await f.text()});
+    report({kind: 'upload', files}); };
+} else if (mode === 'edges') {
+  for (const [name, css] of [['bottom-right', 'right: 0'], ['bottom-middle', 'left: calc(50vw - 100px)'], ['bottom-left', 'left: 0']]) {
+    const b = document.createElement('button'); b.textContent = name;
+    b.style.cssText = `position: fixed; bottom: 0; ${css}; width: 200px; height: 40px; font-size: 16px`;
+    b.onclick = () => report({kind: 'clicked', name}); document.body.appendChild(b); }
 } else if (mode === 'clip') {
   element('top', 'Copy an image', 'half').onclick = async () => {
     const c = document.createElement('canvas'); c.width = 120; c.height = 90; const g = c.getContext('2d');
@@ -533,6 +558,8 @@ FIREFOX_PREFS = {
     "media.navigator.permission.disabled": True,
     # Reading the clipboard from a page without Firefox's Paste popup: the X11 instance gets no keys.
     "dom.events.testing.asyncClipboard": True,
+    # The file chooser through the portal, as Firefox from Flathub asks for it.
+    "widget.use-xdg-desktop-portal.file-picker": 1,
 }
 
 
@@ -724,54 +751,56 @@ class Smoke:
 
     # FileChooser ------------------------------------------------------------------------------------------------
 
-    def chooser_buttons(self, backend, window):
-        """Where each backend's chooser draws Cancel and its primary button (Open, Save), in its window.
-        GTK 3 (xdg-desktop-portal-gtk): both in the header bar. Nautilus (GNOME's): Cancel is the window's
-        close button at the top right, Open and Save at the bottom right."""
+    def chooser_places(self, window):
+        """Where Nautilus's chooser (GNOME's backend) draws what the test clicks, in its window: the window's close
+        button, top right, which cancels; Open or Save, at the bottom right; the first file of the folder's grid,
+        right of the sidebar (measured in the guest)."""
         w = windows()[window["id"]]
-        floating = w["is_floating"]
         size = w["layout"]["window_size"]
-        origin = (w["layout"]["tile_pos_in_workspace_view"] if floating else (0, 0))
-        place = lambda x, y: (round(self.apps.output["x"] + origin[0] + (x if x >= 0 else size[0] + x)),
-                              round(self.apps.output["y"] + origin[1] + (y if y >= 0 else size[1] + y)))
-        if backend == "gtk":
-            return {"cancel": place(44, 22), "primary": place(-46, 22)}
-        return {"cancel": place(-24, 22), "primary": place(-62, -34)}
+        origin = w["layout"]["tile_pos_in_workspace_view"] if w["is_floating"] else (0, 0)
 
-    def chooser_backend(self):
-        owners = Monitor.owners()
-        calls = [c for c in self.monitor.calls() if c[0] == "FileChooser"]
-        check(calls, "FileChooser reached no backend")
-        return owners.get(calls[-1][2], calls[-1][2])
+        def place(x, y):
+            return (round(self.apps.output["x"] + origin[0] + (x if x >= 0 else size[0] + x)),
+                    round(self.apps.output["y"] + origin[1] + (y if y >= 0 else size[1] + y)))
+        return {"cancel": place(-24, 22), "primary": place(-62, -34), "first": place(352, 125),
+                "rect": (origin[0], origin[1], size[0], size[1])}
+
+    def clear_of_band(self, window, label):
+        """A window must end above the band Niri keeps for the shell's indicators."""
+        x, y, w, h = self.chooser_places(window)["rect"]
+        bottom = self.apps.output["height"] - (120 if self.apps.output["width"] < 900 else 60)
+        check(y + h <= bottom, f"{label} reaches {y + h} px, into the indicators' band below {bottom} px")
 
     def check_chooser(self):
         probe = self.need_probe()
         folder = Path(tempfile.mkdtemp(prefix="flow-f012-files-", dir=Path.home()))
+        target = Path(tempfile.mkdtemp(prefix="flow-f012-save-", dir=Path.home()))
         try:
             secret, other = uuid.uuid4().hex, uuid.uuid4().hex
+            # Named so that the chosen file is the first in the grid, as Nautilus sorts it.
             (folder / "chosen.txt").write_text(secret)
-            (folder / "beside.txt").write_text(other)
-            (folder / "save-here").mkdir()
+            (folder / "other.txt").write_text(other)
             options = f"{{'current_folder': <b'{folder}'>}}"
 
             # Cancel.
             before = set(windows())
             thread, result = probe.request("FileChooser", "OpenFile", f"('', 'Open a test file', {options})")
             window = self.dialog(None, before, "the file chooser")
-            backend = self.chooser_backend()
-            self.pointer.click(self.chooser_buttons(backend, window)["cancel"])
+            self.clear_of_band(window, "The chooser")
+            self.pointer.click(self.chooser_places(window)["cancel"])
             answer = finish(thread, result, "Cancel")
             check(answer.get("response") == 1 and not answer["results"].get("uris"),
                   f"Cancel answered {answer}, not 1 with no file")
 
-            # Open: the file's name typed, Open clicked.
+            # Open: the file clicked, then Open.
             before = set(windows())
             thread, result = probe.request("FileChooser", "OpenFile", f"('', 'Open a test file', {options})")
             window = self.dialog(None, before, "the file chooser")
-            keys("chosen.txt")
-            time.sleep(0.5)
+            places = self.chooser_places(window)
+            self.pointer.click(places["first"])
+            time.sleep(0.6)
             self.shot("chooser-open")
-            self.pointer.click(self.chooser_buttons(self.chooser_backend(), window)["primary"])
+            self.pointer.click(places["primary"])
             answer = finish(thread, result, "Open")
             uris = answer.get("results", {}).get("uris") or []
             check(answer.get("response") == 0 and len(uris) == 1, f"Open answered {answer}")
@@ -781,9 +810,9 @@ class Smoke:
             doc = str(Path(path).parent)
             got = probe.send(do="read", path=path)
             check(got.get("text") == secret, f"The probe read {got} from the chosen file")
-            for label, attempt in (("the file beside it", f"{doc}/beside.txt"),
+            for label, attempt in (("the file beside it", f"{doc}/other.txt"),
                                    ("its original path", str(folder / "chosen.txt")),
-                                   ("the file beside its original path", str(folder / "beside.txt"))):
+                                   ("the file beside its original path", str(folder / "other.txt"))):
                 got = probe.send(do="read", path=attempt)
                 check(got.get("error") in ("FileNotFoundError", "PermissionError"),
                       f"The probe could read {label}: {got}")
@@ -794,15 +823,15 @@ class Smoke:
             edited = uuid.uuid4().hex
             check(probe.send(do="write", path=path, text=edited).get("written"), "The probe could not write the chosen file")
             check((folder / "chosen.txt").read_text() == edited, "The probe's write did not reach the chosen file")
-            check((folder / "beside.txt").read_text() == other, "The file beside the chosen one changed")
+            check((folder / "other.txt").read_text() == other, "The file beside the chosen one changed")
 
             # Save: the suggested name kept, Save clicked.
             before = set(windows())
-            save_options = f"{{'current_folder': <b'{folder / 'save-here'}'>, 'current_name': <'saved-by-probe.txt'>}}"
+            save_options = f"{{'current_folder': <b'{target}'>, 'current_name': <'saved-by-probe.txt'>}}"
             thread, result = probe.request("FileChooser", "SaveFile", f"('', 'Save a test file', {save_options})")
             window = self.dialog(None, before, "the save dialog")
             self.shot("chooser-save")
-            self.pointer.click(self.chooser_buttons(self.chooser_backend(), window)["primary"])
+            self.pointer.click(self.chooser_places(window)["primary"])
             answer = finish(thread, result, "Save")
             uris = answer.get("results", {}).get("uris") or []
             check(answer.get("response") == 0 and len(uris) == 1, f"Save answered {answer}")
@@ -811,15 +840,62 @@ class Smoke:
                   f"Save gave the sandbox {path}")
             written = uuid.uuid4().hex
             check(probe.send(do="write", path=path, text=written).get("written"), "The probe could not write the saved file")
-            saved = folder / "save-here" / "saved-by-probe.txt"
+            saved = target / "saved-by-probe.txt"
             check(saved.exists() and saved.read_text() == written, "The saved file is not where the user chose")
-            check(sorted(p.name for p in (folder / "save-here").iterdir()) == ["saved-by-probe.txt"],
+            check(sorted(p.name for p in target.iterdir()) == ["saved-by-probe.txt"],
                   "Saving left other files in the chosen folder")
-            self.passed("chooser", f"{backend}'s chooser: Cancel answered 1; Open gave the sandbox only the chosen file "
-                                   "(read and written; the file beside it, its original path and the home folder "
-                                   "unseen); Save wrote where the user chose")
+
+            # A real app's upload dialog: Firefox, as a Flatpak Firefox asks (the portal, with its window as the
+            # parent, so Niri floats the chooser over it as a Layer).
+            pages = self.need_pages()
+            self.need_firefox(mode="upload")
+            pages.drain()
+            before = set(windows())
+            self.pointer.click(self.apps.at(0.5, 0.5))
+            window = self.dialog("org.gnome.Nautilus", before, "Firefox's upload dialog")
+            check(windows()[window["id"]]["is_floating"], "Firefox's upload dialog is not floating over Firefox")
+            self.clear_of_band(window, "Firefox's upload dialog")
+            # It opens in the folder Nautilus last used for Firefox: go to the test folder by its path.
+            keys("ctrl+l")
+            keys(f"{folder}/")
+            keys("Return")
+            places = self.chooser_places(window)
+            time.sleep(1)
+            self.shot("chooser-firefox")
+            self.pointer.click(places["first"])
+            time.sleep(0.6)
+            self.pointer.click(places["primary"])
+            upload = pages.wait(["upload"])
+            check(upload["files"] == [{"name": "chosen.txt", "text": edited}], f"Firefox uploaded {upload}")
+            self.passed("chooser", "Nautilus's chooser, clear of the indicators' band: Cancel answered 1; Open gave the "
+                                   "sandbox only the chosen file (read and written; the file beside it, its original "
+                                   "path and the home folder unseen); Save wrote where the user chose; Firefox's "
+                                   "upload dialog, floating over it, uploaded the chosen file")
         finally:
             shutil.rmtree(folder, ignore_errors=True)
+            shutil.rmtree(target, ignore_errors=True)
+
+    # The indicators' band ---------------------------------------------------------------------------------------
+
+    def check_edges(self):
+        """An app's own controls at its window's bottom corners and bottom middle take clicks: the shell's home and
+        work indicators sit in a band Niri keeps windows out of, not over them."""
+        pages = self.need_pages()
+        page = self.need_firefox(mode="edges")
+        w = windows()[page["id"]]
+        width, height = w["layout"]["window_size"]
+        self.clear_of_band(page, "Firefox")
+        o = self.apps.output
+        hit = []
+        for name, (x, y) in (("bottom-right", (width - 30, height - 12)), ("bottom-middle", (width // 2, height - 12)),
+                             ("bottom-left", (30, height - 12))):
+            pages.drain()
+            self.pointer.click((o["x"] + x, o["y"] + y))
+            event = pages.wait(["clicked"], timeout=5)
+            check(event["name"] == name, f"A click on the page's {name} button reached {event['name']}")
+            hit.append(name)
+        self.passed("edges", f"Firefox ends {o['height'] - height} px above the screen's bottom; its own "
+                             f"{', '.join(hit)} buttons took the clicks")
 
     # Screenshot -------------------------------------------------------------------------------------------------
 
@@ -1177,7 +1253,7 @@ class Smoke:
         for unit in ("pipewire", "wireplumber", "xdg-desktop-portal"):
             check(subprocess.run(["systemctl", "--user", "is-active", "--quiet", unit]).returncode == 0, f"{unit} is not active")
         check("XDG_CURRENT_DESKTOP=niri" in env.splitlines(), "The session's XDG_CURRENT_DESKTOP is not niri")
-        check("org.freedesktop.impl.portal.FileChooser=gtk" in conf, f"niri-portals.conf does not name GTK's chooser:\n{conf}")
+        check("FileChooser=" not in conf and "default=gnome;gtk" in conf, f"niri-portals.conf:\n{conf}")
         check(not wrong and not missing, f"Backends: {seen}, intended {INTENDED}; wrong {wrong}, never called {missing}")
         self.passed("backends", "; ".join(f"{i} → {', '.join(sorted(b))}" for i, b in sorted(seen.items())))
 

@@ -2525,6 +2525,23 @@ ShellRoot {
         HomeIndicator { id: workHome; anchors.fill: parent }
     }
     PanelWindow {
+        // The band along the bottom where the home indicator and the work indicator sit. Niri keeps every tiled
+        // window out of it, so neither covers an app's own controls: a dialog's buttons at its bottom right (a
+        // file chooser's Open and Save, F-012), a status bar. It draws nothing and takes no input, and it is
+        // always mapped, so the windows above it never change size when an indicator shows or hides. Its height
+        // is the indicators' row, 8 + 52; where the work indicator rises above the home indicator (below 900 px,
+        // for a Layer's wider controls) it is that raised row too, so the band depends on the screen alone.
+        id: bottomBand
+        anchors { bottom: true; left: true; right: true }
+        implicitHeight: screen && screen.width < 900 ? 120 : 60
+        exclusiveZone: implicitHeight
+        color: "transparent"
+        mask: Region {}
+        WlrLayershell.layer: WlrLayer.Bottom
+        WlrLayershell.namespace: "flow-bottom-band"
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+    }
+    PanelWindow {
         // Work indicator: the focused app of an active Group, and the space's place in this display's Flow.
         // It stays in Overview, where its arrows and position are the way along the row for a pointer
         // or a finger, next to Super+Left/Right and the wheel.

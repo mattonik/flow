@@ -1,7 +1,7 @@
 # ADR-0005: XDG portals for Niri
 
-**Status:** Accepted direction; runtime validation pending  
-**Date:** 2026-11-13
+**Status:** Accepted; amended 2026-11-26 after F-012's runtime tests (FileChooser → GTK, Screenshot → Flow's own backend)  
+**Date:** 2026-11-13, amended 2026-11-26
 
 ## Decision
 
@@ -51,6 +51,32 @@ Using `/Applications/UTM.app/Contents/MacOS/utmctl` without opening or manipulat
 Using absolute guest command paths and the logged-in user's session environment, `systemctl --user is-active xdg-desktop-portal.service` returned `active`, and `busctl --user status org.freedesktop.portal.Desktop` showed an owner running xdg-desktop-portal 1.22.1 as that user. `busctl --user tree` showed the desktop portal object. The GTK and GNOME portal services were also active.
 
 A disposable unsandboxed Gio client requested `FileChooser.OpenFile`. The Nautilus chooser appeared and Escape returned response code 1. A second request provided a NUL-terminated temporary directory, and keyboard selection returned success and exactly the URI of the disposable test file. The first probe omitted the required NUL terminator and opened Home instead; the corrected request opened the test directory. The cancel probe did not record whether the returned URI array was empty. These checks do not establish sandbox permissions, file reading, save, capture, or touch behavior. Continue with a sandboxed app and the other interactive scenarios above.
+
+## Amendment after F-012's tests (2026-11-26)
+
+`tests/niri_portals_smoke.py` exercised every portal F-012 names in the guest (see *F-012 acceptance* in
+`docs/IMPLEMENTATION_STATUS.md`). Two of Niri's defaults failed in Flow, and are replaced:
+
+- **FileChooser → GTK** (`programs.niri.useNautilus = lib.mkDefault false`). Nautilus's chooser, which GNOME's
+  backend opens, puts Open and Save at the bottom right of its window. Flow's work indicator sits there over every
+  space (*03 / 03*), and over a floating window it shows *Layer · Files · Make space · Close*: a click on Save
+  reached the indicator, and over Firefox's upload dialog it would have hit *Close*. GTK's chooser has Cancel and
+  Open/Save in its header bar, which nothing of Flow's covers (the island covers the middle of the Save dialog's
+  name field; the field takes the keyboard and its ends take clicks). Nautilus stays Flow's file manager. The
+  wider question, Flow's surfaces over the edges of apps' windows, is the shell's, not the portals'.
+- **Screenshot → Flow** (`session/screenshot_portal.py`, `org.freedesktop.impl.portal.desktop.flow`). GNOME's
+  backend answers `interactive: true` by calling `org.gnome.Shell.Screenshot.InteractiveScreenshot`, which Niri
+  26.04 does not implement (it has `Screenshot` and `PickColor`), so every interactive request failed with answer 2.
+  This reverses the rejection of a Flow-authored backend above, for one interface, now that the capability is
+  shown missing. It asks through GTK's Access dialog (*Take Screenshot* or *Cancel*) and takes the whole screen
+  with Niri's `Screenshot`; area and window choices are not offered, because Niri's own screenshot UI reports
+  nothing on D-Bus when the user cancels, which would leave the request waiting. Requests that are not interactive
+  are taken at once, as the broker has asked first; `PickColor` goes to Niri's picker. Retire it once Niri
+  implements `InteractiveScreenshot`.
+
+Kept as Niri's module chose them: ScreenCast (GNOME: Niri's Mutter ScreenCast API, DMA-BUF only), Access and
+Notification (GTK), Secret (GNOME Keyring). PipeWire comes from NixOS's `graphical-desktop` module, which Niri's
+session enables; Flow's module check asserts it, with the portal routing above.
 
 ## References
 
