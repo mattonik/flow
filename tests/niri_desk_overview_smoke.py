@@ -375,7 +375,7 @@ class Smoke:
              lambda: ui.click(ui.control("desk", "Return to work")), None),
             ("Desk: the Platform API's ShowDesk, then Escape", lambda: ui.ipc("desk_open"), lambda: k("esc"), None),
             ("Desk: Super+H, then pin 1's card", lambda: k("super", "h"), lambda: ui.click(ui.pin_card(0)), "a"),
-            ("Desk: Super+H, then Super+2", lambda: k("super", "h"), lambda: k("super", "2"), "c"),
+            ("Desk: Super+H, then Super+2", lambda: k("super", "h"), lambda: k("super", "2"), "b"),
             ("Desk: Super+H, then Spaces and f's space", lambda: k("super", "h"), lambda: ui.via_switcher("f"), "f"),
         ]
         shots = None
@@ -459,6 +459,289 @@ class Smoke:
         ]
         for label, reveal, back, focus in cases:
             self.case(label, reveal, lambda: self.niri_open() and not self.surfaces(), back, focus=focus)
+
+    def part_layer(self):
+        """A Layer (a floating window over f's space, made one by Flow) open and focused."""
+        self.focus_window("f")
+        self.open_app("l")
+        self.focus_window("l")
+        self.spaces("make-layer")
+        wait_for(lambda: self.window("l")["is_floating"] and self.window("l")["id"] in self.json("spaces_view")["layers"],
+                 "l to be a Layer the shell shows")
+        k = self.keys
+        for label, reveal, shown, back in [
+                ("Layer: Super+H, then Escape", lambda: k("super", "h"), self.desk_open, lambda: k("esc")),
+                ("Layer: Super+O, then Escape", lambda: k("super", "o"), self.overview_open, lambda: k("esc")),
+                ("Layer: four fingers up, then down", lambda: self.devices.swipe(4, 0, -1600),
+                 lambda: self.niri_open() and not self.surfaces(), lambda: self.devices.swipe(4, 0, 1600))]:
+            self.case(label, reveal, shown, back, home="l")
+        self.close("l")
+
+    def close(self, name):
+        ident = self.wid(name)
+        niri("action", "close-window", "--id", ident)
+        wait_for(lambda: self.window(name, missing_ok=True) is None, f"{name} to close")
+        del self.apps[name]
+
+    def part_workspace(self):
+        """Focus on g, on the workspace below the row's."""
+        k = self.keys
+        for label, reveal, shown, back in [
+                ("The workspace below: Super+H, then Escape", lambda: k("super", "h"), self.desk_open, lambda: k("esc")),
+                ("The workspace below: Super+O, then Enter", lambda: k("super", "o"), self.overview_open, lambda: k("enter")),
+                ("The workspace below: four fingers up, then Escape", lambda: self.devices.swipe(4, 0, -1600),
+                 lambda: self.niri_open() and not self.surfaces(), lambda: k("esc"))]:
+            self.case(label, reveal, shown, back, home="g")
+
+    def without(self, captured, name):
+        """``captured`` with ``name``'s window ID left out: a window opened again has a new one."""
+        copy = json.loads(json.dumps({k: v for k, v in captured.items() if k not in ("shots", "files")}))
+        if name in copy["work"]["windows"]:
+            copy["work"]["windows"][name]["id"] = "new"
+        if copy.get("view"):
+            ident = {w["id"] for w in [captured["work"]["windows"].get(name)] if w}
+            for pin in copy["view"]["pins"]:
+                pin["window_ids"] = ["new" if i in ident else i for i in pin["window_ids"]]
+            for space in copy["view"]["spaces"]:
+                if int(space["id"]) in ident:
+                    space["id"] = "new"
+        return copy
+
+    def same_as(self, label, got, reference, name):
+        problems = []
+        if self.without(got, name) != self.without(reference, name):
+            problems.append(f"the work differs from Niri's without Desk: {diff_dicts(self.without(reference, name), self.without(got, name))}")
+        for output in reference["shots"]:
+            count = differ(reference["shots"][output], got["shots"][output])
+            if count:
+                self.save(f"{slug(label)}-desk", {output: got["shots"][output]})
+                self.save(f"{slug(label)}-direct", {output: reference["shots"][output]})
+                problems.append(f"{output} differs from the same without Desk in {count} pixels")
+        if problems:
+            raise Failure(f"{label}: " + "; ".join(problems))
+
+    def part_open_close(self):
+        """A window that opens, or closes, while Desk is shown does what it does without Desk."""
+        k = self.keys
+        self.focus_window("e")
+        time.sleep(0.3)
+        start = self.capture()
+        k("super", "h")
+        wait_for(self.desk_open, "Desk")
+        self.open_app("n")
+        time.sleep(1)
+        if not self.desk_open() or self.layers() == start["layers"]:
+            raise Failure(f"A window opening closed Desk: {sorted(self.surfaces())}")
+        k("esc")
+        wait_for(lambda: not self.surfaces(), "Desk to close")
+        with_desk = self.capture()
+        self.close("n")
+        self.focus_window("e")
+        time.sleep(0.3)
+        again = self.capture()
+        self.compare("Closing the new window again", start, again)
+        self.open_app("n")
+        direct = self.capture()
+        self.same_as("A window opened while Desk was shown", with_desk, direct, "n")
+        self.step("a window opened while Desk was shown: Desk stayed open; after Escape the row, focus and screen were "
+                  "as when it opens with Desk closed")
+
+        before = self.capture()
+        k("super", "h")
+        wait_for(self.desk_open, "Desk")
+        self.close("n")
+        time.sleep(1)
+        if not self.desk_open():
+            raise Failure(f"A window closing closed Desk: {sorted(self.surfaces())}")
+        k("esc")
+        wait_for(lambda: not self.surfaces(), "Desk to close")
+        with_desk = self.capture()
+        self.focus_window("e")
+        self.open_app("n")
+        again = self.capture()
+        self.same_as("Opening the window again", before, again, "n")
+        self.close("n")
+        direct = self.capture()
+        self.same_as("A window closed while Desk was shown", with_desk, direct, "n")
+        self.pins_reach("a window opening and closing under Desk")
+        self.step("the focused window closed while Desk was shown: Desk stayed open; after Escape the row, focus and "
+                  "screen were as when it closes with Desk closed; Super+1 and Super+2 reached their pins")
+
+    def motion(self):
+        return self.json("desk_motion") or {}
+
+    def part_mid_transition(self):
+        """A toggle that comes while a transition still runs is taken, every time."""
+        k = self.keys
+        for attempt in range(3):
+            self.focus_window("e")
+            time.sleep(0.3)
+            before = self.capture()
+            counted = self.motion()["toggled_mid_rise"]
+            k("super", "h")
+            wait_for(lambda: self.motion().get("entering"), "Desk's rise to start", timeout=3, step=0.005)
+            k("super", "h")
+            time.sleep(1)
+            after = self.capture()
+            if self.motion()["toggled_mid_rise"] != counted + 1:
+                raise Failure(f"Super+H again did not come during Desk's rise (attempt {attempt + 1}): {self.motion()}")
+            self.compare(f"Super+H again during Desk's rise ({attempt + 1})", before, after)
+        self.step("Super+H again during Desk's 220 ms rise (the shell counted it there, three times) closed Desk: its layer "
+                  "surface was gone and the screen was the work view again")
+
+        before = self.capture()
+        for presses in (3, 5):
+            for _ in range(presses):
+                k("super", "h")
+                time.sleep(0.06)
+            wait_for(self.desk_open, f"Desk after {presses} quick presses", timeout=3)
+            time.sleep(0.5)
+            if not self.desk_open():
+                raise Failure(f"{presses} quick presses of Super+H left Desk closed")
+            k("esc")
+            wait_for(lambda: not self.surfaces(), "Desk to close")
+        after = self.capture()
+        self.compare("Super+H pressed quickly three and five times", before, after)
+        self.step("Super+H pressed three and five times in quick succession left Desk open each time, and Escape returned "
+                  "to the same work")
+
+        before = self.capture()
+        counted = self.motion()["again_while_pending"]
+        k("super", "o")
+        wait_for(lambda: "pending" in self.surfaces(), "Overview to start opening", timeout=3, step=0.005)
+        k("super", "o")
+        wait_for(self.desk_open, lambda: f"Desk after Super+O twice quickly ({sorted(self.surfaces())})", timeout=3)
+        time.sleep(1)
+        if self.surfaces() != {"desk"} or self.motion()["again_while_pending"] != counted + 1:
+            raise Failure(f"Super+O again while Overview opened: {sorted(self.surfaces())}, {self.motion()}")
+        k("esc")
+        wait_for(lambda: not self.surfaces(), "Desk to close")
+        self.compare("Super+O again while Overview opened", before, self.capture())
+        self.step("Super+O again while Overview was still opening went on to Desk, as again does once it is open")
+
+        before = self.capture()
+        self.devices.swipe(4, 0, -1600, steps=8)
+        self.devices.swipe(4, 0, 1600, steps=8)
+        time.sleep(1)
+        niri_after = read("overview-state")["is_open"]
+        niri("action", "toggle-overview")
+        time.sleep(0.05)
+        niri("action", "toggle-overview")
+        time.sleep(1)
+        after = self.capture()
+        if niri_after or self.niri_open():
+            raise Failure("Niri's overview stayed open after an opening interrupted")
+        self.compare("Niri's overview interrupted while opening", before, after)
+        self.pins_reach("the interrupted transitions")
+        self.step("Niri's overview, opened by four fingers and closed by four fingers straight after, and toggled twice "
+                  "50 ms apart, was closed and the work the same")
+
+    def frames(self, trigger, output, seconds=0.8):
+        """Screenshots of ``output`` as fast as grim takes them, from just before ``trigger`` for ``seconds``."""
+        import threading
+        taken, stop = [], threading.Event()
+
+        def run():
+            while not stop.is_set():
+                taken.append(self.grab(output))
+        thread = threading.Thread(target=run)
+        thread.start()
+        time.sleep(0.1)
+        trigger()
+        time.sleep(seconds)
+        stop.set()
+        thread.join()
+        return taken
+
+    def in_between(self, frames, start, end):
+        """Frames that are neither the work view before nor the surface's settled frame: motion caught midway."""
+        return [f for f in frames if differ(f, start) and differ(f, end)]
+
+    def motion_counts(self):
+        output = self.work()["focused_output"]
+        self.focus_window("e")
+        time.sleep(0.3)
+        work = self.settled(output)
+        desk = self.frames(lambda: self.keys("super", "h"), output)
+        desk_end = self.settled(output)
+        self.keys("esc")
+        wait_for(lambda: not self.surfaces(), "Desk to close")
+        self.settled(output)
+        live = self.frames(lambda: niri("action", "open-overview"), output)
+        live_end = self.settled(output)
+        niri("action", "close-overview")
+        wait_for(lambda: not self.niri_open(), "Niri's overview to close")
+        self.settled(output)
+        return {"desk": len(self.in_between(desk, work, desk_end)), "desk_frames": len(desk),
+                "niri": len(self.in_between(live, work, live_end)), "niri_frames": len(live)}
+
+    def part_reduced_motion(self):
+        moving = self.motion_counts()
+        if not (moving["desk"] and moving["niri"]):
+            raise Failure(f"With motion on, the screenshots caught no frame midway, so they could not show motion: {moving}")
+        self.stop_shell()
+        self.start_shell(reduce_motion=True)
+        time.sleep(1.5)  # Niri reloads its configuration once the shell has pointed niri-motion.kdl at niri-still.kdl
+        try:
+            still = self.motion_counts()
+            k = self.keys
+            self.case("Reduce motion: Super+H, then Escape", lambda: k("super", "h"), self.desk_open, lambda: k("esc"))
+            self.case("Reduce motion: four fingers up, then down", lambda: self.devices.swipe(4, 0, -1600),
+                      lambda: self.niri_open() and not self.surfaces(), lambda: self.devices.swipe(4, 0, 1600))
+        finally:
+            self.stop_shell()
+            self.start_shell(reduce_motion=False)
+            time.sleep(1.5)
+        if still["desk"] or still["niri"]:
+            raise Failure(f"With Reduce motion, frames were caught midway (Desk {still['desk']} of {still['desk_frames']}, "
+                          f"Niri's overview {still['niri']} of {still['niri_frames']})")
+        self.step(f"Reduce motion: no frame midway for Desk ({still['desk_frames']} screenshots) or Niri's overview "
+                  f"({still['niri_frames']}); with it off, {moving['desk']} of {moving['desk_frames']} and {moving['niri']} of "
+                  f"{moving['niri_frames']} were caught midway")
+
+    def display(self, on):
+        subprocess.run(["sudo", "-n", "tee", "/sys/class/drm/card1-Virtual-2/status"], input=("on" if on else "off") + "\n",
+                       text=True, stdout=subprocess.DEVNULL, check=True, timeout=10)
+        subprocess.run(["sudo", "-n", "udevadm", "trigger", "--action=change", "/sys/class/drm/card1"], check=True, timeout=10)
+        wait_for(lambda: ("Virtual-2" in self.outputs()) == on, f"Virtual-2 to turn {'on' if on else 'off'}", timeout=15)
+
+    def part_displays(self):
+        """A second display, with its own windows, pin and focus."""
+        self.display(True)
+        try:
+            time.sleep(2)
+            niri("action", "focus-monitor", "Virtual-2")
+            wait_for(lambda: self.work()["focused_output"] == "Virtual-2", "focus on Virtual-2")
+            self.open_app("x")
+            self.focus_window("x")
+            self.spaces("pin")
+            self.open_app("y")
+            self.focus_window("y")
+            shown = self.spaces("refresh")["display"]  # the focused display's
+            self.external = shown.get("number")
+            if not self.external:
+                raise Failure(f"Virtual-2 has no display number: {shown}")
+            # The shell's pin and display lists, refreshed with the new output.
+            wait_for(lambda: len((self.json("spaces_view") or {}).get("pins", [])) == 1, "the shell to show Virtual-2's pin")
+            k = self.keys
+            cases = [("Main, Virtual-2 on: Super+H, then Escape", "e", lambda: k("super", "h"), self.desk_open, lambda: k("esc")),
+                     ("Main, Virtual-2 on: Super+O, then Escape", "e", lambda: k("super", "o"), self.overview_open, lambda: k("esc")),
+                     ("Virtual-2: Super+H, then Escape", "y", lambda: k("super", "h"), self.desk_open, lambda: k("esc")),
+                     ("Virtual-2: Super+H, then Super+H", "y", lambda: k("super", "h"), self.desk_open, lambda: k("super", "h")),
+                     ("Virtual-2: Super+O, then Escape", "y", lambda: k("super", "o"), self.overview_open, lambda: k("esc")),
+                     ("Virtual-2: Super+O, then Enter", "y", lambda: k("super", "o"), self.overview_open, lambda: k("enter")),
+                     ("Two displays: four fingers up, then down", "y", lambda: self.devices.swipe(4, 0, -1600),
+                      lambda: self.niri_open() and not self.surfaces(), lambda: self.devices.swipe(4, 0, 1600))]
+            for label, home, reveal, shown, back in cases:
+                self.case(label, reveal, shown, back, home=home)
+                self.keys("super", "leftalt", str(self.external))
+                self.keys("super", "leftalt", "1")
+                wait_for(lambda: self.work()["focused"] == "x", f"Super+Alt+{self.external}, 1 to reach Virtual-2's pin after {label}")
+            self.step(f"after each, Super+Alt+{self.external} then 1 reached Virtual-2's pin")
+            self.close("x")
+            self.close("y")
+        finally:
+            self.display(False)
 
 
 def differ(a, b):

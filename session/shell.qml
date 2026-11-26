@@ -729,7 +729,11 @@ ShellRoot {
         openTook[name] = { ms: Date.now() - openStarted[name], count: ((openTook[name] || {}).count || 0) + 1 }
         delete openStarted[name]
     }
+    // Toggles that came while a transition was still running, for tests/niri_desk_overview_smoke.py: each must count.
+    property int deskTogglesMidRise: 0
+    property int overviewAgainWhilePending: 0
     function toggleDesk() {
+        if (deskOpen && deskEnter.running) deskTogglesMidRise += 1
         overviewPending = false
         spacesOverviewOpen = false   // one surface at a time
         notificationsOpen = false
@@ -852,7 +856,9 @@ ShellRoot {
         if (!deskOpen) toggleDesk()
     }
     function toggleSpacesOverview() {
-        if (overviewPending) return
+        // Again while Overview is still opening (taking its snapshot) is again all the same: on to Desk. Ignored, a
+        // quick Super+O Super+O left Overview open, the second press lost.
+        if (overviewPending) { overviewAgainWhilePending += 1; revealDeskFromOverview(); return }
         if (spacesOverviewOpen) revealDeskFromOverview()
         else if (deskOpen) toggleDesk()
         else openSpacesOverview()
@@ -1782,7 +1788,8 @@ ShellRoot {
         function desk_state(): string { return root.deskOpen ? "open" : "closed" }
         // Read-only, for tests/niri_desk_overview_smoke.py: whether Desk's content is still settling in, and where it is.
         function desk_motion(): string {
-            return JSON.stringify({ entering: deskEnter.running, opacity: deskContent.opacity, shift: deskShift.y, shown: deskWindow.visible })
+            return JSON.stringify({ entering: deskEnter.running, opacity: deskContent.opacity, shift: deskShift.y, shown: deskWindow.visible,
+                                    toggled_mid_rise: root.deskTogglesMidRise, again_while_pending: root.overviewAgainWhilePending })
         }
         function overview_state(): string { return root.spacesOverviewOpen ? "open" : "closed" }
         // Back to work without choosing, as Escape does.
