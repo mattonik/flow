@@ -219,8 +219,10 @@ def set_aside_source(path, name):
         raise ValueError(f"Name a saved session that automatic recovery set aside in {path.parent}")
     record = source.with_name(source.name + REOPENED)
     if record.exists():
-        raise ValueError(f"{source.name} was reopened already ({record.read_text(encoding='utf-8').strip()}); "
-                         "open the rest yourself, as reopening it again would open the others twice")
+        how = record.read_text(encoding="utf-8").strip()
+        rest = ("" if how.startswith("reopened") and how.split()[1:2] == how.split()[3:4] else
+                "; open the rest yourself, as reopening it again would open the others twice")
+        raise ValueError(f"{source.name} was reopened already ({how}){rest}. To try again anyway, remove {record}")
     return source
 
 
@@ -1174,12 +1176,21 @@ def main():
                 else:  # refused before opening anything: the user back where they were
                     back_to(started_from, workspace)
                 # Settings offers Reopen it again only if nothing opened: a second run would open those twice.
-                print(json.dumps({"error": str(exc).rstrip(".") + ".", "launched": len(launched)}))
+                print(json.dumps({"error": (str(exc) or type(exc).__name__).rstrip(".") + ".",
+                                  "launched": len(launched)}))
                 sys.exit(1)
             done = (f"Reopened {count} of {len(data['windows'])} windows on an empty workspace." if here
                     else f"Restored {count} windows.")
+            if here and launched and not count and not any(w.get("workspace_id") == workspace["id"]
+                                                           for w in spaces.snapshot()[1]):
+                # Every launch failed and nothing came: not reopened, so it may be tried again.
+                record.unlink(missing_ok=True)
+                launched.clear()
             if here and launched:
-                record.write_text(done.removesuffix(" on an empty workspace.").lower() + "\n", encoding="utf-8")
+                try:
+                    record.write_text(done.removesuffix(" on an empty workspace.").lower() + "\n", encoding="utf-8")
+                except OSError:  # the record from before the first launch still refuses a second reopen
+                    pass
             elif here:
                 back_to(started_from, workspace)
             # Complete: every saved window is back. Settings offers a set-aside session until then, or until
