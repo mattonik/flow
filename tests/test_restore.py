@@ -18,7 +18,7 @@ spec.loader.exec_module(restore)
 
 
 def asides(directory):
-    """The saved sessions recovery set aside in ``directory``, oldest first."""
+    """The saved sessions recovery set aside in ``directory``, by name: oldest first."""
     return sorted(Path(directory).glob("session-before-automatic-recovery-*.json"))
 
 
@@ -252,12 +252,12 @@ class RecoveryTest(unittest.TestCase):
                     self.assertIn(answer["set_aside"], answer["message"])
 
     def test_automatic_start_reopens_nothing_into_work_already_under_way(self):
-        # No marker, but apps open that the saved session does not list, in a Niri instance past ten minutes: a
-        # rollback and back, or a shell that failed at login and was started later. Early, the same apps are ones
-        # started at login; an app the session lists is no such work either.
+        # No marker, but windows open in a Niri instance past ten minutes: a rollback and back, or a shell that
+        # failed at login and was started later. The apps the saved session lists are work too (the user's usual
+        # ones). Early, open windows are apps started with the session; with none open nothing is disturbed.
         saved = json.dumps({"version": 1, "reopen_at_login": True, "windows": [{"app_id": "one", "column": 1}]})
-        for open_apps, age, restores in ((["one", "editor"], 3600, False), (["one", "editor"], 30, True),
-                                         (["one"], 3600, True), ([], 3600, True)):
+        for open_apps, age, restores in ((["one", "editor"], 3600, False), (["one"], 3600, False),
+                                         (["one", "editor"], 30, True), ([], 3600, True)):
             with self.subTest(open_apps=open_apps, age=age), tempfile.TemporaryDirectory() as directory, \
                     patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \
                     patch.object(restore.spaces, "session_id", return_value="session"), \
@@ -273,7 +273,7 @@ class RecoveryTest(unittest.TestCase):
                 self.assertEqual(run.call_count, 1 if restores else 0)
                 self.assertEqual(len(asides(directory)), 0 if restores else 1)
                 if not restores:
-                    self.assertIn("editor", answer["message"])
+                    self.assertIn("one", answer["message"])
 
     def test_niri_age_is_read_on_the_boot_clock(self):
         # Niri's start from /proc against the uptime; a socket whose PID is not Niri's falls back to its ctime.
@@ -291,6 +291,12 @@ class RecoveryTest(unittest.TestCase):
                 (proc / "4242" / "stat").write_text("4242 (python3) " + " ".join(fields))
                 self.assertLess(restore.niri_age(proc), 60)  # the socket file was just made
 
+    def test_an_instance_whose_age_cannot_be_read_counts_as_under_way(self):
+        with patch.object(restore, "niri_age", side_effect=OSError("no socket")):
+            self.assertTrue(restore.under_way_long_enough())
+        with patch.object(restore, "niri_age", return_value=30):
+            self.assertFalse(restore.under_way_long_enough())
+
     def test_a_second_set_aside_keeps_the_first(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "session.json"
@@ -298,7 +304,7 @@ class RecoveryTest(unittest.TestCase):
             restore.set_aside(path)
             path.write_text("second")
             restore.set_aside(path)
-            self.assertEqual(sorted(p.read_text() for p in asides(directory)), ["first", "second"])
+            self.assertEqual([p.read_text() for p in asides(directory)], ["first", "second"])  # by name, by when
 
     def test_a_failed_recovery_keeps_its_reason_for_a_shell_started_again(self):
         saved = json.dumps({"version": 1, "reopen_at_login": True, "windows": []})

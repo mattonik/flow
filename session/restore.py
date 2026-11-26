@@ -198,8 +198,8 @@ def set_aside(path):
     """Move a saved session recovery will not reopen out of the automatic save's way; where it went, or ""."""
     if not path.exists():
         return ""
-    stamp, n = time.strftime("%Y%m%d-%H%M%S"), 0
-    while (aside := path.with_name(SET_ASIDE.format(stamp + (f"-{n}" if n else "")))).exists():
+    stamp, n = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()), 0  # UTC, so the names sort by when
+    while (aside := path.with_name(SET_ASIDE.format(f"{stamp}-{n:02d}"))).exists():
         n += 1
     path.replace(aside)
     return str(aside)
@@ -212,8 +212,9 @@ def set_aside_answer(message, path):
             **({"set_aside": aside} if aside else {})}
 
 
-# With no marker, apps open that the saved session does not list count as work under way only this long after
-# Niri started: at a login, an app started with the session may be open already.
+# With no marker, open windows count as work under way only this long after Niri started. A login's first shell
+# starts with Niri (flow-shell is wanted by niri.service) and asks within seconds, however slow the boot; an app
+# started with the session may be open by then.
 UNDER_WAY_AFTER = 600
 
 
@@ -242,17 +243,16 @@ def under_way_long_enough():
         return True
 
 
-def work_under_way(path):
-    """Apps open in this Niri instance that the saved session does not list: work begun before any shell of this
-    version marked the instance (a rollback and back, a shell that failed at login and was started later). At a
-    login nothing is open yet, or only apps the session lists (one started at login). Unreadable: none."""
+def work_under_way():
+    """The apps of the windows open in this Niri instance, by app ID: work, once the instance has run a while with
+    no marker (a rollback to an older generation and a switch forward, a shell that failed at login and was started
+    later). Whether or not the saved session lists them: a user's work is mostly the apps it lists. None readable:
+    none."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        saved = {w.get("app_id") for w in data.get("windows", []) if isinstance(w, dict)}
         _, windows = spaces.query("Workspaces", "Windows")
     except (OSError, ValueError, AttributeError):
         return []
-    return sorted({w.get("app_id") or "an app without an ID" for w in windows} - saved)
+    return sorted({w.get("app_id") or "an app without an ID" for w in windows})
 
 
 def from_before_reopening(path):
@@ -278,11 +278,10 @@ def automatic(op, path, wait=True, pause=True):
     pause, with its reason: ``"paused": true``, the user was told when it came) or ``off`` (recovery switched on
     since, by hand: nothing is reopened into the windows already there). A shell of a version from before the
     marker wrote none, but every snapshot it wrote lacks ``reopen_at_login``, and none of those is reopened:
-    the upgrade's restart mid-session, or its first login, reopens nothing. With no marker, apps already open
-    that the saved session does not list (``work_under_way``), in an instance past UNDER_WAY_AFTER on the boot
-    clock, mean it is under way: a rollback and back, or a shell that failed at login and was started later;
-    nothing is reopened into them. Either sign alone is not enough: an app started at login is open early, and
-    a first start after a slow boot comes late. Whenever
+    the upgrade's restart mid-session, or its first login, reopens nothing. With no marker, windows open
+    (``work_under_way``) in an instance past UNDER_WAY_AFTER on the boot clock mean it is under way: a rollback
+    and back, or a shell that failed at login and was started later; nothing is reopened into them. A login's
+    first shell asks within seconds of Niri's start, and an app started with the session may be open then. Whenever
     recovery does not reopen a saved session it sets it aside (SET_ASIDE), so the next automatic save does not
     replace it unseen, and says where (``"set_aside"``)."""
     runtime = Path(os.environ["XDG_RUNTIME_DIR"])
@@ -312,7 +311,7 @@ def automatic(op, path, wait=True, pause=True):
                 marker.write_text("ready")
                 return set_aside_answer("Automatic session recovery is ready. The saved session is from before it "
                                         "reopened sessions at login, so it was not reopened.", path)
-            if path.exists() and (open_apps := work_under_way(path)) and under_way_long_enough():
+            if path.exists() and (open_apps := work_under_way()) and under_way_long_enough():
                 marker.write_text("ready")
                 return set_aside_answer("Automatic session recovery is ready. Work was already open ("
                                         + ", ".join(open_apps[:3]) + (", …" if len(open_apps) > 3 else "")

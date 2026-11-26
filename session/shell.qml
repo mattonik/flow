@@ -422,6 +422,9 @@ ShellRoot {
     // Why automatic saving is paused, kept apart from recoveryMessage, which the next recovery command replaces
     // (a Group rename, say). Settings shows it while the pause lasts.
     property string recoveryPauseReason: ""
+    // A saved session recovery set aside instead of reopening it, shown in Settings for this shell's life: the first
+    // automatic save soon replaces recoveryMessage, and Restore session reads only session.json.
+    property string recoverySetAside: ""
     onAutoRecoveryBlockedChanged: if (!autoRecoveryBlocked) recoveryPauseReason = ""
     property string renameGroupId: ""
     property bool switcherOpen: false
@@ -607,10 +610,14 @@ ShellRoot {
                         root.autoRecoveryBlocked = !!result.error
                         if (result.error) root.recoveryPauseReason = result.error
                         // Nothing was reopened, and the saved session was moved aside: said, as the user expected it back.
-                        if (result.set_aside) root.showToast("Nothing was reopened; the saved session was kept aside. See Settings")
+                        if (result.set_aside) {
+                            root.recoverySetAside = result.set_aside
+                            root.showToast("Nothing was reopened; the saved session was kept aside. See Settings")
+                        }
                         // A pause from earlier in this session (a shell restart since): said, as when it came.
                         // A recovery that ran and could not finish opens Settings: it runs only at a Niri instance's first
-                        // shell start, with no work open it does not list (restore.automatic), so before work.
+                        // shell start, and not into windows open past its first ten minutes (restore.automatic), so as a
+                        // rule before work; a shell restarted early with no marker is the exception.
                         if (result.error && result.paused) root.showToast("Automatic saving is paused. Open Settings to review the session")
                         else if (result.error) { root.deskOpen = true; root.settingsOpen = true; Qt.callLater(function() { root.reveal(recoveryStatus) }) }
                     }
@@ -2418,6 +2425,7 @@ ShellRoot {
                             FlowButton { id: restoreSession; implicitHeight: 44; variant: "quiet"; text: "Restore session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: { if (recoveryProcess.running) { root.recoveryMessage = "Wait for automatic recovery to finish"; return } root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
                         }
                         Text { id: recoveryPause; visible: recoveryPreferences.sessionRecovery && root.autoRecoveryBlocked && root.recoveryPauseReason !== "" && root.recoveryPauseReason !== root.recoveryMessage; text: root.recoveryPauseReason; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
+                        Text { id: recoveryAside; visible: root.recoverySetAside !== ""; text: "Not reopened at login: the saved session is kept as " + root.recoverySetAside + ". Rename it to session.json beside it, then Restore session, to reopen it."; textFormat: Text.PlainText; color: floeTheme.textMuted; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 14; font.family: floeTheme.interfaceFont }
                         Text { id: recoveryStatus; visible: root.recoveryMessage !== ""; text: root.recoveryMessage; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
                     }
                     Item {

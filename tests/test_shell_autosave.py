@@ -59,7 +59,9 @@ class ShellAutoSaveTest(unittest.TestCase):
     def test_a_saved_session_set_aside_is_told_in_a_toast(self):
         handler = SHELL[SHELL.index('if (recoveryProcess.command[1] === "auto-start" || recoveryProcess.command[1] === "auto-ready") {'):]
         handler = handler[:handler.index("\n                    }\n")]
-        self.assertRegex(handler, r"if \(result\.set_aside\) root\.showToast\(")
+        self.assertRegex(handler, r"if \(result\.set_aside\) \{\s*root\.recoverySetAside = result\.set_aside\s*root\.showToast\(")
+        # Kept in Settings for the shell's life, as the first automatic save soon replaces recoveryMessage.
+        self.assertRegex(SHELL, r'Text \{ id: recoveryAside; visible: root\.recoverySetAside !== ""')
 
     def test_the_controller_is_told_on_connecting_and_on_every_change(self):
         self.assertRegex(SHELL, r"if \(connected\) \{ write\('\{\"watch\": true, \"auto_save\": ' \+ root\.autoSaveWanted \+ '\}\\n'\)")
