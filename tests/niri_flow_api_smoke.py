@@ -19,7 +19,7 @@ import sys
 import time
 import uuid
 
-from isolated_state import IsolatedState
+from isolated_state import IsolatedState, shell_config
 
 CODE = Path(__file__).resolve().parents[1] / "session"
 NAME = "io.github.mattonik.Flow1"
@@ -207,7 +207,7 @@ def main():
             if len(streams()) != 1:
                 raise RuntimeError(f"Without a shell the service did not follow Niri itself: {streams()}")
             steps.append("without a shell, the service read flow-spaces observe and ran its own event stream")
-            shell_process = subprocess.Popen(["quickshell", "-p", shell], env=env, stdin=subprocess.DEVNULL,
+            shell_process = subprocess.Popen(["quickshell", "-p", shell], env=dict(env, XDG_CONFIG_HOME=shell_config(tmp)), stdin=subprocess.DEVNULL,
                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             # The shell's controller (ADR-0011) serves this state; the service finds it within 5 s, and its own
             # stream, once stopped, is not started again (that would happen 5 s later).

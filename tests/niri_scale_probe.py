@@ -173,6 +173,7 @@ def main():
         runtime, config = tmp / "runtime", tmp / "config"
         runtime.mkdir(mode=0o700)
         config.mkdir()
+        (config / "flow-settings.ini").write_text("[General]\nsessionRecovery=false\n")  # automatic recovery is on by default; not this smoke's subject
         wayland = os.environ.get("WAYLAND_DISPLAY", "wayland-1")
         real_runtime = Path(os.environ["XDG_RUNTIME_DIR"])
         env = dict(os.environ, XDG_STATE_HOME=str(tmp), XDG_CONFIG_HOME=str(config), XDG_RUNTIME_DIR=str(runtime),

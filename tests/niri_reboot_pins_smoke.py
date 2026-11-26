@@ -5,14 +5,18 @@ The checks are listed under *F-003 acceptance* in docs/IMPLEMENTATION_STATUS.md.
 the test runs in phases, one command each, sharing a run folder that outlives the reboot:
 
 - ``prepare RUN --mail THUNDERBIRD``: backs up the real Flow state, settings file and recovery markers into RUN,
-  empties the state folder, turns automatic recovery on and adds desktop entries for the test apps. Then it opens
+  empties the state folder, turns automatic recovery on (with the old key at the false the shell used to write)
+  and adds desktop entries for the test apps. Then it opens
   Mail (Thunderbird, from the store path given, with a profile of its own in RUN), the stand-ins Studio and Notes,
   Files and Scratch, makes Studio and Notes a Group, pins Mail and the Group, and waits for the controller's
   automatic save. Checks the baseline.
-- ``reboot RUN``: reboots the guest.
-- ``logout RUN [--swap-pins]``: ends the Niri session and restarts the display manager, which logs in again
-  automatically. With ``--swap-pins`` the two pins first change places, with the shell stopped, so the saved
-  session's order is no longer the pin order and the Group must come back first.
+- ``reboot RUN``: stops the shell, takes the recovery setting out of the settings file, and reboots the guest.
+- ``logout RUN [--swap-pins]``: stops the shell, takes the setting out, ends the Niri session and restarts the
+  display manager, which logs in again automatically. With ``--swap-pins`` the two pins first change places, so
+  the saved session's order is no longer the pin order and the Group must come back first.
+
+Each restart starts the shell from a settings file without ``sessionRecovery`` and with ``autoRecovery=false``:
+recovery after it is the default's, which the shell then writes back.
 - ``check RUN --after reboot|relogin``: waits for automatic recovery and checks everything again, and that a new
   window put between the pins ends up after them.
 - ``put-back RUN``: closes the windows the test opened and puts the real state, settings, desktop entries and
@@ -343,10 +347,18 @@ def verify(how, record, session):
     group = mine[0]
     check(f"{how}: the Group keeps its ID, name and member order", group_identity(group) == record["group"],
           f"{group_identity(group)} (before: {record['group']})")
-    bound = group.get("bound") or {}
-    check(f"{how}: the Group is bound to the new windows in this Niri session",
-          bound.get("session") == session and bound.get("windows") == {APPS["studio"]: ids["studio"],
-                                                                     APPS["notes"]: ids["notes"]}, json.dumps(bound))
+    # The refresh after recovery binds the Group to its new windows; it may come a moment after recovery reports.
+    wanted = {APPS["studio"]: ids["studio"], APPS["notes"]: ids["notes"]}
+
+    def bound_here():
+        found = next((g for g in load("groups.json")["groups"] if g["id"] == group_id), {}).get("bound") or {}
+        return found if found.get("session") == session and found.get("windows") == wanted else None
+    try:
+        bound = wait_for(bound_here, f"{how}: the Group bound to its new windows", timeout=15)
+    except Failed:
+        bound = None
+    check(f"{how}: the Group is bound to the new windows in this Niri session", bound is not None,
+          json.dumps(bound or next((g for g in load("groups.json")["groups"] if g["id"] == group_id), {}).get("bound")))
 
     pins = load("spaces.json")["pins"]
     check(f"{how}: the same two pins, in the same order", [pin_identity(p) for p in pins] == record["pins"],
@@ -469,12 +481,18 @@ def prepare(run, mail):
     record["phase"] = "backed up"  # from here on put-back restores
     write_record(run, record)
 
+    # This session's marker may say paused (a put-back leaves the real recovery paused in a new session): the test's
+    # own recovery must start afresh on its empty state. Put-back restores the markers on the same boot.
+    for name in record["markers"]:
+        (runtime() / name).unlink(missing_ok=True)
     shutil.rmtree(state, ignore_errors=True)
     state.mkdir(mode=0o700, parents=True)
+    # On while the test sets up; each restart takes it out again (without_recovery_key), so the default decides.
+    # The old key stays at the false every shell used to write, which must not count.
     text = settings.read_text() if settings.exists() else "[General]\n"
-    text = re.sub(r"(?m)^autoRecovery=.*\n?", "", text)
-    text = text.replace("[General]\n", "[General]\nautoRecovery=true\n", 1) if "[General]\n" in text \
-        else "[General]\nautoRecovery=true\n" + text
+    text = re.sub(r"(?m)^(autoRecovery|sessionRecovery)=.*\n?", "", text)
+    lines = "[General]\nautoRecovery=false\nsessionRecovery=true\n"
+    text = text.replace("[General]\n", lines, 1) if "[General]\n" in text else lines + text
     settings.parent.mkdir(parents=True, exist_ok=True)
     settings.write_text(text)
     profile = run / "thunderbird-profile"
@@ -552,10 +570,23 @@ def prepare(run, mail):
     return {"result": "prepared", "group": group_id, "mail": thunderbird.strip()}
 
 
+def without_recovery_key(how):
+    """With the shell stopped, the settings file loses ``sessionRecovery``: the next shell starts on the default.
+    The old ``autoRecovery=false`` stays."""
+    stop_shell()
+    settings = settings_file()
+    settings.write_text(re.sub(r"(?m)^sessionRecovery=.*\n?", "", settings.read_text()))
+    text = settings.read_text()
+    check(f"{how}: the settings file has no sessionRecovery, and autoRecovery=false",
+          not re.search(r"(?m)^sessionRecovery=", text) and re.search(r"(?m)^autoRecovery=false$", text),
+          text.replace("\n", " "))
+
+
 def reboot(run):
     record = read_record(run)
     if record["phase"] not in ("prepared", "checked reboot", "checked relogin"):
         raise Failed(f"Not ready for a reboot: {record['phase']}")
+    without_recovery_key("reboot")
     record["phase"] = "rebooting"
     write_record(run, record)
     print(json.dumps({"rebooting": boot_id()}), flush=True)
@@ -584,6 +615,7 @@ def logout(run, swap=False):
     if record["phase"] not in ("prepared", "checked reboot", "checked relogin"):
         raise Failed(f"Not ready for a log out: {record['phase']}")
     before = niri_session()
+    without_recovery_key("logout")
     if swap:
         swap_pins(record)
     record["phase"] = "logging out"
@@ -633,6 +665,10 @@ def check_after(run, how):
     state = wait_for(recovered, lambda: f"{how}: automatic recovery to finish: {recovery()}", timeout=120, step=0.5)
     check(f"{how}: automatic recovery finished on its own", True,
           f"{time.monotonic() - started:.0f} s after this check started; {state['message']}")
+    text = settings_file().read_text()
+    check(f"{how}: started without the key, the shell wrote the default back: sessionRecovery=true",
+          re.search(r"(?m)^sessionRecovery=true$", text) and re.search(r"(?m)^autoRecovery=false$", text),
+          text.replace("\n", " "))
     verify(how, record, session)
     screenshot(run, {"reboot": "2-after-reboot.png", "relogin": "3-after-relogin.png"}[how])
     new_window_follows(how, record)
@@ -705,8 +741,8 @@ def put_back(run):
             for name in record["markers"]:
                 if (backup / name).exists():
                     shutil.copy2(backup / name, runtime() / name)
-        if (record["settings_existed"] and re.search(r"(?m)^autoRecovery=true$", settings.read_text())
-                and niri_session() != record["session"]):
+        switched_off = settings.exists() and re.search(r"(?m)^sessionRecovery=false$", settings.read_text())
+        if not switched_off and niri_session() != record["session"]:
             # With the real setting on, a shell starting in this new Niri session with no marker would restore the
             # real saved session now. Paused instead: the user reviews it, as after any recovery that needs review.
             write_marker("blocked")

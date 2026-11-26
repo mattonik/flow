@@ -3,6 +3,7 @@
 import contextlib
 import json
 import os
+import re
 import fcntl
 import hashlib
 from collections import Counter
@@ -110,6 +111,29 @@ def saved_order_matches(entries, restored, workspace, windows):
     return True
 
 
+def order_after_pins(entries, restored, workspace, windows, pins, socket, groups=()):
+    """Whether the live row is the saved one, or will be once the next refresh puts pinned spaces first.
+
+    The refresh moves pinned spaces to the front, in pin order, whenever it runs: before recovery looks, or after.
+    So both rows are compared as it leaves them. Pins in another order than the saved session (reordered since the
+    last save) then keep their new order, and the other windows follow them in their saved order."""
+    if saved_order_matches(entries, restored, workspace, windows):
+        return True
+    rows, saved = Counter(), []
+    for entry, window in restored:
+        column = entry.get("column")
+        if not isinstance(column, int) or isinstance(column, bool) or column < 1:
+            return False
+        rows[column] += 1
+        saved.append({**window, "workspace_id": workspace["id"], "is_floating": False,
+                      "layout": {**window.get("layout", {}), "pos_in_scrolling_layout": [column, rows[column]]}})
+    columns = {w["id"]: w["layout"]["pos_in_scrolling_layout"][0]
+               for w in spaces.pin_ordered(workspace, saved, pins, socket, groups)}
+    moved = [({**entry, "column": columns[window["id"]]}, window) for entry, window in restored]
+    return saved_order_matches([entry for entry, _ in moved], moved, workspace,
+                               spaces.pin_ordered(workspace, windows, pins, socket, groups))
+
+
 @contextlib.contextmanager
 def flow_locks(state, wait=True):
     """Flow's locks, as every action takes them: session.lock, then spaces.lock. Without ``wait``, a held
@@ -159,39 +183,156 @@ def save_locked(path, checked=False, if_changed=False, reading=None):
             (" " + "; ".join(warnings) if warnings else ""), "written": path.read_bytes() != before}
 
 
+PAUSED = "Automatic saving is paused; review and save the session."
+# Where automatic recovery puts a saved session it does not reopen, so a save cannot replace it unseen: one file
+# each time, named by when, so a second set-aside never replaces the first.
+SET_ASIDE = "session-before-automatic-recovery-{}.json"
+
+
+def pause_marker(marker, reason=""):
+    """Pause automatic saving for this session, with why: a shell started again later says it again."""
+    marker.write_text("blocked" + ("\n" + reason if reason else ""))
+
+
+def set_aside(path):
+    """Move a saved session recovery will not reopen out of the automatic save's way; where it went, or ""."""
+    if not path.exists():
+        return ""
+    stamp, n = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()), 0  # UTC, so the names sort by when
+    while (aside := path.with_name(SET_ASIDE.format(f"{stamp}-{n:02d}"))).exists():
+        n += 1
+    path.replace(aside)
+    return str(aside)
+
+
+def set_aside_answer(message, path):
+    """``message``, with the saved session set aside and where: ``set_aside`` for the shell's notice."""
+    aside = set_aside(path)
+    return {"message": message + (f" The saved session is kept as {aside}." if aside else ""),
+            **({"set_aside": aside} if aside else {})}
+
+
+# With no marker, open windows count as work under way only this long after Niri started. A login's first shell
+# starts with Niri (flow-shell is wanted by niri.service) and asks within seconds, however slow the boot; an app
+# started with the session may be open by then.
+UNDER_WAY_AFTER = 600
+
+
+def niri_age(proc=Path("/proc")):
+    """Seconds since this Niri instance started, on the boot clock, which a wall-clock jump after login (no RTC,
+    NTP, a VM resumed late) does not move: Niri's process start (its PID is in the socket's name,
+    ``niri.<display>.<pid>.sock``) against the uptime. The socket's creation by the wall clock otherwise."""
+    socket = os.environ.get("NIRI_SOCKET", "")
+    pid = re.search(r"\.(\d+)\.sock$", socket)
+    if pid:
+        try:
+            stat = (proc / pid.group(1) / "stat").read_text()
+            if stat[stat.index("(") + 1:stat.rindex(")")].startswith("niri"):
+                started = int(stat[stat.rindex(")") + 2:].split()[19]) / os.sysconf("SC_CLK_TCK")  # field 22
+                return float((proc / "uptime").read_text().split()[0]) - started
+        except (OSError, ValueError, IndexError):
+            pass
+    return time.time() - os.stat(socket).st_ctime
+
+
+def under_way_long_enough():
+    """Whether this Niri instance has run past UNDER_WAY_AFTER; an instance whose age cannot be read counts."""
+    try:
+        return niri_age() > UNDER_WAY_AFTER
+    except OSError:
+        return True
+
+
+def work_under_way():
+    """The apps of the windows open in this Niri instance, by app ID: work, once the instance has run a while with
+    no marker (a rollback to an older generation and a switch forward, a shell that failed at login and was started
+    later). Whether or not the saved session lists them: a user's work is mostly the apps it lists. None readable:
+    none."""
+    try:
+        _, windows = spaces.query("Workspaces", "Windows")
+    except (OSError, ValueError, AttributeError):
+        return []
+    return sorted({w.get("app_id") or "an app without an ID" for w in windows})
+
+
+def from_before_reopening(path):
+    """Whether the saved session was written before snapshots said they may be reopened at login: by a version
+    with automatic recovery off by default, possibly a Save session made long ago for a manual restore."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False  # unreadable: the restore says what is wrong
+    return isinstance(data, dict) and data.get("reopen_at_login") is not True
+
+
 def automatic(op, path, wait=True, pause=True):
     """An automatic-recovery step. Without ``wait``, recovery's or Flow's locks held elsewhere raise
     BlockingIOError (the resident controller saves this way, and tries again later). Without ``pause``, a save
     that refuses what is there says so (``"refused": true``) and leaves recovery ready: the controller tries
-    once more before it pauses, as what it refused may not last (a second terminal for a quick command)."""
+    once more before it pauses, as what it refused may not last (a second terminal for a quick command).
+
+    The marker belongs to one Niri instance (``spaces.session_id``: boot, socket path, inode and creation). A
+    shell writes it at its first start in that instance whatever the setting: ``auto-start`` (on), or
+    ``auto-seen`` (off: ``off``). So ``auto-start`` reopens the saved session only at a Niri instance's first
+    shell start, however late that comes. A shell started again finds the marker: ``ready``, ``blocked`` (a
+    pause, with its reason: ``"paused": true``, the user was told when it came) or ``off`` (recovery switched on
+    since, by hand: nothing is reopened into the windows already there). A shell of a version from before the
+    marker wrote none, but every snapshot it wrote lacks ``reopen_at_login``, and none of those is reopened:
+    the upgrade's restart mid-session, or its first login, reopens nothing. With no marker, windows open
+    (``work_under_way``) in an instance past UNDER_WAY_AFTER on the boot clock mean it is under way: a rollback
+    and back, or a shell that failed at login and was started later; nothing is reopened into them. A login's
+    first shell asks within seconds of Niri's start, and an app started with the session may be open then. Whenever
+    recovery does not reopen a saved session it sets it aside (SET_ASIDE), so the next automatic save does not
+    replace it unseen, and says where (``"set_aside"``)."""
     runtime = Path(os.environ["XDG_RUNTIME_DIR"])
     marker = runtime / ("flow-recovery-" + hashlib.sha256(spaces.session_id().encode()).hexdigest())
     with marker.with_suffix(".lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
-        state = marker.read_text() if marker.exists() else ""
+        state, _, reason = (marker.read_text() if marker.exists() else "").partition("\n")
         if op == "auto-pause":
-            marker.write_text("blocked")
+            pause_marker(marker)
             return {"message": "Save session to start automatic recovery."}
         if op == "auto-ready":
             marker.write_text("ready")
             return {"message": "Automatic session recovery is ready."}
+        if op == "auto-seen":
+            if not state:
+                marker.write_text("off")
+            return {"message": "Automatic session recovery is off."}
         if op == "auto-start":
+            if state == "off":
+                marker.write_text("ready")
+                return set_aside_answer("Automatic session recovery is ready. It was switched on during this session, "
+                                        "so nothing was reopened; it saves this session from now on.", path)
             if state:
-                return {"message": "Automatic session recovery is ready."} if state == "ready" else {"error": "Automatic saving is paused; review and save the session."}
-            marker.write_text("blocked")
+                return {"message": "Automatic session recovery is ready."} if state == "ready" else {
+                    "error": reason or PAUSED, "paused": True}
+            if path.exists() and from_before_reopening(path):
+                marker.write_text("ready")
+                return set_aside_answer("Automatic session recovery is ready. The saved session is from before it "
+                                        "reopened sessions at login, so it was not reopened.", path)
+            if path.exists() and (open_apps := work_under_way()) and under_way_long_enough():
+                marker.write_text("ready")
+                return set_aside_answer("Automatic session recovery is ready. Work was already open ("
+                                        + ", ".join(open_apps[:3]) + (", …" if len(open_apps) > 3 else "")
+                                        + "), so nothing was reopened into it.", path)
+            pause_marker(marker)
             if path.exists():
                 result = subprocess.run([sys.executable, __file__, "restore"], capture_output=True, text=True)
                 try:
                     output = json.loads(result.stdout)
                 except json.JSONDecodeError:
+                    pause_marker(marker, "Automatic recovery failed; the saved session was preserved.")
                     return {"error": "Automatic recovery failed; the saved session was preserved."}
                 message = output.get("message", "")
                 if result.returncode or not (message.startswith("Restored ") and message.endswith(" windows.")):
-                    return {"error": (output.get("error") or message or "Automatic recovery failed") + " Automatic saving is paused; review and save the session."}
+                    error = (output.get("error") or message or "Automatic recovery failed") + " " + PAUSED
+                    pause_marker(marker, error)
+                    return {"error": error}
             marker.write_text("ready")
             return {"message": "Automatic session recovery is ready."}
         if state != "ready":
-            return {"error": "Automatic saving is paused; review and save the session."}
+            return {"error": PAUSED}
         try:
             with flow_locks(path.parent, wait):
                 try:
@@ -205,13 +346,13 @@ def automatic(op, path, wait=True, pause=True):
             raise
         except Refused as exc:
             if pause:
-                marker.write_text("blocked")
+                pause_marker(marker, str(exc))
             return {"error": str(exc), "refused": True}
         except (ValueError, KeyError, OSError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
-            marker.write_text("blocked")
+            pause_marker(marker, str(exc))
             return {"error": str(exc)}
         except Exception:  # noqa: BLE001 — a bug in saving pauses it, as a crashed save did
-            marker.write_text("blocked")
+            pause_marker(marker, "Automatic saving failed; the saved session was preserved.")
             return {"error": "Automatic saving failed; the saved session was preserved."}
 
 
@@ -340,7 +481,8 @@ def save(path, workspace, windows, session=None, pins=(), registered=None, displ
         if len(matches) == 1 and not any(g["id"] == matches[0]["id"]
                                          and set(g["members"]) == set(matches[0]["members"]) for g in groups):
             raise ValueError("Rejoin or unpin the separated pinned Group before saving; session was not replaced")
-    data = {"version": 1, "session": session, "windows": entries, "groups": groups}
+    # reopen_at_login: written since automatic recovery is on by default; older snapshots are not reopened at login.
+    data = {"version": 1, "reopen_at_login": True, "session": session, "windows": entries, "groups": groups}
     if display:
         data["display"] = display
     if not (if_changed and path.exists() and path.read_text(encoding="utf-8") == json.dumps(data, ensure_ascii=False)):
@@ -502,17 +644,18 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                         else:
                             wait(0.1)
         elif not groups:
+            local = spaces.local_pins(pinned_groups, display)
             for index, (_, window) in enumerate(restored, 1):
                 current, live = checked_snapshot()
                 if any(w.get("workspace_id") == workspace_id and w.get("app_id") in pinned for w in live):
-                    if not saved_order_matches(entries, restored, current, live):
+                    if not order_after_pins(entries, restored, current, live, local, session or "", registered or ()):
                         report.append("Pinned spaces keep their positions; session order needs manual recovery")
                     break
                 action("action", "focus-window", "--id", window["id"])
                 current, live = checked_snapshot()
                 if any(w.get("workspace_id") == workspace_id and w.get("app_id") in pinned for w in live):
                     # A pinned app appeared meanwhile (one opened at login, say): judged as at the top of the loop.
-                    if not saved_order_matches(entries, restored, current, live):
+                    if not order_after_pins(entries, restored, current, live, local, session or "", registered or ()):
                         report.append("Pinned spaces keep their positions; session order needs manual recovery")
                     break
                 action("action", "move-column-to-index", index)
@@ -647,11 +790,9 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 if destinations:
                     workspace, live = checked_snapshot()
                     if any(w.get("workspace_id") == workspace_id and w.get("app_id") in pinned for w in live):
-                        # The next refresh puts pinned spaces first, in pin order: an order it will bring back is saved.
-                        if not (saved_order_matches(entries, restored, workspace, live) or saved_order_matches(
-                                entries, restored, workspace,
-                                spaces.pin_ordered(workspace, live, spaces.local_pins(pinned_groups, display),
-                                                   session or "", registered or ()))):
+                        if not order_after_pins(entries, restored, workspace, live,
+                                                spaces.local_pins(pinned_groups, display), session or "",
+                                                registered or ()):
                             report.append("Pinned spaces keep their positions; session order needs manual recovery")
                         destinations = []
                     else:
@@ -903,7 +1044,7 @@ def main():
             return
         print(json.dumps(import_snapshot(path.parent, data, sys.argv[3], spaces.data_dirs())))
         return
-    if op in ("auto-start", "auto-save", "auto-ready", "auto-pause"):
+    if op in ("auto-start", "auto-save", "auto-ready", "auto-pause", "auto-seen"):
         print(json.dumps(automatic(op, path)))
         return
     if op == "status":

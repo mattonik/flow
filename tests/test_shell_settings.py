@@ -33,6 +33,15 @@ class SettingsTest(unittest.TestCase):
             with self.subTest(block=block.strip()):
                 self.assertEqual(len(re.findall(r"\bproperty\s+\w+\s+\w+", block)), 1)
 
+    def test_automatic_recovery_is_on_unless_switched_off_and_the_old_key_is_not_read(self):
+        # Every shell that started without the old key wrote autoRecovery=false back, so it is not read: a file
+        # holding it, or no key at all, starts with recovery on.
+        recovery = [block for block in settings_blocks(SHELL) if "Recovery" in block]
+        self.assertEqual([re.search(r"property\s+\w+\s+(\w+):\s*(\w+)", block).groups() for block in recovery],
+                         [("sessionRecovery", "true")])
+        self.assertNotIn("autoRecovery:", SHELL)
+        self.assertNotIn("recoveryPreferences.autoRecovery", SHELL)
+
     def test_settings_objects_share_the_two_files(self):
         locations = {re.search(r"location:\s*(\S+)", block).group(1) for block in settings_blocks(SHELL)}
         self.assertEqual(locations, {"root.settingsFile", "root.appearanceFile"})

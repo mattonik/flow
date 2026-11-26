@@ -200,7 +200,7 @@ def main():
         runtime.mkdir(mode=0o700)
         for folder in (bin_dir, config, storm_dir):
             folder.mkdir()
-        (config / "flow-settings.ini").write_text("[General]\nappMenuEnabled=true\n")
+        (config / "flow-settings.ini").write_text("[General]\nappMenuEnabled=true\nsessionRecovery=false\n")  # automatic recovery is on by default; not this smoke's subject
         logs = {name: tmp / f"{name}.log" for name in ("flow-spaces", "flow-search", "flow-appmenu")}
         for name in ("flow-spaces", "flow-search", "flow-appmenu"):
             (bin_dir / name).write_text(RECORDER.format(bash=bash, log=logs[name], real=real[name]))

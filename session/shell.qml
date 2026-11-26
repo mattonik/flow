@@ -134,10 +134,13 @@ ShellRoot {
         location: root.settingsFile
         property bool appMenuEnabled: false
     }
+    // Automatic recovery, on unless switched off. Its key was autoRecovery, off by default; every shell that
+    // started without it wrote autoRecovery=false back (above), so an old false was rarely the user's own. That
+    // key is no longer read: each install starts with recovery on once, and a later switch-off is kept.
     Core.Settings {
         id: recoveryPreferences
         location: root.settingsFile
-        property bool autoRecovery: false
+        property bool sessionRecovery: true
     }
     property var appMenuPath: []
     function currentAppItems() {
@@ -416,6 +419,13 @@ ShellRoot {
     }
     property string recoveryMessage: ""
     property bool autoRecoveryBlocked: true
+    // Why automatic saving is paused, kept apart from recoveryMessage, which the next recovery command replaces
+    // (a Group rename, say). Settings shows it while the pause lasts.
+    property string recoveryPauseReason: ""
+    // A saved session recovery set aside instead of reopening it, shown in Settings for this shell's life: the first
+    // automatic save soon replaces recoveryMessage, and Restore session reads only session.json.
+    property string recoverySetAside: ""
+    onAutoRecoveryBlockedChanged: if (!autoRecoveryBlocked) recoveryPauseReason = ""
     property string renameGroupId: ""
     property bool switcherOpen: false
     onSwitcherOpenChanged: if (!switcherOpen) renameGroupId = ""
@@ -598,9 +608,20 @@ ShellRoot {
                     if (recoveryProcess.command[1] === "save" && root.recoveryToast) { root.recoveryToast = false; root.showToast(root.recoveryMessage) }
                     if (recoveryProcess.command[1] === "auto-start" || recoveryProcess.command[1] === "auto-ready") {
                         root.autoRecoveryBlocked = !!result.error
-                        if (result.error) { root.deskOpen = true; root.settingsOpen = true; Qt.callLater(function() { root.reveal(recoveryStatus) }) }
+                        if (result.error) root.recoveryPauseReason = result.error
+                        // Nothing was reopened, and the saved session was moved aside: said, as the user expected it back.
+                        if (result.set_aside) {
+                            root.recoverySetAside = result.set_aside
+                            root.showToast("Nothing was reopened; the saved session was kept aside. See Settings")
+                        }
+                        // A pause from earlier in this session (a shell restart since): said, as when it came.
+                        // A recovery that ran and could not finish opens Settings: it runs only at a Niri instance's first
+                        // shell start, and not into windows open past its first ten minutes (restore.automatic), so as a
+                        // rule before work; a shell restarted early with no marker is the exception.
+                        if (result.error && result.paused) root.showToast("Automatic saving is paused. Open Settings to review the session")
+                        else if (result.error) { root.deskOpen = true; root.settingsOpen = true; Qt.callLater(function() { root.reveal(recoveryStatus) }) }
                     }
-                    if (recoveryProcess.command[1] === "save" && !result.error && recoveryPreferences.autoRecovery) autoReadyTimer.restart()
+                    if (recoveryProcess.command[1] === "save" && !result.error && recoveryPreferences.sessionRecovery) autoReadyTimer.restart()
                     if (recoveryProcess.command[1] === "rename-group") {
                         root.spacesError = result.error || ""
                         if (!result.error) root.renameGroupId = ""
@@ -610,19 +631,22 @@ ShellRoot {
             }
         }
     }
+    // At each start, whatever the setting: auto-start when it is on, auto-seen when it is off. Either marks this
+    // Niri instance as having had a shell, so a shell started again in it (a crash, an upgrade, the setting
+    // switched on by hand) never reopens the saved session into the windows already open (restore.automatic).
     Timer {
         id: autoStartTimer; interval: 3000
-        Component.onCompleted: if (recoveryPreferences.autoRecovery) start()
+        Component.onCompleted: start()
         onTriggered: {
-            if (!recoveryPreferences.autoRecovery) return
             if (recoveryProcess.running || spacesProcess.running) { restart(); return }
-            recoveryProcess.command = ["flow-recovery", "auto-start"]; recoveryProcess.running = true
+            recoveryProcess.command = ["flow-recovery", recoveryPreferences.sessionRecovery ? "auto-start" : "auto-seen"]
+            recoveryProcess.running = true
         }
     }
     Timer {
         id: autoReadyTimer; interval: 200
         onTriggered: {
-            if (!recoveryPreferences.autoRecovery) return
+            if (!recoveryPreferences.sessionRecovery) return
             if (recoveryProcess.running || spacesProcess.running) { restart(); return }
             recoveryProcess.command = ["flow-recovery", "auto-ready"]; recoveryProcess.running = true
         }
@@ -631,17 +655,20 @@ ShellRoot {
     // setting on, recovery not paused and no Save session, Restore session or rename running (a save during a
     // restore would replace the session it restores, and stop it). It says how each save went. A save that went
     // well leaves the pause as it is: one that ended as the setting was switched must not undo that pause.
-    readonly property bool autoSaveWanted: recoveryPreferences.autoRecovery && !autoRecoveryBlocked && !recoveryWorking
+    readonly property bool autoSaveWanted: recoveryPreferences.sessionRecovery && !autoRecoveryBlocked && !recoveryWorking
     onAutoSaveWantedChanged: if (controller.connected) {
         controller.write(JSON.stringify({ auto_save: autoSaveWanted }) + "\n")
         controller.flush()
     }
     function autoSaved(result) {
-        if (!recoveryPreferences.autoRecovery) return  // switched off since
+        if (!recoveryPreferences.sessionRecovery) return  // switched off since
         recoveryMessage = result.error || result.message || "Recovery unavailable"
         if (!result.error) return
         autoRecoveryBlocked = true
-        deskOpen = true; settingsOpen = true; Qt.callLater(function() { root.reveal(recoveryStatus) })
+        recoveryPauseReason = result.error
+        // Said, not shown: the pause comes while the user works (two windows of one app is enough), so the Desk
+        // stays closed. Settings holds the reason and Save session.
+        showToast("Automatic saving paused. Open Settings to review the session")
     }
     // A display that changes size (a rotation) reshapes the Layers Flow shaped on the next refresh, and Niri
     // may send no window event for a workspace with only floating windows.
@@ -1706,9 +1733,10 @@ ShellRoot {
         function spaces_error(): string { return root.spacesError }
         // Automatic recovery as the shell holds it, for tests/niri_shell_restart_controller_smoke.py.
         function recovery_state(): string {
-            return JSON.stringify({ setting: recoveryPreferences.autoRecovery, paused: root.autoRecoveryBlocked,
+            return JSON.stringify({ setting: recoveryPreferences.sessionRecovery, paused: root.autoRecoveryBlocked,
                                     working: root.recoveryWorking, saving: root.autoSaveWanted,
-                                    message: root.recoveryMessage, connected: controller.connected })
+                                    message: root.recoveryMessage, pause_reason: root.recoveryPauseReason,
+                                    connected: controller.connected })
         }
         // What the shell last read from flow-spaces: pins with their windows, spaces with their Group layout, Layers.
         function spaces_view(): string {
@@ -2373,19 +2401,20 @@ ShellRoot {
                         FlowSwitch {
                             id: autoRecoverySwitch
                             text: "Automatically save and restore session"
-                            checked: recoveryPreferences.autoRecovery
+                            checked: recoveryPreferences.sessionRecovery
                             enabled: !root.recoveryWorking && !root.spacesWorking
                             Accessible.name: text
                             onToggled: {
                                 // Enabled through automatic recovery so focus stays, but a change waits for it:
                                 // the run's result would otherwise undo the pause below.
                                 if (recoveryProcess.running) {
-                                    checked = Qt.binding(() => recoveryPreferences.autoRecovery)
+                                    checked = Qt.binding(() => recoveryPreferences.sessionRecovery)
                                     root.recoveryMessage = "Wait for automatic recovery to finish"
                                     return
                                 }
-                                recoveryPreferences.autoRecovery = checked; recoveryPreferences.sync()
+                                recoveryPreferences.sessionRecovery = checked; recoveryPreferences.sync()
                                 root.autoRecoveryBlocked = true
+                                root.recoveryPauseReason = ""  // a reason from before the switch no longer holds
                                 if (checked) { recoveryProcess.command = ["flow-recovery", "auto-pause"]; recoveryProcess.running = true }
                             }
                         }
@@ -2395,6 +2424,8 @@ ShellRoot {
                             FlowButton { id: saveSession; implicitHeight: 44; text: "Save session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: root.startSaveSession(false) }
                             FlowButton { id: restoreSession; implicitHeight: 44; variant: "quiet"; text: "Restore session"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: { if (recoveryProcess.running) { root.recoveryMessage = "Wait for automatic recovery to finish"; return } root.recoveryMessage = "Restoring applications…"; recoveryProcess.command = ["flow-recovery", "restore"]; recoveryProcess.running = true } }
                         }
+                        Text { id: recoveryPause; visible: recoveryPreferences.sessionRecovery && root.autoRecoveryBlocked && root.recoveryPauseReason !== "" && root.recoveryPauseReason !== root.recoveryMessage; text: root.recoveryPauseReason; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
+                        Text { id: recoveryAside; visible: root.recoverySetAside !== ""; text: "Not reopened at login: the saved session is kept as " + root.recoverySetAside + ". Rename it to session.json beside it, then Restore session, to reopen it."; textFormat: Text.PlainText; color: floeTheme.textMuted; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 14; font.family: floeTheme.interfaceFont }
                         Text { id: recoveryStatus; visible: root.recoveryMessage !== ""; text: root.recoveryMessage; textFormat: Text.PlainText; color: floeTheme.accent; width: parent.width; wrapMode: Text.Wrap }
                     }
                     Item {
