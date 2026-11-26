@@ -478,6 +478,11 @@ ShellRoot {
     // Connected displays in screen order: {key, label, name, number, current}; number 0 is Main.
     property var displays: []
     property string displayName: ""
+    // The focused display's screen. The work view's Island and indicators, Desk and Overview are put there: a layer
+    // surface without a screen goes wherever the compositor's focus is when it maps, so after Desk opened on the second
+    // display and closed, the Island and indicators had moved there from the first (seen in the guest, F-007).
+    property string displayOutput: ""
+    readonly property var workScreen: Quickshell.screens.find(screen => screen.name === displayOutput) || null
     // Super+Alt, display digit, then space digit: the display digit waits here for the space digit.
     property int pendingDisplay: -1
     property string toast: ""
@@ -579,6 +584,7 @@ ShellRoot {
         if (JSON.stringify(otherPins) !== JSON.stringify(result.other_pins || [])) otherPins = result.other_pins || []
         displayLabel = result.display ? result.display.label : ""
         displayName = result.display ? result.display.name || "" : ""
+        displayOutput = result.display ? result.display.output || "" : ""
         displayCount = result.display_count || 1
         if (JSON.stringify(displays) !== JSON.stringify(result.displays || [])) displays = result.displays || []
         displayOrientation = result.orientation || ""
@@ -2025,6 +2031,7 @@ ShellRoot {
     PanelWindow {
         visible: root.deskOpen
         id: deskWindow
+        screen: root.workScreen
         anchors { top: true; bottom: true; left: true; right: true }
         color: floeTheme.canvas
         exclusionMode: ExclusionMode.Ignore
@@ -2537,6 +2544,7 @@ ShellRoot {
         // Overview; again for Desk. Only the bottom 126 × 24 takes input, so it covers little of the app
         // beneath (Flow's columns reach the screen's edge).
         id: homeIndicator
+        screen: root.workScreen
         // Desk and Overview carry their own (a surface opened later stacks above this one).
         visible: !root.deskDrawn && !root.overviewDrawn && !root.switcherOpen && !root.appMenuOpen && !root.searchOpen
         anchors.bottom: true
@@ -2550,6 +2558,7 @@ ShellRoot {
         // It stays in Overview, where its arrows and position are the way along the row for a pointer
         // or a finger, next to Super+Left/Right and the wheel.
         id: workIndicatorWindow
+        screen: root.workScreen
         visible: !root.deskDrawn && !root.switcherOpen && !root.overviewDrawn && !root.appMenuOpen && !root.searchOpen && (!!root.activeSpace || !!root.activeLayer)
         anchors { bottom: true; right: true }
         // Where the bottom controls and this indicator cannot share a row, it rises above them: below 560 px,
@@ -2638,6 +2647,7 @@ ShellRoot {
         // snapshot (openSpacesOverview). Left/Right or the wheel choose, Enter or a click returns to it,
         // Up or the home indicator goes on to Desk, Escape returns to work unchanged.
         id: spacesOverview
+        screen: root.workScreen
         visible: root.spacesOverviewOpen
         anchors { top: true; bottom: true; left: true; right: true }
         color: floeTheme.canvas
@@ -3858,6 +3868,7 @@ ShellRoot {
     }
     PanelWindow {
         id: workIsland
+        screen: root.workScreen
         visible: !root.deskDrawn && !root.overviewDrawn
         anchors.top: true
         implicitWidth: workIslandContent.implicitWidth; implicitHeight: workIslandContent.implicitHeight

@@ -99,3 +99,25 @@ class ReadOnlyTest(unittest.TestCase):
         self.assertIn("root.selectOverview(0)", keys)
         self.assertIn("root.selectOverview(root.displaySpaces.length - 1)", keys)
         self.assertIn(": root.selectOverview(spaceCard.index)", SHELL)
+
+
+class ScreenTest(unittest.TestCase):
+    """The work view's Island and indicators, Desk and Overview are on the focused display's screen, named by the
+    refresh's display output, not wherever the compositor's focus was when each last mapped (F-007)."""
+
+    def test_the_work_surfaces_desk_and_overview_are_on_the_focused_displays_screen(self):
+        self.assertIn("readonly property var workScreen: Quickshell.screens.find(screen => screen.name === displayOutput) || null", SHELL)
+        self.assertIn('displayOutput = result.display ? result.display.output || "" : ""', SHELL)
+        for ident in ("deskWindow", "homeIndicator", "workIndicatorWindow", "spacesOverview", "workIsland"):
+            with self.subTest(window=ident):
+                self.assertIn("screen: root.workScreen", block_after(f"id: {ident}\n").split("\n")[1])
+
+    def test_the_work_view_stays_until_desk_or_overview_has_drawn(self):
+        for ident in ("homeIndicator", "workIndicatorWindow", "workIsland"):
+            with self.subTest(window=ident):
+                visible = next(line for line in block_after(f"id: {ident}\n").split("\n") if "visible:" in line)
+                self.assertIn("!root.deskDrawn", visible)
+                self.assertIn("!root.overviewDrawn", visible)
+                self.assertNotIn("root.deskOpen", visible)
+        self.assertIn("if (deskWindow.visible && !root.deskDrawn) root.deskDrawn = true", SHELL)
+        self.assertIn("if (spacesOverview.visible && !root.overviewDrawn) root.overviewDrawn = true", SHELL)

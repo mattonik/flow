@@ -174,6 +174,13 @@ class RoutingTest(unittest.TestCase):
         self.assertIn(("action", "move-column-to-index", 1), self.actions)
         self.assertNotIn(("action", "focus-window", "--id", 3), self.actions)
 
+    def test_the_refresh_names_the_focused_displays_connector_for_the_shell(self):
+        # The shell puts the work view's Island and indicators, Desk and Overview on that screen (F-007).
+        self.assertEqual(self.invoke("refresh")["display"]["output"], "eDP-1")
+        for ws in self.workspaces:
+            ws["is_focused"] = ws["output"] == "DP-1"
+        self.assertEqual(self.invoke("refresh")["display"]["output"], "DP-1")
+
     def test_new_pin_belongs_to_the_focused_display(self):
         self.pins([])
         self.workspaces[0]["is_focused"], self.workspaces[1]["is_focused"] = False, True

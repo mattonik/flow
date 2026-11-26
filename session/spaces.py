@@ -1999,7 +1999,9 @@ def _run_locked(state, op, arg, reshape=True):
                "other_pins": other_pins(pins, display, displays, connected, ambiguous, workspaces, windows, socket, groups),
                "display": {"key": display, "label": record["label"] if record else workspace.get("output") or "",
                            "name": pin_store.display_name(displays.get(display)),
-                           "number": (displays.get(display) or {}).get("number")},
+                           "number": (displays.get(display) or {}).get("number"),
+                           # The connector the shell puts the work view's Island and indicators, Desk and Overview on.
+                           "output": workspace.get("output") or ""},
                "display_count": len(connected),
                # The shell runs automatic Group layout when a Group does not suit this.
                "orientation": orientation_of((logical["width"], logical["height"]))
