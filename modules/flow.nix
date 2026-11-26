@@ -153,6 +153,14 @@ in {
   options.services.flow.enable = lib.mkEnableOption "the experimental Flow session";
   config = lib.mkIf cfg.enable {
     programs.niri.enable = true;
+    # Portals (ADR-0005, F-012). Niri's module answers FileChooser with GNOME's portal, which opens Nautilus's
+    # chooser: its Open and Save buttons sit at the bottom right, under Flow's work indicator, so a click there
+    # reaches the indicator's Close or Make space instead. GTK's chooser has them in its header bar. Nautilus stays
+    # Flow's file manager, reached over D-Bus as before (services.dbus.packages, below).
+    programs.niri.useNautilus = lib.mkDefault false;
+    # Screen sharing reaches apps as a PipeWire stream (the ScreenCast portal), and Quick Settings' volume uses
+    # WirePlumber: neither works without PipeWire, which Niri's module leaves to the machine.
+    services.pipewire.enable = lib.mkDefault true;
     security.pam.services.swaylock = {};
     hardware.graphics.enable = true;
     fonts.packages = with pkgs; [
@@ -175,7 +183,7 @@ in {
       flowLock
       xwayland-satellite mesa-demos wayland-utils recovery search wireplumber networkmanager flowCli controller
     ]) ++ lib.optionals config.services.desktopManager.plasma6.enable [ (lib.hiPrio kdeSettings) ];
-    services.dbus.packages = [ flowApiActivation ];
+    services.dbus.packages = [ flowApiActivation pkgs.nautilus ];
     # Started on first use by D-Bus activation; it reads Flow state through flow-spaces.
     systemd.user.services.flow-api = {
       description = "Flow Platform API";

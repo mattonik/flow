@@ -25,7 +25,16 @@
         ++ [ config.systemd.user.services.flow-shell.serviceConfig.ExecStart
              config.systemd.user.services.flow-api.serviceConfig.ExecStart ];
       search = lib.findFirst (p: lib.getName p == "flow-search") (throw "no flow-search") config.environment.systemPackages;
-    in assert wrappers != [ ]; assert config.services.gnome.at-spi2-core.enable; pkgs.runCommand "flow-module-check" { } ''
+      # The portal backends Flow intends (ADR-0005, F-012), as the broker will read them: GTK's file chooser, whose
+      # buttons Flow's work indicator does not cover; GNOME's screen casting, which needs PipeWire.
+      portals = config.environment.etc."xdg/xdg-desktop-portal/niri-portals.conf".text;
+      portalNames = map (p: lib.getName p) config.xdg.portal.extraPortals;
+    in assert wrappers != [ ]; assert config.services.gnome.at-spi2-core.enable;
+      assert lib.hasInfix "org.freedesktop.impl.portal.FileChooser=gtk\n" portals;
+      assert lib.hasInfix "default=gnome;gtk\n" portals;
+      assert builtins.elem "xdg-desktop-portal-gnome" portalNames && builtins.elem "xdg-desktop-portal-gtk" portalNames;
+      assert config.services.pipewire.enable && config.services.pipewire.wireplumber.enable;
+      pkgs.runCommand "flow-module-check" { } ''
       ${lib.getExe config.programs.niri.package} validate -c ${niriConfig}
       HOME=$TMPDIR PATH=/no-such ${search}/bin/flow-search --json > rows.json
       ${lib.getExe pkgs.python3} -c 'import json; rows = json.load(open("rows.json")); assert rows and rows[0]["kind"] == "settings", rows'
