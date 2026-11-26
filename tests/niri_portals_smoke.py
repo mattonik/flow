@@ -31,7 +31,7 @@ Checks, in order (names for ``--only``):
   then the page's track ends and Niri lists no cast.
 - ``dnd-file``: a file dragged from Files (Nautilus) onto the page arrives with its name and content.
 - ``dnd-text``: text dragged from Kate onto the page arrives as ``text/plain``.
-- ``clipboard-text``: text copied in GNOME Text Editor (GTK 4, Wayland) is pasted and saved in Kate (Qt 6,
+- ``clipboard-text``: text copied in Mousepad (GTK 3, Wayland) is pasted and saved in Kate (Qt 6,
   Wayland); Kate's is pasted in xterm (X11, through xwayland-satellite), which writes it to a file; xterm's is read
   by Firefox's page (GTK 3, Wayland).
 - ``clipboard-image``: an image copied in KolourPaint (Qt, Wayland) is pasted into Firefox's page (GTK, Wayland);
@@ -56,7 +56,7 @@ is focused again at the end); PortalProbe, uninstalled with its data, and the do
 permission store's screenshot entries; screenshots it caused in ``~/Pictures/Screenshots``; GTK's file-chooser and
 Nautilus's dconf keys; ``recently-used.xbel``; and Flow's saved session and recovery markers, which the installed
 shell's automatic save would otherwise replace with the test's windows (the shell is stopped to put them back, then
-started). Firefox, Kate, KolourPaint and GNOME Text Editor run with configuration and data folders of their own.
+started). Firefox, Kate, KolourPaint and Mousepad run with configuration and data folders of their own.
 The clipboard is left holding the test's last copy.
 """
 
@@ -1322,8 +1322,8 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
         return out.stdout
 
     # Keys go to Wayland apps only, and only before an X11 window has had focus in a check: after one, wtype's chords
-    # reach a Wayland app wrong (GNOME Text Editor's Ctrl+A and Ctrl+C left "c" on the clipboard; KolourPaint's Ctrl+V
-    # opened an empty image), a virtual-keyboard artifact a real keyboard does not have. So the X11 steps come last,
+    # can reach a Wayland app wrong (KolourPaint's Ctrl+V opened an empty image), a virtual-keyboard artifact a real
+    # keyboard does not have. So the X11 steps come last,
     # and the copy from X11 is read by a page with the pointer.
 
     def check_clipboard_text(self):
@@ -1332,7 +1332,10 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
         gtk_file, qt_file, x11_file = self.tmp / "gtk.txt", self.tmp / "qt.txt", self.tmp / "x11.txt"
         gtk_file.write_text(a)
         qt_file.write_text("")
-        gtk = self.apps.start(["gnome-text-editor", "--standalone", gtk_file], app_id="org.gnome.TextEditor",
+        # Mousepad (GTK 3), not GNOME Text Editor (GTK 4): GTK 4 apps drop wtype's chords (Ctrl+A did nothing in the
+        # guest, with or without an X11 window before; named keys such as Return reach them), a virtual-keyboard
+        # artifact of the test's keys, not of Flow.
+        gtk = self.apps.start(["mousepad", "--disable-server", gtk_file], app_id="org.xfce.mousepad",
                               env={"GSETTINGS_BACKEND": "keyfile"})[1]
         qt = self.apps.start(["kate", "-n", qt_file], app_id="org.kde.kate", title="qt.txt")[1]
         for w in (gtk, qt):
@@ -1341,7 +1344,7 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
         # GTK 4 → Qt.
         self.apps.focus(gtk)
         keys("ctrl+a", "ctrl+c")
-        wait_for(lambda: self.wayland_clipboard().decode().strip() == a, "GNOME Text Editor's copy")
+        wait_for(lambda: self.wayland_clipboard().decode().strip() == a, "Mousepad's copy")
         self.apps.focus(qt)
         keys("ctrl+a", "ctrl+v", "ctrl+s")
         wait_for(lambda: qt_file.read_text().strip() == a, lambda: f"Kate to save the paste ({qt_file.read_text()!r})")
@@ -1372,15 +1375,14 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
         read_event = pages.wait(["read", "read-failed"])
         check(read_event["kind"] == "read" and (read_event.get("text") or "").strip() == c,
               f"Firefox read {read_event}, not xterm's copy")
-        self.passed("clipboard-text", "text copied in GNOME Text Editor was pasted and saved in Kate, Kate's pasted in "
+        self.passed("clipboard-text", "text copied in Mousepad (GTK 3) was pasted and saved in Kate, Kate's pasted in "
                                       "xterm (X11), and xterm's read by Firefox (GTK)")
 
     def check_clipboard_image(self):
         pages = self.need_pages()
         c1, c2, c3 = fresh_colour(), fresh_colour(), fresh_colour()
-        src, dst = self.tmp / "copy-from.png", self.tmp / "paste-into.png"
+        src = self.tmp / "copy-from.png"
         src.write_bytes(png(120, 90, c1))
-        dst.write_bytes(png(120, 90, (255, 255, 255)))
 
         def blob_colour(count):
             wait_for(lambda: len(pages.blobs) >= count, "the page's image")
@@ -1405,15 +1407,15 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
         size, got = blob_colour(count)
         check("image/png" in paste["types"] and size == (120, 90) and close(got, c1),
               f"Firefox got {paste}: {size}, colour {got}, not {c1}")
-        self.apps.close_window(kp)
 
-        # GTK → Qt: the page copies, KolourPaint pastes and saves.
+        # GTK → Qt: the page copies, the same KolourPaint pastes it over its image and saves. (A second KolourPaint
+        # started as the first closes showed no document in the guest.)
         self.pointer.click(self.apps.at(0.5, 0.25))
         copied = pages.wait(["copied", "copy-failed"])
         check(copied["kind"] == "copied", f"Firefox could not copy: {copied}")
-        kp = self.apps.start(["kolourpaint", dst], app_id="org.kde.kolourpaint", title="paste-into")[1]
-        self.apps.focus(kp, "100%")
-        time.sleep(2.5)  # its document loaded: a paste before that opens it as a new, unnamed image
+        dst = src
+        self.apps.focus(kp)
+        time.sleep(1)
         keys("ctrl+v")
         time.sleep(1)
         self.shot("clipboard-image-kolourpaint")
@@ -1493,7 +1495,7 @@ def main():
     parser.add_argument("--shots", type=Path)
     args = parser.parse_args()
     for tool in ("niri", "wtype", "grim", "wl-paste", "flatpak", "firefox", "nautilus", "kate", "kolourpaint", "gimp-console",
-                 "gnome-text-editor", "xterm", "foot", "dconf", "busctl", "dbus-monitor", "pw-dump", "flow-pointer"):
+                 "mousepad", "xterm", "foot", "dconf", "busctl", "dbus-monitor", "pw-dump", "flow-pointer"):
         if not shutil.which(tool):
             raise SystemExit(f"{tool} is not on PATH (tests/run_portals_smoke.sh builds the test apps)")
     check(any(w for w in windows().values() if w["workspace_id"] == focused_workspace()["id"]),
