@@ -1252,7 +1252,7 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
         before = set(windows())
         thread, result = self.gimp_shot(out)
         dialog, _, take = self.access_dialog(before)
-        # A user may take a while: longer than D-Bus's default call timeout (25 s), which failed the request once.
+        # A user may take a while: longer than D-Bus's default call timeout (25 s).
         time.sleep(30)
         self.pointer.click(take)
         thread.join(120)

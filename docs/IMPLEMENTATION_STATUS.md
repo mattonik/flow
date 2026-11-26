@@ -17,7 +17,7 @@ The recorded test environment is an Apple Silicon Mac running UTM 5.0.8, QEMU AR
 | F-009 Island/system | Partial | Island, quick settings, lock, a temporary notification inbox and notification banners exist. Apps can show Activities with progress in the island through the Platform API (ADR-0010, 2026-11-21); they are labelled with their owner and end with the app's connection. Quick Settings opens GNOME's Wi-Fi panel and the connection-profile editor, and controls one unambiguous MPRIS player. The guest showed the no-adapter Wi-Fi state; since 2026-11-22 a simulated WPA2 network (`niri_wifi_hwsim_smoke.py`, see *Simulated Wi-Fi*) was found, joined with the right passphrase and refused with a wrong one, and the Network row opened GNOME's panel listing it. Real Wi-Fi hardware, Bluetooth (Flow has no control for it), durable notification history and independent availability across all contexts remain unverified. |
 | F-010 Real accounts | Open | Two-user and guest isolation and switching have not been verified. |
 | F-011 Display hotplug | Partial | In the guest, a second virtual output was disconnected and reconnected through its DRM connector (2026-11-20). Its pins stayed with it and nothing on the other display was reordered, then the pins came back in order. A pinned three-app Group and a single app were moved between the two outputs as one destination each. Physical monitors, docks, connector changes and serial-number identity are unit-tested only. |
-| F-012 Portal correctness | Partial | The guest's portal broker is active and owns its session D-Bus name. A disposable unsandboxed chooser request returned the selected test-file URI, and a second request returned a cancel response. Sandboxed file access, saving, screenshots, screenshare, clipboard and drag/drop remain unverified. |
+| F-012 Portal correctness | Partial | Every portal in the spec's line works in real apps in the guest, by keyboard, on the installed code of this change (see *F-012 acceptance*), but a portal dialog's main button cannot be clicked: the shell's work indicator covers Nautilus's Open and Save, at the chooser's bottom right, and its island and home indicator cover other apps' edges. That overlap is Flow's and is fixed apart (indicators that get out of the way); `edges` and `chooser-pointer` are its acceptance tests and fail until it lands, when F-012 can pass after a re-run of the pointer checks. Passed: a sandboxed Flatpak's file chooser (open and save, access to the chosen file only) and Firefox's upload dialog; screenshots with consent, denial remembered, interactive requests (GIMP 3's included, through Flow's own Screenshot backend, as Niri lacks GNOME's `InteractiveScreenshot`) and PickColor; Firefox's screen sharing through PipeWire, refused on cancel and ended by the page or by Niri's `stop-cast`; files and text dragged from Files and Kate into Firefox; text and images copied between Firefox (GTK), Kate and KolourPaint (Qt) and xterm and Firefox on X11; each interface answered by the backend Flow intends. Not covered: GTK's own text widgets (they drop the test's wtype chords), area or window screenshots, window-only sharing, a sandboxed drop target, touch, multiple displays for capture, and real hardware. |
 | F-013 Audio/peripherals | Open | Volume control was exercised; a Bluetooth headset and microphone were not tested on physical hardware. |
 | F-014 Figma day | Open | No recorded Figma workload, screenshare or browser-load test. |
 | F-015 Development day | Open | Terminal and editors run, but the native-host development, container and VM workflow is not verified. |
@@ -773,6 +773,115 @@ A NEMESIS review of the first version led to the swap, absolute columns in check
 - Screenshots taken right after a focus change showed the previous space: Niri scrolls its view in an animation. The test now focuses the first column, waits for the shell to show it, takes Niri's overview, and puts focus back.
 
 Not covered: the variants above as committed scripts, pins on other displays after a restart, the shortcut typed on a real keyboard, apps that take longer than recovery's 15 s or open several windows, a side-by-side Group after a real restart, a log out with no other session open (which stops the user manager too), and real hardware.
+
+### F-012 acceptance: portals in representative apps (2026-11-26)
+
+The spec's line is "File chooser, screenshots, screenshare, clipboard and drag/drop work in representative apps". F-012 passes when every check below holds in the guest on the installed code built from the change's tree, with the installed shell running as a user has it. Each dialog is answered where its backend draws the button, with the pointer (`tests/pointer.py`), or by keyboard (wtype) where noted.
+
+**Apps, and why each.**
+- **PortalProbe** (`tests/flatpak/portal_probe.py`). Portals exist for sandboxed apps, so a Flatpak asks for files and screenshots. It is built on the freedesktop runtime with no `--filesystem`, `--socket` or `--talk-name`, so what it reaches beyond the portals is what they grant. It is a probe, not a real Flatpak, so that it can also try to read what it must not.
+- **Firefox** (GTK 3, Wayland). The browser of the Figma and video-call days (F-014): it shares the screen through `getDisplayMedia`, uploads through the portal (as Firefox from Flathub asks; here forced with `widget.use-xdg-desktop-portal.file-picker`), takes drops, and copies and pastes. With `MOZ_ENABLE_WAYLAND=0` it is also a real **XWayland** app.
+- **GIMP 3** (3.2.6). Its screenshot plug-in, what *File > Create > Screenshot* runs, always asks the portal with `interactive: true`. Here it runs as a batch call with its last values; GIMP refuses the non-interactive run mode when the portal is its backend, before asking.
+- **Files** (Nautilus, GTK 4), which is also the GNOME backend's chooser.
+- **Kate** and **KolourPaint** (Qt 6, KDE).
+- **xterm**, a native X11 app.
+
+Flow runs xwayland-satellite, so X11 apps are in scope. Each app saves, writes or reports what it received, and the test reads that, not the app's window.
+
+**Backends Flow intends** (ADR-0005, amended 2026-11-26):
+
+| Interface | Backend |
+|---|---|
+| FileChooser, ScreenCast | GNOME (`xdg-desktop-portal-gnome` 51; Nautilus's chooser; Niri's Mutter ScreenCast API) |
+| Screenshot | Flow's own (`session/screenshot_portal.py`) |
+| Access, Notification | GTK |
+| Secret | GNOME Keyring |
+
+`xdg-desktop-portal` 1.22.1 reads this from `/etc/xdg/xdg-desktop-portal/niri-portals.conf` (`XDG_CURRENT_DESKTOP=niri`). PipeWire comes from NixOS's `graphical-desktop` module; the module check asserts it, with WirePlumber and this routing.
+
+**Flow's Screenshot backend.** GNOME's backend answers every interactive screenshot by calling `org.gnome.Shell.Screenshot.InteractiveScreenshot`, which Niri 26.04 does not implement, so GIMP's screenshot and every other interactive request failed. ADR-0005 lists the apps that send it and why no existing backend fits.
+
+Flow's asks through GTK's Access dialog (*Take a Screenshot?*, naming the app as the broker passes it). It asks for every interactive request, and for any other the broker did not check: the broker skips its own check while it has not read the backend's version, for instance after the backend left the bus. So only `permission_store_checked` lets a request through without a dialog.
+
+It captures with grim, the whole layout and every display, once the dialog has had 600 ms to leave the screen. The file is new, created by the backend under `~/Pictures/Screenshots`, mode 0600, never an existing file. Niri's own D-Bus `Screenshot` was dropped: it refuses more than one display, never replies without its folder, and writes wherever `screenshot-path` says.
+
+Cancelling or closing the dialog answers 1 and captures nothing. A Close from the broker closes the dialog and captures nothing, even during the 600 ms. An exception in any step answers 2. The dialog waits as long as the user takes. PickColor goes to Niri's picker; a cancelled pick answers 1.
+
+Area and window choices are not offered (follow-up below). The backend retires once Niri implements `InteractiveScreenshot` ([niri#1983](https://github.com/niri-wm/niri/issues/1983); groundwork in [niri#4820](https://github.com/niri-wm/niri/pull/4820)). `tests/test_screenshot_portal.py` covers each of these paths on a fake bus, and each test fails when the behaviour it names is neutralised.
+
+**Checks** (`tests/niri_portals_smoke.py`, run by `tests/run_portals_smoke.sh`):
+1. **File chooser, from the sandbox, by keyboard** (`chooser`).
+   - Escape answers 1, with no file.
+   - Home and Return open the folder's first file. PortalProbe gets one document-portal path (`/run/user/1000/doc/<id>/chosen.txt`); it can read and write it, and the write reaches the real file. It cannot read the file beside it (through the document folder or that file's own path), the original path, or anything of the home folder beyond its own data.
+   - Return saves under the suggested name: the probe's writes land in the folder the user chose, and nothing else appears there.
+   - Firefox's upload button opens the chooser floating over Firefox (a Layer), and the chosen file reaches the page with its content.
+2. **File chooser by pointer** (`chooser-pointer`). The same, clicking Nautilus's close button, the file, Open and Save where Nautilus draws them.
+3. **Screenshots, with consent** (`screenshot`).
+   - PortalProbe's request opens the Access dialog, naming the app. Deny answers 2, makes no file, and is remembered: the next request is refused without asking.
+   - With that cleared, Allow gives the sandbox a file it can read: the output's size, showing the live screen. A window of a colour chosen for this run covers the screen, and 95% of a grid of points away from the island, the indicators and the closing dialog show that colour.
+   - An interactive request asks through Flow's backend, and the dialog was told the app's ID. Cancel, or closing the dialog, answers 1 and captures nothing. Take Screenshot gives the live screen with the dialog gone from it: 95% of the grid, now including where the dialog was.
+   - The file is mode 0600, under a home folder closed to other users. PickColor answers the colour under a click.
+   - With the backend stopped (off the bus) and PortalProbe's stored answer set to "no", a request that is not interactive is refused by the broker or asked about by the backend's dialog, and Cancel captures nothing. No file appears either way.
+4. **GIMP's screenshot** (`screenshot-gimp`). Cancel gives GIMP no image and leaves no file. Take Screenshot, clicked after 30 s, longer than D-Bus's default call timeout, gives GIMP the live screen.
+5. **Screen sharing** (`screencast`).
+   - Firefox's page asks. Cancelling the portal's dialog refuses it (`NotAllowedError`) and leaves no cast.
+   - Sharing gives the page a stream at the screen's size, Niri lists one PipeWire cast of the output, and PipeWire has its node. A frame from it matches a grim screenshot at 90% of a grid of points, and shows the page's colour for this run.
+   - The share ends, and Niri lists no cast, when the page stops its track. It also ends when it is stopped outside the app with Niri's `stop-cast` (what a key binding or a Flow control would run), and then the page's track ends.
+6. **Drag and drop** (`dnd-file`, `dnd-text`). A file dragged from Files onto Firefox's page arrives with its name and content. Text selected in Kate and dragged onto the page arrives as `text/plain`.
+7. **Clipboard, text** (`clipboard-text`). Copied by Firefox's page, then pasted and saved in Kate. Copied in Kate, then pasted (middle click) in xterm. Copied in xterm (double click), then read by the page. Each holds what was copied.
+8. **Clipboard, image** (`clipboard-image`). Copied in KolourPaint, pasted into Firefox's page (a 120×90 PNG of its colour). Copied by the page, then pasted and saved in KolourPaint, and read by Firefox on X11. Copied by Firefox on X11, then read by the Wayland page. Each image has the colour its copy had.
+9. **The intended backends answered** (`backends`). A D-Bus monitor of the broker's own calls to `org.freedesktop.impl.portal.*` saw each interface above reach the backend in the table and no other. PipeWire, WirePlumber and the broker run.
+10. **An app's edges take clicks** (`edges`). A full-window Firefox page (kiosk) has buttons along its top and bottom edges, left, middle and right, and each must take a click. This is the acceptance test for the shell's overlap fix, below.
+
+**Test-tool limits, not Flow's.** In the guest, wtype cannot type into X11 windows: xwayland-satellite does not take its virtual keymap. So X11 apps are driven by the pointer only: a middle click pastes, a double click copies, page buttons copy and read (Firefox's `dom.events.testing.asyncClipboard` lets a page read the clipboard without its Paste popup). GTK's own text widgets dropped wtype's chords: GNOME Text Editor (GTK 4) and Mousepad (GTK 3) ignored Ctrl+A and Ctrl+C in every form tried, though named keys reach them. So the GTK side of the text clipboard is Firefox's page. After an X11 window has had focus, wtype's chords also reach Wayland apps wrong, so keys come first in each check. Each check ends the apps and closes the windows it opened before the next one starts. The clipboard checks run before the drag checks: run after `dnd-text`, `clipboard-text` found Kate on its welcome page instead of the file it had just opened, every time, though the apps and windows were ended in between, each Kate had folders of its own and the dragged file was read-only. The cause is not known; each check passes alone and in this order. Kate under `QT_QPA_PLATFORM=xcb` draws black in the VM. GStreamer's `pipewiresrc` could not take Niri's DMA-BUF buffers here (BGRx, implicit modifier only; Firefox can), so the frames come from Firefox. Firefox's own permission doorhanger is off (`media.navigator.permission.disabled`): the portal's dialog is the consent F-012 tests.
+
+**The user's state.** The test's windows open on an empty workspace of their own, and a failed check's windows are closed before the next. Everything else it changes is put back however it ends:
+- PortalProbe and its documents;
+- the permission store's screenshot entries;
+- new screenshots;
+- GTK's file-chooser and Nautilus's dconf keys;
+- `recently-used.xbel`;
+- Flow's saved session and recovery markers. The installed shell's automatic save would replace them with the test's windows, so the shell is stopped while they are put back.
+
+Firefox, Kate, KolourPaint and GIMP run with configuration folders of their own. The clipboard is left holding the test's last copy.
+
+**Overlap: the shell over apps' edges (found here, fixed apart).** The island (top middle), the home indicator (bottom middle) and the work indicator (bottom right) sit over every window and take its clicks. So Nautilus's Open and Save, at the chooser's bottom right, cannot be clicked. Over Firefox's floating upload dialog, the work indicator shows *Layer · Files · Make space · Close*, and a click on Open would hit *Close*. A band reserved for the indicators was tried and dropped, since the spec has the island float over content. The user chose indicators that get out of the way: they fade and let clicks through while the pointer is over the part of a window they cover, and come back on edge hover or the usual shortcut. That is its own change. `edges` and `chooser-pointer` are its acceptance tests, and they fail until it lands. The run exits 0 while they are the only failures, and fails if either passes, so the list is updated with the fix. `edges` rests the pointer for 800 ms before each click, as the fix may let clicks through only once the pointer rests. GTK's chooser, with its buttons in the header bar, was tried as a way around it and not kept (ADR-0005).
+
+**Results on the installed code (2026-11-26).**
+- **The build.** The guest ran `8sbc2v8a…`, built from commit 802381b; later commits change only tests and docs (`/etc/floe-test/installs.log` records every switch). It had xdg-desktop-portal 1.22.1, xdg-desktop-portal-gnome 51.0 and -gtk 1.15.3, Niri 26.04, Firefox 159.0.1, GIMP 3.2.6, Kate and KolourPaint 26.08.3, and grim 1.5.0.
+- **The run.** The last full run of `tests/run_portals_smoke.sh --shots` passed 9 checks and exited 0. `chooser-pointer` and `edges` failed, as expected. The system path was the same before and after it.
+  - **Screenshots:** the denied and allowed requests, the stored "no" with the backend off the bus (its own dialog asked; Cancel captured nothing), and the interactive Cancel, close and Take. Each file showed this run's colour at 165/165 and 220/220 points, mode 0600.
+  - **GIMP:** consent, then Cancel and a Take after 30 s.
+  - **Screen sharing:** 399 of 400 points of a frame matched the screen.
+  - **Drags and clipboard:** both drags, the text round of Firefox, Kate and xterm, and the image round of KolourPaint, Firefox and Firefox on X11.
+  - **Backends:** FileChooser and ScreenCast → gnome, Screenshot → flow, Access → gtk (Settings → gnome, gtk; Inhibit → gtk).
+  - **The pointer checks:** Open, clicked at (1218, 766), came to nothing, and the page's top-middle, bottom-middle and bottom-right buttons took no click.
+- **Earlier runs.**
+  - **Before the fixes.** On main's build (`k3as6dw5…`) GIMP's screenshot got no dialog and answered `execution-error`, and the journal showed xdg-desktop-portal-gnome's "Unknown method 'InteractiveScreenshot'".
+  - **Bugs found in the guest, and fixed:**
+    - an app without a desktop entry failed the backend (PyGObject's TypeError for a NULL `GDesktopAppInfo`);
+    - a user who took longer than 25 s to decide got answer 2 (D-Bus's default timeout).
+  - **Bugs found by a NEMESIS review, and fixed:**
+    - the backend took every request that was not interactive at once, though the broker forwards requests unchecked while it has not read the backend's version;
+    - the backend registered its object only once the name was owned;
+    - Niri's D-Bus `Screenshot` refuses more than one display and never replies without its folder.
+- **Neutralised, each in the guest, each failing the check that names it:**
+  - **Consent only for interactive requests:** with the backend stopped and PortalProbe's stored answer "no", the request came back with a screenshot (answer 0, a file in Pictures).
+  - **Screenshot routed to GNOME again:** the interactive dialog never came, and GIMP answered `execution-error`.
+  - **No delay after the dialog:** the screenshot showed the dialog (176/220 points).
+  - **D-Bus's 25 s timeout on the dialog:** GIMP's Take, clicked after 30 s, failed.
+
+  The last three ran on 74c930f's backend, before grim replaced Niri's `Screenshot` as the capture; the routing and both timing paths are unchanged since. The unit tests fail when consent is skipped, the Close guard or the exception guard is removed, a timeout goes back to 25 s, a cancelled pick answers 2, or the file is created world-readable or over an existing one.
+- **Screenshots:** [2026-11-26-f012-portals](screenshots/2026-11-26-f012-portals).
+
+**Follow-ups.**
+- Area and window selection for interactive screenshots. Niri's own UI reports nothing on D-Bus when cancelled; it will come with Niri's `InteractiveScreenshot` (niri#4820).
+- Niri's D-Bus `Screenshot` refuses more than one display and shares one result between concurrent callers: worth an issue upstream (Flow's backend uses grim instead).
+- The 600 ms wait after the dialog is fixed; on a slow system the dialog could still be on the screenshot. Waiting for its window to go would be exact.
+- Host apps are not identified to the portals: Flow launches apps in `run-*.scope` units, not `app-<id>-*.scope`, so the broker passes an empty app ID. Every unsandboxed app shares one screenshot permission, and Flow's dialog says "An app".
+- Flow has no screen-sharing indicator or stop control. Niri's `stop-cast` works; spec §9 asks for privacy status indicators.
+- A sandboxed app as a drop target (the document portal's file transfer) and window-only sharing are untested.
+- Touch, keyboard-only and screen-reader use of the dialogs belong to F-016.
 
 ### Automatic recovery on by default (2026-11-26)
 
