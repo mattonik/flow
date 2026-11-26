@@ -31,9 +31,9 @@ Checks, in order (names for ``--only``):
   then the page's track ends and Niri lists no cast.
 - ``dnd-file``: a file dragged from Files (Nautilus) onto the page arrives with its name and content.
 - ``dnd-text``: text dragged from Kate onto the page arrives as ``text/plain``.
-- ``clipboard-text``: text copied in Mousepad (GTK 3, Wayland) is pasted and saved in Kate (Qt 6,
-  Wayland); Kate's is pasted in xterm (X11, through xwayland-satellite), which writes it to a file; xterm's is read
-  by Firefox's page (GTK 3, Wayland).
+- ``clipboard-text``: text copied by Firefox's page (GTK 3, Wayland) is pasted and saved in Kate (Qt 6, Wayland);
+  Kate's is pasted in xterm (X11, through xwayland-satellite), which writes it to a file; xterm's is read by the
+  page. GTK's own text widgets are not driven: they drop wtype's chords (see the check).
 - ``clipboard-image``: an image copied in KolourPaint (Qt, Wayland) is pasted into Firefox's page (GTK, Wayland);
   the page's is pasted and saved in KolourPaint and read by Firefox on X11 (``MOZ_ENABLE_WAYLAND=0``); that one's is
   read by the Wayland page. Each image has the colour its copy had.
@@ -56,7 +56,7 @@ is focused again at the end); PortalProbe, uninstalled with its data, and the do
 permission store's screenshot entries; screenshots it caused in ``~/Pictures/Screenshots``; GTK's file-chooser and
 Nautilus's dconf keys; ``recently-used.xbel``; and Flow's saved session and recovery markers, which the installed
 shell's automatic save would otherwise replace with the test's windows (the shell is stopped to put them back, then
-started). Firefox, Kate, KolourPaint and Mousepad run with configuration and data folders of their own.
+started). Firefox, Kate, KolourPaint and GIMP run with configuration and data folders of their own.
 The clipboard is left holding the test's last copy.
 """
 
@@ -475,7 +475,11 @@ if (mode === 'cast') {
     b.style.cssText = `position: fixed; ${css}; width: 200px; height: 40px; font-size: 16px`;
     b.onclick = () => report({kind: 'clicked', name}); document.body.appendChild(b); }
 } else if (mode === 'clip') {
-  element('top', 'Copy an image', 'half').onclick = async () => {
+  element('top', q.get('text') ? 'Copy text' : 'Copy an image', 'half').onclick = async () => {
+    if (q.get('text')) {
+      try { await navigator.clipboard.writeText(q.get('text')); report({kind: 'copied'}); }
+      catch (e) { report({kind: 'copy-failed', message: String(e)}); }
+      return; }
     const c = document.createElement('canvas'); c.width = 120; c.height = 90; const g = c.getContext('2d');
     g.fillStyle = '#' + q.get('copy'); g.fillRect(0, 0, 120, 90);
     try { await navigator.clipboard.write([new ClipboardItem({'image/png': await new Promise(r => c.toBlob(r, 'image/png'))})]);
@@ -1327,24 +1331,24 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
     # and the copy from X11 is read by a page with the pointer.
 
     def check_clipboard_text(self):
+        """Text from Firefox (GTK 3) to Kate (Qt), Kate to xterm (X11), and xterm back to Firefox. GTK's own text
+        widgets are not in it: GNOME Text Editor (GTK 4) and Mousepad (GTK 3) dropped every wtype chord in the guest
+        (Ctrl+A, Ctrl+C), in one call or several, slow or not, though named keys such as Return reached them; a
+        virtual-keyboard artifact of the test's keys, not of Flow. Firefox's page copies and reads on a click."""
         pages = self.need_pages()
         a, b, c = (f"clip{n}{uuid.uuid4().hex[:12]}" for n in "abc")
-        gtk_file, qt_file, x11_file = self.tmp / "gtk.txt", self.tmp / "qt.txt", self.tmp / "x11.txt"
-        gtk_file.write_text(a)
+        qt_file, x11_file = self.tmp / "qt.txt", self.tmp / "x11.txt"
         qt_file.write_text("")
-        # Mousepad (GTK 3), not GNOME Text Editor (GTK 4): GTK 4 apps drop wtype's chords (Ctrl+A did nothing in the
-        # guest, with or without an X11 window before; named keys such as Return reach them), a virtual-keyboard
-        # artifact of the test's keys, not of Flow.
-        gtk = self.apps.start(["mousepad", "--disable-server", gtk_file], app_id="org.xfce.mousepad",
-                              env={"GSETTINGS_BACKEND": "keyfile"})[1]
         qt = self.apps.start(["kate", "-n", qt_file], app_id="org.kde.kate", title="qt.txt")[1]
-        for w in (gtk, qt):
-            self.apps.focus(w, "100%")
+        self.apps.focus(qt, "100%")
 
-        # GTK 4 → Qt.
-        self.apps.focus(gtk)
-        keys("ctrl+a", "ctrl+c")
-        wait_for(lambda: self.wayland_clipboard().decode().strip() == a, "Mousepad's copy")
+        # GTK → Qt: the page copies, Kate pastes and saves.
+        page = self.need_firefox(mode="clip", text=a, read=1)
+        pages.drain()
+        self.pointer.click(self.apps.at(0.5, 0.25))
+        copied = pages.wait(["copied", "copy-failed"])
+        check(copied["kind"] == "copied", f"Firefox could not copy: {copied}")
+        wait_for(lambda: self.wayland_clipboard().decode().strip() == a, "Firefox's copy")
         self.apps.focus(qt)
         keys("ctrl+a", "ctrl+v", "ctrl+s")
         wait_for(lambda: qt_file.read_text().strip() == a, lambda: f"Kate to save the paste ({qt_file.read_text()!r})")
@@ -1364,19 +1368,19 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
                  lambda: f"xterm's paste ({x11_file.read_text() if x11_file.exists() else None!r})")
 
         # X11 → GTK: xterm prints c on its first line once the paste is read; a double click there copies it, and
-        # Firefox's page reads it.
+        # the page reads it.
         time.sleep(0.5)
         self.shot("clipboard-xterm")
         self.pointer.run(("move", *self.apps.at(60 / 1280, 40 / 800)), ("wait", 50), "click", ("wait", 60), "click")
         wait_for(lambda: self.wayland_clipboard().decode().strip() == c, "xterm's copy to reach Wayland")
-        self.need_firefox(mode="clip", copy="000000", read=1)
+        self.apps.focus(page, "100%")
         pages.drain()
         self.pointer.click(self.apps.at(0.5, 0.75))
         read_event = pages.wait(["read", "read-failed"])
         check(read_event["kind"] == "read" and (read_event.get("text") or "").strip() == c,
               f"Firefox read {read_event}, not xterm's copy")
-        self.passed("clipboard-text", "text copied in Mousepad (GTK 3) was pasted and saved in Kate, Kate's pasted in "
-                                      "xterm (X11), and xterm's read by Firefox (GTK)")
+        self.passed("clipboard-text", "text copied in Firefox (GTK) was pasted and saved in Kate (Qt), Kate's pasted "
+                                      "in xterm (X11), and xterm's read by Firefox")
 
     def check_clipboard_image(self):
         pages = self.need_pages()
@@ -1494,8 +1498,7 @@ def main():
     parser.add_argument("--only", action="append", choices=CHECKS)
     parser.add_argument("--shots", type=Path)
     args = parser.parse_args()
-    for tool in ("niri", "wtype", "grim", "wl-paste", "flatpak", "firefox", "nautilus", "kate", "kolourpaint", "gimp-console",
-                 "mousepad", "xterm", "foot", "dconf", "busctl", "dbus-monitor", "pw-dump", "flow-pointer"):
+    for tool in ("niri", "wtype", "grim", "wl-paste", "flatpak", "firefox", "nautilus", "kate", "kolourpaint", "gimp-console", "xterm", "foot", "dconf", "busctl", "dbus-monitor", "pw-dump", "flow-pointer"):
         if not shutil.which(tool):
             raise SystemExit(f"{tool} is not on PATH (tests/run_portals_smoke.sh builds the test apps)")
     check(any(w for w in windows().values() if w["workspace_id"] == focused_workspace()["id"]),
