@@ -86,8 +86,11 @@ from pointer import Pointer  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 PROBE = "io.github.mattonik.PortalProbe"
 RUNTIME, BRANCH = "org.freedesktop.Platform", "25.08"
-CHECKS = ["chooser", "screenshot", "screenshot-gimp", "screencast", "dnd-file", "dnd-text", "clipboard-text", "clipboard-image",
-          "chooser-pointer", "backends", "edges"]
+# The clipboard checks run before the drag checks: run after dnd-text, clipboard-text found Kate on its welcome page
+# instead of the file it opened, every time in the guest (each check's apps and windows are ended in between, and
+# Kate gets folders of its own); the cause was not found, and either check passes alone and in this order.
+CHECKS = ["chooser", "screenshot", "screenshot-gimp", "screencast", "clipboard-text", "clipboard-image", "dnd-file",
+          "dnd-text", "chooser-pointer", "backends", "edges"]
 # The backend Flow intends for each interface the checks use (modules/flow.nix, ADR-0005).
 INTENDED = {"FileChooser": "gnome", "Access": "gtk", "Screenshot": "flow", "ScreenCast": "gnome"}
 PERMISSIONS = ("org.freedesktop.impl.portal.PermissionStore", "/org/freedesktop/impl/portal/PermissionStore",
@@ -409,18 +412,26 @@ class Apps:
             except Failed:
                 pass
 
-    def stop(self):
-        for process in self.processes:
+    @staticmethod
+    def end(processes):
+        """SIGTERM to each app's process group, SIGKILL to any still there after 10 s."""
+        for process in processes:
             if process.poll() is None:
                 try:
                     os.killpg(process.pid, signal.SIGTERM)
                 except ProcessLookupError:
                     pass
-        for process in self.processes:
+        for process in processes:
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def stop(self):
+        self.end(self.processes)
         for wid in list(self.own):
             if wid in windows():
                 niri("action", "close-window", "--id", wid)
@@ -1523,7 +1534,7 @@ def main():
             smoke.ran = []
             for name in chosen:
                 smoke.ran.append(name)
-                before = set(windows())
+                before, started = set(windows()), len(smoke.apps.processes)
                 try:
                     if name == "screenshot":
                         smoke.check_screenshot(state)
@@ -1540,8 +1551,10 @@ def main():
                             smoke.shot(f"failed-{name}")
                         except RuntimeError:
                             pass
-                # Each check starts from the windows the previous one found: what one left open (a dialog still
-                # waiting, an app with focus to come back to) took the next one's keys and clicks in the guest.
+                # Each check starts from the windows and apps the previous one found: what one left (a dialog still
+                # waiting; a Kate asking to save the text a drag moved out of it, then left on its welcome page)
+                # took the next one's keys and clicks in the guest.
+                smoke.apps.end(smoke.apps.processes[started:])
                 for wid in set(windows()) - before:
                     smoke.apps.close_window({"id": wid})
                 if smoke.firefox and smoke.firefox["id"] not in windows():
