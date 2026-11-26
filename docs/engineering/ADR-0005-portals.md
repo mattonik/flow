@@ -83,10 +83,18 @@ which is fixed apart.
   `xdg-desktop-portal-wlr` would answer on Niri (grim and slurp) but saves every screenshot to the fixed path
   `/tmp/out.png`, shared between requests and readable by other local users under the default umask. So the
   rejection of a Flow-authored backend above no longer holds, for this one interface. Flow's asks through GTK's
-  Access dialog (*Take Screenshot* or *Cancel*) and takes the whole screen with Niri's `Screenshot`, which saves it
-  under `~/Pictures/Screenshots` and leaves the clipboard alone. Area and window choices are not offered: Niri's own
-  screenshot UI reports nothing on D-Bus when the user cancels it, which would leave the request waiting. Requests
-  that are not interactive are taken at once, as the broker has asked first; PickColor goes to Niri's picker.
+  Access dialog (*Take Screenshot* or *Cancel*, naming the app as the broker passes it) for every interactive
+  request, and for any other the broker did not check: the broker skips its own permission check while it has not
+  read the backend's version, after the backend left the bus for one, so only `permission_store_checked` lets a
+  request through without a dialog. It captures with grim, the whole layout and every display, into a new file under
+  `~/Pictures/Screenshots` that it creates itself (mode 0600, never an existing file). Niri's own D-Bus `Screenshot`
+  was the first choice and was dropped: it refuses more than one display, never replies when its folder is missing,
+  writes wherever Niri's `screenshot-path` says (`/tmp/screenshot.png` when that is null, the defect that ruled out
+  `xdg-desktop-portal-wlr`), and hands concurrent callers each other's results. Area and window choices are not
+  offered: Niri's own screenshot UI reports nothing on D-Bus when the user cancels it, which would leave the request
+  waiting. PickColor goes to Niri's picker; a cancelled pick answers 1. Every request is answered once, whatever
+  fails, and nothing is captured once the broker has closed it. The search for an upstream fix was of Niri's issues,
+  pull requests and discussions on GitHub, and `src/dbus/gnome_shell_screenshot.rs` on main, on 2026-11-26.
   Retire it once Niri implements `InteractiveScreenshot`.
 - **PipeWire.** Screen casting needs it, and NixOS's `graphical-desktop` module, which Niri's session enables,
   turns it on by default (a Flow `mkDefault true` would be a no-op, and `false` conflicts with it). Flow's module

@@ -113,6 +113,7 @@ let
   screenshotPortal = pkgs.writeShellScriptBin "flow-screenshot-portal" ''
     export PYTHONPATH="${sessionPython}"
     export GI_TYPELIB_PATH="${apiTypelibs}"
+    export PATH="${pkgs.grim}/bin:$PATH"
     exec ${apiPython}/bin/python3 -P -m screenshot_portal
   '';
   screenshotPortalFiles = pkgs.runCommand "flow-screenshot-portal-files" { } ''
@@ -175,9 +176,17 @@ in {
   options.services.flow.enable = lib.mkEnableOption "the experimental Flow session";
   config = lib.mkIf cfg.enable {
     programs.niri.enable = true;
-    # Screenshot: Flow's own backend, above; the rest stays as Niri's module chose it.
+    # Screenshot: Flow's own backend, above; the rest stays as Niri's module chose it. The broker reads this when
+    # it starts: after the first switch to it, Screenshot reaches Flow's backend from the next login.
     xdg.portal.extraPortals = [ screenshotPortalFiles ];
     xdg.portal.config.niri."org.freedesktop.impl.portal.Screenshot" = "flow";
+    # Flow adds one key to Niri's portal configuration; without Niri's own keys (if Niri's module ever ships its
+    # niri-portals.conf as a package again, which this configuration would shadow) there would be no default and no
+    # Access backend, and the broker would offer no Screenshot, FileChooser or ScreenCast.
+    assertions = [{
+      assertion = let niri = config.xdg.portal.config.niri; in niri ? default && niri ? "org.freedesktop.impl.portal.Access";
+      message = "Flow sets xdg.portal.config.niri's Screenshot key: Niri's default and Access keys must be set beside it.";
+    }];
     systemd.user.services.flow-screenshot-portal = {
       description = "Flow's Screenshot portal backend";
       partOf = [ "graphical-session.target" ];

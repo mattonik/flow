@@ -48,6 +48,9 @@ Checks, in order (names for ``--only``):
   the work indicator (bottom right) sit over the window and take them instead: this is the acceptance test for the
   shell's fix, indicators that get out of the way, and it fails until that lands.
 
+The run exits 0 when every check passes but ``chooser-pointer`` and ``edges``, which are expected to fail until the
+shell's fix lands, and fails when any other check fails or when one of those two passes.
+
 X11 windows get no keys: xwayland-satellite does not take wtype's virtual keymap, so xterm and Firefox on X11 are
 driven by the pointer only (a middle click pastes, a double click copies, page buttons copy and read).
 
@@ -86,11 +89,11 @@ from pointer import Pointer  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 PROBE = "io.github.mattonik.PortalProbe"
 RUNTIME, BRANCH = "org.freedesktop.Platform", "25.08"
-# The clipboard checks run before the drag checks: run after dnd-text, clipboard-text found Kate on its welcome page
-# instead of the file it opened, every time in the guest (each check's apps and windows are ended in between, and
-# Kate gets folders of its own); the cause was not found, and either check passes alone and in this order.
-CHECKS = ["chooser", "screenshot", "screenshot-gimp", "screencast", "clipboard-text", "clipboard-image", "dnd-file",
-          "dnd-text", "chooser-pointer", "backends", "edges"]
+CHECKS = ["chooser", "screenshot", "screenshot-gimp", "screencast", "dnd-file", "dnd-text", "clipboard-text",
+          "clipboard-image", "chooser-pointer", "backends", "edges"]
+# Expected to fail until the shell's surfaces stop covering apps' edges (fixed apart): they are its acceptance tests.
+# The run fails if any other check fails, or if one of these passes (update this list and the status document).
+EXPECTED_FAILURES = {"chooser-pointer", "edges"}
 # The backend Flow intends for each interface the checks use (modules/flow.nix, ADR-0005).
 INTENDED = {"FileChooser": "gnome", "Access": "gtk", "Screenshot": "flow", "ScreenCast": "gnome"}
 PERMISSIONS = ("org.freedesktop.impl.portal.PermissionStore", "/org/freedesktop/impl/portal/PermissionStore",
@@ -988,7 +991,8 @@ class Smoke:
                              ("bottom-left", (30, height - 12)), ("bottom-middle", (width // 2, height - 12)),
                              ("bottom-right", (width - 30, height - 12))):
             pages.drain()
-            self.pointer.click((o["x"] + x, o["y"] + y))
+            # A dwell before the click, as a user's: the shell's fix may let clicks through once the pointer rests.
+            self.pointer.run(("move", o["x"] + x, o["y"] + y), ("wait", 800), "click")
             try:
                 event = pages.wait(["clicked"], timeout=4)
                 (took if event["name"] == name else missed).append(name)
@@ -1032,13 +1036,12 @@ class Smoke:
         return sum(close(image.pixel(round(x * scale), round(y * scale)), colour) for x, y in points), len(points)
 
     def private(self, path):
-        """Whether another local user can read ``path``: a folder above it closed to them, or the file itself."""
-        for folder in [path, *path.parents]:
-            if folder.stat().st_mode & 0o005 == 0 and folder.is_dir():
-                return f"{folder} is closed to other users ({oct(folder.stat().st_mode & 0o777)})"
-        if path.stat().st_mode & 0o004 == 0:
-            return f"the file is not readable by others ({oct(path.stat().st_mode & 0o777)})"
-        return None
+        """How ``path`` is kept from other local users (None if it is not): its own mode, and the closed folders
+        above it."""
+        if path.stat().st_mode & 0o077:
+            return None
+        closed = [str(f) for f in path.parents if f.stat().st_mode & 0o005 == 0]
+        return f"the file is {oct(path.stat().st_mode & 0o777)}" + (f", under {closed[0]} (closed)" if closed else "")
 
     def check_screenshot(self, state):
         probe = self.need_probe()
@@ -1094,6 +1097,29 @@ class Smoke:
         detail = (f"consent asked and denied (answer 2, no file, kept), then allowed: a {image.width}×{image.height} "
                   f"file of the live screen ({hits}/{len(samples)} points this run's colour), read by the sandbox")
 
+        # A request while the backend is off the bus: the broker has forgotten its version and forwards the request
+        # unchecked, and the backend D-Bus starts for it must ask itself. With the app's stored answer "no", either
+        # the broker refuses (it read the version in time) or a dialog asks; nothing is captured without consent.
+        for path in state.new_screenshots():
+            path.unlink()
+        state.set_permissions({**{a: p for a, p in state.permissions().items() if a != PROBE}, PROBE: ["no"]})
+        subprocess.run(["systemctl", "--user", "stop", "flow-screenshot-portal.service"], timeout=30)
+        time.sleep(1)
+        before = set(windows())
+        thread, result = probe.request("Screenshot", "Screenshot", shot_args)
+        asked = None
+        try:
+            asked, deny, _ = self.access_dialog(before)
+            self.pointer.click(deny)
+        except Failed:
+            pass  # no dialog: the broker refused by itself
+        answer = finish(thread, result, "a request after the backend left the bus")
+        check(answer.get("response") != 0 and not state.new_screenshots(),
+              f"With the backend restarted and the app's answer stored as no, the request answered {answer} "
+              f"and made {state.new_screenshots()}")
+        detail += ("; with the backend off the bus and the stored answer no, " +
+                   ("its own dialog asked and Cancel captured nothing" if asked else "the broker refused"))
+
         # Interactive: the user's own choice. Flow's backend asks through the Access dialog, then takes the whole
         # screen once the dialog is gone.
         for path in state.new_screenshots():
@@ -1134,7 +1160,7 @@ class Smoke:
         check(hits >= 0.95 * len(everywhere), f"Only {hits} of {len(everywhere)} points of the interactive "
                                                "screenshot show this run's colour (the dialog still on it?)")
         privacy = self.private(new[0])
-        check(privacy, f"{new[0]} can be read by other local users")
+        check(privacy, f"{new[0]} ({oct(new[0].stat().st_mode & 0o777)}) can be read by other local users")
         detail += f"; interactive: the dialog named {PROBE}; Cancel, or closing it, answered 1 and captured nothing; " \
                   f"Take Screenshot gave the live screen without the dialog ({hits}/{len(everywhere)} points); {privacy}"
 
@@ -1321,6 +1347,9 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
         word = "drag" + uuid.uuid4().hex[:12]
         source = self.tmp / "kate-drag.txt"
         source.write_text(word + "\n")
+        # Read-only, so Kate copies the dragged text rather than moving it out: a document left changed asks to be
+        # saved when Kate is closed, and the next Kate started on its welcome page.
+        source.chmod(0o444)
         kate = self.apps.start(["kate", "-n", source], app_id="org.kde.kate", title="kate-drag")[1]
         page = self.need_firefox(mode="drop")
         self.apps.side_by_side(kate, page)
@@ -1497,6 +1526,7 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
             check(subprocess.run(["systemctl", "--user", "is-active", "--quiet", unit]).returncode == 0, f"{unit} is not active")
         check("XDG_CURRENT_DESKTOP=niri" in env.splitlines(), "The session's XDG_CURRENT_DESKTOP is not niri")
         check("FileChooser=" not in conf and "default=gnome;gtk" in conf, f"niri-portals.conf:\n{conf}")
+        check(any(self.ran_for(i) for i in INTENDED), "No portal check ran before backends: nothing to check")
         check(not wrong and not missing, f"Backends: {seen}, intended {INTENDED}; wrong {wrong}, never called {missing}")
         self.passed("backends", "; ".join(f"{i} → {', '.join(sorted(b))}" for i, b in sorted(seen.items())))
 
@@ -1567,9 +1597,13 @@ def main():
             for problem in problems:
                 failures.append({"check": "put back", "result": "fail", "detail": problem})
                 print(json.dumps(failures[-1]), flush=True)
-    print(json.dumps({"passed": len(chosen) - len({f["check"] for f in failures if f["check"] in chosen}),
-                      "failed": sorted({f["check"] for f in failures})}), flush=True)
-    sys.exit(1 if failures else 0)
+    failed = {f["check"] for f in failures}
+    unexpected = failed - EXPECTED_FAILURES
+    now_passing = (EXPECTED_FAILURES & set(chosen)) - failed
+    print(json.dumps({"passed": len(set(chosen) - failed), "failed": sorted(failed),
+                      "expected_failures": sorted(failed & EXPECTED_FAILURES), "unexpected": sorted(unexpected),
+                      "expected_to_fail_but_passed": sorted(now_passing)}), flush=True)
+    sys.exit(1 if unexpected or now_passing else 0)
 
 
 if __name__ == "__main__":
