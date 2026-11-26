@@ -606,8 +606,11 @@ ShellRoot {
                     if (recoveryProcess.command[1] === "auto-start" || recoveryProcess.command[1] === "auto-ready") {
                         root.autoRecoveryBlocked = !!result.error
                         if (result.error) root.recoveryPauseReason = result.error
+                        // Nothing was reopened, and the saved session was moved aside: said, as the user expected it back.
+                        if (result.set_aside) root.showToast("Nothing was reopened; the saved session was kept aside. See Settings")
                         // A pause from earlier in this session (a shell restart since): said, as when it came.
-                        // A recovery that ran and could not finish opens Settings: it runs at login, before work.
+                        // A recovery that ran and could not finish opens Settings: it runs only at a Niri instance's first
+                        // shell start, with no work open it does not list (restore.automatic), so before work.
                         if (result.error && result.paused) root.showToast("Automatic saving is paused. Open Settings to review the session")
                         else if (result.error) { root.deskOpen = true; root.settingsOpen = true; Qt.callLater(function() { root.reveal(recoveryStatus) }) }
                     }

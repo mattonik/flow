@@ -3,6 +3,7 @@
 import contextlib
 import json
 import os
+import re
 import fcntl
 import hashlib
 from collections import Counter
@@ -183,8 +184,9 @@ def save_locked(path, checked=False, if_changed=False, reading=None):
 
 
 PAUSED = "Automatic saving is paused; review and save the session."
-# Where automatic recovery puts a saved session it does not reopen, so a save cannot replace it unseen.
-SET_ASIDE = "session-before-automatic-recovery.json"
+# Where automatic recovery puts a saved session it does not reopen, so a save cannot replace it unseen: one file
+# each time, named by when, so a second set-aside never replaces the first.
+SET_ASIDE = "session-before-automatic-recovery-{}.json"
 
 
 def pause_marker(marker, reason=""):
@@ -193,12 +195,64 @@ def pause_marker(marker, reason=""):
 
 
 def set_aside(path):
-    """Move a saved session recovery will not reopen out of the automatic save's way; where it went."""
+    """Move a saved session recovery will not reopen out of the automatic save's way; where it went, or ""."""
     if not path.exists():
         return ""
-    aside = path.with_name(SET_ASIDE)
+    stamp, n = time.strftime("%Y%m%d-%H%M%S"), 0
+    while (aside := path.with_name(SET_ASIDE.format(stamp + (f"-{n}" if n else "")))).exists():
+        n += 1
     path.replace(aside)
-    return f" The saved session is kept as {aside}."
+    return str(aside)
+
+
+def set_aside_answer(message, path):
+    """``message``, with the saved session set aside and where: ``set_aside`` for the shell's notice."""
+    aside = set_aside(path)
+    return {"message": message + (f" The saved session is kept as {aside}." if aside else ""),
+            **({"set_aside": aside} if aside else {})}
+
+
+# With no marker, apps open that the saved session does not list count as work under way only this long after
+# Niri started: at a login, an app started with the session may be open already.
+UNDER_WAY_AFTER = 600
+
+
+def niri_age(proc=Path("/proc")):
+    """Seconds since this Niri instance started, on the boot clock, which a wall-clock jump after login (no RTC,
+    NTP, a VM resumed late) does not move: Niri's process start (its PID is in the socket's name,
+    ``niri.<display>.<pid>.sock``) against the uptime. The socket's creation by the wall clock otherwise."""
+    socket = os.environ.get("NIRI_SOCKET", "")
+    pid = re.search(r"\.(\d+)\.sock$", socket)
+    if pid:
+        try:
+            stat = (proc / pid.group(1) / "stat").read_text()
+            if stat[stat.index("(") + 1:stat.rindex(")")].startswith("niri"):
+                started = int(stat[stat.rindex(")") + 2:].split()[19]) / os.sysconf("SC_CLK_TCK")  # field 22
+                return float((proc / "uptime").read_text().split()[0]) - started
+        except (OSError, ValueError, IndexError):
+            pass
+    return time.time() - os.stat(socket).st_ctime
+
+
+def under_way_long_enough():
+    """Whether this Niri instance has run past UNDER_WAY_AFTER; an instance whose age cannot be read counts."""
+    try:
+        return niri_age() > UNDER_WAY_AFTER
+    except OSError:
+        return True
+
+
+def work_under_way(path):
+    """Apps open in this Niri instance that the saved session does not list: work begun before any shell of this
+    version marked the instance (a rollback and back, a shell that failed at login and was started later). At a
+    login nothing is open yet, or only apps the session lists (one started at login). Unreadable: none."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        saved = {w.get("app_id") for w in data.get("windows", []) if isinstance(w, dict)}
+        _, windows = spaces.query("Workspaces", "Windows")
+    except (OSError, ValueError, AttributeError):
+        return []
+    return sorted({w.get("app_id") or "an app without an ID" for w in windows} - saved)
 
 
 def from_before_reopening(path):
@@ -224,8 +278,13 @@ def automatic(op, path, wait=True, pause=True):
     pause, with its reason: ``"paused": true``, the user was told when it came) or ``off`` (recovery switched on
     since, by hand: nothing is reopened into the windows already there). A shell of a version from before the
     marker wrote none, but every snapshot it wrote lacks ``reopen_at_login``, and none of those is reopened:
-    the upgrade's restart mid-session, or its first login, reopens nothing. Whenever recovery does not reopen a
-    saved session it sets it aside (SET_ASIDE), so the next automatic save does not replace it unseen."""
+    the upgrade's restart mid-session, or its first login, reopens nothing. With no marker, apps already open
+    that the saved session does not list (``work_under_way``), in an instance past UNDER_WAY_AFTER on the boot
+    clock, mean it is under way: a rollback and back, or a shell that failed at login and was started later;
+    nothing is reopened into them. Either sign alone is not enough: an app started at login is open early, and
+    a first start after a slow boot comes late. Whenever
+    recovery does not reopen a saved session it sets it aside (SET_ASIDE), so the next automatic save does not
+    replace it unseen, and says where (``"set_aside"``)."""
     runtime = Path(os.environ["XDG_RUNTIME_DIR"])
     marker = runtime / ("flow-recovery-" + hashlib.sha256(spaces.session_id().encode()).hexdigest())
     with marker.with_suffix(".lock").open("a") as lock:
@@ -244,15 +303,20 @@ def automatic(op, path, wait=True, pause=True):
         if op == "auto-start":
             if state == "off":
                 marker.write_text("ready")
-                return {"message": "Automatic session recovery is ready. It was switched on during this session, so "
-                                   "nothing was reopened; it saves this session from now on." + set_aside(path)}
+                return set_aside_answer("Automatic session recovery is ready. It was switched on during this session, "
+                                        "so nothing was reopened; it saves this session from now on.", path)
             if state:
                 return {"message": "Automatic session recovery is ready."} if state == "ready" else {
                     "error": reason or PAUSED, "paused": True}
             if path.exists() and from_before_reopening(path):
                 marker.write_text("ready")
-                return {"message": "Automatic session recovery is ready. The saved session is from before it "
-                                   "reopened sessions at login, so it was not reopened." + set_aside(path)}
+                return set_aside_answer("Automatic session recovery is ready. The saved session is from before it "
+                                        "reopened sessions at login, so it was not reopened.", path)
+            if path.exists() and (open_apps := work_under_way(path)) and under_way_long_enough():
+                marker.write_text("ready")
+                return set_aside_answer("Automatic session recovery is ready. Work was already open ("
+                                        + ", ".join(open_apps[:3]) + (", …" if len(open_apps) > 3 else "")
+                                        + "), so nothing was reopened into it.", path)
             pause_marker(marker)
             if path.exists():
                 result = subprocess.run([sys.executable, __file__, "restore"], capture_output=True, text=True)

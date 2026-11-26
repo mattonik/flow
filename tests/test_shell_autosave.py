@@ -1,5 +1,9 @@
 """The shell's side of automatic saving, which the controller runs (flow_controller.py): when it asks for it.
 
+There is no QML harness: the shell's handlers are read from the source, so these checks break on a reflow and
+pass a behaviour change kept in the same text. The guest smokes (niri_background_smoke.py, the reboot smoke) run
+the behaviour.
+
 The guest smoke (niri_background_smoke.py) drives the rest: asking once recovery is ready, and pausing on an
 error. A Save session or Restore session running is not driven there, so it is read from the source here.
 """
@@ -51,6 +55,11 @@ class ShellAutoSaveTest(unittest.TestCase):
         self.assertIn("showToast(", paused)
         self.assertNotIn("deskOpen", paused)
         self.assertRegex(handler, r"else if \(result\.error\) \{ root\.deskOpen = true")
+
+    def test_a_saved_session_set_aside_is_told_in_a_toast(self):
+        handler = SHELL[SHELL.index('if (recoveryProcess.command[1] === "auto-start" || recoveryProcess.command[1] === "auto-ready") {'):]
+        handler = handler[:handler.index("\n                    }\n")]
+        self.assertRegex(handler, r"if \(result\.set_aside\) root\.showToast\(")
 
     def test_the_controller_is_told_on_connecting_and_on_every_change(self):
         self.assertRegex(SHELL, r"if \(connected\) \{ write\('\{\"watch\": true, \"auto_save\": ' \+ root\.autoSaveWanted \+ '\}\\n'\)")
