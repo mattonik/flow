@@ -452,7 +452,12 @@ class Smoke:
         self.click(self.control("desk", "Spaces"))
         wait_for(lambda: "switcher" in self.surfaces(), "the Spaces switcher")
         label = f"F-007 {name}"
-        self.click(self.control("switcher", label))
+        # The switcher refreshes as it opens and rebuilds its rows: click once the row has held still for 0.3 s.
+        def still():
+            first = self.control("switcher", label)
+            time.sleep(0.3)
+            return first if self.control("switcher", label) == first else None
+        self.click(wait_for(still, f"the switcher's row {label} to hold still", timeout=5))
 
     def part_overview(self):
         k, ui = self.keys, self
