@@ -65,17 +65,21 @@ class ShellAutoSaveTest(unittest.TestCase):
 
     def test_a_set_aside_session_is_reopened_from_its_own_file(self):
         # Not by renaming it to session.json, which the next automatic save would replace before Restore read it.
-        button = SHELL[SHELL.index("FlowButton { id: reopenAside;"):]
-        button = button[:button.index("\n")]
-        self.assertIn('visible: root.recoverySetAside !== "";', button)
-        self.assertIn("onClicked: root.reopenSetAside()", button)
-        reopen = SHELL[SHELL.index("function reopenSetAside() {"):]
-        reopen = reopen[:reopen.index("\n    }\n")]
-        self.assertIn('recoveryProcess.command = ["flow-recovery", "restore", recoverySetAside]', reopen)
+        # Whole lines and the whole function, as text: an early return, a guard dropped or the button disabled
+        # fails here. What it does is run by tests/niri_set_aside_reopen_smoke.py in the guest; CI cannot.
+        lines = [line.strip() for line in SHELL.splitlines()]
+        self.assertIn('FlowButton { id: reopenAside; visible: root.recoverySetAside !== ""; implicitHeight: 44; variant: "quiet"; text: "Reopen it"; enabled: !root.recoveryWorking && !root.spacesWorking; onClicked: root.reopenSetAside() }', lines)
+        self.assertIn('    function reopenSetAside() {\n        const busy = recoveryProcess.running ? "Wait for session recovery to finish" : spacesWorking ? "Wait for the current action" : ""\n        if (busy) { recoveryMessage = busy; return }\n        if (!recoverySetAside) return\n        recoveryMessage = "Reopening applications…"\n        recoveryProcess.command = ["flow-recovery", "restore", recoverySetAside]\n        recoveryProcess.running = true\n    }', SHELL)
+        # Offered until every window is back: a reopen in part, or one that reopened nothing, keeps it.
+        handler = SHELL[SHELL.index("        id: recoveryProcess"):]
+        handler = handler[:handler.index("\n    }\n")]
+        self.assertIn('if (recoveryProcess.command[1] === "restore" && recoveryProcess.command.length > 2 && result.complete) root.recoverySetAside = ""', [line.strip() for line in handler.splitlines()])
         self.assertNotIn("session.json", SHELL[SHELL.index("Text { id: recoveryAside;"):][:400])
         # Restore with a file argument is not an automatic command, so automatic saving waits while it runs.
         self.assertIn('recoveryWorking: recoveryProcess.running && !String(recoveryProcess.command[1]).startsWith("auto-")', SHELL)
-        self.assertIn('if (recoveryProcess.command[1] === "restore" && recoveryProcess.command.length > 2 && !result.error) root.recoverySetAside = ""', SHELL)
+        # The smoke's way in: the same function, and the path the shell holds.
+        self.assertIn('function reopen_set_aside(): void { root.reopenSetAside() }', lines)
+        self.assertRegex(SHELL, r"set_aside: root\.recoverySetAside, connected: controller\.connected \}\)")
 
     def test_the_controller_is_told_on_connecting_and_on_every_change(self):
         self.assertRegex(SHELL, r"if \(connected\) \{ write\('\{\"watch\": true, \"auto_save\": ' \+ root\.autoSaveWanted \+ '\}\\n'\)")

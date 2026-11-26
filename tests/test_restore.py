@@ -335,38 +335,94 @@ class RecoveryTest(unittest.TestCase):
             restore.save(path, {"id": 1, "active_window_id": 1}, [window(1, "one", 1)])
             self.assertIs(json.loads(path.read_text())["reopen_at_login"], True)
 
-    def test_restore_reopens_a_set_aside_session_in_place(self):
-        # Settings' Reopen passes the set-aside file: Restore reads it there and checks it, not session.json, for
-        # changes while it reopens, so an automatic save of the windows already open (session.json rewritten) does
-        # not stop it, and nothing ever writes over the file.
-        aside_data = {"version": 1, "windows": [{"app_id": "one", "column": 1}]}
+    def reopen_set_aside(self, missing=(), empty=True):
+        """Settings' Reopen it run through the command line against a fake Niri: the user's foot and firefox on
+        workspace 1 (focused), workspace 2 after it on the display empty unless ``empty`` is false. The set-aside
+        session lists the same two apps; ``missing`` have no desktop entry. Returns the printed answer, the Niri
+        actions, the windows and the file's bytes before and after; session.json is rewritten at each launch,
+        as an automatic save of the work would."""
+        world = {"focused": 1, "windows": [
+            {"id": 10, "app_id": "foot", "workspace_id": 1, "layout": {"pos_in_scrolling_layout": [1, 1]}},
+            {"id": 11, "app_id": "firefox", "workspace_id": 1, "layout": {"pos_in_scrolling_layout": [2, 1]}}]}
+        if not empty:
+            world["windows"].append({"id": 12, "app_id": "editor", "workspace_id": 2,
+                                     "layout": {"pos_in_scrolling_layout": [1, 1]}})
+        actions = []
+
+        def workspaces():
+            return [{"id": n, "idx": n, "output": "Virtual-1", "is_focused": n == world["focused"],
+                     "active_window_id": None} for n in (1, 2)]
+
+        def on(ws):
+            return sorted((w for w in world["windows"] if w["workspace_id"] == ws),
+                          key=lambda w: w["layout"]["pos_in_scrolling_layout"][0])
+
+        def command(_kind, action, *args):
+            actions.append((action, *args))
+            if action == "focus-workspace":
+                world["focused"] = args[0]
+            elif action == "focus-window":
+                world["focused_window"] = args[1]
+            elif action == "move-column-to-index":
+                columns = on(world["focused"])
+                moving = next(w for w in columns if w["id"] == world["focused_window"])
+                columns.remove(moving)
+                columns.insert(args[0] - 1, moving)
+                for column, w in enumerate(columns, 1):
+                    w["layout"]["pos_in_scrolling_layout"] = [column, 1]
+
+        def run(argv, **kwargs):  # gio launch: the app opens on the focused workspace, at its end
+            app = Path(argv[-1]).stem
+            path.write_text("an automatic save of the work")
+            world["windows"].append({"id": 20 + len(world["windows"]), "app_id": app, "workspace_id": world["focused"],
+                                     "layout": {"pos_in_scrolling_layout": [len(on(world["focused"])) + 1, 1]}})
+            return Mock(returncode=0)
+
+        aside_data = {"version": 1, "windows": [{"app_id": "firefox", "column": 1}, {"app_id": "foot", "column": 2}]}
         with tempfile.TemporaryDirectory() as directory:
-            state = Path(directory)
-            path = state / "session.json"
+            path = Path(directory) / "session.json"
             path.write_text(json.dumps({"version": 1, "reopen_at_login": True, "windows": []}))
-            aside = state / restore.SET_ASIDE.format("20261126T102642Z-00")
+            aside = path.with_name(restore.SET_ASIDE.format("20261126T102642Z-00"))
             aside.write_text(json.dumps(aside_data))
-            seen = {}
-
-            def fake_restore(data, workspace, windows, dirs, launch, get_snapshot, action, **kwargs):
-                seen["data"] = data
-                path.write_text("an automatic save of the windows already open")
-                get_snapshot()  # the check before each launch
-                return [], 1
-
+            before = aside.read_bytes()
             with patch.object(restore, "state_path", return_value=path), \
                     patch.object(sys, "argv", ["flow-recovery", "restore", str(aside)]), \
-                    patch.object(restore.spaces, "snapshot", return_value=({"id": 1, "output": "Virtual-1"}, [])), \
+                    patch.object(restore.spaces, "query", side_effect=lambda *_: (workspaces(), world["windows"])), \
+                    patch.object(restore.spaces, "snapshot",
+                                 side_effect=lambda: (next(w for w in workspaces() if w["is_focused"]), world["windows"])), \
+                    patch.object(restore.spaces, "command", side_effect=command), \
+                    patch.object(restore.spaces, "desktop_file",
+                                 side_effect=lambda app, _dirs: None if app in missing else Path(f"/apps/{app}.desktop")), \
                     patch.object(restore.spaces, "session_id", return_value="session"), \
+                    patch.object(restore.subprocess, "run", side_effect=run), \
                     patch.object(restore, "focused_display", return_value=(None, set())), \
                     patch.object(restore, "groups_unchanged_or_focused", return_value=True), \
                     patch.object(restore, "pins_unchanged_or_rebound", return_value=True), \
-                    patch.object(restore, "restore", side_effect=fake_restore), \
                     contextlib.redirect_stdout(io.StringIO()) as out:
                 restore.main()
-            self.assertEqual(json.loads(out.getvalue()), {"message": "Restored 1 windows."})
-            self.assertEqual(seen["data"], aside_data)
-            self.assertEqual(aside.read_text(), json.dumps(aside_data))
+            return json.loads(out.getvalue()), actions, world["windows"], before, aside.read_bytes()
+
+    def test_reopening_a_set_aside_session_leaves_the_work_alone(self):
+        # The session was set aside because work is open, mostly in the apps it lists: reopened on the display's
+        # empty workspace, each app launched there, the user's own windows of them neither taken for it nor moved.
+        answer, actions, windows, before, after = self.reopen_set_aside()
+        self.assertEqual(answer, {"message": "Reopened 2 of 2 windows on an empty workspace.", "complete": True})
+        self.assertEqual(actions[0], ("focus-workspace", 2))
+        self.assertFalse([a for a in actions if a[0] == "focus-window" and a[-1] in (10, 11)])
+        self.assertEqual([(w["id"], w["workspace_id"], w["layout"]["pos_in_scrolling_layout"]) for w in windows[:2]],
+                         [(10, 1, [1, 1]), (11, 1, [2, 1])])
+        self.assertEqual(sorted((w["app_id"], w["layout"]["pos_in_scrolling_layout"][0])
+                                for w in windows if w["workspace_id"] == 2), [("firefox", 1), ("foot", 2)])
+        self.assertEqual(after, before)  # read in place, kept; session.json rewritten meanwhile did not stop it
+
+    def test_a_set_aside_session_reopened_in_part_is_not_complete(self):
+        answer, _, _, _, _ = self.reopen_set_aside(missing=("foot",))
+        self.assertIs(answer["complete"], False)
+        self.assertIn("foot: no matching installed application", answer["message"])
+
+    def test_a_set_aside_session_is_not_reopened_without_an_empty_workspace(self):
+        with self.assertRaisesRegex(ValueError, "no empty workspace; nothing was reopened"):
+            self.reopen_set_aside(empty=False)
 
     def test_restore_reads_only_a_set_aside_file_beside_the_session(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -379,6 +435,16 @@ class RecoveryTest(unittest.TestCase):
                     restore.set_aside_source(path, name)
             beside = path.with_name(elsewhere.name)
             self.assertEqual(restore.set_aside_source(path, str(beside)), beside)
+            self.assertEqual(restore.set_aside_source(path, beside.name), beside)  # a bare name: beside session.json
+            link = path.with_name(restore.SET_ASIDE.format("20261126T102643Z-00"))
+            link.symlink_to(path)
+            with self.assertRaises(ValueError):
+                restore.set_aside_source(path, str(link))
+
+    def test_restore_takes_at_most_one_file(self):
+        with patch.object(sys, "argv", ["flow-recovery", "restore", "a", "b"]), \
+                self.assertRaisesRegex(ValueError, "one set-aside saved session"):
+            restore.main()
 
     def test_the_command_line_runs_auto_seen(self):
         with patch.object(sys, "argv", ["flow-recovery", "auto-seen"]), \

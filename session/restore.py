@@ -208,11 +208,12 @@ def set_aside(path):
 def set_aside_source(path, name):
     """The set-aside file ``name`` beside ``path`` for Restore to read, so reopening it never goes through
     session.json, which the next automatic save replaces."""
-    source = path.with_name(Path(name).name)
+    given = Path(name)
+    source = path.with_name(given.name)
     prefix, suffix = SET_ASIDE.split("{}")
-    if str(Path(name).resolve()) != str(source.resolve()) or not (
-            source.name.startswith(prefix) and source.name.endswith(suffix)):
-        raise ValueError("Name a saved session that automatic recovery set aside")
+    beside = given.parent == Path() or given.parent.resolve() == path.parent.resolve()
+    if not beside or source.is_symlink() or not (source.name.startswith(prefix) and source.name.endswith(suffix)):
+        raise ValueError(f"Name a saved session that automatic recovery set aside in {path.parent}")
     return source
 
 
@@ -285,9 +286,10 @@ def automatic(op, path, wait=True, pause=True):
     The marker belongs to one Niri instance (``spaces.session_id``: boot, socket path, inode and creation). A
     shell writes it at its first start in that instance whatever the setting: ``auto-start`` (on), or
     ``auto-seen`` (off: ``off``). So ``auto-start`` reopens the saved session only at a Niri instance's first
-    shell start; a first start past UNDER_WAY_AFTER with windows open is work under way (below). A shell started again finds the marker: ``ready``, ``blocked`` (a
-    pause, with its reason: ``"paused": true``, the user was told when it came) or ``off`` (recovery switched on
-    since, by hand: nothing is reopened into the windows already there). A shell of a version from before the
+    shell start, and a first start past UNDER_WAY_AFTER with windows open is work under way (below). A shell
+    started again finds the marker: ``ready``, ``blocked`` (a pause, with its reason: ``"paused": true``, the
+    user was told when it came) or ``off`` (recovery switched on since, by hand: nothing is reopened into the
+    windows already there). A shell of a version from before the
     marker wrote none, but every snapshot it wrote lacks ``reopen_at_login``, and none of those is reopened:
     the upgrade's restart mid-session, or its first login, reopens nothing. With no marker, windows open
     (``work_under_way``) in an instance past UNDER_WAY_AFTER on the boot clock mean it is under way: a rollback
@@ -502,7 +504,10 @@ def save(path, workspace, windows, session=None, pins=(), registered=None, displ
 
 
 def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=time.sleep, pinned=(), session=None,
-            pinned_groups=(), registered=None, display=None):
+            pinned_groups=(), registered=None, display=None, here=False):
+    """Reopen ``data``'s windows on ``workspace``; the report and how many were restored. A saved app is taken as
+    restored by an open window of it, anywhere; with ``here`` (a set-aside session reopened on an empty workspace,
+    while the user's work is open elsewhere), only by one on ``workspace``, so the work is never moved."""
     side_groups = [g for g in registered or [] if g.get("layout") == "side-by-side"]
     if (any(g.get("pending_layout") for g in registered or []) or
             any(not valid_side_pins(g, pinned_groups) or
@@ -566,6 +571,10 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 and {w["id"] for w in column_members(members[0], current, live)} == set(member_ids))
 
     same_session = bool(session and data.get("session") == session)
+
+    def ours(window):
+        return not here or window.get("workspace_id") == workspace_id
+
     for entry in entries:
         app_id = entry["app_id"]
         if not app_id:
@@ -573,12 +582,12 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
             continue
         window_id = entry.get("window_id")
         exact = [w for w in windows if same_session and isinstance(window_id, int) and not isinstance(window_id, bool)
-                 and window_ids[window_id] == 1
+                 and window_ids[window_id] == 1 and ours(w)
                  and w.get("id") == window_id and w.get("app_id") == app_id]
         if app_counts[app_id] != 1 and len(exact) != 1:
             report.append(f"{app_id}: multiple saved windows require manual recovery")
             continue
-        matches = exact or [w for w in windows if w.get("app_id") == app_id]
+        matches = exact or [w for w in windows if w.get("app_id") == app_id and ours(w)]
         if len(matches) > 1:
             report.append(f"{app_id}: multiple running windows require manual recovery")
             continue
@@ -595,7 +604,7 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
             for _ in range(30):
                 wait(0.5)
                 workspace, windows = checked_snapshot()
-                matches = [w for w in windows if w.get("app_id") == app_id]
+                matches = [w for w in windows if w.get("app_id") == app_id and ours(w)]
                 if matches:
                     break
         valid_group_window = (id(entry) in group_ids and len(matches) == 1
@@ -916,14 +925,14 @@ def import_plan(state, data, dirs):
                     "workspaces": workspaces, "display": display}
 
 
-def empty_workspace(workspace, windows, workspaces):
+def empty_workspace(workspace, windows, workspaces, done="imported"):
     """The focused display's empty workspace: the focused one when it is empty, else Niri's last one there."""
     used = {w.get("workspace_id") for w in windows}
     if workspace["id"] not in used:
         return workspace
     mine = sorted((w for w in workspaces if w.get("output") == workspace.get("output")), key=lambda w: w["idx"])
     if not mine or mine[-1]["id"] in used:
-        raise ValueError("This display has no empty workspace; nothing was imported")
+        raise ValueError(f"This display has no empty workspace; nothing was {done}")
     return mine[-1]
 
 
@@ -1064,6 +1073,7 @@ def main():
     if op == "restore" and len(sys.argv) > 3:
         raise ValueError("Restore reads session.json or one set-aside saved session")
     source = set_aside_source(path, sys.argv[2]) if op == "restore" and len(sys.argv) == 3 else path
+    here = source != path
     if op in ("save", "rename-group", "restore"):
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         with (path.parent / "session.lock").open("a") as lock:
@@ -1085,6 +1095,15 @@ def main():
                     workspace, windows = spaces.snapshot()
                     original_snapshot = source.read_bytes()
                     data = json.loads(original_snapshot)
+                    if here:
+                        # Work is open (that is why it was set aside): reopened on the display's empty workspace.
+                        workspaces, windows = spaces.query("Workspaces", "Windows")
+                        target = empty_workspace(workspace, windows, workspaces, "reopened")
+                        if target["id"] != workspace["id"]:
+                            spaces.command("action", "focus-workspace", target["idx"])
+                        workspace, windows = spaces.snapshot()
+                        if workspace["id"] != target["id"] or any(w.get("workspace_id") == target["id"] for w in windows):
+                            raise ValueError("The empty workspace did not come into focus empty; nothing was reopened")
                     dirs = (os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share"), *os.environ.get("XDG_DATA_DIRS", "/run/current-system/sw/share:/usr/share").split(":"))
                     pins_path = path.parent / "spaces.json"
                     pins = pin_store.read(pins_path)[0]
@@ -1113,10 +1132,17 @@ def main():
                 if current["id"] != workspace["id"]:
                     raise ValueError("Workspace changed; session recovery stopped")
                 subprocess.run(app_command(["gio", "launch", str(desktop)]), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # A set-aside session may predate Groups registered since: only those it saved are its own, as an
+            # import passes only the Groups it created.
+            saved_ids = {g.get("id") for g in data.get("groups") or [] if isinstance(g, dict)}
             report, count = restore(data, workspace, windows, dirs, launch, checked_state, spaces.command,
-                                    pinned=pinned_apps(pins), session=session, pinned_groups=pins, registered=registered,
-                                    display=display)
-            print(json.dumps({"message": f"Restored {count} windows." + (" " + "; ".join(report) if report else "")}))
+                                    pinned=pinned_apps(pins), session=session, pinned_groups=pins,
+                                    registered=[g for g in registered if g.get("id") in saved_ids] if here else registered,
+                                    display=display, here=here)
+            done = (f"Reopened {count} of {len(data['windows'])} windows on an empty workspace." if here
+                    else f"Restored {count} windows.")
+            # Complete: every saved window is back; Settings offers a set-aside session until then.
+            print(json.dumps({"message": done + (" " + "; ".join(report) if report else ""), "complete": not report}))
         return
     raise ValueError("Unknown recovery action")
 

@@ -7,16 +7,17 @@ The shell gets its own runtime directory, state and configuration, with automati
 focused display's empty workspace must be free; the smoke works there and closes every window it opened. With
 ``FLOW_SCREENSHOT`` set (and ``grim`` on PATH), Settings with the set-aside line is captured there.
 
-The saved session is one terminal (``flow-sa-one``), saved and closed; a second (``flow-sa-work``) stays open as
-the work. The runtime's marker says the shell has run with recovery off (``flow-recovery auto-seen``), so the
-shell's first start sets the session aside rather than reopen it into that work.
+The saved session is two terminals, ``flow-sa-one`` and ``flow-sa-work``, saved; ``flow-sa-one`` is closed and
+``flow-sa-work`` stays open as the work, so the session lists an app the work has open. The shell's runtime has
+no marker and Niri started over ten minutes ago, so its first start takes the open window for work under way
+(``restore.under_way_long_enough``) and sets the session aside rather than reopen it into that work.
 
 Checked:
 - the shell sets the saved session aside: the file holds what was saved, the shell names it, a toast says so;
 - automatic saving then writes session.json with the work window (what replaced a set-aside renamed back to
   session.json, as Settings once advised);
-- Reopen it restores from the set-aside file: the saved terminal opens again, the file is unchanged, and the
-  shell no longer offers it.
+- Reopen it reopens both saved terminals on the display's empty workspace from the set-aside file, leaves the
+  work window where it was, keeps the file, and the shell no longer offers it.
 
 Prints one JSON line per check and a final ``{"result": ...}``; exits 1 if any check failed.
 """
@@ -30,8 +31,14 @@ import subprocess
 import sys
 import time
 
+import importlib.util
+
 from isolated_state import IsolatedState
 from niri_performance_smoke import niri, read, wait_for
+
+spec = importlib.util.spec_from_file_location("restore", Path(__file__).parents[1] / "session/restore.py")
+restore = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(restore)
 
 SAVE_EVERY = 30  # s at most between automatic saves (the controller's AUTO_SAVE_EVERY)
 
@@ -47,6 +54,8 @@ def main():
     empty = max((w for w in read("workspaces") if w["output"] == output), key=lambda w: w["idx"])
     if any(w["workspace_id"] == empty["id"] for w in read("windows")):
         raise RuntimeError("The focused display has no empty workspace")
+    if restore.niri_age() < restore.UNDER_WAY_AFTER + 60:
+        raise RuntimeError("Niri started under eleven minutes ago: open work would not yet count as under way")
     results, terminals, shell_process = [], [], None
 
     def check(name, value, ok):
@@ -90,22 +99,23 @@ def main():
             return wait_for(lambda: next((w["id"] for w in read("windows") if w.get("pid") == process.pid), None),
                             f"terminal {name}")
 
-        def windows_of(app):
-            return [w for w in read("windows") if w.get("app_id") == app and w["workspace_id"] == empty["id"]]
+        def windows_of(app, workspace=None):
+            return [w for w in read("windows") if w.get("app_id") == app
+                    and (workspace is None or w["workspace_id"] == workspace)]
 
         try:
             niri("action", "focus-workspace", empty["idx"])
             terminal("one")
+            work_id = terminal("work")
             saved = recovery("save")
-            if not session.exists():
+            if not session.exists() or len(json.loads(session.read_text())["windows"]) != 2:
                 raise RuntimeError(f"Save session failed: {saved}")
             saved_bytes = session.read_bytes()
-            first = terminals.pop()
+            first = terminals.pop(0)
             first.terminate()
             first.wait(timeout=10)
             wait_for(lambda: not windows_of("flow-sa-one") or None, "the saved terminal to close")
-            terminal("work")
-            recovery("auto-seen")  # a shell ran in this Niri instance with recovery off
+            work_at = next(w for w in read("windows") if w["id"] == work_id)["layout"]["pos_in_scrolling_layout"]
 
             shell_process = subprocess.Popen(["quickshell", "-p", shell], env=env, stdin=subprocess.DEVNULL,
                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -120,7 +130,7 @@ def main():
             except RuntimeError:
                 aside = None
             kept = bool(aside) and aside.parent == session.parent and aside.exists() and aside.read_bytes() == saved_bytes
-            check("first start into work: the saved session set aside, named by the shell, a toast",
+            check("first start, no marker, a window open past ten minutes: the session set aside, named, a toast",
                   f"{aside}, toast {toast!r}", kept and bool(toast) and not windows_of("flow-sa-one"))
             if not kept:
                 return 1
@@ -149,17 +159,21 @@ def main():
 
             ipc("reopen_set_aside")
             try:
-                wait_for(lambda: windows_of("flow-sa-one") or None, "the set-aside terminal to reopen", timeout=30)
-                wait_for(lambda: (s := state()) and not s.get("working") and s.get("message", "").startswith("Restored")
-                         or None, "Restore to finish", timeout=30)
+                wait_for(lambda: (s := state()) and not s.get("working") and s.get("message", "").startswith("Reopened")
+                         or None, "Reopen to finish", timeout=60)
             except RuntimeError:
                 pass
             after = state()
-            reopened = windows_of("flow-sa-one")
-            check("Reopen it restores from the set-aside file, keeps it, and offers it no more",
-                  f"{len(reopened)} flow-sa-one, message {after.get('message')!r}, offered {after.get('set_aside')!r}",
-                  len(reopened) == 1 and aside.read_bytes() == saved_bytes and after.get("set_aside") == ""
-                  and after.get("message", "").startswith("Restored"))
+            work = next((w for w in read("windows") if w["id"] == work_id), {})
+            elsewhere = sorted(w["app_id"] for w in read("windows") if w.get("app_id", "").startswith("flow-sa-")
+                               and w["workspace_id"] != empty["id"])
+            check("Reopen it: both saved apps on the empty workspace, the work window left where it was, the file "
+                  "kept, no longer offered",
+                  f"reopened {elsewhere}, work {work.get('workspace_id')}:{work.get('layout', {}).get('pos_in_scrolling_layout')}"
+                  f", message {after.get('message')!r}, offered {after.get('set_aside')!r}",
+                  elsewhere == ["flow-sa-one", "flow-sa-work"] and work.get("workspace_id") == empty["id"]
+                  and work["layout"]["pos_in_scrolling_layout"] == work_at and aside.read_bytes() == saved_bytes
+                  and after.get("set_aside") == "" and after.get("message", "").startswith("Reopened 2 of 2"))
         finally:
             if shell_process:
                 shell_process.terminate()
@@ -174,7 +188,7 @@ def main():
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     process.kill()
-            for window in windows_of("flow-sa-one") + windows_of("flow-sa-work"):  # opened by Restore, not here
+            for window in windows_of("flow-sa-one") + windows_of("flow-sa-work"):  # some opened by Reopen, not here
                 if window.get("pid"):
                     try:
                         os.kill(window["pid"], signal.SIGTERM)

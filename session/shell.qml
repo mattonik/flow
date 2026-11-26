@@ -426,12 +426,14 @@ ShellRoot {
     // automatic save soon replaces recoveryMessage), with Reopen, which restores from that file itself: a copy put
     // back as session.json would be replaced by the next automatic save before Restore session read it.
     property string recoverySetAside: ""
-    // Settings' Reopen it, and tests/niri_set_aside_reopen_smoke.py: restores from the set-aside file itself.
+    // Settings' Reopen it, and tests/niri_set_aside_reopen_smoke.py: restores from the set-aside file itself, on
+    // the display's empty workspace (the work is open), and is offered until every window is back ("complete").
     // Not an automatic command, so automatic saving waits while it runs (recoveryWorking).
     function reopenSetAside() {
-        if (recoveryProcess.running) { recoveryMessage = "Wait for automatic recovery to finish"; return }
-        if (!recoverySetAside || spacesWorking) return
-        recoveryMessage = "Restoring applications…"
+        const busy = recoveryProcess.running ? "Wait for session recovery to finish" : spacesWorking ? "Wait for the current action" : ""
+        if (busy) { recoveryMessage = busy; return }
+        if (!recoverySetAside) return
+        recoveryMessage = "Reopening applications…"
         recoveryProcess.command = ["flow-recovery", "restore", recoverySetAside]
         recoveryProcess.running = true
     }
@@ -632,7 +634,7 @@ ShellRoot {
                         else if (result.error) { root.deskOpen = true; root.settingsOpen = true; Qt.callLater(function() { root.reveal(recoveryStatus) }) }
                     }
                     if (recoveryProcess.command[1] === "save" && !result.error && recoveryPreferences.sessionRecovery) autoReadyTimer.restart()
-                    if (recoveryProcess.command[1] === "restore" && recoveryProcess.command.length > 2 && !result.error) root.recoverySetAside = ""
+                    if (recoveryProcess.command[1] === "restore" && recoveryProcess.command.length > 2 && result.complete) root.recoverySetAside = ""
                     if (recoveryProcess.command[1] === "rename-group") {
                         root.spacesError = result.error || ""
                         if (!result.error) root.renameGroupId = ""
