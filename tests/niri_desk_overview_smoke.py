@@ -778,10 +778,10 @@ class Smoke:
         wait_for(lambda: not self.surfaces(), "Desk to close")
         self.keys("super", "o")
         wait_for(self.overview_open, "Overview")
-        self.settled(output)
+        overview_h = self.settled(output)  # this opening's own frame: its snapshots are newer
         to_desk_h = self.frames(lambda: self.keys("super", "h"), output)  # toggle, another route from Overview to Desk
         wait_for(self.desk_open, "Desk after Super+H from Overview")
-        self.settled(output)
+        desk_h = self.settled(output)
         to_overview = self.frames(lambda: self.click(self.control("desk", "Overview")), output)
         wait_for(self.overview_open, "Overview from Desk")
         overview_again = self.settled(output)
@@ -789,7 +789,8 @@ class Smoke:
         wait_for(lambda: not self.surfaces(), "Overview to close")
         self.settled(output)
         between = sum(1 for frames in (to_desk, to_desk_h, to_overview) for f in frames if not differ(f, work))
-        between_bare = len([f for f in to_desk + to_desk_h if differ(f, overview) and differ(f, desk_again)])
+        between_bare = (len([f for f in to_desk if differ(f, overview) and differ(f, desk_again)])
+                        + len([f for f in to_desk_h if differ(f, overview_h) and differ(f, desk_h)]))
         live = self.frames(lambda: niri("action", "open-overview"), output)
         live_end = self.settled(output)
         niri("action", "close-overview")
@@ -815,7 +816,7 @@ class Smoke:
         self.save(f"to-overview-{tag}-end", {output: overview_again})
         print(f"{tag}: Overview to Desk " + "".join("o" if not differ(f, overview) else "d" if not differ(f, desk_again)
                                                     else "w" if not differ(f, work) else "?" for f in to_desk), flush=True)
-        print(f"{tag}: Overview to Desk by Super+H " + "".join("o" if not differ(f, overview) else "d" if not differ(f, desk_again)
+        print(f"{tag}: Overview to Desk by Super+H " + "".join("o" if not differ(f, overview_h) else "d" if not differ(f, desk_h)
                                                                else "w" if not differ(f, work) else "?" for f in to_desk_h), flush=True)
         return {"return_midway": sum(1 for f in back if differ(f, desk_end) and differ(f, work)), "return_frames": len(back),
                 "between": between, "to_desk_midway": between_bare, "to_desk_frames": len(to_desk) + len(to_desk_h),
