@@ -22,8 +22,8 @@ Checked:
 - a space whose snapshot is over a minute old: taken again when it settles;
 - a window joining another's column with focus unchanged, which changes only the spaces: saved;
 - a second window of one app (recovery cannot tell them apart) closed again after the save that found it: no
-  pause, and saving goes on; one that stays: saving pauses at the next save, Desk opens to say so, and a change
-  after it is not saved.
+  pause, and saving goes on; one that stays: saving pauses at the next save, a toast and Settings say so with
+  the Desk left closed, and a change after it is not saved.
 
 Automatic saves are the controller's (it reports them on its socket), or main's ``flow-recovery auto-save`` runs.
 
@@ -270,18 +270,31 @@ def main():
             if ipc("desk_state") != "closed":
                 ipc("leave")
 
-            # One that stays: saving pauses at the next save, the shell shows it on Desk, and nothing is saved
-            # after it.
+            # One that stays: saving pauses at the next save. A toast says so and Settings holds the reason, but
+            # the Desk stays closed over the user's work. Nothing is saved after it.
             terminal(SPACES[0])
+            seen = {"toast": "", "desk": set()}
+
+            def paused_now():
+                toast = ipc("toast")
+                seen["toast"] = seen["toast"] or (toast if toast.startswith("Automatic saving paused") else "")
+                seen["desk"].add(ipc("desk_state"))
+                return json.loads(ipc("recovery_state"))["paused"]
             try:
-                wait_for(lambda: ipc("desk_state") == "open", "Desk showing the pause", timeout=2 * SAVE_EVERY + 15)
+                wait_for(paused_now, "automatic saving to pause", timeout=2 * SAVE_EVERY + 15)
                 paused = time.time()
+                for _ in range(10):  # the toast follows the pause in the same handler; the Desk would too
+                    paused_now()
+                    time.sleep(0.2)
             except RuntimeError:
                 paused = None
-            check("a second window of one app that stays: automatic saving pauses and Desk shows it", paused is not None,
-                  "True", paused is not None)
+            state = json.loads(ipc("recovery_state"))
+            shown = (paused is not None and bool(seen["toast"]) and seen["desk"] == {"closed"}
+                     and state["message"].startswith("Automatic saving paused") and "multiple windows" in state["message"])
+            check("a second window of one app that stays: automatic saving pauses, a toast and Settings say why, "
+                  "the Desk stays closed", f"toast {seen['toast']!r}, desk {sorted(seen['desk'])}, settings "
+                  f"{state['message']!r}", "True", shown)
             if paused:
-                ipc("leave")
                 time.sleep(1)
                 sock.focus(tiles[1])
                 time.sleep(SAVE_EVERY + 5)
