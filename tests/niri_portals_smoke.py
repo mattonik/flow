@@ -22,6 +22,9 @@ Checks, in order (names for ``--only``):
   gets is the live screen, at the output's size, showing a window of a colour picked for this run. An interactive
   request (as GIMP sends) asks through Flow's backend: Cancel answers 1, Take Screenshot gives the live screen
   without the dialog. PickColor answers the colour under a click.
+- ``screenshot-gimp``: GIMP 3's screenshot plug-in (what File > Create > Screenshot runs, here as a batch call),
+  which always asks with ``interactive: true``: Cancel gives GIMP no image and leaves no file; Take Screenshot
+  gives it the live screen.
 - ``screencast``: Firefox's ``getDisplayMedia`` on a local page. Cancelling the portal's dialog refuses the page.
   Sharing gives a PipeWire stream that Niri lists, whose frames show the screen. It ends when the page stops it,
   and when it is stopped outside the app with Niri's ``stop-cast`` (what a key binding or a Flow control runs);
@@ -81,7 +84,7 @@ from pointer import Pointer  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 PROBE = "io.github.mattonik.PortalProbe"
 RUNTIME, BRANCH = "org.freedesktop.Platform", "25.08"
-CHECKS = ["chooser", "screenshot", "screencast", "dnd-file", "dnd-text", "clipboard-text", "clipboard-image",
+CHECKS = ["chooser", "screenshot", "screenshot-gimp", "screencast", "dnd-file", "dnd-text", "clipboard-text", "clipboard-image",
           "chooser-pointer", "backends", "edges"]
 # The backend Flow intends for each interface the checks use (modules/flow.nix, ADR-0005).
 INTENDED = {"FileChooser": "gnome", "Access": "gtk", "Screenshot": "flow", "ScreenCast": "gnome"}
@@ -695,6 +698,20 @@ class Monitor:
                 found.append((match.group(2), match.group(3), match.group(1)))
         return found
 
+    def access_dialogs(self):
+        """The text each AccessDialog call carried (the backend's consent dialogs), one string per call."""
+        found, current = [], None
+        for line in self.log.read_text(errors="replace").splitlines():
+            if line.startswith("method call"):
+                current = [] if "member=AccessDialog" in line else None
+                if current is not None:
+                    found.append(current)
+            elif current is not None:
+                match = re.match(r'\s+string "(.*)"$', line)
+                if match:
+                    current.append(match.group(1))
+        return [" | ".join(f) for f in found]
+
     @staticmethod
     def owners():
         """Unique bus name → the portal backend it owns (``gtk``, ``gnome``, ...)."""
@@ -964,14 +981,35 @@ class Smoke:
         ww = w["layout"]["window_size"][0]
         return window, self.apps.window_point(window, ww // 4, -23), self.apps.window_point(window, 3 * ww // 4, -23)
 
-    def check_screenshot(self, state):
-        probe = self.need_probe()
+    def marker(self):
+        """A full-width window of a colour chosen for this run, focused, for screenshots to show."""
         colour = fresh_colour()
         _, marker = self.apps.start(["foot", "-a", "flow-f012-marker", "-o", f"colors-dark.background={colour_hex(colour)}",
                                      "-o", f"colors-light.background={colour_hex(colour)}", "sh", "-c", "sleep 900"],
                                     app_id="flow-f012-marker", isolated=False)
         self.apps.focus(marker, "100%")
         time.sleep(1)
+        return colour, marker
+
+    def shows(self, image, colour):
+        """How many of a grid of points, away from the shell's island and indicators, show ``colour``."""
+        o, scale = self.apps.output, self.apps.output["scale"]
+        points = [(x, y) for x in range(40, o["width"] - 40, 60) for y in range(80, o["height"] - 80, 60)
+                  if not (x > o["width"] - 300 and y > o["height"] - 120)]
+        return sum(close(image.pixel(round(x * scale), round(y * scale)), colour) for x, y in points), len(points)
+
+    def private(self, path):
+        """Whether another local user can read ``path``: a folder above it closed to them, or the file itself."""
+        for folder in [path, *path.parents]:
+            if folder.stat().st_mode & 0o005 == 0 and folder.is_dir():
+                return f"{folder} is closed to other users ({oct(folder.stat().st_mode & 0o777)})"
+        if path.stat().st_mode & 0o004 == 0:
+            return f"the file is not readable by others ({oct(path.stat().st_mode & 0o777)})"
+        return None
+
+    def check_screenshot(self, state):
+        probe = self.need_probe()
+        colour, marker = self.marker()
         state.set_permissions({a: p for a, p in state.permissions().items() if a != PROBE})
         shot_args = "('', {'interactive': <false>})"
 
@@ -1035,6 +1073,15 @@ class Smoke:
         self.pointer.click(cancel)
         answer = finish(thread, result, "Cancel on the interactive dialog")
         check(answer.get("response") == 1 and not state.new_screenshots(), f"Cancel answered {answer}")
+        told = self.monitor.access_dialogs()
+        check(told and PROBE in told[-1], f"The consent dialog was not told the app's name: {told[-1:] or 'no dialog'}")
+        # Closed instead of answered: the same as Cancel.
+        before = set(windows())
+        thread, result = probe.request("Screenshot", "Screenshot", interactive)
+        dialog, _, _ = self.access_dialog(before)
+        self.apps.close_window(dialog)
+        answer = finish(thread, result, "Closing the interactive dialog")
+        check(answer.get("response") == 1 and not state.new_screenshots(), f"Closing the dialog answered {answer}")
         before = set(windows())
         thread, result = probe.request("Screenshot", "Screenshot", interactive)
         dialog, _, take = self.access_dialog(before)
@@ -1053,8 +1100,10 @@ class Smoke:
         hits = sum(close(image.pixel(round(x * scale), round(y * scale)), colour) for x, y in everywhere)
         check(hits >= 0.95 * len(everywhere), f"Only {hits} of {len(everywhere)} points of the interactive "
                                                "screenshot show this run's colour (the dialog still on it?)")
-        detail += f"; interactive: Cancel answered 1, Take Screenshot gave the live screen without the dialog " \
-                  f"({hits}/{len(everywhere)} points)"
+        privacy = self.private(new[0])
+        check(privacy, f"{new[0]} can be read by other local users")
+        detail += f"; interactive: the dialog named {PROBE}; Cancel, or closing it, answered 1 and captured nothing; " \
+                  f"Take Screenshot gave the live screen without the dialog ({hits}/{len(everywhere)} points); {privacy}"
 
         # PickColor: Niri's picker, answered with a click on the marker.
         thread, result = probe.request("Screenshot", "PickColor", "('', {})")
@@ -1066,6 +1115,76 @@ class Smoke:
               f"PickColor answered {answer}, not this run's colour {colour}")
         self.apps.close_window(marker)
         self.passed("screenshot", detail + "; PickColor picked the marker's colour")
+
+    GIMP_SHOT = """
+import gi
+gi.require_version("Gimp", "3.0")
+from gi.repository import Gimp, Gio
+procedure = Gimp.get_pdb().lookup_procedure("plug-in-screenshot")
+config = procedure.create_config()
+config.set_property("run-mode", Gimp.RunMode.NONINTERACTIVE)
+config.set_property("shoot-type", "screen")
+result = procedure.run(config)
+print("GIMP-STATUS", result.index(0).value_nick, flush=True)
+if result.index(0) == Gimp.PDBStatusType.SUCCESS:
+    Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, result.index(1), Gio.File.new_for_path(%r), None)
+    print("GIMP-SAVED", flush=True)
+"""
+
+    def gimp_shot(self, out):
+        """GIMP 3's screenshot plug-in, the one File > Create > Screenshot runs, as a batch call: on Wayland it
+        asks the Screenshot portal with ``interactive: true`` whatever its run mode
+        (plug-ins/screenshot/screenshot-freedesktop.c)."""
+        home = self.tmp / "gimp-home"
+        env = {**os.environ, "XDG_CONFIG_HOME": str(home / "config"), "XDG_CACHE_HOME": str(home / "cache"),
+               "XDG_DATA_HOME": str(home / "data")}
+        result = {}
+
+        def shoot():
+            done = subprocess.run(["gimp-console", "-i", "--batch-interpreter=python-fu-eval", "-b",
+                                   self.GIMP_SHOT % str(out), "--quit"], env=env, text=True,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
+            result["output"] = done.stdout
+        thread = threading.Thread(target=shoot, daemon=True)
+        thread.start()
+        return thread, result
+
+    def check_screenshot_gimp(self):
+        state = self.state
+        colour, marker = self.marker()
+        out = self.tmp / "gimp-shot.png"
+
+        def status(result):
+            match = re.search(r"GIMP-STATUS (\S+)", result.get("output", ""))
+            return match.group(1) if match else None
+
+        before = set(windows())
+        thread, result = self.gimp_shot(out)
+        try:
+            dialog, cancel, _ = self.access_dialog(before)
+        except Failed:
+            thread.join(120)
+            tail = " ".join(line for line in result.get("output", "").splitlines()[-6:] if "GIMP" in line or "rror" in line)
+            raise Failed(f"GIMP's screenshot showed no consent dialog and answered {status(result)}: {tail}")
+        self.shot("screenshot-gimp-consent")
+        self.pointer.click(cancel)
+        thread.join(120)
+        check(status(result) not in (None, "success") and not out.exists() and not state.new_screenshots(),
+              f"Cancel gave GIMP {status(result)}, file {out.exists()}, screenshots {state.new_screenshots()}")
+        cancelled = status(result)
+
+        before = set(windows())
+        thread, result = self.gimp_shot(out)
+        dialog, _, take = self.access_dialog(before)
+        self.pointer.click(take)
+        thread.join(120)
+        check(status(result) == "success" and "GIMP-SAVED" in result.get("output", "") and out.exists(),
+              f"Take Screenshot gave GIMP {status(result)}: {result.get('output', '')[-400:]}")
+        hits, points = self.shows(Image(out.read_bytes()), colour)
+        check(hits >= 0.95 * points, f"Only {hits} of {points} points of GIMP's screenshot show this run's colour")
+        self.apps.close_window(marker)
+        self.passed("screenshot-gimp", f"GIMP 3's screenshot asked for consent; Cancel gave it {cancelled} and no "
+                                       f"file; Take Screenshot gave it the live screen ({hits}/{points} points)")
 
     # ScreenCast -------------------------------------------------------------------------------------------------
 
@@ -1331,7 +1450,7 @@ def main():
     parser.add_argument("--only", action="append", choices=CHECKS)
     parser.add_argument("--shots", type=Path)
     args = parser.parse_args()
-    for tool in ("niri", "wtype", "grim", "wl-paste", "flatpak", "firefox", "nautilus", "kate", "kolourpaint",
+    for tool in ("niri", "wtype", "grim", "wl-paste", "flatpak", "firefox", "nautilus", "kate", "kolourpaint", "gimp-console",
                  "gnome-text-editor", "xterm", "foot", "dconf", "busctl", "dbus-monitor", "pw-dump", "flow-pointer"):
         if not shutil.which(tool):
             raise SystemExit(f"{tool} is not on PATH (tests/run_portals_smoke.sh builds the test apps)")
@@ -1352,6 +1471,9 @@ def main():
                 try:
                     if name == "screenshot":
                         smoke.check_screenshot(state)
+                    elif name == "screenshot-gimp":
+                        smoke.state = state
+                        smoke.check_screenshot_gimp()
                     else:
                         getattr(smoke, "check_" + name.replace("-", "_"))()
                 except (Failed, RuntimeError, subprocess.SubprocessError) as exc:

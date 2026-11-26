@@ -85,6 +85,23 @@ class MonitorTest(unittest.TestCase):
             monitor.log.write_text(log)
             self.assertEqual(monitor.calls(), [("FileChooser", "OpenFile", ":1.72"), ("ScreenCast", "Start", ":1.69")])
 
+    def test_reads_what_the_consent_dialog_was_told(self):
+        log = (
+            "method call time=2.0 sender=:1.80 -> destination=:1.72 serial=5 path=/org/freedesktop/portal/desktop; "
+            "interface=org.freedesktop.impl.portal.Access; member=AccessDialog\n"
+            "   object path \"/org/freedesktop/portal/desktop/request/flow/ab\"\n"
+            "   string \"io.github.mattonik.PortalProbe\"\n"
+            "   string \"\"\n"
+            "   string \"Take a Screenshot?\"\n"
+            "method call time=2.1 sender=:1.64 -> destination=:1.72 serial=6 path=/org/freedesktop/portal/desktop; "
+            "interface=org.freedesktop.impl.portal.FileChooser; member=OpenFile\n"
+            "   string \"not a dialog\"\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            monitor = smoke.Monitor.__new__(smoke.Monitor)
+            monitor.log = Path(tmp) / "monitor.log"
+            monitor.log.write_text(log)
+            self.assertEqual(monitor.access_dialogs(), ["io.github.mattonik.PortalProbe |  | Take a Screenshot?"])
+
 
 if __name__ == "__main__":
     unittest.main()

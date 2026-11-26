@@ -89,6 +89,7 @@ class Backend:
             answer(OTHER)
 
         state["id"] = self.connection.register_object(handle, self.request_info, on_close, None, None)
+        answer.done = lambda: state["answered"]
         return answer
 
     def screenshot(self, handle, app_id, parent_window, options, invocation):
@@ -100,6 +101,11 @@ class Backend:
         answer = self.request(handle, invocation, close_dialog if options.get("interactive") else None)
 
         def take():
+            # Nothing is captured for a request already answered: closed by the broker (the app gave up) while the
+            # user decided, or while the dialog faded.
+            if answer.done():
+                return False
+
             def saved(connection, result):
                 try:
                     ok, used = connection.call_finish(result).unpack()
@@ -124,7 +130,7 @@ class Backend:
             except self.GLib.Error as exc:
                 print(f"flow-screenshot-portal: the consent dialog failed: {exc.message}", file=sys.stderr)
                 return answer(OTHER)
-            if code != SUCCESS:
+            if code != SUCCESS or answer.done():
                 return answer(CANCELLED)
             self.GLib.timeout_add(AFTER_DIALOG_MS, take)
         self.call(ACCESS, "AccessDialog", self.GLib.Variant("(osssssa{sv})", (

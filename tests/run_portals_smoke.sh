@@ -3,7 +3,7 @@
 # and drag and drop through the installed portals, in real apps, under the guest's screen lock. Run in the guest, in
 # the Niri session's user, from the checkout's root; extra arguments go to the test (--only NAME, --shots DIR).
 #
-# The apps the guest does not install (Kate, KolourPaint, GNOME Text Editor, xterm, wl-clipboard) are built from the
+# The apps the guest does not install (Kate, KolourPaint, GNOME Text Editor, xterm, wl-clipboard, GIMP) are built from the
 # nixpkgs of the flake in FLOW_GUEST_FLAKE (default /etc/floe-test), with FLOW_NIX (default "sudo -n nix") and
 # FLOW_NIX_ARGS (for the UTM guest: "--option ssl-cert-file /etc/floe-test/host-trust.pem"), into
 # ~/flow-f012/apps, garbage-collector roots that stay until removed. PortalProbe needs the
@@ -12,14 +12,14 @@ set -eu
 flake=${FLOW_GUEST_FLAKE:-/etc/floe-test}
 roots=${FLOW_F012_APPS:-$HOME/flow-f012/apps}
 mkdir -p "$roots"
-for attr in kdePackages.kate kdePackages.kolourpaint gnome-text-editor xterm wl-clipboard; do
+for attr in kdePackages.kate kdePackages.kolourpaint gnome-text-editor xterm wl-clipboard gimp; do
     name=${attr##*.}
     [ -e "$roots/$name" ] && continue
     (cd /tmp && ${FLOW_NIX:-sudo -n nix} build --out-link "$roots/$name" --inputs-from "$flake" "nixpkgs#$attr" ${FLOW_NIX_ARGS:-})
 done
 eval "$(systemctl --user show-environment \
     | grep -E '^(NIRI_SOCKET|WAYLAND_DISPLAY|DISPLAY|XDG_CURRENT_DESKTOP|XDG_SESSION_TYPE|NIXOS_OZONE_WL|PATH)=' | sed 's/^/export /')"
-for name in kate kolourpaint gnome-text-editor xterm wl-clipboard; do PATH="$roots/$name/bin:$PATH"; done
+for name in kate kolourpaint gnome-text-editor xterm wl-clipboard gimp; do PATH="$roots/$name/bin:$PATH"; done
 export PATH
 # FLOW_SCREEN_LOCK_HELD: the caller holds the lock already (a second open of the file would wait for it for ever).
 if [ -z "${FLOW_SCREEN_LOCK_HELD:-}" ]; then
