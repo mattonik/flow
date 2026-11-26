@@ -749,9 +749,12 @@ class Smoke:
         work = self.settled(output)
         desk = self.frames(lambda: self.keys("super", "h"), output)
         desk_end = self.settled(output)
-        self.keys("esc")
+        back = self.frames(lambda: self.keys("esc"), output)
         wait_for(lambda: not self.surfaces(), "Desk to close")
         self.settled(output)
+        # The return, as measured: Desk's frame (d), then the work, whole (w) or for a moment without its work indicator (?).
+        print(f"{'still' if self.reduce_motion else 'moving'}: Escape from Desk "
+              + "".join("d" if not differ(f, desk_end) else "w" if not differ(f, work) else "?" for f in back), flush=True)
         # Overview to Desk and back, and the returns: the work must never show between two surfaces.
         self.keys("super", "o")
         wait_for(self.overview_open, "Overview")
@@ -781,7 +784,8 @@ class Smoke:
               + "".join("w" if not differ(f, work) else "d" if not differ(f, desk_end) else "?" for f in desk), flush=True)
         print(f"{tag}: Overview to Desk " + "".join("o" if not differ(f, overview) else "d" if not differ(f, desk_again)
                                                     else "w" if not differ(f, work) else "?" for f in to_desk), flush=True)
-        return {"between": between, "to_desk_midway": between_bare, "to_desk_frames": len(to_desk),
+        return {"return_midway": sum(1 for f in back if differ(f, desk_end) and differ(f, work)), "return_frames": len(back),
+                "between": between, "to_desk_midway": between_bare, "to_desk_frames": len(to_desk),
                 "desk": len(self.in_between(desk, work, desk_end)), "desk_frames": len(desk),
                 "niri": len(self.in_between(live, work, live_end)), "niri_frames": len(live)}
 
@@ -814,6 +818,9 @@ class Smoke:
         self.step(f"the work never showed between Overview and Desk, either way ({moving['to_desk_frames']} and "
                   f"{still['to_desk_frames']} screenshots from Overview to Desk); with Reduce motion every one was Overview's "
                   "or Desk's settled frame")
+        self.step(f"returning from Desk by Escape, {moving['return_midway']} of {moving['return_frames']} screenshots (motion on) "
+                  f"and {still['return_midway']} of {still['return_frames']} (Reduce motion) were the work without its whole "
+                  "work indicator; the rest Desk's or the work's settled frame")
         self.step(f"Reduce motion: no frame midway for Desk ({still['desk_frames']} screenshots) or Niri's overview "
                   f"({still['niri_frames']}); with it off, {moving['desk']} of {moving['desk_frames']} and {moving['niri']} of "
                   f"{moving['niri_frames']} were caught midway")
