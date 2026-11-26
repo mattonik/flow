@@ -110,6 +110,29 @@ def saved_order_matches(entries, restored, workspace, windows):
     return True
 
 
+def order_after_pins(entries, restored, workspace, windows, pins, socket, groups=()):
+    """Whether the live row is the saved one, or will be once the next refresh puts pinned spaces first.
+
+    The refresh moves pinned spaces to the front, in pin order, whenever it runs: before recovery looks, or after.
+    So both rows are compared as it leaves them. Pins in another order than the saved session (reordered since the
+    last save) then keep their new order, and the other windows follow them in their saved order."""
+    if saved_order_matches(entries, restored, workspace, windows):
+        return True
+    rows, saved = Counter(), []
+    for entry, window in restored:
+        column = entry.get("column")
+        if not isinstance(column, int) or isinstance(column, bool) or column < 1:
+            return False
+        rows[column] += 1
+        saved.append({**window, "workspace_id": workspace["id"], "is_floating": False,
+                      "layout": {**window.get("layout", {}), "pos_in_scrolling_layout": [column, rows[column]]}})
+    columns = {w["id"]: w["layout"]["pos_in_scrolling_layout"][0]
+               for w in spaces.pin_ordered(workspace, saved, pins, socket, groups)}
+    moved = [({**entry, "column": columns[window["id"]]}, window) for entry, window in restored]
+    return saved_order_matches([entry for entry, _ in moved], moved, workspace,
+                               spaces.pin_ordered(workspace, windows, pins, socket, groups))
+
+
 @contextlib.contextmanager
 def flow_locks(state, wait=True):
     """Flow's locks, as every action takes them: session.lock, then spaces.lock. Without ``wait``, a held
@@ -502,17 +525,18 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                         else:
                             wait(0.1)
         elif not groups:
+            local = spaces.local_pins(pinned_groups, display)
             for index, (_, window) in enumerate(restored, 1):
                 current, live = checked_snapshot()
                 if any(w.get("workspace_id") == workspace_id and w.get("app_id") in pinned for w in live):
-                    if not saved_order_matches(entries, restored, current, live):
+                    if not order_after_pins(entries, restored, current, live, local, session or "", registered or ()):
                         report.append("Pinned spaces keep their positions; session order needs manual recovery")
                     break
                 action("action", "focus-window", "--id", window["id"])
                 current, live = checked_snapshot()
                 if any(w.get("workspace_id") == workspace_id and w.get("app_id") in pinned for w in live):
                     # A pinned app appeared meanwhile (one opened at login, say): judged as at the top of the loop.
-                    if not saved_order_matches(entries, restored, current, live):
+                    if not order_after_pins(entries, restored, current, live, local, session or "", registered or ()):
                         report.append("Pinned spaces keep their positions; session order needs manual recovery")
                     break
                 action("action", "move-column-to-index", index)
@@ -647,11 +671,9 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
                 if destinations:
                     workspace, live = checked_snapshot()
                     if any(w.get("workspace_id") == workspace_id and w.get("app_id") in pinned for w in live):
-                        # The next refresh puts pinned spaces first, in pin order: an order it will bring back is saved.
-                        if not (saved_order_matches(entries, restored, workspace, live) or saved_order_matches(
-                                entries, restored, workspace,
-                                spaces.pin_ordered(workspace, live, spaces.local_pins(pinned_groups, display),
-                                                   session or "", registered or ()))):
+                        if not order_after_pins(entries, restored, workspace, live,
+                                                spaces.local_pins(pinned_groups, display), session or "",
+                                                registered or ()):
                             report.append("Pinned spaces keep their positions; session order needs manual recovery")
                         destinations = []
                     else:

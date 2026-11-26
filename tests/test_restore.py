@@ -650,6 +650,40 @@ class RecoveryTest(unittest.TestCase):
                 self.assertEqual(report, expected)
                 self.assertNotIn("move-column-to-index", [call.args[1] for call in actions.call_args_list])
 
+    def test_single_window_recovery_accepts_pins_reordered_since_the_save(self):
+        # Saved with Mail first; the pins were swapped since, and a refresh during the launches put Notes first.
+        # The pins keep their new order; the unpinned windows must still be in their saved order.
+        saved = {"version": 1, "windows": [{"app_id": "mail", "column": 1}, {"app_id": "notes", "column": 2},
+                                           {"app_id": "files", "column": 3}, {"app_id": "scratch", "column": 4}]}
+        pins = [{"app_id": "notes"}, {"app_id": "mail"}]
+        for unpinned, expected in ((("files", "scratch"), []),
+                                   (("scratch", "files"),
+                                    ["Pinned spaces keep their positions; session order needs manual recovery"])):
+            with self.subTest(unpinned=unpinned):
+                ws = {"id": 1, "active_window_id": 1}
+                windows = [window(2, "notes", 1), window(1, "mail", 2),
+                           window(3, unpinned[0], 3), window(4, unpinned[1], 4)]
+                actions = Mock()
+                report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                                pinned={"notes", "mail"}, pinned_groups=pins)
+                self.assertEqual((report, count), (expected, 4))
+                self.assertNotIn("move-column-to-index", [call.args[1] for call in actions.call_args_list])
+
+    def test_single_window_recovery_counts_only_this_displays_pins(self):
+        # Notes is pinned to another display, so here only Mail leads: Files and Notes must follow it in their
+        # saved order. Counting the other display's pin would put Notes first in both rows and pass them.
+        saved = {"version": 1, "windows": [{"app_id": "files", "column": 1}, {"app_id": "notes", "column": 2},
+                                           {"app_id": "mail", "column": 3}]}
+        pins = [{"app_id": "notes", "display": "ext"}, {"app_id": "mail", "display": "main"}]
+        for display, expected in (("main", ["Pinned spaces keep their positions; session order needs manual recovery"]),
+                                  (None, [])):
+            with self.subTest(display=display):
+                ws = {"id": 1, "active_window_id": 1}
+                windows = [window(2, "notes", 1), window(3, "mail", 2), window(1, "files", 3)]
+                report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), Mock(),
+                                            pinned={"notes", "mail"}, pinned_groups=pins, display=display)
+                self.assertEqual(report, expected)
+
     def test_single_window_recovery_ignores_pins_on_another_workspace(self):
         ws = {"id": 1, "active_window_id": 1}
         saved = {"version": 1, "windows": [{"app_id": "one", "column": 1}]}
@@ -955,17 +989,64 @@ class RecoveryTest(unittest.TestCase):
         self.assertNotIn(call("action", "consume-or-expel-window-left", "--id", 3), actions.call_args_list)
 
     def test_pinned_group_recovery_counts_only_this_displays_pins(self):
-        # A pin of another display does not lead this display's strip at the next refresh, so its order is not
-        # the saved one here.
+        # Notes is pinned to another display, so here it is an unpinned window: the next refresh puts only the Group
+        # first, and Notes and Files must follow it in their saved order. Counting the other display's pin would
+        # put Notes first in both rows and pass them.
         saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two"]}],
-                 "windows": [{"app_id": "notes", "column": 1}, {"app_id": "one", "column": 2},
-                             {"app_id": "two", "column": 2}]}
+                 "windows": [{"app_id": "files", "column": 1}, {"app_id": "notes", "column": 2},
+                             {"app_id": "one", "column": 3}, {"app_id": "two", "column": 3}]}
         pins = [{"app_id": "notes", "display": "ext"},
                 {"app_id": "one", "members": ["one", "two"], "group_id": "group-id", "display": "main"}]
-        ws, windows = {"id": 1}, [window(1, "one", 1), window(2, "two", 2), window(3, "notes", 3)]
+        for display, expected in (("main", ["Pinned spaces keep their positions; session order needs manual recovery"]),
+                                  (None, [])):
+            with self.subTest(display=display):
+                ws = {"id": 1}
+                windows = [window(3, "notes", 1), window(1, "one", 2), window(2, "two", 3), window(4, "files", 4)]
+                actions = Mock(side_effect=NiriActions(ws, windows))
+                report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
+                                            pinned={"one", "two", "notes"}, pinned_groups=pins, display=display,
+                                            registered=[{"id": "group-id", "label": "Pair", "members": ["one", "two"]}])
+                self.assertEqual(report, expected)
+
+    def test_pinned_group_recovery_accepts_pins_reordered_since_the_save_whenever_the_refresh_runs(self):
+        # The pins were swapped after the last save: the Group is now first, Mail second. Recovery joins the Group
+        # with Mail still first; a refresh may put the pins in their new order before recovery looks or after.
+        # Either way the pins end in pin order and Files follows them, so the session is restored.
+        saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two"]}],
+                 "windows": [{"app_id": "mail", "column": 1}, {"app_id": "one", "column": 2},
+                             {"app_id": "two", "column": 2}, {"app_id": "files", "column": 3}]}
+        pins = [{"app_id": "one", "members": ["one", "two"], "group_id": "group-id"}, {"app_id": "mail"}]
+        registered = [{"id": "group-id", "label": "Pair", "members": ["one", "two"]}]
+        for refresh in (False, True):
+            with self.subTest(refresh_after_the_join=refresh):
+                ws = {"id": 1}
+                windows = [window(4, "mail", 1), window(1, "one", 2), window(2, "two", 3), window(3, "files", 4)]
+                niri = NiriActions(ws, windows)
+
+                def act(kind, action, *args):
+                    niri(kind, action, *args)
+                    if refresh and action.startswith("consume"):
+                        for live, moved in zip(windows, restore.spaces.pin_ordered(ws, windows, pins, "", registered)):
+                            live["layout"] = moved["layout"]
+
+                report, count = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows),
+                                                Mock(side_effect=act), pinned={"one", "two", "mail"},
+                                                pinned_groups=pins, registered=registered)
+                self.assertEqual((report, count), ([], 4))
+
+    def test_pinned_group_recovery_still_reports_unpinned_windows_out_of_saved_order(self):
+        # Pins in a new order are accepted; unpinned windows out of their saved order are not.
+        saved = {"version": 1, "groups": [{"id": "group-id", "members": ["one", "two"]}],
+                 "windows": [{"app_id": "mail", "column": 1}, {"app_id": "one", "column": 2},
+                             {"app_id": "two", "column": 2}, {"app_id": "files", "column": 3},
+                             {"app_id": "scratch", "column": 4}]}
+        pins = [{"app_id": "one", "members": ["one", "two"], "group_id": "group-id"}, {"app_id": "mail"}]
+        ws = {"id": 1}
+        windows = [window(4, "mail", 1), window(1, "one", 2), window(2, "two", 3), window(5, "scratch", 4),
+                   window(3, "files", 5)]
         actions = Mock(side_effect=NiriActions(ws, windows))
         report, _ = restore.restore(saved, ws, windows, [], Mock(), lambda: (ws, windows), actions,
-                                    pinned={"one", "two", "notes"}, pinned_groups=pins, display="main",
+                                    pinned={"one", "two", "mail"}, pinned_groups=pins,
                                     registered=[{"id": "group-id", "label": "Pair", "members": ["one", "two"]}])
         self.assertEqual(report, ["Pinned spaces keep their positions; session order needs manual recovery"])
 
