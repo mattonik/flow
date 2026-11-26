@@ -337,7 +337,7 @@ class RecoveryTest(unittest.TestCase):
 
     def reopen_set_aside(self, missing=(), empty=True, registered=(), aside_session=None, focus_moves=True,
                          groups=(), leave_after_launch=False, crowded_on_focus=False, reopened_before=False,
-                         other_display=False):
+                         other_display=False, killed_at_launch=False, user_away_on_focus=False):
         """Settings' Reopen it run through the command line against a fake Niri: the user's foot and firefox on
         workspace 1 (focused), workspace 2 after it on the display empty unless ``empty`` is false. The set-aside
         session lists the same two apps; ``missing`` have no desktop entry; ``registered`` are the Groups now
@@ -345,7 +345,8 @@ class RecoveryTest(unittest.TestCase):
         work's window IDs); ``focus_moves`` false, Niri ignores focus-workspace; ``leave_after_launch``, the user goes back to the
         work after the first launch; ``crowded_on_focus``, a window lands on workspace 2 as it is focused;
         ``reopened_before``, the file was reopened once already; ``other_display``, it was saved on another
-        connected display. ``self.record`` is then what the reopen wrote beside the file, ``self.exit_code`` its
+        connected display; ``killed_at_launch``, the reopen is killed as its first app starts;
+        ``user_away_on_focus``, the user goes back to workspace 1 as 2 is focused. ``self.record`` is then what the reopen wrote beside the file, ``self.exit_code`` its
         exit status. Returns the printed answer, the Niri
         actions, the windows and the file's bytes before and after; session.json is rewritten at each launch,
         as an automatic save of the work would."""
@@ -369,6 +370,8 @@ class RecoveryTest(unittest.TestCase):
             actions.append((action, *args))
             if action == "focus-workspace" and focus_moves:
                 world["focused"] = args[0]
+                if user_away_on_focus and args[0] == 2:
+                    world["focused"] = 1
                 if crowded_on_focus and args[0] == 2:
                     world["windows"].append({"id": 30, "app_id": "late", "workspace_id": 2,
                                              "layout": {"pos_in_scrolling_layout": [1, 1]}})
@@ -383,6 +386,8 @@ class RecoveryTest(unittest.TestCase):
                     w["layout"]["pos_in_scrolling_layout"] = [column, 1]
 
         def run(argv, **kwargs):  # gio launch: the app opens on the focused workspace, at its end
+            if killed_at_launch:
+                raise KeyboardInterrupt  # as a signal would end it: no answer, no last word on disk
             app = Path(argv[-1]).stem
             path.write_text("an automatic save of the work")
             world["windows"].append({"id": 20 + len(world["windows"]), "app_id": app, "workspace_id": world["focused"],
@@ -429,8 +434,10 @@ class RecoveryTest(unittest.TestCase):
                     restore.main()
                 except SystemExit as exc:  # an error after the move to the empty workspace, printed with what opened
                     self.exit_code = exc.code
+                except KeyboardInterrupt:
+                    self.exit_code = "killed"
             self.record = record.read_text() if record.exists() else None
-            return json.loads(out.getvalue()), actions, world["windows"], before, aside.read_bytes()
+            return json.loads(out.getvalue() or "{}"), actions, world["windows"], before, aside.read_bytes()
 
     def test_reopening_a_set_aside_session_leaves_the_work_alone(self):
         # The session was set aside because work is open, mostly in the apps it lists: reopened on the display's
@@ -495,6 +502,18 @@ class RecoveryTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, r"reopened already \(reopened 2 of 2 windows\); open the rest"):
             self.reopen_set_aside(reopened_before=True)
         self.assertEqual(self.niri_actions, [])
+
+    def test_a_reopen_killed_as_it_launches_is_recorded_before_the_launch(self):
+        # Killed with the first app starting, it never answers: the record written before that launch still stops
+        # a second reopen from opening it twice.
+        self.reopen_set_aside(killed_at_launch=True)
+        self.assertEqual((self.exit_code, self.record), ("killed", "stopped while reopening\n"))
+
+    def test_a_refused_reopen_leaves_a_user_who_moved_on_where_they_are(self):
+        # The user went back to their work themselves as the empty workspace was focused: refused, and not moved.
+        with self.assertRaisesRegex(ValueError, "did not come into focus empty"):
+            self.reopen_set_aside(user_away_on_focus=True)
+        self.assertEqual(self.niri_actions, [("focus-workspace", 2)])
 
     def test_a_set_aside_session_from_another_connected_display_is_refused_where_the_user_is(self):
         with self.assertRaisesRegex(ValueError, "saved on another connected display"):
