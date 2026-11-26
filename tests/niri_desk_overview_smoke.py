@@ -556,6 +556,11 @@ class Smoke:
         if "desk" in self.surfaces():
             k("esc")
             wait_for(lambda: not self.surfaces(), "Desk to close")
+        # Its error stays in the shell until an action succeeds: Super+1 from the row's workspace, so the cases below
+        # start without it.
+        self.focus_window("e")
+        k("super", "1")
+        wait_for(lambda: self.work()["focused"] == "a" and self.ipc("spaces_error") == "", "Super+1 from the row to clear it")
         self.step(f"control, nothing shown: Super+1 from the workspace below gave focus {control[0]}, error {control[1]!r}, "
                   f"surfaces {control[2]}")
         self.pins_from = "e" if control[0] != "a" else None
