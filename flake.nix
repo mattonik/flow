@@ -23,7 +23,8 @@
       niriConfig = config.environment.etc."niri/config.kdl".source;
       wrappers = builtins.filter (p: lib.hasPrefix "flow" (lib.getName p)) config.environment.systemPackages
         ++ [ config.systemd.user.services.flow-shell.serviceConfig.ExecStart
-             config.systemd.user.services.flow-api.serviceConfig.ExecStart ];
+             config.systemd.user.services.flow-api.serviceConfig.ExecStart
+             config.systemd.user.services.flow-screenshot-portal.serviceConfig.ExecStart ];
       search = lib.findFirst (p: lib.getName p == "flow-search") (throw "no flow-search") config.environment.systemPackages;
       # The portal backends Flow intends (ADR-0005, F-012), as the broker will read them: GTK's file chooser, whose
       # buttons Flow's work indicator does not cover; GNOME's screen casting, which needs PipeWire (NixOS's
@@ -34,6 +35,8 @@
     in assert wrappers != [ ]; assert config.services.gnome.at-spi2-core.enable;
       assert lib.hasInfix "org.freedesktop.impl.portal.FileChooser=gtk\n" portals;
       assert lib.hasInfix "default=gnome;gtk\n" portals;
+      assert lib.hasInfix "org.freedesktop.impl.portal.Screenshot=flow\n" portals;
+      assert builtins.elem "flow-screenshot-portal-files" portalNames;
       assert builtins.elem "xdg-desktop-portal-gnome" portalNames && builtins.elem "xdg-desktop-portal-gtk" portalNames;
       assert config.services.pipewire.enable && config.services.pipewire.wireplumber.enable;
       pkgs.runCommand "flow-module-check" { } ''

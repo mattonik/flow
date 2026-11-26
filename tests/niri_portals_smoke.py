@@ -29,8 +29,8 @@ Checks, in order (names for ``--only``):
 - ``clipboard-image``: an image copied and pasted around KolourPaint (Qt, Wayland), Firefox (GTK, Wayland) and
   Firefox on X11 (``MOZ_ENABLE_WAYLAND=0``): each pasted image has the colour the copy had.
 - ``backends``: every portal request above reached the backend Flow intends (from a D-Bus monitor of the
-  ``org.freedesktop.impl.portal.*`` calls): FileChooser and Access the GTK backend, Screenshot and ScreenCast the
-  GNOME one. PipeWire and WirePlumber run.
+  ``org.freedesktop.impl.portal.*`` calls): FileChooser and Access the GTK backend, Screenshot Flow's own
+  (``session/screenshot_portal.py``), ScreenCast the GNOME one. PipeWire and WirePlumber run.
 
 X11 windows get no keys: xwayland-satellite does not take wtype's virtual keymap, so xterm and Firefox on X11 are
 driven by the pointer only (a middle click pastes, a double click copies, page buttons copy and read).
@@ -73,7 +73,7 @@ RUNTIME, BRANCH = "org.freedesktop.Platform", "25.08"
 CHECKS = ["chooser", "screenshot", "screencast", "dnd-file", "dnd-text", "clipboard-text", "clipboard-image",
           "backends"]
 # The backend Flow intends for each interface the checks use (modules/flow.nix, ADR-0005).
-INTENDED = {"FileChooser": "gtk", "Access": "gtk", "Screenshot": "gnome", "ScreenCast": "gnome"}
+INTENDED = {"FileChooser": "gtk", "Access": "gtk", "Screenshot": "flow", "ScreenCast": "gnome"}
 PERMISSIONS = ("org.freedesktop.impl.portal.PermissionStore", "/org/freedesktop/impl/portal/PermissionStore",
                "org.freedesktop.impl.portal.PermissionStore")
 DOCUMENTS = ("org.freedesktop.portal.Documents", "/org/freedesktop/portal/documents", "org.freedesktop.portal.Documents")
@@ -890,22 +890,49 @@ class Smoke:
         detail = (f"consent asked and denied (answer 2, no file, kept), then allowed: a {image.width}×{image.height} "
                   f"file of the live screen ({hits}/{len(samples)} points this run's colour), read by the sandbox")
 
-        # Interactive: the user's own choice, through the backend's UI.
+        # Interactive: the user's own choice. Flow's backend asks through the Access dialog, then takes the whole
+        # screen once the dialog is gone.
         for path in state.new_screenshots():
             path.unlink()
+        interactive = "('', {'interactive': <true>})"
         before = set(windows())
-        thread, result = probe.request("Screenshot", "Screenshot", "('', {'interactive': <true>})", timeout=60)
-        time.sleep(3)
-        appeared = [windows()[w] for w in windows() if w not in before]
+        thread, result = probe.request("Screenshot", "Screenshot", interactive)
+        dialog, cancel, _ = self.access_dialog(before)
         self.shot("screenshot-interactive")
-        if appeared:
-            self.apps.own.update(w["id"] for w in appeared)
-        thread.join(5)
-        if not thread.is_alive():
-            answer = result.get("answer", result)
-            raise Failed(f"An interactive request answered {answer} before any choice ({detail})")
-        raise Failed(f"An interactive request showed {[(w['app_id'], w['title']) for w in appeared]} and no way "
-                     f"through it is known to this test ({detail})")
+        self.pointer.click(cancel)
+        answer = finish(thread, result, "Cancel on the interactive dialog")
+        check(answer.get("response") == 1 and not state.new_screenshots(), f"Cancel answered {answer}")
+        before = set(windows())
+        thread, result = probe.request("Screenshot", "Screenshot", interactive)
+        dialog, _, take = self.access_dialog(before)
+        self.pointer.click(take)
+        answer = finish(thread, result, "Take Screenshot")
+        uri = answer.get("results", {}).get("uri")
+        check(answer.get("response") == 0 and uri, f"Take Screenshot answered {answer}")
+        new = state.new_screenshots()
+        check(len(new) == 1, f"Take Screenshot made {new}")
+        check(probe.send(do="read_size", path=doc_path(uri)).get("size") == new[0].stat().st_size,
+              "The sandbox could not read the interactive screenshot")
+        image = Image(new[0].read_bytes())
+        # The dialog is gone by then: its place shows the marker too.
+        everywhere = [(x, y) for x in range(40, o["width"] - 40, 60) for y in range(80, o["height"] - 80, 60)
+                      if not (x > o["width"] - 300 and y > o["height"] - 120)]
+        hits = sum(close(image.pixel(round(x * scale), round(y * scale)), colour) for x, y in everywhere)
+        check(hits >= 0.95 * len(everywhere), f"Only {hits} of {len(everywhere)} points of the interactive "
+                                               "screenshot show this run's colour (the dialog still on it?)")
+        detail += f"; interactive: Cancel answered 1, Take Screenshot gave the live screen without the dialog " \
+                  f"({hits}/{len(everywhere)} points)"
+
+        # PickColor: Niri's picker, answered with a click on the marker.
+        thread, result = probe.request("Screenshot", "PickColor", "('', {})")
+        time.sleep(1.5)
+        self.pointer.click(self.apps.at(0.3, 0.6))
+        answer = finish(thread, result, "PickColor")
+        picked = answer.get("results", {}).get("color")
+        check(answer.get("response") == 0 and picked and close([round(c * 255) for c in picked], colour, 3),
+              f"PickColor answered {answer}, not this run's colour {colour}")
+        self.apps.close_window(marker)
+        self.passed("screenshot", detail + "; PickColor picked the marker's colour")
 
     # ScreenCast -------------------------------------------------------------------------------------------------
 

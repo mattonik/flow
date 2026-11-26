@@ -108,6 +108,28 @@ let
     Exec=${flowApi}/bin/flow-api
     SystemdService=flow-api.service
   '';
+  # Flow's Screenshot portal backend (session/screenshot_portal.py, ADR-0005): GNOME's answers an interactive
+  # request with a call Niri does not implement. D-Bus starts it when the portal broker first asks.
+  screenshotPortal = pkgs.writeShellScriptBin "flow-screenshot-portal" ''
+    export PYTHONPATH="${sessionPython}"
+    export GI_TYPELIB_PATH="${apiTypelibs}"
+    exec ${apiPython}/bin/python3 -P -m screenshot_portal
+  '';
+  screenshotPortalFiles = pkgs.runCommand "flow-screenshot-portal-files" { } ''
+    mkdir -p $out/share/xdg-desktop-portal/portals $out/share/dbus-1/services
+    cat > $out/share/xdg-desktop-portal/portals/flow.portal <<EOF
+    [portal]
+    DBusName=org.freedesktop.impl.portal.desktop.flow
+    Interfaces=org.freedesktop.impl.portal.Screenshot;
+    UseIn=niri
+    EOF
+    cat > $out/share/dbus-1/services/org.freedesktop.impl.portal.desktop.flow.service <<EOF
+    [D-BUS Service]
+    Name=org.freedesktop.impl.portal.desktop.flow
+    Exec=${screenshotPortal}/bin/flow-screenshot-portal
+    SystemdService=flow-screenshot-portal.service
+    EOF
+  '';
   wifiSettings = pkgs.writeShellScriptBin "flow-wifi-settings" ''
     export XDG_CURRENT_DESKTOP=GNOME
     export XDG_DATA_DIRS="${pkgs.gnome-control-center}/share:''${XDG_DATA_DIRS:-/run/current-system/sw/share:/usr/share}"
@@ -158,6 +180,20 @@ in {
     # reaches the indicator's Close or Make space instead. GTK's chooser has them in its header bar. Nautilus stays
     # Flow's file manager, reached over D-Bus as before (services.dbus.packages, below).
     programs.niri.useNautilus = lib.mkDefault false;
+    # Screenshot: Flow's own backend, above; the rest stays as Niri's module chose it.
+    xdg.portal.extraPortals = [ screenshotPortalFiles ];
+    xdg.portal.config.niri."org.freedesktop.impl.portal.Screenshot" = "flow";
+    systemd.user.services.flow-screenshot-portal = {
+      description = "Flow's Screenshot portal backend";
+      partOf = [ "graphical-session.target" ];
+      after = [ "graphical-session.target" ];
+      serviceConfig = {
+        Type = "dbus";
+        BusName = "org.freedesktop.impl.portal.desktop.flow";
+        ExecStart = "${screenshotPortal}/bin/flow-screenshot-portal";
+        Restart = "on-failure";
+      };
+    };
     security.pam.services.swaylock = {};
     hardware.graphics.enable = true;
     fonts.packages = with pkgs; [
