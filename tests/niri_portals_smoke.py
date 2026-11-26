@@ -89,8 +89,12 @@ from pointer import Pointer  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 PROBE = "io.github.mattonik.PortalProbe"
 RUNTIME, BRANCH = "org.freedesktop.Platform", "25.08"
-CHECKS = ["chooser", "screenshot", "screenshot-gimp", "screencast", "dnd-file", "dnd-text", "clipboard-text",
-          "clipboard-image", "chooser-pointer", "backends", "edges"]
+# The clipboard checks run before the drag checks. Run after dnd-text, clipboard-text found Kate on its welcome page
+# instead of the file it had just opened, every time in the guest, though each check's apps are ended and windows
+# closed in between, every Kate gets folders of its own, and the dragged file is read-only. The cause is not known;
+# each check passes alone and in this order.
+CHECKS = ["chooser", "screenshot", "screenshot-gimp", "screencast", "clipboard-text", "clipboard-image", "dnd-file",
+          "dnd-text", "chooser-pointer", "backends", "edges"]
 # Expected to fail until the shell's surfaces stop covering apps' edges (fixed apart): they are its acceptance tests.
 # The run fails if any other check fails, or if one of these passes (update this list and the status document).
 EXPECTED_FAILURES = {"chooser-pointer", "edges"}
@@ -712,7 +716,8 @@ class Monitor:
     def __init__(self, folder):
         self.log = Path(folder) / "monitor.log"
         self.process = subprocess.Popen(
-            ["dbus-monitor", "--session", "type='method_call',path='/org/freedesktop/portal/desktop'"],
+            ["dbus-monitor", "--session", "type='method_call',path='/org/freedesktop/portal/desktop'",
+             "type='signal',interface='org.freedesktop.DBus',member='NameOwnerChanged'"],
             stdout=open(self.log, "w"), stderr=subprocess.DEVNULL)
         time.sleep(1)
 
@@ -747,14 +752,24 @@ class Monitor:
                     current.append(match.group(1))
         return [" | ".join(f) for f in found]
 
-    @staticmethod
-    def owners():
-        """Unique bus name → the portal backend it owns (``gtk``, ``gnome``, ...)."""
-        names = {}
+    def owners(self):
+        """Bus name → the portal backend it is (``gtk``, ``gnome``, ...): the well-known names themselves, every
+        unique name that owned one during the run (a backend restarted meanwhile has a new one), and today's."""
+        backend = re.compile(r"org\.freedesktop\.impl\.portal\.desktop\.(\w+)")
+        names, lines = {}, self.log.read_text(errors="replace").splitlines()
+        for i, line in enumerate(lines):
+            if "member=NameOwnerChanged" in line:
+                args = [m.group(1) for m in (re.match(r'\s+string "(.*)"$', l) for l in lines[i + 1:i + 4]) if m]
+                if len(args) == 3 and backend.fullmatch(args[0]):
+                    for unique in args[1:]:
+                        if unique:
+                            names[unique] = backend.fullmatch(args[0]).group(1)
         for row in json.loads(busctl("list")):
-            match = re.fullmatch(r"org\.freedesktop\.impl\.portal\.desktop\.(\w+)", row.get("name", ""))
-            if match and row.get("connection"):
-                names[row["connection"]] = match.group(1)
+            match = backend.fullmatch(row.get("name", ""))
+            if match:
+                names[row["name"]] = match.group(1)
+                if row.get("connection"):
+                    names[row["connection"]] = match.group(1)
         return names
 
     def stop(self):
@@ -1347,8 +1362,7 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
         word = "drag" + uuid.uuid4().hex[:12]
         source = self.tmp / "kate-drag.txt"
         source.write_text(word + "\n")
-        # Read-only, so Kate copies the dragged text rather than moving it out: a document left changed asks to be
-        # saved when Kate is closed, and the next Kate started on its welcome page.
+        # Read-only, so the drag copies the text rather than moving it out of the file.
         source.chmod(0o444)
         kate = self.apps.start(["kate", "-n", source], app_id="org.kde.kate", title="kate-drag")[1]
         page = self.need_firefox(mode="drop")
@@ -1514,7 +1528,7 @@ if result.index(0) == Gimp.PDBStatusType.SUCCESS:
     # Backends ---------------------------------------------------------------------------------------------------
 
     def check_backends(self):
-        owners = Monitor.owners()
+        owners = self.monitor.owners()
         seen = {}
         for interface, method, destination in self.monitor.calls(Monitor.broker()):
             seen.setdefault(interface, set()).add(owners.get(destination, destination))
@@ -1582,8 +1596,7 @@ def main():
                         except RuntimeError:
                             pass
                 # Each check starts from the windows and apps the previous one found: what one left (a dialog still
-                # waiting; a Kate asking to save the text a drag moved out of it, then left on its welcome page)
-                # took the next one's keys and clicks in the guest.
+                # waiting, an app to come back to) took the next one's keys and clicks in the guest.
                 smoke.apps.end(smoke.apps.processes[started:])
                 for wid in set(windows()) - before:
                     smoke.apps.close_window({"id": wid})
