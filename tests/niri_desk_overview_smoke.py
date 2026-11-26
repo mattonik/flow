@@ -16,6 +16,7 @@ every case Super+1 and Super+2, pressed on the keyboard, must reach their pins. 
 """
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -31,7 +32,11 @@ from isolated_state import IsolatedState, shell_config
 from pointer import Pointer, center
 from uinput import Devices
 
-BAND = 44  # the Island's tab: its clock changes, so screenshots are compared below it
+# Screenshots are compared between the shell's two 44 px bands: the Island's tab above (its clock moves) and the home and
+# work indicators' band below, whose text Qt draws with grayscale antialiasing one time and subpixel the next (seen in
+# the guest: the same "03 / 04", with coloured fringes after Desk closed). The shell's surfaces are checked by Niri's layer
+# list and the shell's own state instead.
+BAND = 44
 PARTS = ("desk", "overview", "niri", "layer", "workspace", "open-close", "mid-transition", "reduced-motion", "displays")
 
 
@@ -195,8 +200,25 @@ class Smoke:
     def shots(self):
         return {output: self.settled(output) for output in self.outputs()}
 
+    def caught_up(self):
+        """The shell shows the space of the focused window as active, and its view held still for 0.6 s."""
+        focused = next((w["id"] for w in read("windows") if w["is_focused"]), None)
+
+        def shown():
+            view = self.json("spaces_view") or {}
+            active = [s for s in view.get("spaces", []) if s["active"]]
+            members = {str(focused)} | {str(i) for p in view.get("pins", []) for i in p["window_ids"]}
+            return view if (focused is None or active) and members else None
+        end = time.monotonic() + 10
+        while True:
+            first = wait_for(shown, "the shell to show the focused space", timeout=10)
+            time.sleep(0.6)
+            if self.json("spaces_view") == first or time.monotonic() > end:
+                return first
+
     def capture(self):
         wait_for(lambda: self.ipc("toast") == "", "the shell's toast to go", timeout=8)
+        self.caught_up()
         return {"work": self.work(), "files": self.files(), "view": self.json("spaces_view"), "layers": self.layers(),
                 "shots": self.shots(), "surfaces": self.surfaces()}
 
@@ -209,7 +231,7 @@ class Smoke:
     def compare(self, label, before, after, focus=None, same_screen=True):
         """``after`` must be ``before``, but for focus moved to ``focus`` (a window name), when the route chose a space."""
         problems = []
-        expected = json.loads(json.dumps(before["work"]))
+        expected = copy.deepcopy(before["work"])
         if focus:
             expected["focused"] = focus
             target = expected["windows"][focus]
@@ -495,17 +517,17 @@ class Smoke:
 
     def without(self, captured, name):
         """``captured`` with ``name``'s window ID left out: a window opened again has a new one."""
-        copy = json.loads(json.dumps({k: v for k, v in captured.items() if k not in ("shots", "files")}))
-        if name in copy["work"]["windows"]:
-            copy["work"]["windows"][name]["id"] = "new"
-        if copy.get("view"):
+        kept = copy.deepcopy({k: v for k, v in captured.items() if k not in ("shots", "files")})
+        if name in kept["work"]["windows"]:
+            kept["work"]["windows"][name]["id"] = "new"
+        if kept.get("view"):
             ident = {w["id"] for w in [captured["work"]["windows"].get(name)] if w}
-            for pin in copy["view"]["pins"]:
+            for pin in kept["view"]["pins"]:
                 pin["window_ids"] = ["new" if i in ident else i for i in pin["window_ids"]]
-            for space in copy["view"]["spaces"]:
+            for space in kept["view"]["spaces"]:
                 if int(space["id"]) in ident:
                     space["id"] = "new"
-        return copy
+        return kept
 
     def same_as(self, label, got, reference, name):
         problems = []
@@ -745,7 +767,7 @@ class Smoke:
 
 
 def differ(a, b):
-    """Pixels that differ below the Island's band between two PPM screenshots (any size difference counts as all)."""
+    """Pixels that differ between the shell's bands between two PPM screenshots (any size difference counts as all)."""
     def parse(data):
         parts = data.split(b"\n", 3)
         width, height = map(int, parts[1].split())
@@ -756,10 +778,10 @@ def differ(a, b):
     wb, hb, pb = parse(b)
     if (wa, ha) != (wb, hb):
         return wa * ha
-    start = wa * 3 * BAND
-    if pa[start:] == pb[start:]:
+    start, end = wa * 3 * BAND, wa * 3 * (ha - BAND)
+    if pa[start:end] == pb[start:end]:
         return 0
-    return sum(1 for i in range(start, len(pa), 3) if pa[i:i + 3] != pb[i:i + 3])
+    return sum(1 for i in range(start, end, 3) if pa[i:i + 3] != pb[i:i + 3])
 
 
 def diff_dicts(a, b):
