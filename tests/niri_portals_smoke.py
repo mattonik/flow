@@ -23,7 +23,8 @@ Checks, in order (names for ``--only``):
 - ``screenshot``: PortalProbe asks Screenshot for the screen. Its consent dialog (the Access backend) is denied
   once (answer 2, no file, and the next request is refused without asking), then allowed: the file the probe
   gets is the live screen, at the output's size, showing a window of a colour picked for this run. An interactive
-  request must end in a file too.
+  request (as GIMP sends) asks through Flow's backend: Cancel answers 1, Take Screenshot gives the live screen
+  without the dialog. PickColor answers the colour under a click.
 - ``screencast``: Firefox's ``getDisplayMedia`` on a local page. Cancelling the portal's dialog refuses the page.
   Sharing gives a PipeWire stream that Niri lists, whose frames show the screen. It ends when the page stops it,
   and when it is stopped outside the app with Niri's ``stop-cast`` (what a key binding or a Flow control runs);

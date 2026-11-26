@@ -1,6 +1,6 @@
 # ADR-0005: XDG portals for Niri
 
-**Status:** Accepted; amended 2026-11-26 after F-012's runtime tests (FileChooser → GTK, Screenshot → Flow's own backend)  
+**Status:** Accepted; amended 2026-11-26 after F-012's runtime tests (Screenshot → Flow's own backend)  
 **Date:** 2026-11-13, amended 2026-11-26
 
 ## Decision
@@ -55,28 +55,40 @@ A disposable unsandboxed Gio client requested `FileChooser.OpenFile`. The Nautil
 ## Amendment after F-012's tests (2026-11-26)
 
 `tests/niri_portals_smoke.py` exercised every portal F-012 names in the guest (see *F-012 acceptance* in
-`docs/IMPLEMENTATION_STATUS.md`). Two of Niri's defaults failed in Flow, and are replaced:
+`docs/IMPLEMENTATION_STATUS.md`). Niri's defaults are kept but for Screenshot, and one Flow bug the chooser found is
+fixed in the shell.
 
-- **FileChooser → GTK** (`programs.niri.useNautilus = lib.mkDefault false`). Nautilus's chooser, which GNOME's
-  backend opens, puts Open and Save at the bottom right of its window. Flow's work indicator sits there over every
-  space (*03 / 03*), and over a floating window it shows *Layer · Files · Make space · Close*: a click on Save
-  reached the indicator, and over Firefox's upload dialog it would have hit *Close*. GTK's chooser has Cancel and
-  Open/Save in its header bar, which nothing of Flow's covers (the island covers the middle of the Save dialog's
-  name field; the field takes the keyboard and its ends take clicks). Nautilus stays Flow's file manager. The
-  wider question, Flow's surfaces over the edges of apps' windows, is the shell's, not the portals'.
+- **FileChooser stays GNOME's (Nautilus's chooser).** Its Open and Save buttons sit at the bottom right of its window,
+  where Flow's work indicator covered every window (*03 / 03*, or *Layer · Files · Make space · Close* over a floating
+  dialog such as Firefox's upload), so a click on Save reached the indicator. That was Flow's bug, not the
+  backend's: any app's bottom-right controls were covered. The shell now keeps a band along the bottom that Niri
+  keeps windows out of (`bottomBand` in `session/shell.qml`, 60 px, 120 px below 900 px wide), and the home and
+  work indicators sit in it. GTK's chooser (`programs.niri.useNautilus = false`) was tried and works, with its
+  buttons in the header bar, but it is GTK 3, apart from Files, and the island covers the middle of its Name field;
+  with the overlap fixed there is no reason to leave Niri's default.
 - **Screenshot → Flow** (`session/screenshot_portal.py`, `org.freedesktop.impl.portal.desktop.flow`). GNOME's
   backend answers `interactive: true` by calling `org.gnome.Shell.Screenshot.InteractiveScreenshot`, which Niri
   26.04 does not implement (it has `Screenshot` and `PickColor`), so every interactive request failed with answer 2.
-  This reverses the rejection of a Flow-authored backend above, for one interface, now that the capability is
-  shown missing. It asks through GTK's Access dialog (*Take Screenshot* or *Cancel*) and takes the whole screen
-  with Niri's `Screenshot`; area and window choices are not offered, because Niri's own screenshot UI reports
-  nothing on D-Bus when the user cancels, which would leave the request waiting. Requests that are not interactive
-  are taken at once, as the broker has asked first; `PickColor` goes to Niri's picker. Retire it once Niri
-  implements `InteractiveScreenshot`.
+  Common tools send it: GIMP 3 always ([screenshot-freedesktop.c](https://gitlab.gnome.org/GNOME/gimp/-/blob/c03dfa417c20f31561327df9637c2c730b1c51ca/plug-ins/screenshot/screenshot-freedesktop.c#L187)),
+  ksnip in every mode but full screen, and Flathub's OCR and QR tools (Gradia, Decoder, Frog, TextSnatcher).
+  Flameshot sends `false`; Firefox, OBS, Krita, Inkscape and LibreOffice do not use the interface; GTK's and Qt's
+  colour pickers use PickColor. Niri has no implementation in a release or a pull request
+  ([niri#1983](https://github.com/niri-wm/niri/issues/1983), open; [niri#4820](https://github.com/niri-wm/niri/pull/4820)
+  lays groundwork). Of the existing backends, GTK's dropped Screenshot in 1.15.0, KDE's needs KWin, and
+  `xdg-desktop-portal-wlr` would answer on Niri (grim and slurp) but saves every screenshot to the fixed path
+  `/tmp/out.png`, shared between requests and readable by other local users under the default umask. So the
+  rejection of a Flow-authored backend above no longer holds, for this one interface. Flow's asks through GTK's
+  Access dialog (*Take Screenshot* or *Cancel*) and takes the whole screen with Niri's `Screenshot`, which saves it
+  under `~/Pictures/Screenshots` and leaves the clipboard alone. Area and window choices are not offered: Niri's own
+  screenshot UI reports nothing on D-Bus when the user cancels it, which would leave the request waiting. Requests
+  that are not interactive are taken at once, as the broker has asked first; PickColor goes to Niri's picker.
+  Retire it once Niri implements `InteractiveScreenshot`.
+- **PipeWire.** Screen casting needs it, and NixOS's `graphical-desktop` module, which Niri's session enables,
+  turns it on by default (a Flow `mkDefault true` would be a no-op, and `false` conflicts with it). Flow's module
+  check asserts it, with WirePlumber, and the portal routing above.
 
-Kept as Niri's module chose them: ScreenCast (GNOME: Niri's Mutter ScreenCast API, DMA-BUF only), Access and
-Notification (GTK), Secret (GNOME Keyring). PipeWire comes from NixOS's `graphical-desktop` module, which Niri's
-session enables; Flow's module check asserts it, with the portal routing above.
+Kept as Niri's module chose them: FileChooser and ScreenCast (GNOME; Niri's Mutter ScreenCast API offers DMA-BUF
+buffers only), Access and Notification (GTK), Secret (GNOME Keyring).
 
 ## References
 
