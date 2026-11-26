@@ -781,6 +781,9 @@ class Smoke:
         wait_for(lambda: not self.niri_open(), "Niri's overview to close")
         self.settled(output)
         tag = "still" if self.reduce_motion else "moving"
+        for n, frame in enumerate(self.in_between(live, work, live_end)[:2]):
+            self.save(f"midway-{tag}-niri-{n}", {output: frame})
+        self.save(f"midway-{tag}-niri-end", {output: live_end})
         for n, frame in enumerate(self.in_between(desk, work, desk_end)[:4]):
             self.save(f"midway-{tag}-desk-{n}", {output: frame})
         self.save(f"midway-{tag}-desk-end", {output: desk_end})
@@ -792,6 +795,9 @@ class Smoke:
                                                     else "w" if not differ(f, work) else "?" for f in to_overview), flush=True)
         for n, frame in enumerate(f for f in to_overview if not differ(f, work)):
             self.save(f"between-{tag}-{n}", {output: frame})
+        for n, frame in enumerate([f for f in to_overview if differ(f, desk_again) and differ(f, overview_again)][:2]):
+            self.save(f"to-overview-{tag}-{n}", {output: frame})
+        self.save(f"to-overview-{tag}-end", {output: overview_again})
         print(f"{tag}: Overview to Desk " + "".join("o" if not differ(f, overview) else "d" if not differ(f, desk_again)
                                                     else "w" if not differ(f, work) else "?" for f in to_desk), flush=True)
         return {"return_midway": sum(1 for f in back if differ(f, desk_end) and differ(f, work)), "return_frames": len(back),
