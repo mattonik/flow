@@ -21,6 +21,9 @@ eval "$(systemctl --user show-environment \
     | grep -E '^(NIRI_SOCKET|WAYLAND_DISPLAY|DISPLAY|XDG_CURRENT_DESKTOP|XDG_SESSION_TYPE|NIXOS_OZONE_WL|PATH)=' | sed 's/^/export /')"
 for name in kate kolourpaint gnome-text-editor xterm wl-clipboard; do PATH="$roots/$name/bin:$PATH"; done
 export PATH
-exec 9>/tmp/floe-screen.lock
-flock -w "${FLOW_LOCK_WAIT:-1800}" 9 || { echo "screen lock busy" >&2; exit 1; }
+# FLOW_SCREEN_LOCK_HELD: the caller holds the lock already (a second open of the file would wait for it for ever).
+if [ -z "${FLOW_SCREEN_LOCK_HELD:-}" ]; then
+    exec 9>/tmp/floe-screen.lock
+    flock -w "${FLOW_LOCK_WAIT:-1800}" 9 || { echo "screen lock busy" >&2; exit 1; }
+fi
 exec python3 tests/niri_portals_smoke.py "$@"
