@@ -71,6 +71,15 @@ class Smoke:
         self.state = self.tmp / "flow"
         self.config = Path(shell_config(tmp))
         self.env = dict(os.environ, XDG_STATE_HOME=str(self.tmp))
+        # The shell's grim: the real one, half a second late while ``slow-grim`` exists, so Overview stays in its
+        # opening phase (taking a snapshot) long enough for a second Super+O to land there, as on a slow large display.
+        self.slow_flag = self.tmp / "slow-grim"
+        wrappers = self.tmp / "bin"
+        wrappers.mkdir()
+        real_grim = subprocess.check_output(["sh", "-c", "command -v grim"], text=True).strip()
+        (wrappers / "grim").write_text(f'#!/bin/sh\n[ -e "{self.slow_flag}" ] && sleep 0.5\nexec "{real_grim}" "$@"\n')
+        (wrappers / "grim").chmod(0o755)
+        self.shell_path = f"{wrappers}:{os.environ['PATH']}"
         self.shell = None
         self.apps, self.processes, self.steps = {}, [], []
         self.devices = Devices()
@@ -99,7 +108,7 @@ class Smoke:
         line = f"reduceMotion={'true' if reduce_motion else 'false'}\n"
         appearance.write_text(text.replace("[General]\n", "[General]\n" + line, 1) if "[General]\n" in text
                               else "[General]\n" + line + text)
-        self.shell = subprocess.Popen(["quickshell", "-p", self.shell_file], env=dict(self.env, XDG_CONFIG_HOME=str(self.config)),
+        self.shell = subprocess.Popen(["quickshell", "-p", self.shell_file], env=dict(self.env, XDG_CONFIG_HOME=str(self.config), PATH=self.shell_path),
                                       stdin=subprocess.DEVNULL, stdout=open(self.out / "shell.log", "a"), stderr=subprocess.STDOUT)
         wait_for(lambda: self.shell.poll() is None and self.ipc("toast") == "" and self.json("spaces_view"),
                  "the shell to start", timeout=30, step=0.3)
@@ -654,18 +663,26 @@ class Smoke:
                   "to the same work")
 
         before = self.capture()
-        counted = self.motion()["again_while_pending"]
-        k("super", "o")
-        wait_for(lambda: "pending" in self.surfaces(), "Overview to start opening", timeout=3, step=0.005)
-        k("super", "o")
-        wait_for(self.desk_open, lambda: f"Desk after Super+O twice quickly ({sorted(self.surfaces())})", timeout=3)
-        time.sleep(1)
-        if self.surfaces() != {"desk"} or self.motion()["again_while_pending"] != counted + 1:
-            raise Failure(f"Super+O again while Overview opened: {sorted(self.surfaces())}, {self.motion()}")
-        k("esc")
-        wait_for(lambda: not self.surfaces(), "Desk to close")
+        hits = []
+        self.slow_flag.touch()
+        for gap in (0.1, 0.2, 0.3):
+            counted = self.motion()["again_while_pending"]
+            k("super", "o")
+            time.sleep(gap)
+            k("super", "o")
+            wait_for(self.desk_open, lambda: f"Desk after Super+O twice {gap} s apart ({sorted(self.surfaces())})", timeout=3)
+            time.sleep(0.8)
+            if self.surfaces() != {"desk"}:
+                raise Failure(f"Super+O twice {gap} s apart left {sorted(self.surfaces())}")
+            hits.append(self.motion()["again_while_pending"] - counted)
+            k("esc")
+            wait_for(lambda: not self.surfaces(), "Desk to close")
+        self.slow_flag.unlink()
+        if not all(hits):
+            raise Failure(f"Not every second Super+O came while Overview was still opening ({hits}): the case was not reached")
         self.compare("Super+O again while Overview opened", before, self.capture())
-        self.step("Super+O again while Overview was still opening went on to Desk, as again does once it is open")
+        self.step(f"with the snapshot made 0.5 s slow, Super+O pressed again 0.1, 0.2 and 0.3 s after the first, while Overview "
+                  "was still opening (the shell counted each), went on to Desk every time")
 
         before = self.capture()
         self.devices.swipe(4, 0, -1600, steps=8)
