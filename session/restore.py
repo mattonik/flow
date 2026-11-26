@@ -194,6 +194,11 @@ SET_ASIDE = "session-before-automatic-recovery-{}.json"
 REOPENED = ".reopened"
 
 
+class Recorded(ValueError):
+    """A set-aside file another reopen has recorded (``"recorded": true`` in the answer): Settings stops offering
+    Reopen it, which can only be refused now."""
+
+
 def write_record(record, state, how="", first=False):
     """Write a set-aside file's reopen record; False if it could not be written (a full disk, say). Written to a
     file of its own, then put in place whole: a write that fails leaves the record as it was, never empty. The
@@ -257,12 +262,12 @@ def set_aside_source(path, name):
         state, how = read_record(record)
         again = f". To try again anyway, remove {record}"
         if state == "complete":
-            raise ValueError(f"{source.name} was reopened already ({how}){again}")
+            raise Recorded(f"{source.name} was reopened already ({how}){again}")
         if state in ("partial", "stopped"):
-            raise ValueError(f"{source.name} was reopened already ({how}); open the rest yourself, as reopening it "
-                             f"again would open the others twice{again}")
-        raise ValueError(f"{source.name} may be open in part: a reopen of it started and did not say how it "
-                         f"ended; check your workspaces before opening the rest{again}")
+            raise Recorded(f"{source.name} was reopened already ({how}); open the rest yourself, as reopening it "
+                           f"again would open the others twice{again}")
+        raise Recorded(f"{source.name} may be open in part: a reopen of it started and did not say how it "
+                       f"ended; check your workspaces before opening the rest{again}")
     return source
 
 
@@ -1191,7 +1196,8 @@ def main():
                         return current
             launched = []  # tried
             # Launches gio reported done: their windows may land anywhere, or come late, so any keeps the record.
-            # One gio reports failed did not spawn the app (it exits non-zero only then), and opens nothing.
+            # One gio reports failed is taken to have opened nothing: reasoned from GLib, not checked live
+            # (g_desktop_app_info launch reports spawn errors at once; D-Bus activation returns without waiting).
             started = []
             record = source.with_name(source.name + REOPENED)
 
@@ -1203,7 +1209,8 @@ def main():
                     try:
                         recorded = write_record(record, "started", "a reopen started", first=True)
                     except FileExistsError:
-                        raise ValueError(f"Another reopen of {source.name} started first; nothing was reopened here") from None
+                        raise Recorded(f"Another reopen of {source.name} started first; nothing was reopened here, "
+                                       "and that one is left to it") from None
                     if not recorded:
                         raise ValueError(f"Could not record the reopen beside {source.name}; nothing was reopened")
                 launched.append(desktop)
@@ -1231,10 +1238,11 @@ def main():
                     write_record(record, "stopped", f"stopped: {why}")
                 elif launched:
                     nothing_started()
-                else:  # refused before opening anything: the user back where they were
-                    back_to(started_from, workspace)
+                elif not isinstance(exc, Recorded):  # refused before opening anything: the user back where they were
+                    back_to(started_from, workspace)  # (not when another reopen took it: that workspace is its own)
                 # Settings offers Reopen it again only if nothing was tried: a second run would open those twice.
-                print(json.dumps({"error": why + ".", "launched": len(launched)}))
+                print(json.dumps({"error": why + ".", "launched": len(launched),
+                                  **({"recorded": True} if isinstance(exc, Recorded) else {})}))
                 sys.exit(1)
             done = (f"Reopened {count} of {len(data['windows'])} windows on an empty workspace." if here
                     else f"Restored {count} windows.")
@@ -1261,7 +1269,7 @@ if __name__ == "__main__":
     try:
         main()
     except (ValueError, KeyError, OSError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
-        print(json.dumps({"error": str(exc)}))
+        print(json.dumps({"error": str(exc), **({"recorded": True} if isinstance(exc, Recorded) else {})}))
         code = 1
     finally:
         orphan_io.finish(kept)

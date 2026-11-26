@@ -447,7 +447,7 @@ class RecoveryTest(unittest.TestCase):
             aside.write_text(json.dumps(aside_data))
             before = aside.read_bytes()
             record = aside.with_name(aside.name + restore.REOPENED)
-            if record_before:
+            if record_before is not None:
                 record.write_text(record_before)
             with patch.object(restore, "state_path", return_value=path), \
                     patch.object(sys, "argv", ["flow-recovery", "restore", str(aside)]), \
@@ -556,7 +556,8 @@ class RecoveryTest(unittest.TestCase):
                              ("reopened 2 of 2 windows\n", r"reopened already \(reopened 2 of 2 windows\)\. "),
                              ("reopened 1 of 2 windows\n", r"reopened already \(reopened 1 of 2 windows\); open the rest"),
                              ("stopped: Workspace changed\n", r"reopened already \(stopped: Workspace changed\); open the rest"),
-                             ("stopped while reopening\n", r"may be open in part")):
+                             ("stopped while reopening\n", r"may be open in part"),
+                             ("", r"may be open in part")):  # empty: a power cut before its data reached the disk
             with self.subTest(record=record), \
                     self.assertRaisesRegex(ValueError, said + r".*To try again anyway, remove .*\.reopened$"):
                 self.reopen_set_aside(record_before=record)
@@ -632,11 +633,13 @@ class RecoveryTest(unittest.TestCase):
     def test_a_reopen_started_meanwhile_elsewhere_is_left_to_it(self):
         # Another reopen of the file (Settings and the command line at once) recorded itself after this one's
         # check: this one opens nothing, and leaves the other's record.
+        # Nor moves the user off the workspace that one is opening apps on, which would stop it.
         answer, actions, _, _, _ = self.reopen_set_aside(race=True)
         self.assertEqual(self.launches, [0])
-        self.assertEqual(answer["launched"], 0)
+        self.assertEqual((answer["launched"], answer["recorded"]), (0, True))
         self.assertIn("Another reopen of", answer["error"])
         self.assertEqual(self.record, "started\nanother reopen\n")
+        self.assertEqual([a for a in actions if a[0] == "focus-workspace"], [("focus-workspace", 2)])
 
     def test_a_reopen_with_one_launch_failed_keeps_its_record(self):
         answer, _, _, _, _ = self.reopen_set_aside(gio_fails=("foot",))
@@ -656,6 +659,21 @@ class RecoveryTest(unittest.TestCase):
         self.assertEqual((answer["launched"], self.record), (0, None))
         self.assertIn("Could not record the reopen", answer["error"])
         self.assertEqual([a for a in actions if a[0] == "focus-workspace"], [("focus-workspace", 2), ("focus-workspace", 1)])
+
+    def test_a_refused_reopen_says_through_the_command_line_that_the_file_is_recorded(self):
+        # So Settings stops offering Reopen it, which can only be refused now (after a shell restart, say).
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "flow"
+            state.mkdir()
+            aside = state / restore.SET_ASIDE.format("20261126T102642Z-00")
+            aside.write_text('{"version": 1, "windows": []}')
+            aside.with_name(aside.name + restore.REOPENED).write_text("complete\nreopened 2 of 2 windows\n")
+            result = subprocess.run([sys.executable, str(Path(__file__).parents[1] / "session/restore.py"), "restore",
+                                     str(aside)], capture_output=True, text=True, timeout=60,
+                                    env={**os.environ, "XDG_STATE_HOME": directory})
+            answer = json.loads(result.stdout)
+            self.assertEqual((result.returncode, answer.get("recorded")), (1, True), result.stderr)
+            self.assertIn("reopened already (reopened 2 of 2 windows)", answer["error"])
 
     def test_a_record_write_that_the_system_refuses_leaves_the_record_as_it_was(self):
         # For real: a child that may write no byte (a full disk's EFBIG/ENOSPC), the record before kept whole.
