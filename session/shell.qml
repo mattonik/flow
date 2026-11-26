@@ -2401,6 +2401,7 @@ ShellRoot {
                                 }
                                 recoveryPreferences.sessionRecovery = checked; recoveryPreferences.sync()
                                 root.autoRecoveryBlocked = true
+                                root.recoveryPauseReason = ""  // a reason from before the switch no longer holds
                                 if (checked) { recoveryProcess.command = ["flow-recovery", "auto-pause"]; recoveryProcess.running = true }
                             }
                         }

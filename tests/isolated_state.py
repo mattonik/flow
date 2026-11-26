@@ -91,7 +91,8 @@ def shell_config(tmp):
     """A configuration folder in ``tmp`` for a development shell: the user's Flow settings and appearance, with
     automatic recovery switched off. It is on by default, and a shell on the user's own configuration would run
     it against the user's recovery marker (opening Settings when it is paused) or save the smoke's windows. Set
-    it as the shell's ``XDG_CONFIG_HOME`` only; the apps a smoke opens keep the user's configuration."""
+    it as the shell's ``XDG_CONFIG_HOME`` only: apps the smoke opens itself keep the user's configuration, though
+    apps the shell launches would inherit the copy."""
     real = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
     config = Path(tmp) / "shell-config"
     config.mkdir(exist_ok=True)

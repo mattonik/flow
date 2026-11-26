@@ -3,6 +3,7 @@ import fcntl
 import io
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -108,7 +109,9 @@ class RecoveryTest(unittest.TestCase):
                 self.assertEqual(marker.read_text(), "ready")  # a refusal without pause leaves recovery ready
                 paused = restore.automatic("auto-save", path, wait=False)
                 self.assertTrue(paused["refused"], paused)
-                self.assertEqual(marker.read_text(), "blocked")
+                state, _, reason = marker.read_text().partition("\n")
+                self.assertEqual(state, "blocked")
+                self.assertIn("multiple windows", reason)  # kept for a shell started again later
                 self.assertNotIn("refused", restore.automatic("auto-save", path, wait=False))  # paused now
                 self.assertEqual(path.read_text(), "previous snapshot")
 
@@ -186,32 +189,96 @@ class RecoveryTest(unittest.TestCase):
 
     def test_automatic_start_at_login_restores_only_near_the_start_of_the_niri_session(self):
         # The shell runs auto-start --login. A shell first starting later in a session with no marker, as when an
-        # upgrade switched recovery on and restarted it, must not restore into the windows already open; tools and
-        # tests that run auto-start without --login still restore.
+        # upgrade switched recovery on and restarted it, must not restore into the windows already open, and
+        # sets the saved session aside so the next save does not replace it; tools and tests that run
+        # auto-start without --login still restore.
+        saved = json.dumps({"version": 1, "reopen_at_login": True, "windows": []})
         for login, age, restores in ((True, 600, False), (True, 5, True), (False, 600, True)):
             with self.subTest(login=login, age=age), tempfile.TemporaryDirectory() as directory, \
                     patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \
                     patch.object(restore.spaces, "session_id", return_value="session"), \
-                    patch.object(restore, "niri_started", return_value=time.time() - age), \
+                    patch.object(restore, "niri_age", return_value=age), \
                     patch.object(restore.subprocess, "run",
                                  return_value=Mock(returncode=0, stdout='{"message":"Restored 2 windows."}')) as run:
                 path = Path(directory) / "session.json"
-                path.write_text("saved")
+                path.write_text(saved)
                 answer = restore.automatic("auto-start", path, login=login)
                 self.assertNotIn("error", answer)
                 self.assertEqual(run.call_count, 1 if restores else 0)
-                self.assertEqual(path.read_text(), "saved")
+                aside = path.with_name(restore.SET_ASIDE)
+                self.assertEqual((path.exists(), aside.exists()), (restores, not restores))
+                self.assertEqual((path if restores else aside).read_text(), saved)
                 marker = next(Path(directory).glob("flow-recovery-*[0-9a-f]"))
                 self.assertEqual(marker.read_text(), "ready")
 
+    def test_automatic_start_does_not_reopen_a_snapshot_from_before_it_reopened_sessions(self):
+        # A Save session from before automatic recovery was on by default, possibly long ago, kept aside.
+        for data, restores in (({"version": 1, "windows": []}, False),
+                               ({"version": 1, "reopen_at_login": True, "windows": []}, True)):
+            with self.subTest(data=data), tempfile.TemporaryDirectory() as directory, \
+                    patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \
+                    patch.object(restore.spaces, "session_id", return_value="session"), \
+                    patch.object(restore, "niri_age", return_value=5), \
+                    patch.object(restore.subprocess, "run",
+                                 return_value=Mock(returncode=0, stdout='{"message":"Restored 0 windows."}')) as run:
+                path = Path(directory) / "session.json"
+                path.write_text(json.dumps(data))
+                answer = restore.automatic("auto-start", path, login=True)
+                self.assertNotIn("error", answer)
+                self.assertEqual(run.call_count, 1 if restores else 0)
+                self.assertEqual(path.with_name(restore.SET_ASIDE).exists(), not restores)
+                if not restores:
+                    self.assertIn(restore.SET_ASIDE, answer["message"])
+
+    def test_a_saved_session_says_it_may_be_reopened_at_login(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.json"
+            restore.save(path, {"id": 1, "active_window_id": 1}, [window(1, "one", 1)])
+            self.assertIs(json.loads(path.read_text())["reopen_at_login"], True)
+
+    def test_niri_age_is_read_on_the_boot_clock(self):
+        # Niri's start from /proc against the uptime; a socket whose PID is not Niri's falls back to its ctime.
+        ticks = os.sysconf("SC_CLK_TCK")
+        with tempfile.TemporaryDirectory() as directory:
+            proc = Path(directory) / "proc"
+            (proc / "4242").mkdir(parents=True)
+            fields = ["S"] + ["0"] * 18 + [str(100 * ticks)] + ["0"] * 10  # field 22: started 100 s after boot
+            (proc / "4242" / "stat").write_text("4242 (niri) " + " ".join(fields))
+            (proc / "uptime").write_text("400.00 800.00\n")
+            socket = Path(directory) / "niri.wayland-1.4242.sock"
+            socket.write_text("")
+            with patch.dict("os.environ", {"NIRI_SOCKET": str(socket)}):
+                self.assertAlmostEqual(restore.niri_age(proc), 300.0)
+                (proc / "4242" / "stat").write_text("4242 (python3) " + " ".join(fields))
+                self.assertLess(restore.niri_age(proc), 60)  # the socket file was just made
+
+    def test_the_command_line_passes_login_to_auto_start_only(self):
+        for argv, login in ((["auto-start", "--login"], True), (["auto-start"], False)):
+            with self.subTest(argv=argv), patch.object(sys, "argv", ["flow-recovery", *argv]), \
+                    patch.object(restore, "automatic", return_value={}) as automatic, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                restore.main()
+                self.assertEqual(automatic.call_args.kwargs.get("login"), login)
+        with patch.object(sys, "argv", ["flow-recovery", "auto-save", "--login"]), \
+                patch.object(restore, "automatic", return_value={}) as automatic:
+            with self.assertRaises(ValueError):
+                restore.main()
+            automatic.assert_not_called()
+
     def test_automatic_start_says_a_pause_from_earlier_in_the_session_was_already_told(self):
+        # With its reason, which a shell started again later shows in Settings.
         with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \
                 patch.object(restore.spaces, "session_id", return_value="session"):
             path = Path(directory) / "session.json"
             restore.automatic("auto-pause", path)
             answer = restore.automatic("auto-start", path, login=True)
             self.assertTrue(answer.get("paused"))
-            self.assertIn("paused", answer["error"])
+            self.assertEqual(answer["error"], restore.PAUSED)
+            marker = next(Path(directory).glob("flow-recovery-*[0-9a-f]"))
+            restore.pause_marker(marker, "app: multiple windows need manual recovery after restart")
+            answer = restore.automatic("auto-start", path, login=True)
+            self.assertEqual((answer.get("paused"), answer["error"]),
+                             (True, "app: multiple windows need manual recovery after restart"))
 
     def test_automatic_recovery_preserves_snapshot_after_partial_restore(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"XDG_RUNTIME_DIR": directory}), \

@@ -324,7 +324,7 @@ def main():
                     time.sleep(0.2)
                 state = json.loads(ipc("recovery_state") or "{}")
                 told = (bool(seen["toast"]) and seen["desk"] == {"closed"} and state.get("paused")
-                        and state.get("pause_reason", "").startswith("Automatic saving is paused"))
+                        and "multiple windows" in state.get("pause_reason", ""))  # the reason from before
                 check("a shell restart while paused: a toast, the reason kept, the Desk closed",
                       f"toast {seen['toast']!r}, desk {sorted(seen['desk'])}, reason {state.get('pause_reason')!r}",
                       "True", told)
