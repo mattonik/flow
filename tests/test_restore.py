@@ -339,7 +339,7 @@ class RecoveryTest(unittest.TestCase):
     def reopen_set_aside(self, missing=(), empty=True, registered=(), aside_session=None, focus_moves=True,
                          groups=(), leave_after_launch=False, crowded_on_focus=False, record_before=None,
                          other_display=False, killed_at_launch=False, user_away_on_focus=False, gio_fails=(),
-                         broken_after_launch=None, lands_on=None, opens_anyway=False):
+                         broken_after_launch=None, lands_on=None, opens_anyway=False, slow=False):
         """Settings' Reopen it run through the command line against a fake Niri: the user's foot and firefox on
         workspace 1 (focused), workspace 2 after it on the display empty unless ``empty`` is false. The set-aside
         session lists the same two apps; ``missing`` have no desktop entry; ``registered`` are the Groups now
@@ -350,7 +350,8 @@ class RecoveryTest(unittest.TestCase):
         connected display; ``killed_at_launch``, the reopen is killed as its first app starts;
         ``user_away_on_focus``, the user goes back to workspace 1 as 2 is focused; ``gio_fails``, the apps whose
         launch fails (``opens_anyway``, its window opens all the same); ``lands_on``, the workspace launched
-        windows land on (else the focused one); ``broken_after_launch``, the error a bug raises once one app
+        windows land on (else the focused one); ``slow``, launches work but no window has come by the end;
+        ``broken_after_launch``, the error a bug raises once one app
         started. Waits take no time.
         ``self.record`` is then what the reopen wrote beside the file, ``self.exit_code`` its
         exit status. Returns the printed answer, the Niri
@@ -400,6 +401,8 @@ class RecoveryTest(unittest.TestCase):
             if broken_after_launch and any(w["workspace_id"] == 2 for w in world["windows"]):
                 raise broken_after_launch
             path.write_text("an automatic save of the work")
+            if slow:
+                return Mock(returncode=0)
             ws = lands_on or world["focused"]
             world["windows"].append({"id": 20 + len(world["windows"]), "app_id": app, "workspace_id": ws,
                                      "layout": {"pos_in_scrolling_layout": [len(on(ws)) + 1, 1]}})
@@ -572,6 +575,13 @@ class RecoveryTest(unittest.TestCase):
         self.assertEqual((answer["complete"], answer["launched"]), (False, 2))
         self.assertEqual(self.record, "partial\nreopened 0 of 2 windows\n")
         self.assertEqual(sorted(w["app_id"] for w in windows if w["workspace_id"] == 3), ["firefox", "foot"])
+
+    def test_a_reopen_whose_apps_are_slow_to_open_keeps_its_record(self):
+        # Launched, and no window yet anywhere when it ends: they may still come, so it is not offered again.
+        answer, actions, _, _, _ = self.reopen_set_aside(slow=True)
+        self.assertEqual((answer["complete"], answer["launched"]), (False, 2))
+        self.assertEqual(self.record, "partial\nreopened 0 of 2 windows\n")
+        self.assertEqual([a for a in actions if a[0] == "focus-workspace"], [("focus-workspace", 2)])  # left there
 
     def test_a_reopen_whose_failed_launch_opened_anyway_keeps_its_record(self):
         # gio said every launch failed, but a window came (elsewhere): kept, as a second run would open it twice.
