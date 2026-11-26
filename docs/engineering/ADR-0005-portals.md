@@ -55,17 +55,22 @@ A disposable unsandboxed Gio client requested `FileChooser.OpenFile`. The Nautil
 ## Amendment after F-012's tests (2026-11-26)
 
 `tests/niri_portals_smoke.py` exercised every portal F-012 names in the guest (see *F-012 acceptance* in
-`docs/IMPLEMENTATION_STATUS.md`). Niri's defaults are kept but for Screenshot, and one Flow bug the chooser found is
-fixed in the shell.
+`docs/IMPLEMENTATION_STATUS.md`). Niri's defaults are kept but for Screenshot. The choosers also found a Flow bug,
+which is fixed apart.
 
-- **FileChooser stays GNOME's (Nautilus's chooser).** Its Open and Save buttons sit at the bottom right of its window,
-  where Flow's work indicator covered every window (*03 / 03*, or *Layer · Files · Make space · Close* over a floating
-  dialog such as Firefox's upload), so a click on Save reached the indicator. That was Flow's bug, not the
-  backend's: any app's bottom-right controls were covered. The shell now keeps a band along the bottom that Niri
-  keeps windows out of (`bottomBand` in `session/shell.qml`, 60 px, 120 px below 900 px wide), and the home and
-  work indicators sit in it. GTK's chooser (`programs.niri.useNautilus = false`) was tried and works, with its
-  buttons in the header bar, but it is GTK 3, apart from Files, and the island covers the middle of its Name field;
-  with the overlap fixed there is no reason to leave Niri's default.
+- **FileChooser stays GNOME's (Nautilus's chooser).** Its Open and Save buttons sit at the bottom right of its
+  window, where Flow's work indicator sits over every window (*03 / 03*, or *Layer · Files · Make space · Close* over
+  a floating dialog such as Firefox's upload), so a click on Save reaches the indicator, and over Firefox's upload
+  dialog it would hit *Close*. That is Flow's bug, not the backend's: the island and the home indicator cover
+  apps' controls the same way, and any app's bottom-right buttons are covered. A band reserved for the
+  indicators was tried and dropped: the spec has the island float over content, not take a strip of the screen.
+  The fix, apart from this change, is indicators that get out of the way: they fade and let clicks through while
+  the pointer is over the part of the window they cover, and come back on edge hover or the usual shortcut. Until
+  it lands, the choosers work by keyboard and their primary buttons do not take a click. GTK's chooser
+  (`programs.niri.useNautilus = false`) was tried and works by pointer, with its buttons in the header bar, but it
+  only moves the problem: the island covers the middle of its Name field, it is GTK 3 and apart from Files (Flow's
+  file manager, which the GNOME chooser is), and with the overlap fixed in the shell there is no reason left to
+  leave Niri's default.
 - **Screenshot → Flow** (`session/screenshot_portal.py`, `org.freedesktop.impl.portal.desktop.flow`). GNOME's
   backend answers `interactive: true` by calling `org.gnome.Shell.Screenshot.InteractiveScreenshot`, which Niri
   26.04 does not implement (it has `Screenshot` and `PickColor`), so every interactive request failed with answer 2.

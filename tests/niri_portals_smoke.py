@@ -10,13 +10,10 @@ given more than once); ``--shots DIR`` keeps a screenshot (grim) of each dialog 
 
 Checks, in order (names for ``--only``):
 
-- ``edges``: Firefox's page has buttons at its window's bottom left, middle and right corner; each takes a click.
-  The shell's home and work indicators sit in a band along the bottom that Niri keeps windows out of
-  (``bottomBand`` in ``session/shell.qml``); before it, the work indicator covered every window's bottom right
-  corner, where dialogs put Open and Save.
 - ``chooser``: PortalProbe (``tests/flatpak/portal_probe.py``), a Flatpak with no filesystem access, asks
-  FileChooser to open a file and to save one, in Nautilus's chooser (GNOME's backend). The test clicks the file
-  and the dialog's Open or Save where Nautilus draws them, at the bottom right, clear of the indicators' band. The probe reads and writes the chosen file through the document portal and nothing
+  FileChooser to open a file and to save one, in Nautilus's chooser (GNOME's backend), answered by keyboard:
+  Escape cancels, the file's path typed in its location bar and Return opens it, Return saves under the
+  suggested name. The probe reads and writes the chosen file through the document portal and nothing
   else: not the file beside it, not the original path, not the home folder. Cancel answers 1. Firefox's upload
   button, through the portal as a Flatpak Firefox asks, opens the chooser floating over Firefox, and the chosen
   file reaches the page.
@@ -35,10 +32,16 @@ Checks, in order (names for ``--only``):
   xterm (X11, through xwayland-satellite): each saves or writes what it pasted to a file the test reads.
 - ``clipboard-image``: an image copied and pasted around KolourPaint (Qt, Wayland), Firefox (GTK, Wayland) and
   Firefox on X11 (``MOZ_ENABLE_WAYLAND=0``): each pasted image has the colour the copy had.
+- ``chooser-pointer``: the same, answered with the pointer where Nautilus draws its buttons (the close button, the
+  file, Open, Save). It fails today where the shell's work indicator covers the chooser's Open and Save (see
+  ``edges``), and says so.
 - ``backends``: every portal request above reached the backend Flow intends (from a D-Bus monitor of the
   ``org.freedesktop.impl.portal.*`` calls): FileChooser and ScreenCast the GNOME backend, Access the GTK one,
-  Screenshot Flow's own
-  (``session/screenshot_portal.py``). PipeWire and WirePlumber run.
+  Screenshot Flow's own (``session/screenshot_portal.py``). PipeWire and WirePlumber run.
+- ``edges``: a full-window Firefox page (kiosk) has buttons along its window's top and bottom edges: left,
+  middle and right. Each must take a click. Today the island (top middle), the home indicator (bottom middle) and
+  the work indicator (bottom right) sit over the window and take them instead: this is the acceptance test for the
+  shell's fix, indicators that get out of the way, and it fails until that lands.
 
 X11 windows get no keys: xwayland-satellite does not take wtype's virtual keymap, so xterm and Firefox on X11 are
 driven by the pointer only (a middle click pastes, a double click copies, page buttons copy and read).
@@ -78,8 +81,8 @@ from pointer import Pointer  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 PROBE = "io.github.mattonik.PortalProbe"
 RUNTIME, BRANCH = "org.freedesktop.Platform", "25.08"
-CHECKS = ["edges", "chooser", "screenshot", "screencast", "dnd-file", "dnd-text", "clipboard-text", "clipboard-image",
-          "backends"]
+CHECKS = ["chooser", "screenshot", "screencast", "dnd-file", "dnd-text", "clipboard-text", "clipboard-image",
+          "chooser-pointer", "backends", "edges"]
 # The backend Flow intends for each interface the checks use (modules/flow.nix, ADR-0005).
 INTENDED = {"FileChooser": "gnome", "Access": "gtk", "Screenshot": "flow", "ScreenCast": "gnome"}
 PERMISSIONS = ("org.freedesktop.impl.portal.PermissionStore", "/org/freedesktop/impl/portal/PermissionStore",
@@ -460,9 +463,11 @@ if (mode === 'cast') {
   input.onchange = async () => { const files = []; for (const f of input.files) files.push({name: f.name, text: await f.text()});
     report({kind: 'upload', files}); };
 } else if (mode === 'edges') {
-  for (const [name, css] of [['bottom-right', 'right: 0'], ['bottom-middle', 'left: calc(50vw - 100px)'], ['bottom-left', 'left: 0']]) {
+  for (const [name, css] of [['top-left', 'top: 0; left: 0'], ['top-middle', 'top: 0; left: calc(50vw - 100px)'],
+                             ['top-right', 'top: 0; right: 0'], ['bottom-left', 'bottom: 0; left: 0'],
+                             ['bottom-middle', 'bottom: 0; left: calc(50vw - 100px)'], ['bottom-right', 'bottom: 0; right: 0']]) {
     const b = document.createElement('button'); b.textContent = name;
-    b.style.cssText = `position: fixed; bottom: 0; ${css}; width: 200px; height: 40px; font-size: 16px`;
+    b.style.cssText = `position: fixed; ${css}; width: 200px; height: 40px; font-size: 16px`;
     b.onclick = () => report({kind: 'clicked', name}); document.body.appendChild(b); }
 } else if (mode === 'clip') {
   element('top', 'Copy an image', 'half').onclick = async () => {
@@ -564,13 +569,13 @@ FIREFOX_PREFS = {
 }
 
 
-def firefox(apps, name, url, x11=False):
+def firefox(apps, name, url, x11=False, kiosk=False):
     profile = apps.tmp / f"firefox-{name}"
     profile.mkdir()
     (profile / "user.js").write_text("".join(f"user_pref({json.dumps(k)}, {json.dumps(v)});\n"
                                              for k, v in FIREFOX_PREFS.items()))
     env = {"MOZ_ENABLE_WAYLAND": "0", "GDK_BACKEND": "x11"} if x11 else {"MOZ_ENABLE_WAYLAND": "1"}
-    return apps.start(["firefox", "--profile", profile, "--no-remote", "--new-instance", url], env=env,
+    return apps.start(["firefox", "--profile", profile, "--no-remote", "--new-instance", *(["--kiosk"] if kiosk else []), url], env=env,
                       title="Mozilla Firefox", timeout=60)[1]
 
 
@@ -735,12 +740,13 @@ class Smoke:
             self.pages = Pages(self.tmp)
         return self.pages
 
-    def need_firefox(self, **params):
-        """The Wayland Firefox, full width and focused, showing the test page with ``params``."""
+    def need_firefox(self, kiosk=False, **params):
+        """The Wayland Firefox, full width and focused, showing the test page with ``params``; ``kiosk``: the page
+        fills the window, with no tabs or toolbar above it."""
         pages = self.need_pages()
         if self.firefox and self.firefox["id"] in windows():
             self.apps.close_window(self.firefox)
-        self.firefox = firefox(self.apps, uuid.uuid4().hex[:8], pages.url(**params))
+        self.firefox = firefox(self.apps, uuid.uuid4().hex[:8], pages.url(**params), kiosk=kiosk)
         self.apps.focus(self.firefox, "100%")
         time.sleep(2)  # the page's first paint
         return self.firefox
@@ -763,19 +769,34 @@ class Smoke:
         def place(x, y):
             return (round(self.apps.output["x"] + origin[0] + (x if x >= 0 else size[0] + x)),
                     round(self.apps.output["y"] + origin[1] + (y if y >= 0 else size[1] + y)))
-        return {"cancel": place(-24, 22), "primary": place(-62, -34), "first": place(352, 125),
-                "rect": (origin[0], origin[1], size[0], size[1])}
-
-    def clear_of_band(self, window, label):
-        """A window must end above the band Niri keeps for the shell's indicators."""
-        x, y, w, h = self.chooser_places(window)["rect"]
-        bottom = self.apps.output["height"] - (120 if self.apps.output["width"] < 900 else 60)
-        check(y + h <= bottom, f"{label} reaches {y + h} px, into the indicators' band below {bottom} px")
+        return {"cancel": place(-24, 22), "primary": place(-62, -34), "first": place(352, 125)}
 
     def check_chooser(self):
+        self.chooser(by_pointer=False)
+
+    def check_chooser_pointer(self):
+        self.chooser(by_pointer=True)
+
+    def chooser(self, by_pointer):
+        """Nautilus's chooser, answered by keyboard (``by_pointer`` False: Escape, the path typed in its location
+        bar and Return, Return on the suggested name) or with the pointer (its close button; the file, then Open;
+        Save), where it draws them."""
+        name = "chooser-pointer" if by_pointer else "chooser"
         probe = self.need_probe()
         folder = Path(tempfile.mkdtemp(prefix="flow-f012-files-", dir=Path.home()))
         target = Path(tempfile.mkdtemp(prefix="flow-f012-save-", dir=Path.home()))
+        steps = []
+
+        def click(window, what):
+            at = self.chooser_places(window)[what]
+            self.pointer.click(at)
+            return at
+
+        def covered(at, label):
+            """What a click that came to nothing hit: the shell's surfaces sit over the window there."""
+            layers = [l for l in read("layers") if l.get("namespace") == "quickshell"]
+            return (f"{label} at {at} came to nothing; the installed shell has {len(layers)} overlay surfaces and its "
+                    "work indicator sits over the window's bottom right corner (the overlap Flow fixes apart)")
         try:
             secret, other = uuid.uuid4().hex, uuid.uuid4().hex
             # Named so that the chosen file is the first in the grid, as Nautilus sorts it.
@@ -787,21 +808,31 @@ class Smoke:
             before = set(windows())
             thread, result = probe.request("FileChooser", "OpenFile", f"('', 'Open a test file', {options})")
             window = self.dialog(None, before, "the file chooser")
-            self.clear_of_band(window, "The chooser")
-            self.pointer.click(self.chooser_places(window)["cancel"])
+            click(window, "cancel") if by_pointer else keys("Escape")
             answer = finish(thread, result, "Cancel")
             check(answer.get("response") == 1 and not answer["results"].get("uris"),
                   f"Cancel answered {answer}, not 1 with no file")
+            steps.append("Cancel answered 1")
 
-            # Open: the file clicked, then Open.
+            # Open.
             before = set(windows())
             thread, result = probe.request("FileChooser", "OpenFile", f"('', 'Open a test file', {options})")
             window = self.dialog(None, before, "the file chooser")
-            places = self.chooser_places(window)
-            self.pointer.click(places["first"])
-            time.sleep(0.6)
-            self.shot("chooser-open")
-            self.pointer.click(places["primary"])
+            if by_pointer:
+                click(window, "first")
+                time.sleep(0.6)
+                self.shot("chooser-open-pointer")
+                at = click(window, "primary")
+            else:
+                keys("ctrl+l", str(folder / "chosen.txt"))
+                self.shot("chooser-open")
+                keys("Return")
+            thread.join(15)
+            if thread.is_alive() and by_pointer:
+                self.shot("chooser-open-pointer-missed")
+                keys("Escape")
+                finish(thread, result, "Escape after the missed click")
+                raise Failed(covered(at, "A click on Open"))
             answer = finish(thread, result, "Open")
             uris = answer.get("results", {}).get("uris") or []
             check(answer.get("response") == 0 and len(uris) == 1, f"Open answered {answer}")
@@ -825,14 +856,24 @@ class Smoke:
             check(probe.send(do="write", path=path, text=edited).get("written"), "The probe could not write the chosen file")
             check((folder / "chosen.txt").read_text() == edited, "The probe's write did not reach the chosen file")
             check((folder / "other.txt").read_text() == other, "The file beside the chosen one changed")
+            steps.append("Open gave the sandbox only the chosen file (read and written; the file beside it, its "
+                         "original path and the home folder unseen)")
 
-            # Save: the suggested name kept, Save clicked.
+            # Save, with the suggested name.
             before = set(windows())
             save_options = f"{{'current_folder': <b'{target}'>, 'current_name': <'saved-by-probe.txt'>}}"
             thread, result = probe.request("FileChooser", "SaveFile", f"('', 'Save a test file', {save_options})")
             window = self.dialog(None, before, "the save dialog")
-            self.shot("chooser-save")
-            self.pointer.click(self.chooser_places(window)["primary"])
+            self.shot("chooser-save-pointer" if by_pointer else "chooser-save")
+            if by_pointer:
+                at = click(window, "primary")
+            else:
+                keys("Return")
+            thread.join(15)
+            if thread.is_alive() and by_pointer:
+                keys("Escape")
+                finish(thread, result, "Escape after the missed click")
+                raise Failed(covered(at, "A click on Save") + f" ({'; '.join(steps)})")
             answer = finish(thread, result, "Save")
             uris = answer.get("results", {}).get("uris") or []
             check(answer.get("response") == 0 and len(uris) == 1, f"Save answered {answer}")
@@ -845,6 +886,7 @@ class Smoke:
             check(saved.exists() and saved.read_text() == written, "The saved file is not where the user chose")
             check(sorted(p.name for p in target.iterdir()) == ["saved-by-probe.txt"],
                   "Saving left other files in the chosen folder")
+            steps.append("Save wrote where the user chose")
 
             # A real app's upload dialog: Firefox, as a Flatpak Firefox asks (the portal, with its window as the
             # parent, so Niri floats the chooser over it as a Layer).
@@ -855,48 +897,62 @@ class Smoke:
             self.pointer.click(self.apps.at(0.5, 0.5))
             window = self.dialog("org.gnome.Nautilus", before, "Firefox's upload dialog")
             check(windows()[window["id"]]["is_floating"], "Firefox's upload dialog is not floating over Firefox")
-            self.clear_of_band(window, "Firefox's upload dialog")
             # It opens in the folder Nautilus last used for Firefox: go to the test folder by its path.
-            keys("ctrl+l")
-            keys(f"{folder}/")
-            keys("Return")
-            places = self.chooser_places(window)
+            keys("ctrl+l", f"{folder}/", "Return")
             time.sleep(1)
-            self.shot("chooser-firefox")
-            self.pointer.click(places["first"])
-            time.sleep(0.6)
-            self.pointer.click(places["primary"])
-            upload = pages.wait(["upload"])
+            self.shot("chooser-firefox-pointer" if by_pointer else "chooser-firefox")
+            if by_pointer:
+                click(window, "first")
+                time.sleep(0.6)
+                at = click(window, "primary")
+            else:
+                keys("ctrl+l", str(folder / "chosen.txt"), "Return")
+            try:
+                upload = pages.wait(["upload"], timeout=15)
+            except Failed:
+                if by_pointer:
+                    keys("Escape")
+                    raise Failed(covered(at, "A click on Open in Firefox's upload dialog") + f" ({'; '.join(steps)})")
+                raise
             check(upload["files"] == [{"name": "chosen.txt", "text": edited}], f"Firefox uploaded {upload}")
-            self.passed("chooser", "Nautilus's chooser, clear of the indicators' band: Cancel answered 1; Open gave the "
-                                   "sandbox only the chosen file (read and written; the file beside it, its original "
-                                   "path and the home folder unseen); Save wrote where the user chose; Firefox's "
-                                   "upload dialog, floating over it, uploaded the chosen file")
+            steps.append("Firefox's upload dialog, floating over it, uploaded the chosen file")
+            self.passed(name, ("pointer: " if by_pointer else "keyboard: ") + "; ".join(steps))
         finally:
             shutil.rmtree(folder, ignore_errors=True)
             shutil.rmtree(target, ignore_errors=True)
 
-    # The indicators' band ---------------------------------------------------------------------------------------
+    # Overlap: the shell's surfaces over an app's edges -----------------------------------------------------------
 
     def check_edges(self):
-        """An app's own controls at its window's bottom corners and bottom middle take clicks: the shell's home and
-        work indicators sit in a band Niri keeps windows out of, not over them."""
+        """An app's own controls along its window's top and bottom edges take clicks. Today they do not where the
+        island (top middle), the home indicator (bottom middle) and the work indicator (bottom right) sit over the
+        window: this check is the acceptance test for the fix (indicators that get out of the way) and fails
+        until it lands."""
         pages = self.need_pages()
-        page = self.need_firefox(mode="edges")
+        page = self.need_firefox(kiosk=True, mode="edges")
         w = windows()[page["id"]]
         width, height = w["layout"]["window_size"]
-        self.clear_of_band(page, "Firefox")
         o = self.apps.output
-        hit = []
-        for name, (x, y) in (("bottom-right", (width - 30, height - 12)), ("bottom-middle", (width // 2, height - 12)),
-                             ("bottom-left", (30, height - 12))):
+        took, missed = [], []
+        for name, (x, y) in (("top-left", (30, 12)), ("top-middle", (width // 2, 12)), ("top-right", (width - 30, 12)),
+                             ("bottom-left", (30, height - 12)), ("bottom-middle", (width // 2, height - 12)),
+                             ("bottom-right", (width - 30, height - 12))):
             pages.drain()
             self.pointer.click((o["x"] + x, o["y"] + y))
-            event = pages.wait(["clicked"], timeout=5)
-            check(event["name"] == name, f"A click on the page's {name} button reached {event['name']}")
-            hit.append(name)
-        self.passed("edges", f"Firefox ends {o['height'] - height} px above the screen's bottom; its own "
-                             f"{', '.join(hit)} buttons took the clicks")
+            try:
+                event = pages.wait(["clicked"], timeout=4)
+                (took if event["name"] == name else missed).append(name)
+            except Failed:
+                missed.append(name)
+                # The click reached the shell instead (Overview from the home indicator, a panel from the island,
+                # the next space from the work indicator): back to the page before the next one.
+                keys("Escape", "Escape")
+                self.apps.focus(page)
+            self.pointer.park()
+        self.shot("edges")
+        check(not missed, f"The page's own {', '.join(missed)} buttons took no click (the shell's surfaces sit over "
+                          f"them); {', '.join(took) or 'none'} did")
+        self.passed("edges", f"every edge button of a full-window page took its click: {', '.join(took)}")
 
     # Screenshot -------------------------------------------------------------------------------------------------
 
