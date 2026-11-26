@@ -187,6 +187,9 @@ PAUSED = "Automatic saving is paused; review and save the session."
 # Where automatic recovery puts a saved session it does not reopen, so a save cannot replace it unseen: one file
 # each time, named by when, so a second set-aside never replaces the first.
 SET_ASIDE = "session-before-automatic-recovery-{}.json"
+# Beside a set-aside file once Reopen it opened anything from it, with how it went: a second reopen would open
+# those apps twice, and the shell that knew it may have restarted since.
+REOPENED = ".reopened"
 
 
 def pause_marker(marker, reason=""):
@@ -214,16 +217,22 @@ def set_aside_source(path, name):
     beside = given.parent == Path() or given.parent.resolve() == path.parent.resolve()
     if not beside or source.is_symlink() or not (source.name.startswith(prefix) and source.name.endswith(suffix)):
         raise ValueError(f"Name a saved session that automatic recovery set aside in {path.parent}")
+    record = source.with_name(source.name + REOPENED)
+    if record.exists():
+        raise ValueError(f"{source.name} was reopened already ({record.read_text(encoding='utf-8').strip()}); "
+                         "open the rest yourself, as reopening it again would open the others twice")
     return source
 
 
-def back_to(workspace, now):
-    """Focus ``workspace`` again if a set-aside reopen moved the user off it and opened nothing."""
-    if workspace["id"] != now["id"]:
-        try:
+def back_to(workspace, target):
+    """Focus ``workspace`` again after a set-aside reopen that moved the user to ``target`` and opened nothing,
+    if they are still there (not if they went elsewhere meanwhile)."""
+    try:
+        now = spaces.snapshot()[0]
+        if workspace["id"] != target["id"] and now["id"] == target["id"]:
             spaces.command("action", "focus-workspace", workspace["idx"])
-        except (OSError, ValueError, subprocess.SubprocessError):
-            pass
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        pass
 
 
 def set_aside_answer(message, path):
@@ -1122,7 +1131,7 @@ def main():
                             spaces.command("action", "focus-workspace", target["idx"])
                         workspace, windows = spaces.snapshot()
                         if workspace["id"] != target["id"] or any(w.get("workspace_id") == target["id"] for w in windows):
-                            back_to(started_from, workspace)
+                            back_to(started_from, target)
                             raise ValueError("The empty workspace did not come into focus empty; nothing was reopened")
         if op == "restore":
             def checked_state():
@@ -1138,12 +1147,15 @@ def main():
                                 or not pins_unchanged_or_rebound(pins, now_pins, session, current[1], current[0], now_groups)):
                             raise ValueError("Session, Groups or pinned spaces changed; session recovery stopped")
                         return current
-            launched = []
+            launched = []  # tried: a launch that failed may still open its app
+            record = source.with_name(source.name + REOPENED)
 
             def launch(desktop):
                 current, _ = checked_state()
                 if current["id"] != workspace["id"]:
                     raise ValueError("Workspace changed; session recovery stopped")
+                if here and not launched:
+                    record.write_text("stopped while reopening\n", encoding="utf-8")
                 launched.append(desktop)
                 subprocess.run(app_command(["gio", "launch", str(desktop)]), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             # A set-aside session may predate Groups registered since: only those it saved are its own, as an
@@ -1154,16 +1166,22 @@ def main():
                                         pinned=pinned_apps(pins), session=session, pinned_groups=pins,
                                         registered=[g for g in registered if g.get("id") in saved_ids] if here else registered,
                                         display=display, here=here)
-            except (ValueError, OSError, subprocess.SubprocessError) as exc:
+            except Exception as exc:  # noqa: BLE001 — for a reopen, whatever stopped it is told with what opened
                 if not here:
                     raise
-                if not launched:  # refused before opening anything: the user back where they were
+                if launched:
+                    record.write_text(f"stopped: {exc}\n", encoding="utf-8")
+                else:  # refused before opening anything: the user back where they were
                     back_to(started_from, workspace)
                 # Settings offers Reopen it again only if nothing opened: a second run would open those twice.
-                print(json.dumps({"error": str(exc), "launched": len(launched)}))
+                print(json.dumps({"error": str(exc).rstrip(".") + ".", "launched": len(launched)}))
                 sys.exit(1)
             done = (f"Reopened {count} of {len(data['windows'])} windows on an empty workspace." if here
                     else f"Restored {count} windows.")
+            if here and launched:
+                record.write_text(done.removesuffix(" on an empty workspace.").lower() + "\n", encoding="utf-8")
+            elif here:
+                back_to(started_from, workspace)
             # Complete: every saved window is back. Settings offers a set-aside session until then, or until
             # anything was launched.
             print(json.dumps({"message": done + (" " + "; ".join(report) if report else ""), "complete": not report,
