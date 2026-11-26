@@ -58,6 +58,8 @@ let
     { name = "FloeTheme.qml"; path = ../session/FloeTheme.qml; }
     { name = "niri-dark.kdl"; path = ../design/generated/niri-dark.kdl; }
     { name = "niri-light.kdl"; path = ../design/generated/niri-light.kdl; }
+    { name = "niri-still.kdl"; path = ../session/niri-still.kdl; }
+    { name = "niri-moving.kdl"; path = ../session/niri-moving.kdl; }
   ];
   # Keeps ~/.config/flow/niri-appearance.kdl pointing at the current appearance's Niri colours.
   niriAppearanceSync = pkgs.writeShellScriptBin "flow-niri-appearance" ''

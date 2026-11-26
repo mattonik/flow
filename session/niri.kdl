@@ -11,6 +11,8 @@ layout {
 // current appearance, which the installed shell writes and Niri reloads when it changes.
 include "@niriAppearance@"
 include optional=true "~/.config/flow/niri-appearance.kdl"
+// Reduce motion turns Niri's animations off too: the installed shell points this at niri-still.kdl or niri-moving.kdl.
+include optional=true "~/.config/flow/niri-motion.kdl"
 hotkey-overlay { skip-at-startup; }
 // Flow's Overview is the shell's; Niri's own stays in the Spaces switcher, not in a screen corner.
 gestures { hot-corners { off; }; }

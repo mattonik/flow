@@ -1780,6 +1780,10 @@ ShellRoot {
         function open_took(name: string): string { return JSON.stringify(root.openTook[name] || { ms: -1, count: 0 }) }
         function window_labels(): string { return JSON.stringify(root.windows.map(w => [w.id, w.label])) }
         function desk_state(): string { return root.deskOpen ? "open" : "closed" }
+        // Read-only, for tests/niri_desk_overview_smoke.py: whether Desk's content is still settling in, and where it is.
+        function desk_motion(): string {
+            return JSON.stringify({ entering: deskEnter.running, opacity: deskContent.opacity, shift: deskShift.y, shown: deskWindow.visible })
+        }
         function overview_state(): string { return root.spacesOverviewOpen ? "open" : "closed" }
         // Back to work without choosing, as Escape does.
         function overview_close(): void { root.closeSpacesOverview() }
@@ -2407,7 +2411,7 @@ ShellRoot {
                             text: "Reduce motion"
                             checked: motionPreferences.reduceMotion
                             Accessible.name: "Reduce motion: buttons and progress change instantly"
-                            onToggled: { motionPreferences.reduceMotion = checked; motionPreferences.sync() }
+                            onToggled: { motionPreferences.reduceMotion = checked; motionPreferences.sync(); root.syncCompositorAppearance() }
                         }
                         FlowSwitch {
                             id: menuSwitch

@@ -1,0 +1,4 @@
+// Reduce motion is on (Desk → Settings): Niri's own transitions are instant too, as the shell's are.
+animations {
+    off
+}

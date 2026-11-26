@@ -133,6 +133,18 @@ class NiriConfigTest(unittest.TestCase):
         for mode in ("dark", "light"):
             self.assertIn(f'{{ name = "niri-{mode}.kdl"; path = ../design/generated/niri-{mode}.kdl; }}', NIX)
 
+    def test_reduce_motion_reaches_niri_through_a_later_include(self):
+        appearance = NIRI.index('include optional=true "~/.config/flow/niri-appearance.kdl"')
+        motion = NIRI.index('include optional=true "~/.config/flow/niri-motion.kdl"')
+        self.assertLess(appearance, motion)
+        self.assertNotRegex(re.sub(r"//.*", "", NIRI), r"\banimations\b")  # nothing in Niri's own file turns them back on
+        still = (ROOT / "session/niri-still.kdl").read_text()
+        self.assertRegex(re.sub(r"//.*", "", still), r"animations\s*\{\s*off\s*\}")
+        self.assertEqual(re.sub(r"//.*", "", (ROOT / "session/niri-moving.kdl").read_text()).strip(), "")
+        for name in ("still", "moving"):
+            self.assertIn(f'{{ name = "niri-{name}.kdl"; path = ../session/niri-{name}.kdl; }}', NIX)
+        self.assertIn("motionPreferences.sync(); root.syncCompositorAppearance()", SHELL)
+
     def test_the_installed_shell_syncs_at_startup_and_on_the_switch(self):
         self.assertIn('if (Quickshell.shellDir === "/etc/flow") Quickshell.execDetached(["flow-niri-appearance"])', SHELL)
         startup = SHELL[SHELL.index("    Component.onCompleted: {"):SHELL.index("    function syncCompositorAppearance()")]
@@ -189,7 +201,7 @@ class NiriAppearanceSyncTest(unittest.TestCase):
         (self.home / ".config").mkdir(parents=True)
         self.installed = self.root / "etc-flow"
         self.installed.mkdir()
-        for mode in ("dark", "light"):
+        for mode in ("dark", "light", "still", "moving"):
             (self.installed / f"niri-{mode}.kdl").write_text(f"// {mode}\n")
         self.link = self.home / ".config/flow/niri-appearance.kdl"
         self.env = dict(os.environ, HOME=str(self.home), FLOW_SHELL_DIR=str(self.installed), XDG_RUNTIME_DIR=str(self.root))
@@ -209,6 +221,20 @@ class NiriAppearanceSyncTest(unittest.TestCase):
         self.assertEqual(self.link.read_text(), "// light\n")
         self.appearance(False)
         self.assertEqual(self.sync(), str(self.installed / "niri-dark.kdl"))
+
+    def test_the_motion_link_follows_reduce_motion(self):
+        motion = self.link.with_name("niri-motion.kdl")
+        self.sync()
+        self.assertEqual(os.readlink(motion), str(self.installed / "niri-moving.kdl"))
+        (self.home / ".config/floe-appearance.ini").write_text("[General]\nlightMode=true\nreduceMotion=true\n")
+        self.assertEqual(self.sync(), str(self.installed / "niri-light.kdl"))
+        self.assertEqual(os.readlink(motion), str(self.installed / "niri-still.kdl"))
+        before = os.lstat(motion).st_ino
+        self.sync()
+        self.assertEqual(os.lstat(motion).st_ino, before)
+        self.appearance(True)  # reduceMotion gone: the default, off
+        self.sync()
+        self.assertEqual(os.readlink(motion), str(self.installed / "niri-moving.kdl"))
 
     def test_an_unchanged_setting_leaves_the_link_alone(self):
         self.sync()
