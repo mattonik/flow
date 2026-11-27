@@ -56,7 +56,9 @@ class ReadingOrderTest(unittest.TestCase):
 
 class ScrolledReadingOrderTest(unittest.TestCase):
     """The walk's expected order (``cycle_of``, which ``walk`` uses) with scrolling views (``controls()``'s
-    ``views``). The shell's side, and that ``walk`` uses it, are checked only in the guest."""
+    ``views``, outermost first). That the shell gives ``views`` and that ``walk`` uses ``cycle_of`` are checked only
+    in the guest, and there nothing tells outermost-first from innermost-first: the switcher's row of cards comes last
+    in its view, so either reads the same."""
 
     @staticmethod
     def names(listed):
@@ -86,17 +88,17 @@ class ScrolledReadingOrderTest(unittest.TestCase):
                           self.c("button", [410, y, 100, 44], view), self.c("next row", [100, y + 80, 100, 44], view)]
                 self.assertEqual(self.names(listed), ["above", "tile", "button", "next row"])
 
-    def test_cards_below_a_list_keep_their_order(self):
-        # Notification cards scrolled below their list: each card's Open folder, then its ×.
-        view = [(20, 120, 330, 500)]
-        listed = [self.c("Clear all", [250, 60, 90, 44])]
-        for n, y in enumerate((700, 800, 900)):
-            listed += [self.c(f"open {n}", [40, y, 120, 44], view), self.c(f"close {n}", [300, y, 44, 44], view)]
-        self.assertEqual(self.names(listed), ["Clear all", "open 0", "close 0", "open 1", "close 1", "open 2", "close 2"])
+    def test_a_card_scrolled_up_behind_a_panels_header_is_read_after_it(self):
+        # A list of cards whose view starts at 63, under a header row (13 to 57) with Clear all: a card scrolled
+        # up to 13 has its Open folder centred in the header's row, left of Clear all.
+        view = [(20, 63, 330, 500)]
+        listed = [self.c("Clear all", [250, 13, 90, 44]), self.c("open", [40, 20, 120, 44], view),
+                  self.c("close", [300, 13, 44, 44], view), self.c("next open", [40, 120, 120, 44], view)]
+        self.assertEqual(self.names(listed), ["Clear all", "open", "close", "next open"])
 
     def test_a_view_in_a_scrolled_view_is_read_in_its_place(self):
-        # The switcher scrolled down: its header's Close is above its view's top (20), the row of space cards
-        # (a horizontal view inside) starts at 0, and a card's controls are a block in it.
+        # A view scrolled down with a row of cards in it (a horizontal view of its own, as the switcher's spaces
+        # are): a control above the outer view's top (20), the row of cards at 0, and a card's controls a block.
         outer, inner = (0, 20, 800, 700), (0, 0, 800, 200)
         card = [10, 0, 200, 180]
         listed = [self.c("space", [20, 10, 180, 44], (outer, inner), card),
@@ -107,8 +109,8 @@ class ScrolledReadingOrderTest(unittest.TestCase):
         self.assertEqual(self.names(listed), ["Close", "space", "pin", "next space", "Layers"])
 
     def test_a_row_of_cards_scrolled_sideways_is_read_between_its_arrows(self):
-        # The switcher's row of cards scrolled right, between its ‹ and › in the outer view: the first card is
-        # off to the left, past ‹. Read in the outer view's terms, it would come before ‹.
+        # A row of cards scrolled right, between a ‹ and a › of the outer view (the switcher's ‹ › sit above its row
+        # instead): the first card is off to the left, past ‹. Read in the outer view's terms, it comes before ‹.
         outer, inner = (0, 20, 800, 700), (40, 20, 720, 200)
         listed = [self.c("‹", [0, 90, 36, 44], (outer,)),
                   self.c("first", [-150, 30, 180, 44], (outer, inner), [-160, 20, 200, 180]),

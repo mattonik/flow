@@ -201,7 +201,8 @@ def reading_order(controls, depth=0):
     view's (``views``, outermost first): the view is read where it is, its controls where they are in it. Their
     positions all move together as it scrolls, so the order does not depend on the scroll, as Qt's Tab order does
     not. A control's whole rectangle, read with the window's, put a Desk button scrolled up behind the Island's row
-    into that row."""
+    into that row. Not handled: a card that holds a scrolling view (none does today) would be read as two blocks, its
+    view's and the rest of its own."""
     blocks = {}
     for c in controls:
         views = c.get("views") or []
