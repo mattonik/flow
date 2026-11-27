@@ -1,7 +1,8 @@
 # ADR-0005: XDG portals for Niri
 
-**Status:** Accepted; amended 2026-11-26 after F-012's runtime tests (Screenshot → Flow's own backend)  
-**Date:** 2026-11-13, amended 2026-11-26
+**Status:** Accepted; amended 2026-11-26 after F-012's runtime tests (Screenshot → Flow's own backend), and
+2026-11-27 (the overlap fixed in the shell, ADR-0013)  
+**Date:** 2026-11-13, amended 2026-11-26 and 2026-11-27
 
 ## Decision
 
@@ -64,9 +65,11 @@ which is fixed apart.
   dialog it would hit *Close*. That is Flow's bug, not the backend's: the island and the home indicator cover
   apps' controls the same way, and any app's bottom-right buttons are covered. A band reserved for the
   indicators was tried and dropped: the spec has the island float over content, not take a strip of the screen.
-  The fix, apart from this change, is indicators that get out of the way: they fade and let clicks through while
-  the pointer is over the part of the window they cover, and come back on edge hover or the usual shortcut. Until
-  it lands, the choosers work by keyboard and their primary buttons do not take a click. GTK's chooser
+  The fix, apart from this change, is indicators that get out of the way. *Fixed 2026-11-27*
+  ([ADR-0013](ADR-0013-bands-give-way.md)): once the pointer rests 0.6 s on a band over an app, the band fades and
+  its input region empties, so the next click is the app's. It comes back when the pointer leaves or reaches the
+  screen's edge. A quick click still reaches the band. With that, Open and Save take a click after a rest, and so
+  does Firefox's upload dialog (`chooser-pointer` passes). GTK's chooser
   (`programs.niri.useNautilus = false`) was tried and works by pointer, with its buttons in the header bar, but it
   only moves the problem: the island covers the middle of its Name field, it is GTK 3 and apart from Files (Flow's
   file manager, which the GNOME chooser is), and with the overlap fixed in the shell there is no reason left to
