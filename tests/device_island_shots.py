@@ -130,11 +130,12 @@ def main():
                     time.sleep(5)  # a banner from the last view has gone
 
                 def moving(prefix):
-                    # Mid-move: Niri slides to the space beside, and the work indicator shows.
+                    # Moving: the work indicator shows once the shell's refresh after the move arrives (0.15 to 0.6 s),
+                    # mostly after Niri's slide has ended.
                     smoke.apps.focus(kate, "100%")
-                    time.sleep(1)
+                    time.sleep(2)
                     m.niri("action", "focus-window", "--id", firefox["id"])
-                    time.sleep(0.15)
+                    time.sleep(0.6)
                     shot(f"{prefix}-moving")
                     time.sleep(1.5)
 

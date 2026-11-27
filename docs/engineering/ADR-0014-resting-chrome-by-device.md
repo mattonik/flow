@@ -74,7 +74,8 @@ an app is there because the user summoned it, or only for a moment, and then tak
 
 **On every device:**
 - **The work indicator** shows only while moving between spaces (for 1.2 s after the active space on a display
-  changes), and takes no clicks then. It stays interactive in Niri's overview, as before.
+  changes), and takes no clicks. It no longer shows in Niri's overview either: there it would appear a moment after
+  the overview, a frame of its own. The opened Island has the space's position and its arrows.
 - **The home line** shows only when a direct touch device is plugged in (a touchscreen or a pen display:
   `INPUT_PROP_DIRECT` with multitouch positions, read from `/sys/class/input` at start, every 30 s and when the screens
   change). Without one, Super+O, Super+H and the Island reach Overview and Desk.

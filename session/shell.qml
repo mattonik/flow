@@ -2764,17 +2764,14 @@ ShellRoot {
         HomeIndicator { id: workHome; anchors.fill: parent }
     }
     PanelWindow {
-        // Work indicator: the focused app of an active Group, and the space's place in this display's Flow.
-        // Over apps it shows only for a moment while moving between spaces, and takes no clicks then (ADR-0014).
-        // It stays in Niri's overview, where its arrows and position are the way along the row for a pointer
-        // or a finger, next to Super+Left/Right and the wheel.
+        // Work indicator: the focused app of an active Group, and the space's place in this display's Flow. It shows
+        // only for a moment while moving between spaces, and takes no clicks (ADR-0014); the opened Island has the
+        // position and its arrows.
         id: workIndicatorWindow
         screen: root.workScreen
         visible: !root.workCovered && !root.switcherOpen && !root.appMenuOpen && !root.searchOpen && (!!root.activeSpace || !!root.activeLayer)
-            && (root.spacesMoving || root.overviewOpen)
-        mask: root.overviewOpen ? indicatorWhole : passThrough
-        Region { id: passThrough }
-        Region { id: indicatorWhole; width: workIndicatorWindow.width; height: workIndicatorWindow.height }
+            && root.spacesMoving
+        mask: Region {}
         anchors { bottom: true; right: true }
         // Where the bottom controls and this indicator cannot share a row, it rises above them: below 560 px,
         // or below 900 px for an active Layer's wider controls.

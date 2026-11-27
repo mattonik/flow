@@ -571,7 +571,14 @@ def run(shell, bus, steps, problems):
             subprocess.run(["wtype", "-k", "Hyper_L"], check=True, timeout=10)
             wait_for(shell_app, "the shell on the AT-SPI bus")
             ipc("island")  # nothing rests over apps (ADR-0014): open the Island, as Super+B does
-            island = wait_for(lambda: controls("island"), "the island")
+
+            def settled_island():
+                # Its size once laid out: its row grows as its parts appear (the position, an activity).
+                first = controls("island")
+                time.sleep(0.4)
+                second = controls("island")
+                return second if second and first and second[0]["window"] == first[0]["window"] else None
+            island = wait_for(settled_island, "the island, laid out")
             chips = progress_bars(island[0]["window"])
             if len(chips) != 1 or not chips[0].name.startswith("Activity from Photos: Copy photos") or chips[0].description != "40 percent":
                 raise RuntimeError(f"The island's activity chip is not one progress bar: {[(c.name, c.description) for c in chips]}")
