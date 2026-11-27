@@ -1409,34 +1409,37 @@ ShellRoot {
         property bool probing: false
         // The pointer reached this band from the screen's edge: the shell's, until it leaves.
         property bool fromEdge: false
+        // A button went down on the band since the pointer last moved: it is in use, so no rest fades it.
+        property bool pressed: false
         readonly property int restMs: 600
         readonly property int probeMs: 1500
         readonly property int edgeRows: 2
         readonly property bool hovered: pointer.hovered
-        readonly property bool pressActive: press.active
-        readonly property real hoverY: pointer.point.position.y
-        // For give_way: how long after a rest faded the band Niri took the pointer away from it (its input region
-        // applied), in ms; -1 until a rest has faded it.
+        // Where the pointer last moved to over the band. Qt hands the band the same position again when something
+        // under a still pointer animates (the home indicator's line widening under it): that is not a motion.
+        property point lastAt: Qt.point(-1, -1)
+        // For give_way: presses the band saw, and how long after a rest faded it Niri took the pointer away (its
+        // input region applied), in ms; -1 until a rest has faded it.
+        property int presses: 0
         property real fadedAt: 0
         property real leftAfter: -1
-        // Presses the band took, for give_way.
-        property int presses: 0
-        property int rests: 0
-        property int seens: 0
-        property string restWhy: ""
         default property alias content: band.data
         anchors.fill: parent
         onOverAppChanged: if (!overApp) { yielded = false; probing = false }
         function atEdge(y: real): bool {
             return edge === "top" ? y < edgeRows : edge === "bottom" ? y >= height - edgeRows : false
         }
-        // The pointer is over the band: from the edge it comes back; seen by a probe it stays out of the way.
-        function seen(): void {
-            const atTheEdge = atEdge(pointer.point.position.y)
+        // The pointer moved over the band (or came onto it): from the edge it comes back; seen by a probe it stays
+        // out of the way. Either way a rest starts again.
+        function moved(): void {
+            const at = pointer.point.position
+            if (at.x === lastAt.x && at.y === lastAt.y) return
+            lastAt = Qt.point(at.x, at.y)
+            pressed = false
+            const atTheEdge = atEdge(at.y)
             if (atTheEdge) fromEdge = true
             if (yielded && atTheEdge) { yielded = false; probing = false }
             else if (probing) probing = false
-            seens += 1
             rest.restart()
         }
         property Region passRegion: Region {
@@ -1450,23 +1453,26 @@ ShellRoot {
             opacity: giveWay.yielded ? 0 : 1
             Behavior on opacity { NumberAnimation { duration: root.motionQuick; easing.type: Easing.BezierSpline; easing.bezierCurve: root.standardCurve } }
         }
+        MouseArea {
+            // Above the band, it notes a press and passes it on to the band's own controls (a pointer handler on
+            // this item would not see a press a button below has taken).
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            onPressed: mouse => { giveWay.pressed = true; giveWay.presses += 1; rest.stop(); mouse.accepted = false }
+        }
         HoverHandler {
             id: pointer
             onHoveredChanged: {
-                if (hovered) { giveWay.seen(); return }
+                if (hovered) { giveWay.lastAt = Qt.point(-1, -1); giveWay.moved(); return }
                 if (giveWay.fadedAt) { giveWay.leftAfter = Date.now() - giveWay.fadedAt; giveWay.fadedAt = 0 }
-                giveWay.fromEdge = false; rest.stop()
+                giveWay.fromEdge = false; giveWay.pressed = false; rest.stop()
             }
-            onPointChanged: if (hovered) giveWay.seen()
+            onPointChanged: if (hovered) giveWay.moved()
         }
-        // Passive: it sees a press that a button takes, so a press held still never fades the band.
-        PointHandler { id: press; acceptedButtons: Qt.AllButtons; onActiveChanged: if (active) giveWay.presses += 1 }
         Timer {
             id: rest; interval: giveWay.restMs
-            onTriggered: {
-                giveWay.rests += 1
-                giveWay.restWhy = [pointer.hovered, press.active, giveWay.overApp, giveWay.fromEdge, giveWay.yielded].join(",")
-                if (pointer.hovered && !press.active && giveWay.overApp && !giveWay.fromEdge && !giveWay.yielded) { giveWay.yielded = true; giveWay.fadedAt = Date.now() }
+            onTriggered: if (pointer.hovered && !giveWay.pressed && giveWay.overApp && !giveWay.fromEdge && !giveWay.yielded) {
+                giveWay.yielded = true; giveWay.fadedAt = Date.now()
             }
         }
         Timer { interval: giveWay.probeMs; running: giveWay.yielded && !giveWay.probing; onTriggered: giveWay.probing = true }
@@ -2055,10 +2061,10 @@ ShellRoot {
         }
         function launcher_state(): string { return root.launcherBusy() ? "open" : "closed" }
         // Read-only, for tests: each work-view band's way out of an app's way (GiveWay, ADR-0013).
-        function press_active(way): bool { return way.pressActive }
         function give_way(): string {
             const state = way => ({ over_app: way.overApp, yielded: way.yielded, probing: way.probing, from_edge: way.fromEdge,
-                                    hovered: way.hovered, y: way.hoverY, left_after_ms: way.leftAfter, presses: way.presses, rests: way.rests, seens: way.seens, why: way.restWhy, press: press_active(way), mask: way.mask === null ? "all" : way.edge ? "edge" : "none" })
+                                    hovered: way.hovered, pressed: way.pressed, presses: way.presses, left_after_ms: way.leftAfter,
+                                    mask: way.mask === null ? "all" : way.edge ? "edge" : "none" })
             return JSON.stringify({ island: state(islandWay), home: state(homeWay), indicator: state(indicatorWay), app_button: state(appMenuWay) })
         }
         // The app menu as the shell holds it, for scripted checks: the focused window, its probe, whether the

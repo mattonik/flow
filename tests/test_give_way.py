@@ -65,18 +65,29 @@ class GiveWayTest(unittest.TestCase):
 
     def test_it_fades_only_after_a_rest_over_an_app_away_from_the_edge(self):
         rest = block_after("id: rest; interval: giveWay.restMs", GIVE_WAY)
-        self.assertIn("if (pointer.hovered && !press.active && giveWay.overApp && !giveWay.fromEdge && !giveWay.yielded) { giveWay.yielded = true;", rest)
+        self.assertIn("if (pointer.hovered && !giveWay.pressed && giveWay.overApp && !giveWay.fromEdge && !giveWay.yielded) {", rest)
         self.assertEqual(re.search(r"readonly property int restMs: (\d+)", GIVE_WAY).group(1), "600")
         over = re.search(r"readonly property bool overApp: (.*\n.*)", GIVE_WAY).group(1)
         for part in ("active", "root.workViewOnly", "root.windows.length > 0", "!root.searchOpen", "!root.quickSettingsOpen",
                      "!root.notificationsOpen", "!root.appMenuOpen"):
             self.assertIn(part, over)
         self.assertIn("onOverAppChanged: if (!overApp) { yielded = false; probing = false }", GIVE_WAY)
-        # Every motion starts the rest again.
-        self.assertIn("rest.restart()", block_after("function seen(): void {", GIVE_WAY))
+        moved = block_after("function moved(): void {", GIVE_WAY)
+        # Only a motion starts the rest again: the same position handed over again (an animation under a still
+        # pointer, the home indicator's line widening) does not, or the home indicator faded 0.2 s late.
+        self.assertIn("if (at.x === lastAt.x && at.y === lastAt.y) return", moved)
+        self.assertLess(moved.index("return"), moved.index("rest.restart()"))
+        self.assertIn("onPointChanged: if (hovered) giveWay.moved()", GIVE_WAY)
+
+    def test_a_press_on_the_band_keeps_it(self):
+        # Seen above the band and passed on, so the band's own controls still take it.
+        area = block_after("MouseArea {", GIVE_WAY)
+        self.assertIn("onPressed: mouse => { giveWay.pressed = true; giveWay.presses += 1; rest.stop(); mouse.accepted = false }", area)
+        self.assertNotIn("hoverEnabled", area)
+        self.assertLess(GIVE_WAY.index("id: band"), GIVE_WAY.index("MouseArea {"))
 
     def test_it_comes_back_at_the_edge_or_when_a_probe_finds_no_pointer(self):
-        seen = block_after("function seen(): void {", GIVE_WAY)
+        seen = block_after("function moved(): void {", GIVE_WAY)
         self.assertIn("if (yielded && atTheEdge) { yielded = false; probing = false }", seen)
         self.assertIn("else if (probing) probing = false", seen)
         self.assertIn("running: giveWay.yielded && !giveWay.probing; onTriggered: giveWay.probing = true", GIVE_WAY)
