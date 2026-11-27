@@ -38,18 +38,18 @@ Checks, in order (names for ``--only``):
   the page's is pasted and saved in KolourPaint and read by Firefox on X11 (``MOZ_ENABLE_WAYLAND=0``); that one's is
   read by the Wayland page. Each image has the colour its copy had.
 - ``chooser-pointer``: the same, answered with the pointer where Nautilus draws its buttons (the close button, the
-  file, Open, Save). It fails today where the shell's work indicator covers the chooser's Open and Save (see
-  ``edges``), and says so.
+  file, Open, Save), each after a rest as a user's: Open and Save sit under the shell's work indicator, which fades
+  and lets the click through once the pointer rests on it (``edges``, ADR-0013).
 - ``backends``: every portal request above reached the backend Flow intends (from a D-Bus monitor of the
   ``org.freedesktop.impl.portal.*`` calls): FileChooser and ScreenCast the GNOME backend, Access the GTK one,
   Screenshot Flow's own (``session/screenshot_portal.py``). PipeWire and WirePlumber run.
 - ``edges``: a full-window Firefox page (kiosk) has buttons along its window's top and bottom edges: left,
-  middle and right. Each must take a click. Today the island (top middle), the home indicator (bottom middle) and
-  the work indicator (bottom right) sit over the window and take them instead: this is the acceptance test for the
-  shell's fix, indicators that get out of the way, and it fails until that lands.
+  middle and right. Each must take a click after a rest, though the island (top middle), the home indicator (bottom
+  middle) and the work indicator (bottom right) sit over the window: the shell's bands fade and let it through
+  (ADR-0013). A quick click on the home indicator must still reach it and open Overview.
 
-The run exits 0 when every check passes but ``chooser-pointer`` and ``edges``, which are expected to fail until the
-shell's fix lands, and fails when any other check fails or when one of those two passes.
+The run exits 0 when every check passes but those in ``EXPECTED_FAILURES`` (none), and fails when any other check
+fails or when one of those passes.
 
 X11 windows get no keys: xwayland-satellite does not take wtype's virtual keymap, so xterm and Firefox on X11 are
 driven by the pointer only (a middle click pastes, a double click copies, page buttons copy and read).
@@ -98,9 +98,9 @@ REST_MS = 800
 # each check passes alone and in this order.
 CHECKS = ["chooser", "screenshot", "screenshot-gimp", "screencast", "clipboard-text", "clipboard-image", "dnd-file",
           "dnd-text", "chooser-pointer", "backends", "edges"]
-# Expected to fail until the shell's surfaces stop covering apps' edges (fixed apart): they are its acceptance tests.
-# The run fails if any other check fails, or if one of these passes (update this list and the status document).
-EXPECTED_FAILURES = {"chooser-pointer", "edges"}
+# Checks expected to fail. The run fails if any other check fails, or if one of these passes (update this list and
+# the status document). Empty since the shell's bands get out of apps' way (ADR-0013).
+EXPECTED_FAILURES = set()
 # The backend Flow intends for each interface the checks use (modules/flow.nix, ADR-0005).
 INTENDED = {"FileChooser": "gnome", "Access": "gtk", "Screenshot": "flow", "ScreenCast": "gnome"}
 PERMISSIONS = ("org.freedesktop.impl.portal.PermissionStore", "/org/freedesktop/impl/portal/PermissionStore",
@@ -805,6 +805,13 @@ class Smoke:
             self.probe = Probe(self.tmp)
         return self.probe
 
+    @staticmethod
+    def ipc(call):
+        """A read-only call on the installed shell's IPC (target ``desk``): its answer, or the end of its error."""
+        out = subprocess.run(["quickshell", "ipc", "-p", "/etc/flow/shell.qml", "call", "desk", call], text=True,
+                             capture_output=True, timeout=10)
+        return out.stdout.strip() or out.stderr.strip()[-200:]
+
     def need_pages(self):
         if not self.pages:
             self.pages = Pages(self.tmp)
@@ -866,10 +873,8 @@ class Smoke:
         def covered(at, label):
             """What a click that came to nothing hit: the shell's surfaces sit over the window there."""
             layers = [l for l in read("layers") if l.get("namespace") == "quickshell"]
-            out = subprocess.run(["quickshell", "ipc", "-p", "/etc/flow/shell.qml", "call", "desk", "give_way"], text=True,
-                                 capture_output=True, timeout=10)
             return (f"{label} at {at} came to nothing; the installed shell has {len(layers)} overlay surfaces and its "
-                    f"work indicator sits over the window's bottom right corner; its bands: {out.stdout.strip()}")
+                    f"work indicator sits over the window's bottom right corner; its bands: {self.ipc('give_way')}")
         try:
             secret, other = uuid.uuid4().hex, uuid.uuid4().hex
             # Named so that the chosen file is the first in the grid, as Nautilus sorts it.
@@ -998,18 +1003,16 @@ class Smoke:
     # Overlap: the shell's surfaces over an app's edges -----------------------------------------------------------
 
     def check_edges(self):
-        """An app's own controls along its window's top and bottom edges take clicks. Today they do not where the
-        island (top middle), the home indicator (bottom middle) and the work indicator (bottom right) sit over the
-        window: this check is the acceptance test for the fix (indicators that get out of the way) and fails
-        until it lands."""
+        """An app's own controls along its window's top and bottom edges take clicks, where the island (top middle),
+        the home indicator (bottom middle) and the work indicator (bottom right) sit over the window: after a rest
+        the bands fade and let the click through (ADR-0013). A quick click still reaches the band: the home
+        indicator's opens Overview, and Escape closes it."""
         pages = self.need_pages()
         page = self.need_firefox(kiosk=True, mode="edges")
 
         def bands():
             """The installed shell's bands as it holds them (faded or not, and their input), for a missed click."""
-            out = subprocess.run(["quickshell", "ipc", "-p", "/etc/flow/shell.qml", "call", "desk", "give_way"], text=True,
-                                 capture_output=True, timeout=10)
-            return out.stdout.strip() or out.stderr.strip()[-200:]
+            return self.ipc("give_way")
         w = windows()[page["id"]]
         width, height = w["layout"]["window_size"]
         o = self.apps.output
@@ -1036,10 +1039,30 @@ class Smoke:
                 self.apps.focus(page)
             self.pointer.park()
         self.shot("edges")
+        # A quick click (50 ms after the pointer arrives) is the band's: it opens Overview, the page sees nothing.
+        pages.drain()
+        self.pointer.click((o["x"] + width // 2, o["y"] + height - 12))
+        try:
+            wait_for(lambda: self.ipc("overview_state") == "open", "a quick click on the home indicator to open Overview", 4)
+            quick = "a quick click on the home indicator opened Overview"
+        except Failed:
+            quick = None
+        finally:
+            if self.ipc("overview_state") == "open":
+                keys("Escape")
+                wait_for(lambda: self.ipc("overview_state") == "closed", "Overview to close")
+            self.apps.focus(page)
+            self.pointer.park()
+        try:
+            stray = pages.wait(["clicked"], timeout=0.5)
+        except Failed:
+            stray = None
+        check(quick and not stray, f"A quick click on the home indicator did not reach it (Overview stayed closed, or the "
+                                   f"page took it: {stray}): the bands must stay usable")
         check(not missed, f"The page's own {', '.join(missed)} buttons took no click (the shell's surfaces sit over "
                           f"them); {', '.join(took) or 'none'} did")
         self.passed("edges", f"every edge button of a full-window page took its click after a {REST_MS} ms rest: "
-                             f"{', '.join(took)}; the bands let go of the pointer after {', '.join(waits)}")
+                             f"{', '.join(took)}; the bands let go of the pointer after {', '.join(waits)}; {quick}")
 
     # Screenshot -------------------------------------------------------------------------------------------------
 
