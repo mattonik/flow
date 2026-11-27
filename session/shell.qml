@@ -1418,7 +1418,7 @@ ShellRoot {
         property bool yielded: false
         property bool probing: false
         // Reached on purpose (from its edge, or Super+B): the shell's until the pointer leaves it.
-        property bool held: false
+        property bool reached: false
         readonly property int probeMs: 1500
         readonly property int edgeRows: 2
         readonly property bool hovered: pointer.hovered
@@ -1442,7 +1442,7 @@ ShellRoot {
         // Super+B: the band is the shell's again, and stays so while the pointer is over it (which Niri reports as
         // soon as the whole input region is back); a band the pointer is not on is shown anyway.
         function summon(): void {
-            yielded = false; probing = false; held = true
+            yielded = false; probing = false; reached = true
             summonWait.restart()
         }
         // The pointer moved over the band, or came onto it.
@@ -1450,8 +1450,8 @@ ShellRoot {
             const at = pointer.point.position
             if (at.x === lastAt.x && at.y === lastAt.y) return
             lastAt = Qt.point(at.x, at.y)
-            if (atEdge(at)) { held = true; yielded = false; probing = false; return }
-            if (held) return
+            if (atEdge(at)) { reached = true; yielded = false; probing = false; return }
+            if (reached) return
             if (overApp) fadeOut()
             else probing = false
         }
@@ -1480,12 +1480,12 @@ ShellRoot {
             onHoveredChanged: {
                 if (hovered) { giveWay.lastAt = Qt.point(-1, -1); giveWay.moved(); return }
                 if (giveWay.fadedAt) { giveWay.leftAfter = Date.now() - giveWay.fadedAt; giveWay.fadedAt = 0 }
-                giveWay.held = false
+                giveWay.reached = false
             }
             onPointChanged: if (hovered) giveWay.moved()
         }
         // A summoned band the pointer is not on lets go again: the next time the pointer comes from the app, it fades.
-        Timer { id: summonWait; interval: 1000; onTriggered: if (!pointer.hovered) giveWay.held = false }
+        Timer { id: summonWait; interval: 1000; onTriggered: if (!pointer.hovered) giveWay.reached = false }
         Timer { interval: giveWay.probeMs; running: giveWay.yielded && !giveWay.probing; onTriggered: giveWay.probing = true }
         Timer { interval: 250; running: giveWay.probing; onTriggered: { giveWay.probing = false; giveWay.yielded = false } }
     }
@@ -2075,7 +2075,7 @@ ShellRoot {
         function bands(): void { for (const way of [islandWay, homeWay, indicatorWay, appMenuWay]) way.summon() }
         // Read-only, for tests: each work-view band's way out of an app's way (GiveWay, ADR-0013).
         function give_way(): string {
-            const state = way => ({ over_app: way.overApp, yielded: way.yielded, probing: way.probing, held: way.held,
+            const state = way => ({ over_app: way.overApp, yielded: way.yielded, probing: way.probing, reached: way.reached,
                                     hovered: way.hovered, left_after_ms: way.leftAfter, opacity: way.fadedOpacity,
                                     mask: way.yielded && !way.probing ? "edges" : "shown" })
             return JSON.stringify({ island: state(islandWay), home: state(homeWay), indicator: state(indicatorWay), app_button: state(appMenuWay) })

@@ -1075,7 +1075,7 @@ class Smoke:
                     self.pointer.move(at(*edge))
                 else:
                     self.ipc("bands")
-                wait_for(lambda: (b := bands()[name])["held"] and not b["yielded"], f"the {name} band back by its {way}", 3)
+                wait_for(lambda: (b := bands()[name])["reached"] and not b["yielded"], f"the {name} band back by its {way}", 3)
                 pages.drain()
                 self.pointer.click(target())
                 try:

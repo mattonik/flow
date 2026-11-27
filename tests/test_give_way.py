@@ -73,8 +73,8 @@ class GiveWayTest(unittest.TestCase):
 
     def test_it_fades_the_moment_the_pointer_comes_from_the_app(self):
         moved = block_after("function moved(): void {", GIVE_WAY)
-        self.assertIn("if (atEdge(at)) { held = true; yielded = false; probing = false; return }", moved)
-        self.assertIn("if (held) return", moved)
+        self.assertIn("if (atEdge(at)) { reached = true; yielded = false; probing = false; return }", moved)
+        self.assertIn("if (reached) return", moved)
         self.assertIn("if (overApp) fadeOut()", moved)
         self.assertNotIn("Timer", moved)
         self.assertNotIn("restMs", GIVE_WAY)
@@ -87,17 +87,17 @@ class GiveWayTest(unittest.TestCase):
             self.assertIn(part, over)
         self.assertIn("onOverAppChanged: if (!overApp) { yielded = false; probing = false }", GIVE_WAY)
 
-    def test_held_until_the_pointer_leaves(self):
+    def test_reached_until_the_pointer_leaves(self):
         hover = block_after("HoverHandler {", GIVE_WAY)
-        self.assertIn("giveWay.held = false", hover)
-        self.assertIn("onTriggered: if (!pointer.hovered) giveWay.held = false", GIVE_WAY)
+        self.assertIn("giveWay.reached = false", hover)
+        self.assertIn("onTriggered: if (!pointer.hovered) giveWay.reached = false", GIVE_WAY)
 
     def test_super_b_summons_every_band(self):
         self.assertIn('Super+B { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "bands"; }', NIRI)
         bands = block_after("function bands(): void {", SHELL)
         self.assertIn("for (const way of [islandWay, homeWay, indicatorWay, appMenuWay]) way.summon()", bands)
         summon = block_after("function summon(): void {", GIVE_WAY)
-        self.assertIn("yielded = false; probing = false; held = true", summon)
+        self.assertIn("yielded = false; probing = false; reached = true", summon)
 
     def test_it_comes_back_when_a_probe_finds_no_pointer(self):
         self.assertIn("running: giveWay.yielded && !giveWay.probing; onTriggered: giveWay.probing = true", GIVE_WAY)
