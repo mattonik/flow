@@ -235,6 +235,7 @@ class Smoke:
     def capture(self):
         wait_for(lambda: self.ipc("toast") == "", "the shell's toast to go", timeout=8)
         self.caught_up()
+        self.still()
         return {"work": self.work(), "files": self.files(), "view": self.json("spaces_view"), "layers": self.layers(),
                 "shots": self.shots(), "surfaces": self.surfaces()}
 

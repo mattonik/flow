@@ -138,6 +138,8 @@ After #54 was merged (64ab56c) and installed in the guest as generation 49, `nir
 
 Following the v1.0 demo, Work shows a small capsule at the bottom right with the active space's place in this display's Flow (*02 / 05*) and previous/next buttons. For an active Group it also shows *Group* and a switch with one button per app, the focused one highlighted. Selecting an app focuses it. When focus moves to another app in the same Group, by the switch, Super+Up/Down or a click, a toast names it (*Foot Client is now focused*, adding *menus updated* when the app menu is enabled). Apps are named from their desktop entry, falling back to the window title. On screens narrower than 800 pixels only the position is shown, so it never overlaps the bottom controls. The capsule hides while Desk, Overview, the switcher, the launcher or an app menu is open.
 
+Since ADR-0014 (resting chrome by device) the capsule shows over apps only for 1.2 s after a move between spaces, and takes no clicks then; it stays interactive in Niri's overview. The space's position and its arrows are in the opened Island (and in the band of a notched MacBook).
+
 In the guest, the development shell showed *Group · Foot · Foot Client* and *02 / 02* beside a neighboring app. Super+Down's backend action moved focus to Foot Client, the switch followed, and the toast read *Foot Client is now focused*; the toast was also read back through the shell's IPC. The capsule's buttons were not clicked, since there is no pointer automation in the guest. They call the existing focus and navigation actions.
 
 ### Layers

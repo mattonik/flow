@@ -2628,16 +2628,14 @@ ShellRoot {
                         Row {
                             id: clockPillChoice
                             spacing: 6
-                            Accessible.role: Accessible.Grouping
-                            Accessible.name: "Clock pill"
                             Repeater {
                                 model: [{ value: "off", label: "Off" }, { value: "main", label: "Main screen" }, { value: "all", label: "All screens" }]
                                 FlowButton {
                                     required property var modelData
                                     implicitHeight: 44; variant: "quiet"
                                     text: modelData.label
+                                    // The current one: its dot, border and "Current", as other choices among siblings.
                                     selected: pillPreferences.clockPill === modelData.value
-                                    Accessible.role: Accessible.RadioButton
                                     Accessible.name: "Clock pill: " + modelData.label
                                     onClicked: { pillPreferences.clockPill = modelData.value; pillPreferences.sync() }
                                 }
