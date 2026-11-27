@@ -196,8 +196,24 @@ def rows_of(items, box):
     return [i for row in rows for i in sorted(row["items"], key=lambda i: box(i)[0])]
 
 
+def shown(control):
+    """Where a control is read: the part of it inside its scrolling view (the shell's ``view``). Its whole
+    rectangle would read a Desk button scrolled up behind the Island's row as one of the Island's. Controls scrolled
+    wholly out are folded against the edge they left by, a millionth of their distance from it, so that they keep
+    their rows and order among themselves and stay between the view's neighbours, as the content does."""
+    x, y, w, h = control["rect"]
+    if not control.get("view"):
+        return [x, y, w, h]
+    top, bottom = control["view"][1], control["view"][1] + control["view"][3]
+    if y + h <= top:
+        return [x, top - (top - y) * 1e-6, w, h * 1e-6]
+    if y >= bottom:
+        return [x, bottom + (y - bottom) * 1e-6, w, h * 1e-6]
+    return [x, max(y, top), w, min(y + h, bottom) - max(y, top)]
+
+
 def reading_order(controls):
-    """Controls in reading order; a card's controls are one block, read in the card's place."""
+    """Controls in reading order, each where it shows; a card's controls are one block, read in the card's place."""
     blocks = {}
     for c in controls:
         blocks.setdefault(tuple(c["card"]) if c["card"] else ("alone", id(c)), []).append(c)
@@ -428,7 +444,7 @@ def run(shell, bus, steps, problems):
             """Tab round the surface and Shift+Tab back. Each step must land on the next control in reading
             order that is enabled at that moment: a scrolled row of cards enables its "‹" button on the way."""
             frame, listed = matched(surface)
-            cycle = [c["at"] for c in reading_order([dict(c, start=c["rect"], at=i) for i, c in enumerate(listed)])]
+            cycle = [c["at"] for c in reading_order([dict(c, start=shown(c), at=i) for i, c in enumerate(listed)])]
             # The test's own rule, not the shell's focus policy: every enabled control is reached but the
             # pointer-only ones, which must not be.
             reachable = lambda c: c["enabled"] and (surface, c["text"]) not in POINTER_ONLY

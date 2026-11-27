@@ -52,6 +52,37 @@ class ReadingOrderTest(unittest.TestCase):
                     control("A1", 10, 190, 90, 44, first)]
         self.assertEqual([c["name"] for c in smoke.reading_order(controls)], ["header", "A", "A1", "A2", "B"])
 
+    def test_a_control_scrolled_up_behind_a_row_is_read_where_it_shows(self):
+        # Desk with Settings open, as the guest drew it (27 November 2026): its view starts at 56, below the
+        # Island's row (0 to 44), and Search is scrolled up to 9, so only 56 to 68 of it shows. Its whole
+        # rectangle is centred at 38, in the Island's row and left of floe.; where it shows is below that row.
+        view = [0, 56, 1280, 700]
+        listed = [{"name": "floe.", "rect": [408, 0, 56, 44], "view": None},
+                  {"name": "Apps", "rect": [464, 0, 57, 44], "view": None},
+                  {"name": "Search anything", "rect": [185, 9, 590, 59], "view": view},
+                  {"name": "Pin", "rect": [185, 187, 218, 44], "view": view},
+                  {"name": "Return to work", "rect": [971, 1096, 124, 44], "view": view}]
+        self.assertEqual(smoke.shown(listed[2]), [185, 56, 590, 12])
+        self.assertEqual(smoke.shown(listed[0]), [408, 0, 56, 44])
+        order = smoke.reading_order([dict(c, start=smoke.shown(c), card=None) for c in listed])
+        self.assertEqual([c["name"] for c in order], ["floe.", "Apps", "Search anything", "Pin", "Return to work"])
+
+    def test_controls_scrolled_wholly_out_keep_their_order_at_the_views_edge(self):
+        # The notifications panel as the guest drew it: cards below the view, each an "Open folder" left of its
+        # "×". Squashed onto the edge, they would read as one row: every "Open folder", then every "×".
+        view = [0, 56, 1280, 700]
+        listed = [{"name": "floe.", "rect": [408, 0, 56, 44], "view": None},
+                  {"name": "hidden above", "rect": [185, -383, 590, 59], "view": view},
+                  {"name": "shown", "rect": [185, 300, 100, 44], "view": view}]
+        for n, y in enumerate((900, 1000, 1100)):
+            listed += [{"name": f"open {n}", "rect": [20, y, 120, 44], "view": view},
+                       {"name": f"close {n}", "rect": [300, y, 44, 44], "view": view}]
+        self.assertTrue(56 - 1e-3 < smoke.shown(listed[1])[1] < 56)
+        self.assertTrue(756 < smoke.shown(listed[3])[1] < 756 + 1e-3)
+        order = smoke.reading_order([dict(c, start=smoke.shown(c), card=None) for c in listed])
+        self.assertEqual([c["name"] for c in order], ["floe.", "hidden above", "shown", "open 0", "close 0", "open 1",
+                                                      "close 1", "open 2", "close 2"])
+
 
 class RingTest(unittest.TestCase):
     FOCUS, BACKGROUND = (189, 218, 209), (28, 45, 54)

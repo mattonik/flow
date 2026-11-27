@@ -1993,6 +1993,16 @@ ShellRoot {
         // focus ring is drawn, so a check over AT-SPI can hold each accessible name to its visible label.
         function controls(): string {
             const found = []
+            // The scrolling view a control is in, as drawn in its window (null outside one): a control scrolled
+            // partly or wholly out of it is read where it shows, not where its hidden part reaches.
+            const viewOf = item => {
+                for (let p = item.parent; p; p = p.parent)
+                    if (p.flickableDirection !== undefined && p.clip) {
+                        const c = p.mapToItem(null, 0, 0)
+                        return [c.x, c.y, p.width, p.height]
+                    }
+                return null
+            }
             const visit = (item, surface, size, card) => {
                 if (!item || !item.visible) return
                 if (item.readingGroup === true) {
@@ -2006,7 +2016,7 @@ ShellRoot {
                     found.push({ surface: surface, window: size, kind: "field", text: "", icon: false, words: [],
                                  enabled: item.enabled, tabbable: (item.focusPolicy & Qt.TabFocus) !== 0,
                                  selected: false, open: false, card: card || null,
-                                 rect: [corner.x, corner.y, item.width, item.height],
+                                 rect: [corner.x, corner.y, item.width, item.height], view: viewOf(item),
                                  ring: [corner.x, corner.y, item.width, item.height, 0] })
                     return
                 }
@@ -2020,7 +2030,7 @@ ShellRoot {
                     found.push({ surface: surface, window: size, kind: "row", text: item.text, icon: false, words: words,
                                  enabled: item.enabled, tabbable: (item.focusPolicy & Qt.TabFocus) !== 0,
                                  selected: false, open: false, card: card || null,
-                                 rect: [corner.x, corner.y, item.width, item.height],
+                                 rect: [corner.x, corner.y, item.width, item.height], view: viewOf(item),
                                  ring: [corner.x - 13, corner.y - 1, item.width + 26, item.height + 2, 0] })
                     return
                 }
@@ -2029,7 +2039,7 @@ ShellRoot {
                     found.push({ surface: surface, window: size, kind: "slider", text: "", icon: true, words: [],
                                  enabled: item.enabled, tabbable: (item.focusPolicy & Qt.TabFocus) !== 0,
                                  selected: false, open: false, card: card || null,
-                                 rect: [corner.x, corner.y, item.width, item.height],
+                                 rect: [corner.x, corner.y, item.width, item.height], view: viewOf(item),
                                  ring: [knob.x, knob.y, item.handle.width, item.handle.height, -4] })
                     return
                 }
@@ -2049,7 +2059,7 @@ ShellRoot {
                     found.push({ surface: surface, window: size, kind: isSwitch ? "switch" : item.capsule ? "capsule" : item.glyph ? "glyph" : "button",
                                  text: item.text, icon: !!item.glyph, words: words, enabled: item.enabled,
                                  tabbable: (item.focusPolicy & Qt.TabFocus) !== 0, selected: item.selected === true, open: item.open === true,
-                                 rect: [at.x, at.y, item.width, item.height], card: card || null,
+                                 rect: [at.x, at.y, item.width, item.height], card: card || null, view: viewOf(item),
                                  ring: [ring.x, ring.y, host.width, host.height, item.focusRingInset] })
                     return
                 }
