@@ -66,10 +66,10 @@ which is fixed apart.
   apps' controls the same way, and any app's bottom-right buttons are covered. A band reserved for the
   indicators was tried and dropped: the spec has the island float over content, not take a strip of the screen.
   The fix, apart from this change, is indicators that get out of the way. *Fixed 2026-11-27*
-  ([ADR-0013](ADR-0013-bands-give-way.md)): once the pointer rests 0.6 s on a band over an app, the band fades and
-  its input region empties, so the next click is the app's. It comes back when the pointer leaves or reaches the
-  screen's edge. A quick click still reaches the band. With that, Open and Save take a click after a rest, and so
-  does Firefox's upload dialog (`chooser-pointer` passes). GTK's chooser
+  ([ADR-0013](ADR-0013-bands-give-way.md)): the moment the pointer comes onto a band over an app, the band fades
+  and its input region shrinks to its screen-edge rows, so a click on Open or Save, with no rest, is the app's
+  (`chooser-pointer` passes). The band is the shell's again through its screen edge or Super+B, and comes back once
+  the pointer has left it. GTK's chooser
   (`programs.niri.useNautilus = false`) was tried and works by pointer, with its buttons in the header bar, but it
   only moves the problem: the island covers the middle of its Name field, it is GTK 3 and apart from Files (Flow's
   file manager, which the GNOME chooser is), and with the overlap fixed in the shell there is no reason left to
