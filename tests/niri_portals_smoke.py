@@ -804,9 +804,9 @@ class Smoke:
         return self.probe
 
     @staticmethod
-    def ipc(call):
-        """A read-only call on the installed shell's IPC (target ``desk``): its answer, or the end of its error."""
-        out = subprocess.run(["quickshell", "ipc", "-p", "/etc/flow/shell.qml", "call", "desk", call], text=True,
+    def ipc(call, *args):
+        """A call on the installed shell's IPC (target ``desk``): its answer, or the end of its error."""
+        out = subprocess.run(["quickshell", "ipc", "-p", "/etc/flow/shell.qml", "call", "desk", call, *args], text=True,
                              capture_output=True, timeout=10)
         return out.stdout.strip() or out.stderr.strip()[-200:]
 
