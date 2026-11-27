@@ -1385,6 +1385,72 @@ ShellRoot {
             }
         }
     }
+    // A work-view band (the Island, the home and work indicators, the App button) that gets out of an app's way
+    // (ADR-0013). The bands float over apps, whose columns reach the screen's edges, so under each lies an app's
+    // own top or bottom edge. Where the pointer rests on a band over an app (restMs without moving or pressing),
+    // the band fades out and its surface's input region empties (`mask`), so the next click reaches the app.
+    // A quick click, a tap and a swipe still reach the band, as does anything in the screen's outermost `edgeRows`
+    // (the band's edge, for one hanging from it): the way back to a faded band, and a rest there never fades it.
+    // Every probeMs a faded band takes input again, still unseen and disabled: if the pointer is still over it,
+    // Niri hands it the pointer at once and it empties again; if not, it fades back in.
+    component GiveWay: Item {
+        id: giveWay
+        // The surface's input region: the whole surface, or while faded only its edge rows (none off the edge).
+        readonly property var mask: yielded && !probing ? passRegion : null
+        // "top" or "bottom": the screen edge the band hangs from; "" for one that does not touch it.
+        property string edge: ""
+        // The surface is shown.
+        property bool active: true
+        // Only in the plain work view with an app under the band, and never while the shell is in use
+        // (a panel, search or the app menu open).
+        readonly property bool overApp: active && root.workViewOnly && root.windows.length > 0
+            && !root.searchOpen && !root.quickSettingsOpen && !root.notificationsOpen && !root.appMenuOpen
+        property bool yielded: false
+        property bool probing: false
+        // The pointer reached this band from the screen's edge: the shell's, until it leaves.
+        property bool fromEdge: false
+        readonly property int restMs: 600
+        readonly property int probeMs: 1500
+        readonly property int edgeRows: 2
+        default property alias content: band.data
+        anchors.fill: parent
+        onOverAppChanged: if (!overApp) { yielded = false; probing = false }
+        function atEdge(y: real): bool {
+            return edge === "top" ? y < edgeRows : edge === "bottom" ? y >= height - edgeRows : false
+        }
+        // The pointer is over the band: from the edge it comes back; seen by a probe it stays out of the way.
+        function seen(): void {
+            const atTheEdge = atEdge(pointer.point.position.y)
+            if (atTheEdge) fromEdge = true
+            if (yielded && atTheEdge) { yielded = false; probing = false }
+            else if (probing) probing = false
+            rest.restart()
+        }
+        property Region passRegion: Region {
+            x: 0; y: giveWay.edge === "bottom" ? giveWay.height - giveWay.edgeRows : 0
+            width: giveWay.edge ? giveWay.width : 0; height: giveWay.edge ? giveWay.edgeRows : 0
+        }
+        Item {
+            id: band
+            anchors.fill: parent
+            enabled: !giveWay.yielded
+            opacity: giveWay.yielded ? 0 : 1
+            Behavior on opacity { NumberAnimation { duration: root.motionQuick; easing.type: Easing.BezierSpline; easing.bezierCurve: root.standardCurve } }
+        }
+        HoverHandler {
+            id: pointer
+            onHoveredChanged: { if (hovered) giveWay.seen(); else { giveWay.fromEdge = false; rest.stop() } }
+            onPointChanged: if (hovered) giveWay.seen()
+        }
+        // Passive: it sees a press that a button takes, so a press held still never fades the band.
+        PointHandler { id: press; acceptedButtons: Qt.AllButtons }
+        Timer {
+            id: rest; interval: giveWay.restMs
+            onTriggered: if (pointer.hovered && !press.active && giveWay.overApp && !giveWay.fromEdge && !giveWay.yielded) giveWay.yielded = true
+        }
+        Timer { interval: giveWay.probeMs; running: giveWay.yielded && !giveWay.probing; onTriggered: giveWay.probing = true }
+        Timer { interval: 250; running: giveWay.probing; onTriggered: { giveWay.probing = false; giveWay.yielded = false } }
+    }
     // The home indicator: a short line, after iOS. Tap it or drag it up: from work to Overview, from
     // Overview to Desk ("again to reveal your desk"), from Desk back to work.
     component HomeIndicator: MouseArea {
@@ -2570,7 +2636,11 @@ ShellRoot {
         implicitWidth: 126; implicitHeight: 24
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
-        HomeIndicator { id: workHome; anchors.fill: parent }
+        mask: homeWay.mask
+        GiveWay {
+            id: homeWay; edge: "bottom"; active: homeIndicator.visible
+            HomeIndicator { id: workHome; anchors.fill: parent }
+        }
     }
     PanelWindow {
         // Work indicator: the focused app of an active Group, and the space's place in this display's Flow.
@@ -2587,6 +2657,11 @@ ShellRoot {
         implicitWidth: workIndicator.implicitWidth + 8; implicitHeight: 52
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
+        // Off the screen's edge (8 px up, or above the bottom controls): no edge rows; it comes back once the
+        // pointer has left it.
+        mask: indicatorWay.mask
+        GiveWay {
+        id: indicatorWay; active: workIndicatorWindow.visible
         CapsuleBar {
             anchors.fill: parent
             Row {
@@ -2659,6 +2734,7 @@ ShellRoot {
                     onClicked: root.spaceAction("navigate", "right")
                 }
             }
+        }
         }
     }
     PanelWindow {
@@ -3599,11 +3675,16 @@ ShellRoot {
         margins.top: narrow ? 56 : 0
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
-        FlowButton {
-            id: appMenuButton
-            anchors.fill: parent
-            text: (root.appMenuProbe ? root.appMenuProbe.name : "Application") + "  ▾"
-            onClicked: root.requestAppMenu()
+        mask: appMenuWay.mask
+        GiveWay {
+            // Below the tab on a narrow screen, off the edge.
+            id: appMenuWay; edge: appMenuTrigger.narrow ? "" : "top"; active: appMenuTrigger.visible
+            FlowButton {
+                id: appMenuButton
+                anchors.fill: parent
+                text: (root.appMenuProbe ? root.appMenuProbe.name : "Application") + "  ▾"
+                onClicked: root.requestAppMenu()
+            }
         }
     }
     PanelWindow {
@@ -3894,7 +3975,11 @@ ShellRoot {
         color: "transparent"
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
-        SystemIsland { id: workIslandContent; anchors.fill: parent; room: workIsland.screen ? workIsland.screen.width : 1280 }
+        mask: islandWay.mask
+        GiveWay {
+            id: islandWay; edge: "top"; active: workIsland.visible
+            SystemIsland { id: workIslandContent; anchors.fill: parent; room: workIsland.screen ? workIsland.screen.width : 1280 }
+        }
     }
     PanelWindow {
         // Temporary feedback for shortcuts and Group focus changes; it never takes keyboard focus.
@@ -3907,6 +3992,8 @@ ShellRoot {
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+        // Nothing in it takes a click: every click goes through to the app beneath (ADR-0013).
+        mask: Region {}
         Rectangle {
             // The capsule belongs to the island and its bars; feedback is a panel.
             anchors.fill: parent; radius: 14
