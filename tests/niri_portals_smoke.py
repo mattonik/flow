@@ -1039,7 +1039,9 @@ class Smoke:
                 self.apps.focus(page)
             self.pointer.park()
         self.shot("edges")
-        # A quick click (50 ms after the pointer arrives) is the band's: it opens Overview, the page sees nothing.
+        # A quick click (50 ms after the pointer arrives) on the band, shown again since the pointer left it (up to
+        # 1.75 s: its probe), is the band's: it opens Overview, and the page sees nothing.
+        wait_for(lambda: not json.loads(self.ipc("give_way"))["home"]["yielded"], "the home indicator to show again", 5)
         pages.drain()
         self.pointer.click((o["x"] + width // 2, o["y"] + height - 12))
         try:
