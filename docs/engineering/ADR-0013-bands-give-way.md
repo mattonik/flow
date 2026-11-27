@@ -36,8 +36,8 @@ The Island, the home indicator, the work indicator and the App button each sit i
   the switcher, search, the panels and the app menu) with a window on the focused workspace. The bands do not
   compare window rectangles: Flow's columns reach the screen's edges. Then, on that first motion, the band fades
   over 120 ms (at once with Reduce motion) and is disabled. Its surface's input region (Quickshell's `mask`)
-  shrinks to its edge rows. Niri moves the pointer to the app as soon as the region is applied: 6 to 60 ms after
-  the motion in the guest. A click after that is the app's, however quick.
+  shrinks to its edge rows. Niri moves the pointer to the app as soon as the region is applied: 2 to 92 ms after
+  the motion in the guest (see *The let-go window* below). A click after that is the app's, however quick.
 - **The shell's when reached on purpose.** There are two ways:
   - Through its edge rows: the outermost 2 rows of the screen edge the band hangs from (top for the Island and
     the App button, bottom for the home indicator). The work indicator's surface reaches the screen's
@@ -80,10 +80,13 @@ The Island, the home indicator, the work indicator and the App button each sit i
   never start. Spec §7.2's tentative "tap → compact actions" on the Island also needs taps to reach it. A finger
   on a band the mouse has just faded reaches the app (its body has no input then). Untested: the guest has no
   touchscreen, and a 2 px edge row is narrow for a finger's edge swipe.
-- **A pointer that jumps onto a band and clicks at once.** A tablet pen's tap in place, or a warp, may click before
-  Niri has moved the pointer off the band (up to 60 ms measured). The click then lands on the disabled band and
-  does nothing. A mouse reaches the band through its border first, so the band has let go before the pointer
-  stops. The smoke glides in over about 190 ms, slowing as a hand does, and clicks as it stops.
+- **The let-go window.** Between the pointer's first motion on a band and Niri moving it off, the band is faded
+  and disabled but still has the pointer. In the guest that took 2 to 92 ms, the most under load (Firefox busy,
+  the full smoke). A click inside that window lands on the disabled band, and neither the band nor the app takes
+  it. A mouse usually crosses a band's border well before it stops on a control inside, so the band has let go.
+  A pen tapped in place, a warp, or a fast flick that stops just inside a thin band (the home indicator is 24 px)
+  can still lose a click. The smoke models a hand: it glides in over 240 ms with a cubic ease-out and clicks
+  within about 30 ms of stopping. On the 24 px home indicator that leaves the band about 130 ms to let go.
 - While a band is faded the app gets a pointer leave and enter every 1.5 s from the probe. A tooltip waiting for
   the pointer to rest may start over. During an app's implicit grab (a button held), the band gets no enter, and
   after 250 ms it shows under the still pointer. The next motion fades it again.

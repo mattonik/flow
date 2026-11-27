@@ -123,11 +123,11 @@ class Pointer:
     def click(self, at, button="left"):
         self.run(("move", *at), ("wait", 50), ("click", button))
 
-    def glide_click(self, at, frm, steps=12, pause=16, button="left"):
+    def glide_click(self, at, frm, steps=15, pause=16, button="left"):
         """A mouse's click: from ``frm`` to ``at`` in ``steps`` moves ``pause`` ms apart, slowing as it nears the target
-        as a hand does (ease-out: from 80 px away, the last 32 px take about 120 of its 190 ms), and the click the
-        moment it stops there, with no rest."""
-        ease = [1 - (1 - i / steps) ** 2 for i in range(steps + 1)]
+        as a hand does (a cubic ease-out over 240 ms: from 80 px away, the last 12 px take about 110 ms), and the
+        click the moment it stops there, with no rest."""
+        ease = [1 - (1 - i / steps) ** 3 for i in range(steps + 1)]
         path = [("move", round(frm[0] + (at[0] - frm[0]) * e), round(frm[1] + (at[1] - frm[1]) * e)) for e in ease]
         self.run(*[part for move in path for part in (move, ("wait", pause))][:-1], ("click", button))
 
