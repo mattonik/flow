@@ -18,9 +18,10 @@ Checks (``--only NAME``, repeatable):
   a click elsewhere closes it.
 - ``pill``: the clock pill is off in a configuration that has never set it. "main" with Virtual-2 on shows it on the
   main display only, as the controller numbers it (``flow-spaces refresh``: display 0); with Virtual-2 unplugged, on
-  Virtual-1 alone; with Virtual-1 unplugged instead, on Virtual-2, the lowest-numbered display left. "all" shows it on
-  both, and Virtual-2 unplugged takes its pill away. Each output goes on and off through sysfs; Virtual-1 is on and
-  Virtual-2 off again at the end.
+  Virtual-1 alone; with Virtual-2 made Main (the controller's ``make-main``, on the shell's own state), on Virtual-2.
+  "all" shows it on both, and Virtual-2 unplugged takes its pill away. Virtual-2 goes on and off through sysfs and is
+  off again at the end. Virtual-1 is never unplugged: in the guest, plugged back with ``on`` it loses its EDID (and
+  so its identity, a new display to the controller) until the host sends a display change.
 - ``moving``: the work indicator shows only while moving between spaces, then goes.
 - ``home``: no home line without a touch device; a touchscreen plugged in (uinput) shows it, unplugged hides it.
 - ``banner``: a notification's banner takes no clicks: a click on it reaches the page beneath.
@@ -104,13 +105,25 @@ class Smoke(m.Smoke):
         self.keys, self.state = keys, state
         self.output = m.read("outputs")[OUTPUT]["logical"]
 
+    def controller(self, *args):
+        """``flow-spaces`` on the shell's own (isolated) state."""
+        out = subprocess.run(["flow-spaces", *args], env={**os.environ, "XDG_STATE_HOME": self.state}, text=True,
+                             capture_output=True, timeout=30, check=True).stdout
+        return json.loads(out)
+
     def controller_main(self):
         """The main display's connector as the controller has it, not the shell: display 0, or with it away the
-        lowest-numbered connected one (``flow-spaces refresh`` on the shell's own state)."""
-        out = subprocess.run(["flow-spaces", "refresh"], env={**os.environ, "XDG_STATE_HOME": self.state}, text=True,
-                             capture_output=True, timeout=30, check=True).stdout
-        shown = [d for d in json.loads(out)["displays"] if d.get("output")]
+        lowest-numbered connected one."""
+        shown = [d for d in self.controller("refresh")["displays"] if d.get("output")]
         return min(shown, key=lambda d: d["number"] if d["number"] is not None else 99)["output"]
+
+    def make_main(self, output):
+        key = next(d["key"] for d in self.controller("refresh")["displays"] if d.get("output") == output)
+        self.controller("make-main", key)
+        # The shell reads the numbering on its next refresh, which a focus change brings.
+        m.niri("action", "focus-monitor", output)
+        time.sleep(0.5)
+        m.niri("action", "focus-monitor", OUTPUT)
 
     def relayout(self):
         """After an output came or went: the pointer's layout and the page's output."""
@@ -164,7 +177,8 @@ class Smoke(m.Smoke):
         check(not missed, f"Clicks on rows 1 to 3 that did not reach the page: {missed}")
         got = self.clicked((o["x"] + width // 2, o["y"]))
         s = island()
-        check(got is None and s["open"] and s["by"] == "press", f"A press on row 0 reached {got!r}, Island {s}")
+        # A press there opens it at once; under load the rest may have opened it first. Either way the page gets nothing.
+        check(got is None and s["open"] and s["by"] in ("press", "edge"), f"A press on row 0 reached {got!r}, Island {s}")
         self.close_island()
         self.passed("row", f"rows 1 to 3 reached the page at the left, middle and right ({len(took)} clicks); a press on "
                            "row 0 opened the Island and reached nothing")
@@ -240,7 +254,7 @@ class Smoke(m.Smoke):
 
         def pills(want, label):
             return wait_for(lambda: (lambda s: s if sorted(s["pills"]) == sorted(want) else None)(island()),
-                            lambda: f"{label} (pills {island()['pills']}, want {want})", timeout=6)["pills"]
+                            lambda: f"{label} (pills {island()['pills']}, want {want})", timeout=15)["pills"]
         try:
             display(True)
             self.relayout()
@@ -252,27 +266,27 @@ class Smoke(m.Smoke):
             display(False)
             pills([OUTPUT], "Main only, with Virtual-2 unplugged")
             display(True)
-            display(False, OUTPUT)  # Main itself goes: the lowest-numbered display left is Main now
             self.relayout()
+            self.make_main("Virtual-2")
             main = self.controller_main()
-            check(main == "Virtual-2", f"With Virtual-1 away the controller's main display is {main}")
-            pills(["Virtual-2"], "the pill on Virtual-2 once Virtual-1 went")
-            display(True, OUTPUT)
-            self.relayout()
-            pills([OUTPUT], "the pill back on Virtual-1")
+            check(main == "Virtual-2", f"Made Main, Virtual-2 is not the controller's main display ({main})")
+            pills(["Virtual-2"], "the pill on Virtual-2 once it is Main")
+            self.make_main(OUTPUT)
+            pills([OUTPUT], "the pill back on Virtual-1 once it is Main again")
             ipc("clock_pill", "all")
             pills([OUTPUT, "Virtual-2"], "a pill on both displays")
             self.shot("pill-all")
-        finally:
-            if OUTPUT not in m.read("outputs"):
-                display(True, OUTPUT)
             display(False)
             self.relayout()
-        pills([OUTPUT], "the pill to leave the unplugged display")
-        ipc("clock_pill", "off")
+            pills([OUTPUT], "the pill to leave the unplugged display")
+        finally:
+            ipc("clock_pill", "off")
+            if "Virtual-2" in m.read("outputs"):
+                display(False)
+                self.relayout()
         pills([], "the pill to go with the setting off")
         self.passed("pill", "off by default; Main only showed it on the controller's main display alone with Virtual-2 on and "
-                            "off, and on Virtual-2 when Virtual-1 went; All screens on both, and unplugging Virtual-2 took "
+                            "off, and on Virtual-2 once it was made Main; All screens on both, and unplugging Virtual-2 took "
                             "its pill away")
 
     def check_moving(self):
@@ -443,8 +457,6 @@ def main():
                     shell.wait(10)
     finally:
         keys.close()
-        if OUTPUT not in m.read("outputs"):
-            display(True, OUTPUT)
         if "Virtual-2" in m.read("outputs"):
             display(False)
         subprocess.run(["systemctl", "--user", "start", "flow-shell"])

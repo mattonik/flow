@@ -203,16 +203,19 @@ def main():
             index = next(i for i, l in enumerate(labels) if re.search(pattern, l))
             pointer.click(pointer.hover(lambda: target(f"app_item:{index}"), label))
 
+        def to_edge():
+            outputs = json.loads(subprocess.check_output(["niri", "msg", "-j", "outputs"], text=True, timeout=10))
+            o = next(v["logical"] for v in outputs.values() if v.get("logical"))
+            pointer.move((o["x"] + o["width"] // 2, o["y"]))
+            time.sleep(0.6)
+
         def shown_button():
             """The App button's state once it shows: on the opened Island (ADR-0014: nothing rests over apps, so a
-            focused app with a menu makes it available, and the Island, opened from the top edge, shows it)."""
+            focused app with a menu makes it available, and the Island, opened from the top edge, shows it). The
+            pointer is pushed against the top edge, as a user reaching for the button would, and rests there."""
             s = state()
-            if s.get("available") and not s.get("button"):
-                # By the pointer, as a user reaching for the button would: pushed against the top edge.
-                outputs = json.loads(subprocess.check_output(["niri", "msg", "-j", "outputs"], text=True, timeout=10))
-                o = next(v["logical"] for v in outputs.values() if v.get("logical"))
-                pointer.move((o["x"] + o["width"] // 2, o["y"]))
-                time.sleep(0.6)
+            if s.get("available"):
+                to_edge()
                 s = state()
             return s.get("button") and s
 
