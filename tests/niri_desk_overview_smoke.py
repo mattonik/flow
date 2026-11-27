@@ -287,6 +287,16 @@ class Smoke:
         self.pointer.click(at)
         self.pointer.park()
 
+    def click_island(self, text):
+        """A click on the work view's Island over the apps, reached as a user reaches it: through the screen's top
+        edge, since coming onto it from the app fades it and lets the click through to the app (ADR-0013)."""
+        found = [c for c in self.json("controls") or [] if c["surface"] == "island" and c["text"] == text and c.get("screen")]
+        if not found:
+            raise Failure(f"The Island has no {text!r}")
+        at = center(found[0])
+        self.pointer.move((at[0], found[0]["screen"][1]))
+        self.click(at)
+
     def target(self, name):
         return self.json("pointer_target", name)
 
@@ -426,9 +436,9 @@ class Smoke:
         cases = [
             ("Desk: Super+H, then Super+H", lambda: k("super", "h"), lambda: k("super", "h"), None),
             ("Desk: Super+H, then Escape", lambda: k("super", "h"), lambda: k("esc"), None),
-            ("Desk: the Island's floe., then floe. again", lambda: ui.click(ui.control("island", "floe.")),
+            ("Desk: the Island's floe., then floe. again", lambda: ui.click_island("floe."),
              lambda: ui.click(ui.control("desk", "floe.")), None),
-            ("Desk: floe., then Desk's home indicator", lambda: ui.click(ui.control("island", "floe.")),
+            ("Desk: floe., then Desk's home indicator", lambda: ui.click_island("floe."),
              lambda: ui.tap_home("desk_home"), None),
             ("Desk: Super+H, then Return to work", lambda: k("super", "h"),
              lambda: ui.click(ui.control("desk", "Return to work")), None),
