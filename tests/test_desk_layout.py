@@ -27,7 +27,7 @@ def block_at(start):
 
 
 def desk_window():
-    return block_at(SHELL.index("PanelWindow {\n        visible: root.deskOpen\n"))
+    return block_at(SHELL.index("PanelWindow {\n        visible: root.deskOpen || root.deskHeld\n"))
 
 
 def child(block, marker):

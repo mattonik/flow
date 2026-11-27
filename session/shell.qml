@@ -478,6 +478,13 @@ ShellRoot {
     // Connected displays in screen order: {key, label, name, number, current}; number 0 is Main.
     property var displays: []
     property string displayName: ""
+    // The focused display's screen, from the last refresh. The work view's Island, indicators and app-menu trigger are put
+    // there: a layer surface without a screen goes wherever the compositor's focus is when it maps, so after Desk opened
+    // on the second display and closed, the Island and indicators had moved there from the first (seen in the guest,
+    // F-007). So they follow the display the work indicator describes, a refresh (0.15 to 0.6 s) after focus moves.
+    // Desk and Overview keep no screen of their own: they map where Niri's focus is as they open, which is never late.
+    property string displayOutput: ""
+    readonly property var workScreen: Quickshell.screens.find(screen => screen.name === displayOutput) || null
     // Super+Alt, display digit, then space digit: the display digit waits here for the space digit.
     property int pendingDisplay: -1
     property string toast: ""
@@ -579,6 +586,7 @@ ShellRoot {
         if (JSON.stringify(otherPins) !== JSON.stringify(result.other_pins || [])) otherPins = result.other_pins || []
         displayLabel = result.display ? result.display.label : ""
         displayName = result.display ? result.display.name || "" : ""
+        displayOutput = result.display ? result.display.output || "" : ""
         displayCount = result.display_count || 1
         if (JSON.stringify(displays) !== JSON.stringify(result.displays || [])) displays = result.displays || []
         displayOrientation = result.orientation || ""
@@ -730,7 +738,32 @@ ShellRoot {
         openTook[name] = { ms: Date.now() - openStarted[name], count: ((openTook[name] || {}).count || 0) + 1 }
         delete openStarted[name]
     }
+    // Toggles that came while a transition was still running, for tests/niri_desk_overview_smoke.py: each must count.
+    property int deskTogglesMidRise: 0
+    // Desk and Overview are on screen: shown, and their first frame drawn. The work view's Island and indicators stay
+    // until then (Desk and Overview are mapped above them), so the screen never shows work without them first: with
+    // Reduce motion, five frames (about 110 ms) of that came before Desk in the guest.
+    property bool deskDrawn: false
+    property bool overviewDrawn: false
+    // Between Overview and Desk, the one going stays on screen until the one coming has drawn its first frame, so the
+    // work never shows between them.
+    property bool deskHeld: false
+    property bool overviewHeld: false
+    readonly property bool workCovered: (deskOpen && deskDrawn) || (spacesOverviewOpen && overviewDrawn) || deskHeld || overviewHeld
+    onDeskDrawnChanged: if (deskDrawn) overviewHeld = false
+    onOverviewDrawnChanged: if (overviewDrawn) deskHeld = false
+    onDeskOpenChanged: if (!deskOpen) overviewHeld = false
+    onSpacesOverviewOpenChanged: if (!spacesOverviewOpen && !overviewPending) deskHeld = false
+    onOverviewPendingChanged: if (!overviewPending && !spacesOverviewOpen) deskHeld = false
+    // Held where the change is made, whoever asks for it (a key, a button, search, the IPC): toggleDesk from Overview,
+    // openSpacesOverview from Desk. Never longer than 0.6 s from the latest hold.
+    function holdDesk() { deskHeld = true; holdTimer.restart() }
+    function holdOverview() { overviewHeld = true; holdTimer.restart() }
+    Timer { id: holdTimer; interval: 600; onTriggered: { root.deskHeld = false; root.overviewHeld = false } }
+    property int overviewAgainWhilePending: 0
     function toggleDesk() {
+        if (deskOpen && deskEnter.running) deskTogglesMidRise += 1
+        if (!deskOpen && spacesOverviewOpen) holdOverview()   // Overview to Desk: Overview stays until Desk has drawn
         overviewPending = false
         spacesOverviewOpen = false   // one surface at a time
         notificationsOpen = false
@@ -811,6 +844,7 @@ ShellRoot {
     function openSpacesOverview() {
         // Only the plain work view shows the space itself; from Desk or a panel the screen shows them instead.
         const plain = workViewOnly
+        if (deskOpen) holdDesk()   // Desk to Overview: Desk stays until Overview has drawn
         notificationsOpen = false
         quickSettingsOpen = false
         switcherOpen = false
@@ -849,11 +883,13 @@ ShellRoot {
     }
     // "Again to reveal your desk": the same gesture or key that opened Overview goes one level further.
     function revealDeskFromOverview() {
-        closeSpacesOverview()
-        if (!deskOpen) toggleDesk()
+        if (deskOpen) closeSpacesOverview()
+        else toggleDesk()   // which closes Overview, held until Desk has drawn
     }
     function toggleSpacesOverview() {
-        if (overviewPending) return
+        // Again while Overview is still opening (taking its snapshot) is again all the same: on to Desk. Ignored, a
+        // quick Super+O Super+O left Overview open, the second press lost.
+        if (overviewPending) { overviewAgainWhilePending += 1; revealDeskFromOverview(); return }
         if (spacesOverviewOpen) revealDeskFromOverview()
         else if (deskOpen) toggleDesk()
         else openSpacesOverview()
@@ -1111,7 +1147,7 @@ ShellRoot {
         if (result.confirm && Date.now() - searchArmedAt < 500) return
         searchArmed = ""
         searchOpen = false
-        if (result.kind !== "settings" && !(result.kind === "action" && result.value === "desk")) deskOpen = false
+        if (result.kind !== "settings" && !(result.kind === "action" && (result.value === "desk" || result.value === "overview"))) deskOpen = false
         if (result.kind === "app" || result.kind === "file" || result.kind === "command") openSearchResult(result)
         else if (result.kind === "pin") spaceAction("focus", result.value)
         else if (result.kind === "window") spaceAction("focus-window", result.value)
@@ -1781,6 +1817,11 @@ ShellRoot {
         function open_took(name: string): string { return JSON.stringify(root.openTook[name] || { ms: -1, count: 0 }) }
         function window_labels(): string { return JSON.stringify(root.windows.map(w => [w.id, w.label])) }
         function desk_state(): string { return root.deskOpen ? "open" : "closed" }
+        // Read-only, for tests/niri_desk_overview_smoke.py: whether Desk's content is still settling in, and where it is.
+        function desk_motion(): string {
+            return JSON.stringify({ entering: deskEnter.running, opacity: deskContent.opacity, shift: deskShift.y, shown: deskWindow.visible,
+                                    toggled_mid_rise: root.deskTogglesMidRise, again_while_pending: root.overviewAgainWhilePending })
+        }
         function overview_state(): string { return root.spacesOverviewOpen ? "open" : "closed" }
         // Back to work without choosing, as Escape does.
         function overview_close(): void { root.closeSpacesOverview() }
@@ -1880,7 +1921,8 @@ ShellRoot {
                     // Where the layer sits on its screen follows from its anchors and margins.
                     const place = { anchors: [window.anchors.top, window.anchors.bottom, window.anchors.left, window.anchors.right],
                                     margins: [window.margins.top, window.margins.bottom, window.margins.left, window.margins.right] }
-                    for (let i = first; i < found.length; i++) found[i].place = place
+                    const screen = window.screen ? [window.screen.x, window.screen.y, window.screen.width, window.screen.height] : null
+                    for (let i = first; i < found.length; i++) { found[i].place = place; found[i].screen = screen }
                 }
             return JSON.stringify(found)
         }
@@ -2007,14 +2049,18 @@ ShellRoot {
     // shortcut: Desk content settles in (220 ms fade and rise) but apps do not move away; add the spatial
     // transition when compositor integration supports it.
     PanelWindow {
-        visible: root.deskOpen
+        visible: root.deskOpen || root.deskHeld
         id: deskWindow
         anchors { top: true; bottom: true; left: true; right: true }
         color: floeTheme.canvas
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: root.notificationsOpen || root.quickSettingsOpen || root.searchOpen ? WlrKeyboardFocus.None : WlrKeyboardFocus.Exclusive
-        onVisibleChanged: if (visible && root.motionQuick) deskEnter.restart()
+        onVisibleChanged: { if (!visible) root.deskDrawn = false; else if (root.motionQuick) deskEnter.restart() }
+        Connections {
+            target: deskContent.Window.window
+            function onFrameSwapped() { if (deskWindow.visible && !root.deskDrawn) root.deskDrawn = true }
+        }
         ParallelAnimation {
             id: deskEnter
             NumberAnimation { target: deskContent; property: "opacity"; from: 0; to: 1; duration: 220; easing.type: Easing.BezierSpline; easing.bezierCurve: root.standardCurve }
@@ -2407,7 +2453,7 @@ ShellRoot {
                             text: "Reduce motion"
                             checked: motionPreferences.reduceMotion
                             Accessible.name: "Reduce motion: buttons and progress change instantly"
-                            onToggled: { motionPreferences.reduceMotion = checked; motionPreferences.sync() }
+                            onToggled: { motionPreferences.reduceMotion = checked; motionPreferences.sync(); root.syncCompositorAppearance() }
                         }
                         FlowSwitch {
                             id: menuSwitch
@@ -2517,8 +2563,9 @@ ShellRoot {
         // Overview; again for Desk. Only the bottom 126 × 24 takes input, so it covers little of the app
         // beneath (Flow's columns reach the screen's edge).
         id: homeIndicator
+        screen: root.workScreen
         // Desk and Overview carry their own (a surface opened later stacks above this one).
-        visible: !root.deskOpen && !root.spacesOverviewOpen && !root.switcherOpen && !root.appMenuOpen && !root.searchOpen
+        visible: !root.workCovered && !root.switcherOpen && !root.appMenuOpen && !root.searchOpen
         anchors.bottom: true
         implicitWidth: 126; implicitHeight: 24
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
@@ -2530,7 +2577,8 @@ ShellRoot {
         // It stays in Overview, where its arrows and position are the way along the row for a pointer
         // or a finger, next to Super+Left/Right and the wheel.
         id: workIndicatorWindow
-        visible: !root.deskOpen && !root.switcherOpen && !root.spacesOverviewOpen && !root.appMenuOpen && !root.searchOpen && (!!root.activeSpace || !!root.activeLayer)
+        screen: root.workScreen
+        visible: !root.workCovered && !root.switcherOpen && !root.appMenuOpen && !root.searchOpen && (!!root.activeSpace || !!root.activeLayer)
         anchors { bottom: true; right: true }
         // Where the bottom controls and this indicator cannot share a row, it rises above them: below 560 px,
         // or below 900 px for an active Layer's wider controls.
@@ -2618,7 +2666,7 @@ ShellRoot {
         // snapshot (openSpacesOverview). Left/Right or the wheel choose, Enter or a click returns to it,
         // Up or the home indicator goes on to Desk, Escape returns to work unchanged.
         id: spacesOverview
-        visible: root.spacesOverviewOpen
+        visible: root.spacesOverviewOpen || root.overviewHeld
         anchors { top: true; bottom: true; left: true; right: true }
         color: floeTheme.canvas
         exclusionMode: ExclusionMode.Ignore
@@ -2631,7 +2679,7 @@ ShellRoot {
         readonly property real bandTop: 44
         readonly property real bandBottom: 44
         readonly property real cardHeight: cardWidth * Math.max(0.3, (height - bandTop - bandBottom) / Math.max(1, width))
-        onVisibleChanged: if (visible) { overviewRow.positionViewAtIndex(root.overviewIndex, ListView.Center); overviewFocus.forceActiveFocus() }
+        onVisibleChanged: if (visible) { overviewRow.positionViewAtIndex(root.overviewIndex, ListView.Center); overviewFocus.forceActiveFocus() } else root.overviewDrawn = false
         FocusScope {
             id: overviewFocus
             anchors.fill: parent; focus: true
@@ -2639,6 +2687,7 @@ ShellRoot {
             Connections {
                 target: overviewFocus.Window.window
                 function onFrameSwapped() {
+                    if (spacesOverview.visible && !root.overviewDrawn) root.overviewDrawn = true
                     if (!root.openStarted.overview || !spacesOverview.visible || overviewRow.count !== root.displaySpaces.length) return
                     for (let i = 0; i < overviewRow.count; i++) {
                         const card = overviewRow.itemAtIndex(i)
@@ -2654,8 +2703,8 @@ ShellRoot {
             Keys.onReturnPressed: root.chooseOverviewSpace(root.overviewIndex)
             Keys.onEnterPressed: root.chooseOverviewSpace(root.overviewIndex)
             Keys.onPressed: event => {
-                if (event.key === Qt.Key_Home) { root.overviewIndex = 0; event.accepted = true }
-                else if (event.key === Qt.Key_End) { root.overviewIndex = Math.max(0, root.displaySpaces.length - 1); event.accepted = true }
+                if (event.key === Qt.Key_Home) { root.selectOverview(0); event.accepted = true }
+                else if (event.key === Qt.Key_End) { root.selectOverview(root.displaySpaces.length - 1); event.accepted = true }
             }
             SystemIsland {
                 id: overviewIsland
@@ -2777,7 +2826,7 @@ ShellRoot {
                         MouseArea {
                             anchors.fill: parent; hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: spaceCard.selected ? root.chooseOverviewSpace(spaceCard.index) : (root.overviewIndex = spaceCard.index)
+                            onClicked: spaceCard.selected ? root.chooseOverviewSpace(spaceCard.index) : root.selectOverview(spaceCard.index)
                             onDoubleClicked: root.chooseOverviewSpace(spaceCard.index)
                         }
                         Accessible.role: Accessible.Button
@@ -3537,7 +3586,8 @@ ShellRoot {
     // shortcut: only published accessibility menus are shown; add toolkit-specific bridges when verified.
     PanelWindow {
         id: appMenuTrigger
-        visible: root.appMenuAvailable && !root.deskOpen && !root.overviewOpen && !root.appMenuOpen
+        screen: root.workScreen
+        visible: root.appMenuAvailable && !root.workCovered && !root.overviewOpen && !root.appMenuOpen
         anchors { top: true; left: true }
         implicitWidth: 220; implicitHeight: 44
         // On the Island's row, flush with the top edge as the tab is, 8px right of the centred tab: the button
@@ -3837,7 +3887,8 @@ ShellRoot {
     }
     PanelWindow {
         id: workIsland
-        visible: !root.deskOpen && !root.spacesOverviewOpen
+        screen: root.workScreen
+        visible: !root.workCovered
         anchors.top: true
         implicitWidth: workIslandContent.implicitWidth; implicitHeight: workIslandContent.implicitHeight
         color: "transparent"
