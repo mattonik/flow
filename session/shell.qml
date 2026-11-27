@@ -564,6 +564,8 @@ ShellRoot {
         else openIsland(name, "shortcut")
     }
     onWorkCoveredChanged: if (workCovered) closeIsland()
+    // The opened Island shows what the banner did (the bell's dot, the activity): a banner, critical or not, is done.
+    onIslandOpenChanged: if (islandOpen) bannerNotification = null
     // Its screen unplugged: nothing would close it.
     onIslandScreenChanged: if (!islandScreen) closeIsland()
     // A direct touch device (a touchscreen or a pen display): INPUT_PROP_DIRECT with multitouch positions. The home line
@@ -2090,6 +2092,8 @@ ShellRoot {
             const found = ({
                 home: () => [homeIndicator, workHome, workHome.lit],
                 island: () => [workIsland, islandCard, islandHover.hovered],
+                island_overview: () => [workIsland, islandOverview, islandOverview.hovered],
+                island_desk: () => [workIsland, islandDesk, islandDesk.hovered],
                 pill: () => [(clockPills.instances.find(w => w.visible) || null), (clockPills.instances.find(w => w.visible) || {}).contentItem, false],
                 overview_home: () => [spacesOverview, overviewHome, overviewHome.lit],
                 desk_home: () => [deskWindow, deskHome, deskHome.lit],
@@ -4104,32 +4108,96 @@ ShellRoot {
                 Column {
                     id: islandColumn
                     anchors.horizontalCenter: parent.horizontalCenter
-                    Row {
+                    // Its system controls (as Desk's and Overview's islands), then the work: Overview and Desk,
+                    // the space's place and the way along it, a Group's apps or a Layer's actions.
+                    SystemIsland { id: workIslandContent; flat: true; anchors.horizontalCenter: parent.horizontalCenter; room: workIsland.screen ? workIsland.screen.width - 40 : 1240 }
+                    Rectangle { width: parent.width - 24; height: 1; anchors.horizontalCenter: parent.horizontalCenter; color: Qt.alpha(floeTheme.border, 0.35) }
+                    Item {
+                        id: islandWork
                         anchors.horizontalCenter: parent.horizontalCenter
-                        SystemIsland { id: workIslandContent; flat: true; room: workIsland.screen ? workIsland.screen.width - 160 : 1120 }
-                        Rectangle { visible: islandPosition.visible; width: 1; height: 20; anchors.verticalCenter: parent.verticalCenter; color: Qt.alpha(floeTheme.border, 0.5) }
+                        implicitWidth: islandWorkRow.implicitWidth; implicitHeight: islandWorkRow.implicitHeight
+                        width: implicitWidth; height: implicitHeight
                         Row {
-                            // The space's place in this display's Flow, and the way along it (the work indicator's).
-                            id: islandPosition
-                            visible: !!root.activeSpace && !root.activeLayer
+                            id: islandWorkRow
                             IslandButton {
-                                width: 44; implicitHeight: 44; glyph: "left"; text: "‹"
-                                enabled: root.activeSpaceIndex > 0
-                                Accessible.name: "Previous space"
-                                onClicked: root.spaceAction("navigate", "left")
-                            }
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: (root.activeSpaceIndex < 9 ? "0" : "") + (root.activeSpaceIndex + 1) + " / " + (root.displaySpaces.length < 10 ? "0" : "") + root.displaySpaces.length
-                                textFormat: Text.PlainText; color: floeTheme.textPrimary; font.pixelSize: 13; font.letterSpacing: 0.5
-                                font.family: floeTheme.interfaceFont; font.features: { "tnum": 1 }
-                                Accessible.name: "Space " + (root.activeSpaceIndex + 1) + " of " + root.displaySpaces.length
+                                id: islandOverview
+                                implicitHeight: 44; text: "Overview"
+                                Accessible.name: "Show Overview"
+                                onClicked: root.toggleSpacesOverview()
                             }
                             IslandButton {
-                                width: 44; implicitHeight: 44; glyph: "right"; text: "›"
-                                enabled: root.activeSpaceIndex >= 0 && root.activeSpaceIndex < root.displaySpaces.length - 1
-                                Accessible.name: "Next space"
-                                onClicked: root.spaceAction("navigate", "right")
+                                id: islandDesk
+                                implicitHeight: 44; text: "Desk"
+                                Accessible.name: "Open Floe Desk"
+                                onClicked: root.toggleDesk()
+                            }
+                            Rectangle { visible: islandPosition.visible; width: 1; height: 20; anchors.verticalCenter: parent.verticalCenter; color: Qt.alpha(floeTheme.border, 0.5) }
+                            Row {
+                                // The space's place in this display's Flow, and the way along it.
+                                id: islandPosition
+                                visible: !!root.activeSpace && !root.activeLayer
+                                IslandButton {
+                                    width: 44; implicitHeight: 44; glyph: "left"; text: "‹"
+                                    enabled: root.activeSpaceIndex > 0
+                                    Accessible.name: "Previous space"
+                                    onClicked: root.spaceAction("navigate", "left")
+                                }
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: (root.activeSpaceIndex < 9 ? "0" : "") + (root.activeSpaceIndex + 1) + " / " + (root.displaySpaces.length < 10 ? "0" : "") + root.displaySpaces.length
+                                    textFormat: Text.PlainText; color: floeTheme.textPrimary; font.pixelSize: 13; font.letterSpacing: 0.5
+                                    font.family: floeTheme.interfaceFont; font.features: { "tnum": 1 }
+                                    Accessible.name: "Space " + (root.activeSpaceIndex + 1) + " of " + root.displaySpaces.length
+                                }
+                                IslandButton {
+                                    width: 44; implicitHeight: 44; glyph: "right"; text: "›"
+                                    enabled: root.activeSpaceIndex >= 0 && root.activeSpaceIndex < root.displaySpaces.length - 1
+                                    Accessible.name: "Next space"
+                                    onClicked: root.spaceAction("navigate", "right")
+                                }
+                            }
+                            Rectangle { visible: islandGroup.visible || islandLayer.visible; width: 1; height: 20; anchors.verticalCenter: parent.verticalCenter; color: Qt.alpha(floeTheme.border, 0.5) }
+                            Row {
+                                // A Group's apps: the focused one selected, a click focuses another (once the work
+                                // indicator's, ADR-0014).
+                                id: islandGroup
+                                visible: !root.activeLayer && !!(root.activeSpace && root.activeSpace.group_id)
+                                spacing: 2
+                                SectionLabel { anchors.verticalCenter: parent.verticalCenter; leftPadding: 10; rightPadding: 4; text: "GROUP" }
+                                Repeater {
+                                    model: workIsland.visible && islandGroup.visible ? root.activeSpace.members : []
+                                    IslandButton {
+                                        required property var modelData
+                                        width: Math.min(148, Math.max(64, implicitWidth)); implicitHeight: 44
+                                        selected: modelData.active
+                                        text: (modelData.app_name || modelData.label).slice(0, 16)
+                                        Accessible.name: (modelData.active ? "Focused: " : "Focus ") + (modelData.app_name || modelData.label) + " in Group " + root.activeSpace.label
+                                        onClicked: if (!modelData.active) root.spaceAction("focus-window", String(modelData.id))
+                                    }
+                                }
+                            }
+                            Row {
+                                // A Layer's actions (once the work indicator's).
+                                id: islandLayer
+                                visible: !!root.activeLayer
+                                spacing: 4
+                                SectionLabel { anchors.verticalCenter: parent.verticalCenter; leftPadding: 10; rightPadding: 4; text: "LAYER" }
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter; rightPadding: 6
+                                    width: Math.min(implicitWidth, 160); elide: Text.ElideRight
+                                    text: root.activeLayer ? (root.activeLayer.app_name || root.activeLayer.label).slice(0, 24) : ""
+                                    textFormat: Text.PlainText; color: floeTheme.textPrimary; font.weight: Font.DemiBold; font.pixelSize: 13; font.family: floeTheme.interfaceFont
+                                }
+                                IslandButton {
+                                    implicitHeight: 44; text: "Make space"
+                                    Accessible.name: "Make space: this Layer becomes a space of its own"
+                                    onClicked: root.spaceAction("layer-to-space", String(root.activeLayer.id))
+                                }
+                                IslandButton {
+                                    implicitHeight: 44; variant: "danger"; text: "Close"
+                                    Accessible.name: "Close this Layer; the app is asked to close and the space under it stays as it is"
+                                    onClicked: root.spaceAction("close-layer", String(root.activeLayer.id))
+                                }
                             }
                         }
                     }
@@ -4165,7 +4233,7 @@ ShellRoot {
                 && !(root.islandOpen && root.islandScreenName === modelData.name)
             anchors.top: true
             margins.top: 4
-            implicitWidth: pillLabel.implicitWidth + 20; implicitHeight: 22
+            implicitWidth: pillLabel.width + 20; implicitHeight: 22
             color: "transparent"; exclusionMode: ExclusionMode.Ignore
             WlrLayershell.layer: WlrLayer.Overlay
             WlrLayershell.namespace: "flow-clock-pill"
@@ -4175,9 +4243,14 @@ ShellRoot {
                 color: Qt.alpha(floeTheme.canvas, 0.9); border.width: 1
                 border.color: pillArea.containsMouse ? Qt.alpha(floeTheme.accent, 0.7) : Qt.alpha(floeTheme.border, 0.5)
                 Text {
+                    // The time, and the newest activity's owner and progress while one runs.
                     id: pillLabel
                     anchors.centerIn: parent
-                    text: Qt.formatTime(clock.date, "hh:mm"); textFormat: Text.PlainText; color: floeTheme.textPrimary
+                    readonly property var activity: root.activities.length ? root.activities[0] : null
+                    width: Math.min(implicitWidth, 220); elide: Text.ElideRight
+                    text: Qt.formatTime(clock.date, "hh:mm") + (activity ? "  ·  " + activity.owner
+                        + (activity.progress >= 0 ? " " + Math.round(activity.progress * 100) + "%" : " …") : "")
+                    textFormat: Text.PlainText; color: floeTheme.textPrimary
                     font.pixelSize: 12; font.weight: Font.Medium; font.family: floeTheme.interfaceFont; font.features: { "tnum": 1 }
                 }
             }
@@ -4190,7 +4263,7 @@ ShellRoot {
                 }
                 onClicked: root.openIsland(clockPill.modelData.name, "pill")
                 Accessible.role: Accessible.Button
-                Accessible.name: "Time " + pillLabel.text + ": open the Island"
+                Accessible.name: pillLabel.text + ": open the Island"
             }
         }
     }
@@ -4247,10 +4320,36 @@ ShellRoot {
                     Accessible.name: root.searchOpen ? "Close search and apps" : "Open apps"
                     onClicked: { if (root.searchOpen) { root.closeLauncher(); root.closeSearch() } else root.openApps() }
                 }
+                BandButton {
+                    band: band.h; text: "Overview"; open: root.spacesOverviewOpen
+                    Accessible.name: "Show Overview"
+                    onClicked: root.toggleSpacesOverview()
+                }
             }
             Row {
                 anchors { right: parent.horizontalCenter; rightMargin: band.side }
                 height: band.h; spacing: 4
+                Repeater {
+                    // A Group's apps, the focused one marked; a Layer's actions.
+                    model: band.visible && !root.activeLayer && root.activeSpace && root.activeSpace.group_id ? root.activeSpace.members : []
+                    BandButton {
+                        required property var modelData
+                        band: band.h; open: modelData.active
+                        text: (modelData.app_name || modelData.label).slice(0, 14)
+                        Accessible.name: (modelData.active ? "Focused: " : "Focus ") + (modelData.app_name || modelData.label) + " in Group " + root.activeSpace.label
+                        onClicked: if (!modelData.active) root.spaceAction("focus-window", String(modelData.id))
+                    }
+                }
+                BandButton {
+                    visible: !!root.activeLayer; band: band.h; text: "Make space"
+                    Accessible.name: "Make space: this Layer becomes a space of its own"
+                    onClicked: root.spaceAction("layer-to-space", String(root.activeLayer.id))
+                }
+                BandButton {
+                    visible: !!root.activeLayer; band: band.h; text: "Close"
+                    Accessible.name: "Close this Layer; the app is asked to close and the space under it stays as it is"
+                    onClicked: root.spaceAction("close-layer", String(root.activeLayer.id))
+                }
                 Text {
                     // The newest activity, short: who it is from and its progress.
                     visible: root.activities.length > 0

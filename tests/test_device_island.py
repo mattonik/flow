@@ -95,6 +95,39 @@ class PlainScreenTest(unittest.TestCase):
         self.assertIn("id: clockPills\n        model: Quickshell.screens", CODE)
 
 
+class IslandContentTest(unittest.TestCase):
+    """The user's choices (27 November 2026): Overview and Desk buttons in the opened Island, no hot corner; a Group's
+    apps and a Layer's actions there too; a critical banner stays until the Island or the panel opens."""
+
+    def test_overview_and_desk_are_in_the_opened_island(self):
+        island = window("workIsland")
+        for ident, call in (("islandOverview", "root.toggleSpacesOverview()"), ("islandDesk", "root.toggleDesk()")):
+            button = island[island.index(f"id: {ident}"):][:300]
+            self.assertIn(f"onClicked: {call}", button)
+        self.assertIn('BandButton {\n                    band: band.h; text: "Overview"', CODE)
+        # No hot corner: Niri's stays off, and Overview is reached from the Island, Super+O or the home line.
+        self.assertIn("gestures { hot-corners { off; }; }", NIRI)
+
+    def test_a_groups_apps_and_a_layers_actions_are_in_the_opened_island(self):
+        island = window("workIsland")
+        group = island[island.index("id: islandGroup"):][:1400]
+        self.assertIn("model: workIsland.visible && islandGroup.visible ? root.activeSpace.members : []", group)
+        self.assertIn('root.spaceAction("focus-window", String(modelData.id))', group)
+        layer = island[island.index("id: islandLayer"):][:1600]
+        self.assertIn('root.spaceAction("layer-to-space", String(root.activeLayer.id))', layer)
+        self.assertIn('root.spaceAction("close-layer", String(root.activeLayer.id))', layer)
+
+    def test_a_critical_banner_stays_until_the_island_or_the_panel_opens(self):
+        counting = CODE[CODE.index("readonly property bool bannerCounting:"):][:250]
+        self.assertIn("bannerNotification.urgency !== NotificationUrgency.Critical", counting)
+        self.assertIn("onIslandOpenChanged: if (islandOpen) bannerNotification = null", CODE)
+
+    def test_the_clock_pill_shows_an_activity(self):
+        pill = window("clockPill")
+        self.assertIn("root.activities.length ? root.activities[0] : null", pill)
+        self.assertIn("activity.owner", pill)
+
+
 class NotchedScreenTest(unittest.TestCase):
     def test_the_band_keeps_its_rows_from_windows(self):
         band = window("band")

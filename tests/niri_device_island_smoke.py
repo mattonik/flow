@@ -16,6 +16,7 @@ Checks (``--only NAME``, repeatable):
   the Island, no sooner than 150 ms, and it closes once the pointer has left; the time from the push to its first frame.
 - ``shortcut``: Super+B opens it, the time from the key press to its first frame, and Escape closes it; opened again,
   a click elsewhere closes it.
+- ``work``: the opened Island's Overview and Desk buttons open Overview and Desk (there is no hot corner).
 - ``pill``: the clock pill is off in a configuration that has never set it. "main" with Virtual-2 on shows it on the
   main display only, as the controller numbers it (``flow-spaces refresh``: display 0); with Virtual-2 unplugged, on
   Virtual-1 alone; with Virtual-2 made Main (the controller's ``make-main``, on the shell's own state), on Virtual-2.
@@ -25,6 +26,7 @@ Checks (``--only NAME``, repeatable):
 - ``moving``: the work indicator shows only while moving between spaces, then goes.
 - ``home``: no home line without a touch device; a touchscreen plugged in (uinput) shows it, unplugged hides it.
 - ``banner``: a notification's banner takes no clicks: a click on it reaches the page beneath.
+- ``critical``: a critical notification's banner stays past 7 s, and goes for good once the Island opens.
 - ``band``: a simulated 13-inch MacBook Air in Asahi's full-panel mode (the notchPanel override and a custom mode one
   32 px band taller than 1280x800): the band is drawn, windows start below it at 1280x800, the screen has no edge
   strip; and whether a fullscreen window covers the band. Then the panel matched, not forced: the Air's own
@@ -48,9 +50,10 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import niri_portals_smoke as m  # noqa: E402
 from isolated_state import IsolatedState, shell_config  # noqa: E402
+from pointer import center  # noqa: E402
 from uinput import Devices  # noqa: E402
 
-CHECKS = ["rest", "row", "edge", "shortcut", "pill", "moving", "home", "banner", "band"]
+CHECKS = ["rest", "row", "edge", "shortcut", "work", "pill", "moving", "home", "banner", "critical", "band"]
 SHELL = os.environ.get("FLOW_SHELL", "/etc/flow/shell.qml")
 OUTPUT = "Virtual-1"
 CONNECTORS = {"Virtual-1": "/sys/class/drm/card1-Virtual-1", "Virtual-2": "/sys/class/drm/card1-Virtual-2"}
@@ -84,6 +87,20 @@ def wait_for(test, label, timeout=5, every=0.05):
 def check(condition, message):
     if not condition:
         raise Failed(message)
+
+
+def notify(summary, critical=False):
+    hints = ["1", "urgency", "y", "2"] if critical else ["0"]
+    subprocess.run(["busctl", "--user", "call", "org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+                    "org.freedesktop.Notifications", "Notify", "susssasa{sv}i", "Flow test", "0", "", summary,
+                    "A click here is the page's", "0", *hints, "5000"], check=True, timeout=10, stdout=subprocess.DEVNULL)
+
+
+def target(name):
+    try:
+        return json.loads(ipc("pointer_target", name) or "null")
+    except ValueError:
+        return None
 
 
 def layers():
@@ -336,9 +353,7 @@ class Smoke(m.Smoke):
         _, (width, _) = self.edges_page()
         o = self.output
         self.pointer.park()
-        subprocess.run(["busctl", "--user", "call", "org.freedesktop.Notifications", "/org/freedesktop/Notifications",
-                        "org.freedesktop.Notifications", "Notify", "susssasa{sv}i", "Flow test", "0", "", "Over the page",
-                        "A click here is the page's", "0", "0", "5000"], check=True, timeout=10, stdout=subprocess.DEVNULL)
+        notify("Over the page")
         wait_for(lambda: island()["banner"], "the banner")
         # The banner hangs 8 px below the top edge in the middle, over the page's top-middle button (40 px tall).
         got = self.clicked((o["x"] + width // 2, o["y"] + 24))
@@ -346,6 +361,41 @@ class Smoke(m.Smoke):
         check(got == "top-middle", f"A click on the banner reached {got!r}, not the page's top-middle button")
         self.shot("banner")
         self.passed("banner", "a click on the banner reached the page's button beneath it")
+
+    def open_by_edge(self):
+        self.close_island()
+        time.sleep(0.4)
+        o = self.output
+        self.pointer.move((o["x"] + o["width"] // 2, o["y"]))
+        return wait_for(lambda: (lambda s: s if s.get("open") and s.get("shown_at") else None)(island()),
+                        "the Island to open from the edge", timeout=2)
+
+    def check_work(self):
+        self.edges_page()
+        for name, surface in (("island_overview", "overview"), ("island_desk", "desk")):
+            self.open_by_edge()
+            button = wait_for(lambda: target(name), f"the Island's {name}")
+            self.pointer.click(center(button))
+            wait_for(lambda: json.loads(ipc("surfaces") or "{}").get(surface), f"{name} to open {surface}", timeout=3)
+            self.shot(f"work-{surface}")
+            self.keys.keys("esc")
+            wait_for(lambda: not any(json.loads(ipc("surfaces") or "{}").values()), f"{surface} to close", timeout=3)
+            self.pointer.park()
+        self.passed("work", "the opened Island's Overview and Desk buttons opened Overview and Desk")
+
+    def check_critical(self):
+        self.edges_page()
+        self.pointer.park()
+        notify("Critical over the page", critical=True)
+        wait_for(lambda: island()["banner"], "the critical banner")
+        time.sleep(7)
+        check(island()["banner"], "The critical banner went by itself")
+        self.open_by_edge()
+        check(not island()["banner"], "The critical banner shows with the Island open")
+        self.close_island()
+        time.sleep(1)
+        check(not island()["banner"], "The critical banner came back after the Island closed")
+        self.passed("critical", "a critical banner stayed past 7 s, and went for good once the Island opened")
 
     def check_band(self):
         before = m.read("outputs")[OUTPUT]

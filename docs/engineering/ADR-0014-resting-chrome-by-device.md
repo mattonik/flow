@@ -45,22 +45,26 @@ an app is there because the user summoned it, or only for a moment, and then tak
   It closes 500 ms after the pointer has left it, the strip, the pill and the App button, once whatever it opened (a
   panel, search, the app menu) has closed. Desk or Overview opening closes it, and so does its screen being
   unplugged. It holds today's controls, the space's position with its arrows, and the App button beside it when the
-  focused app has a menu. Panels and the app menu hang below it, on its screen.
+  focused app has a menu. Its second row holds the work: *Overview* and *Desk*, the space's position with its arrows,
+  and a Group's apps (the focused one selected) or a Layer's *Make space* and *Close*. Panels and the app menu hang
+  below it, on its screen.
 - **A screen with another display directly above it** shares its top edge: the pointer pushed up goes on to the
   other display instead of resting on row 0. There the strip still opens the Island on a press, and Super+B and the
   pill work as anywhere.
 - **The clock pill** is a setting, off by default: *Off*, *Main screen* or *All screens*. It is small (about
-  50 × 22 px), 4 px below the top edge, and takes clicks only on itself. *Main screen* is Super+number's main display:
+  50 × 22 px, wider while an activity runs: the time, then the activity's owner and progress), 4 px below the top
+  edge, and takes clicks only on itself. *Main screen* is Super+number's main display:
   Main, or the lowest-numbered connected display while Main is away. Screens come and go without a restart.
-- **A notification's banner** shows near the top for 5 s (a critical one until the notifications are opened) and
-  takes no clicks: a click there is the app's. To act on a notification, open the Island and its bell, or press
+- **A notification's banner** shows near the top for 5 s (a critical one until the Island or the notifications open)
+  and takes no clicks: a click there is the app's. To act on a notification, open the Island and its bell, or press
   Super+N. Resting on a banner no longer holds it.
 
 **A notched MacBook in Asahi's full-panel mode** (`appledrm.show_notch=1`, formerly `apple_dcp.show_notch`):
 - **The band beside the camera is the shell's.** A layer surface with an exclusive zone keeps tiled windows below
   it, so apps get exactly the rectangle Asahi gives them by default and lose nothing.
-- **The Island lives in the band:** Desk and Apps at the left (after the App button when it shows, §8.1), the
-  space's position and an activity left of the camera, and the clock, notifications and quick settings right of it.
+- **The Island lives in the band:** Desk, Apps and Overview at the left (after the App button when it shows, §8.1),
+  a Group's apps or a Layer's actions, an activity and the space's position left of the camera, and the clock,
+  notifications and quick settings right of it.
   It never expands below the camera, so nothing repeats what the band shows. A notification's banner hangs below
   the band.
 - **Hit targets** are the band's height (32 logical px on a 13-inch Air at scale 2), not the brand's 44 px: the band is
@@ -86,7 +90,7 @@ an app is there because the user summoned it, or only for a moment, and then tak
   after the overview, a frame of its own. The opened Island has the position and its arrows.
 - **The home line** shows only when a touchscreen is plugged in (`INPUT_PROP_DIRECT` with multitouch positions, read
   from `/sys/class/input` at start, every 30 s and when the screens change, so one plugged in later can take up to
-  30 s to show it). Without one, Super+O, Super+H and the Island reach Overview and Desk.
+  30 s to show it). Without one, the opened Island's *Overview* and *Desk*, Super+O and Super+H reach them.
 - **A tablet** (a touchscreen and no keyboard) is meant to get a thin status margin and the home line. It is not
   built yet: today a tablet is treated as a plain screen with a touch device.
 
@@ -107,13 +111,12 @@ an app is there because the user summoned it, or only for a moment, and then tak
   the layout, not native cutout handling (§7.3).
 - The fade branch and the thin-margin prototype are dropped from the plan; their branches stay.
 
-## Open
+## The user's choices on three details (27 November 2026)
 
-Three choices are waiting on the user and are not built:
-- How a pointer reaches Overview at rest without the home line: Niri's hot corner is off, and Flow has none. Either
-  Overview and Desk buttons in the opened Island, or a Flow hot corner.
-- Whether a critical notification's banner stays on screen, taking no clicks, until the notifications are opened (as
-  built), or is brief like the rest.
-- Whether a Group's members and a Layer's actions, which the work indicator showed at rest, move into the opened
-  Island. Until then a pointer reaches them only in the switcher (Super+Tab); Super+Up and Super+Down still move
-  between a Group's members.
+- **Overview and Desk from the pointer:** buttons in the opened Island (*Overview*, *Desk*), not a hot corner.
+  Niri's own hot corner stays off, as before, and Flow adds none.
+- **A critical notification's banner** stays on screen, taking no clicks, until the Island or the notifications
+  panel (Super+N) opens. The Island opening ends any banner, since its bell shows what waits. Activities show in the
+  opened Island, and in the clock pill when that is on.
+- **A Group's apps and a Layer's actions**, which the work indicator showed at rest, are in the opened Island,
+  beside the space's position (and in the band of a notched screen, left of the camera). Overview is unchanged.

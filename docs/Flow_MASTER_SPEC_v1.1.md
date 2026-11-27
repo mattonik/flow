@@ -248,9 +248,9 @@ Each kind of screen decides how the Island appears (ADR-0014): nothing of the sh
 
 ### 7.4 Conventional desktop/external monitor
 
-- At rest, nothing over apps: the Island opens when the pointer is pushed against the top edge (a 1 px strip, after a short rest), by Super+B, or from the optional clock pill (a setting: off, the main screen or all screens). Opened, it is a floating card, round on every corner, with approximately three compact system controls and the space's position. No fake camera notch on unnotched monitors.
+- At rest, nothing over apps: the Island opens when the pointer is pushed against the top edge (a 1 px strip, after a short rest), by Super+B, or from the optional clock pill (a setting: off, the main screen or all screens). Opened, it is a floating card, round on every corner: approximately three compact system controls, then Overview and Desk, the space's position, and a Group's apps or a Layer's actions. No hot corner. No fake camera notch on unnotched monitors.
 - Do not let UI permanently consume a large vertical strip.
-- A notification's banner shows briefly and takes no clicks; to act on it, open the Island (its bell) or the notifications panel.
+- A notification's banner shows briefly (a critical one until the Island or the notifications panel opens) and takes no clicks; to act on it, open the Island (its bell) or the notifications panel.
 - Notifications have history, do-not-disturb, priority/action semantics, privacy/redaction and normal focus behavior.
 
 ---
