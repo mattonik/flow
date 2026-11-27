@@ -38,13 +38,14 @@ Checks, in order (names for ``--only``):
   the page's is pasted and saved in KolourPaint and read by Firefox on X11 (``MOZ_ENABLE_WAYLAND=0``); that one's is
   read by the Wayland page. Each image has the colour its copy had.
 - ``chooser-pointer``: the same, answered with the pointer where Nautilus draws its buttons (the close button, the
-  file, Open, Save), each 50 ms after the pointer arrives: Open and Save sit under the shell's work indicator, which
-  fades and lets the click through as soon as the pointer comes onto it (``edges``, ADR-0013).
+  file, Open, Save), each as a hand clicks: the pointer glides in over about 100 ms and clicks as it stops, with no
+  rest. Open and Save sit under the shell's work indicator, which fades and lets the click through as soon as the
+  pointer comes onto it (``edges``, ADR-0013).
 - ``backends``: every portal request above reached the backend Flow intends (from a D-Bus monitor of the
   ``org.freedesktop.impl.portal.*`` calls): FileChooser and ScreenCast the GNOME backend, Access the GTK one,
   Screenshot Flow's own (``session/screenshot_portal.py``). PipeWire and WirePlumber run.
 - ``edges``: a full-window Firefox page (kiosk) has buttons along its window's top and bottom edges: left,
-  middle and right. Each must take a click 50 ms after the pointer arrives, though the island (top middle), the home
+  middle and right. Each must take a click as a hand makes it (gliding in, clicking as it stops), though the island (top middle), the home
   indicator (bottom middle) and the work indicator (bottom right) sit over the window: the shell's bands fade and
   let it through (ADR-0013). Each of those bands, reached on purpose by its screen edge or by Super+B's IPC call,
   must take a click again: the island's wordmark opens Desk, the home indicator Overview.
@@ -404,6 +405,13 @@ class Apps:
         """A point of the screen, as fractions of the output."""
         o = self.output
         return round(o["x"] + o["width"] * rx), round(o["y"] + o["height"] * ry)
+
+    def toward_middle(self, at, distance):
+        """``at`` moved ``distance`` px toward the middle of the output, along each axis it is off the middle by more."""
+        o = self.output
+        mx, my = o["x"] + o["width"] / 2, o["y"] + o["height"] / 2
+        step = lambda v, m: v + (distance if v < m else -distance) if abs(v - m) > distance else v
+        return round(step(at[0], mx)), round(step(at[1], my))
 
     def window_point(self, window, x, y):
         """A point in a floating window, ``x``/``y`` from its left/top (negative: from its right/bottom)."""
@@ -863,8 +871,9 @@ class Smoke:
         steps = []
 
         def click(window, what):
+            # As a hand clicks: in from 80 px nearer the screen's middle, and the click as the pointer stops.
             at = self.chooser_places(window)[what]
-            self.pointer.click(at)
+            self.pointer.glide_click(at, self.apps.toward_middle(at, 80))
             return at
 
         def covered(at, label):
@@ -1000,8 +1009,8 @@ class Smoke:
     # Overlap: the shell's surfaces over an app's edges -----------------------------------------------------------
 
     def check_edges(self):
-        """An app's own controls along its window's top and bottom edges take clicks, as a user's (50 ms after the
-        pointer arrives), where the island (top middle), the home indicator (bottom middle) and the work indicator
+        """An app's own controls along its window's top and bottom edges take clicks, as a hand makes them (the pointer
+        glides in from the page's middle side and clicks as it stops, with no rest), where the island (top middle), the home indicator (bottom middle) and the work indicator
         (bottom right) sit over the window: the bands fade and let the click through (ADR-0013). Each band is still
         the shell's when reached on purpose, by its edge and by Super+B (its IPC call): the island's wordmark then
         opens Desk, the home indicator Overview, and a click on the work indicator stays the shell's."""
@@ -1029,7 +1038,8 @@ class Smoke:
                   "bottom-right": (width - 30, height - 12)}
         for name, (x, y) in points.items():
             pages.drain()
-            self.pointer.click(at(x, y))
+            # As a hand clicks: in from the page's middle side, 80 px away, and the click as the pointer stops.
+            self.pointer.glide_click(at(x, y), self.apps.toward_middle(at(x, y), 80))
             try:
                 event = pages.wait(["clicked"], timeout=4)
                 (took if event["name"] == name else missed).append(name)
@@ -1093,7 +1103,7 @@ class Smoke:
                         wait_for(lambda: not opened(), f"{label} to close")
                     self.apps.focus(page)
                     self.pointer.park()
-        self.passed("edges", f"every edge button of a full-window page took a click 50 ms after the pointer came: "
+        self.passed("edges", f"every edge button of a full-window page took a click as the pointer, gliding in, stopped: "
                              f"{', '.join(took)}; the bands let go of the pointer after {', '.join(waits)}, and were back "
                              f"{back:.1f} s after it left; reached on purpose, {'; '.join(reached)}")
 
