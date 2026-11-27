@@ -147,9 +147,13 @@ class ScreenTest(unittest.TestCase):
     def test_the_work_views_bands_are_on_the_focused_displays_screen(self):
         self.assertIn("readonly property var workScreen: Quickshell.screens.find(screen => screen.name === displayOutput) || null", CODE)
         self.assertIn('displayOutput = result.display ? result.display.output || "" : ""', CODE)
-        for ident in ("homeIndicator", "workIndicatorWindow", "workIsland", "appMenuTrigger"):
+        for ident in ("homeIndicator", "workIndicatorWindow"):
             with self.subTest(window=ident):
                 self.assertIn("screen: root.workScreen", window(ident))
+        # The opened Island goes where it was opened (the screen whose edge or pill was used), else the focused one;
+        # the App button goes with it.
+        self.assertIn("screen: root.islandScreen || root.workScreen", window("workIsland"))
+        self.assertIn("screen: root.islandOpen && root.islandScreen ? root.islandScreen : root.workScreen", window("appMenuTrigger"))
 
     def test_desk_and_overview_map_where_focus_is(self):
         # A screen from the refresh can be late: Desk would open on the display the user just left.

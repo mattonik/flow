@@ -60,10 +60,12 @@ def function_body(name):
 
 
 class SystemPanelTest(unittest.TestCase):
-    def test_a_panel_hangs_12_px_below_the_island_and_fits_the_screen(self):
-        island_height = int(re.search(r"implicitHeight: (\d+)", own(component("SystemIsland"))).group(1))
+    def test_a_panel_hangs_below_the_island_and_fits_the_screen(self):
+        # Below the opened Island's card (6 px under it), else below a notched screen's band or near the top edge.
         system_panel = own(component("SystemPanel"))
-        self.assertEqual(int(re.search(r"margins\.top: (\d+)", system_panel).group(1)), island_height + 12)
+        self.assertIn("margins.top: root.panelTop", system_panel)
+        self.assertIn("readonly property real panelTop: !bandFor(workScreen) && islandOpen ? workIsland.implicitHeight + 6 : topInset(workScreen)", SHELL)
+        self.assertIn("return geometry ? geometry.height + 8 : 8", SHELL)
         self.assertIn("implicitHeight: Math.min(screen.height - 80, panelBody.implicitHeight", system_panel)
         scroller = block_at(SHELL.rindex("ScrollView {", 0, SHELL.index("id: panelScroller")))
         self.assertIn("contentHeight: panelBody.implicitHeight", own(scroller))

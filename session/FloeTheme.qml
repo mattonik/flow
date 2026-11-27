@@ -22,4 +22,13 @@ QtObject {
     readonly property color danger: light ? "#8F2D23" : "#FFB4A8"
     readonly property color warning: light ? "#805015" : "#F1BAAA"
     readonly property color success: light ? "#25634D" : "#A4D4C4"
+    readonly property color bandFill: "#000000"
+    readonly property color bandText: "#E8ECEA"
+    readonly property color bandMuted: "#C9D1D0"
+    readonly property color bandHover: "#1B2226"
+    readonly property color bandPressed: "#2A3236"
+    readonly property color bandFocus: "#BDDAD1"
+    readonly property color bandCutoutEdge: "#2A2F33"
+    readonly property color bandLens: "#0E1418"
+    readonly property color bandLensEdge: "#1F2A30"
 }

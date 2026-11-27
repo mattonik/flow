@@ -63,6 +63,8 @@ binds {
     Super+Q { close-window; }
     // Flow's Overview; again for Desk. Niri's live Overview is in the Spaces switcher.
     Super+O { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "overview"; }
+    // The Island on a plain screen, which shows nothing at rest (ADR-0014).
+    Super+B { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "island"; }
     Super+Tab { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "switcher"; }
     Super+H { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "toggle"; }
     Super+Shift+Slash { show-hotkey-overlay; }

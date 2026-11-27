@@ -34,6 +34,9 @@ def render_qml(tokens):
         f'    readonly property string technicalFont: "{tokens["typography"]["family"]["technical"]["$value"][0]}"',
         f'    readonly property string brandFont: "{tokens["typography"]["family"]["brand"]["$value"][0]}"',
         *(f'    readonly property color {camel(key)}: light ? "{light[key]["$value"]}" : "{dark[key]["$value"]}"' for key in dark),
+        # The same in either appearance: a notched MacBook's band is as black as its camera's cutout.
+        *(f'    readonly property color band{camel(key)[0].upper() + camel(key)[1:]}: "{entry["$value"]}"'
+          for key, entry in tokens.get("band", {}).items() if not key.startswith("$")),
         "}", ""
     ])
 
