@@ -15,7 +15,7 @@ Checks (``--only NAME``, repeatable):
 - ``edge``: the pointer pushed against the top edge opens the Island after its 150 ms rest, and it closes once the
   pointer has left; the time from the push to its first frame.
 - ``shortcut``: Super+B opens it, the time from the key press to its first frame, and Escape closes it.
-- ``pill``: the clock pill is off in a fresh configuration; "main" with Virtual-2 on shows it on the main display
+- ``pill``: the clock pill is off in a configuration that has never set it; "main" with Virtual-2 on shows it on the main display
   only, "all" on both; Virtual-2 unplugged drops it, with the main display's kept. Virtual-2 goes on and off through
   sysfs, and is off again at the end.
 - ``moving``: the work indicator shows only while moving between spaces, then goes.
@@ -32,6 +32,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -315,7 +316,12 @@ def main():
             smoke = None
             try:
                 subprocess.run(["systemctl", "--user", "stop", "flow-shell"], check=True)
-                env = {**os.environ, "XDG_STATE_HOME": dev_state, "XDG_CONFIG_HOME": shell_config(tmp)}
+                config = shell_config(tmp)
+                # A configuration that has never set the Island's keys: a shell that ran writes each key's default
+                # back to the file it reads (Qt's Settings), and the copy is the user's.
+                settings = Path(config) / "flow-settings.ini"
+                settings.write_text(re.sub(r"(?m)^(clockPill|notchPanel)=.*\n?", "", settings.read_text()))
+                env = {**os.environ, "XDG_STATE_HOME": dev_state, "XDG_CONFIG_HOME": config}
                 shell = subprocess.Popen(["quickshell", "-p", SHELL], env=env, stdin=subprocess.DEVNULL,
                                          stdout=open(Path(tmp) / "shell.log", "w"), stderr=subprocess.STDOUT,
                                          start_new_session=True)
