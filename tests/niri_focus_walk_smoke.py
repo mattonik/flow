@@ -295,7 +295,12 @@ def run(shell, bus, steps, problems):
                     if frame.getState().contains(pyatspi.STATE_SHOWING) and [extents.width, extents.height] == [round(v) for v in size]:
                         return frame
                 return None
-            return wait_for(find, f"a showing AT-SPI window of size {size}", timeout=5)
+            def seen():
+                app = shell_app()
+                return [(app.getChildAtIndex(i).queryComponent().getExtents(pyatspi.WINDOW_COORDS).width,
+                         app.getChildAtIndex(i).queryComponent().getExtents(pyatspi.WINDOW_COORDS).height,
+                         app.getChildAtIndex(i).getState().contains(pyatspi.STATE_SHOWING)) for i in range(app.childCount)] if app else []
+            return wait_for(find, lambda: f"a showing AT-SPI window of size {size} (windows: {seen()})", timeout=5)
 
         def nodes(node):
             """Visible descendants. Qt exposes only controls in view: one scrolled away has no object."""

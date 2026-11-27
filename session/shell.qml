@@ -4117,7 +4117,11 @@ ShellRoot {
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.namespace: "flow-island"
         WlrLayershell.keyboardFocus: visible && root.islandOpenedBy === "shortcut" ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-        onVisibleChanged: { root.islandShownAt = 0; islandAway.entered = root.islandOpenedBy !== "shortcut" }
+        onVisibleChanged: {
+            root.islandShownAt = 0
+            islandAway.entered = root.islandOpenedBy !== "shortcut"
+            if (visible && root.islandOpenedBy === "shortcut") islandFocus.forceActiveFocus()
+        }
         Connections {
             target: islandCard.Window.window
             function onFrameSwapped() { if (workIsland.visible && !root.islandShownAt) root.islandShownAt = Date.now() }
@@ -4130,6 +4134,7 @@ ShellRoot {
             radius: 22; color: floeTheme.canvas
             border.width: 1; border.color: Qt.alpha(floeTheme.border, 0.55)
             FocusScope {
+                id: islandFocus
                 anchors.fill: parent; focus: true
                 Keys.onEscapePressed: root.closeIsland()
                 Column {

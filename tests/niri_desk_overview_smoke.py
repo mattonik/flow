@@ -160,6 +160,12 @@ class Smoke:
     def names(self):
         return {app: name for name, app in self.apps.items()}
 
+    def still(self):
+        """The work indicator gone after a move between spaces (it shows for a moment then, ADR-0014), so a screenshot
+        never catches it in one capture and not in the other."""
+        wait_for(lambda: not (self.json("island_state") or {}).get("moving"), "the work indicator to go after a move",
+                 timeout=3)
+
     def work(self):
         """What a reveal and return must not change: each test window's ID, workspace, column, row, size and floating
         place; the focused output and window; each output's active workspace and each workspace's active window."""
@@ -364,7 +370,8 @@ class Smoke:
     def case(self, label, reveal, shown, back, focus=None, home="e"):
         """One reveal and return from a settled baseline with focus on ``home``."""
         self.focus_window(home)
-        time.sleep(0.3)
+        time.sleep(0.8)  # the shell's refresh after focus moves takes up to 0.6 s
+        self.still()
         before = self.capture()
         reveal()
         asked = time.monotonic()  # the key, click or call that asked for it has been sent
@@ -386,6 +393,8 @@ class Smoke:
         back()
         wait_for(lambda: not self.surfaces() and not read("overview-state")["is_open"],
                  lambda: f"{label}: to return ({sorted(self.surfaces())})")
+        time.sleep(0.8)
+        self.still()
         after = self.capture()
         if focus:
             # The screen must be what focusing the same window directly shows, from the same start.
@@ -406,9 +415,12 @@ class Smoke:
 
     def reference(self, home, focus):
         self.focus_window(home)
-        time.sleep(0.3)
+        time.sleep(0.8)  # the shell's refresh after focus moves takes up to 0.6 s
+        self.still()
         self.shots()
         self.focus_window(focus)
+        time.sleep(0.8)  # the shell's refresh after focus moves takes up to 0.6 s
+        self.still()
         return self.shots()
 
     def desk_open(self):

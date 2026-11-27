@@ -205,11 +205,14 @@ def main():
 
         def shown_button():
             """The App button's state once it shows: on the opened Island (ADR-0014: nothing rests over apps, so a
-            focused app with a menu makes it available and Super+B, the IPC's island, opens the Island with it)."""
+            focused app with a menu makes it available, and the Island, opened from the top edge, shows it)."""
             s = state()
             if s.get("available") and not s.get("button"):
-                ipc("island")
-                time.sleep(0.3)
+                # By the pointer, as a user reaching for the button would: pushed against the top edge.
+                outputs = json.loads(subprocess.check_output(["niri", "msg", "-j", "outputs"], text=True, timeout=10))
+                o = next(v["logical"] for v in outputs.values() if v.get("logical"))
+                pointer.move((o["x"] + o["width"] // 2, o["y"]))
+                time.sleep(0.6)
                 s = state()
             return s.get("button") and s
 
