@@ -2661,7 +2661,7 @@ ShellRoot {
     PanelWindow {
         // The home indicator (the prototype's, after iOS): a short line. Tap it, or drag it up, for
         // Overview; again for Desk. Only the bottom 126 × 24 takes input, so it covers little of the app
-        // beneath (Flow's columns reach the screen's edge).
+        // beneath (Flow's columns reach the screen's edge), and a rest there hands that to the app (GiveWay).
         id: homeIndicator
         screen: root.workScreen
         // Desk and Overview carry their own (a surface opened later stacks above this one).
