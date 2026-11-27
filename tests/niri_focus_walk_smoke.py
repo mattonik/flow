@@ -565,6 +565,7 @@ def run(shell, bus, steps, problems):
             # when an earlier run stopped right after that same first call.
             subprocess.run(["wtype", "-k", "Hyper_L"], check=True, timeout=10)
             wait_for(shell_app, "the shell on the AT-SPI bus")
+            ipc("island")  # nothing rests over apps (ADR-0014): open the Island, as Super+B does
             island = wait_for(lambda: controls("island"), "the island")
             chips = progress_bars(island[0]["window"])
             if len(chips) != 1 or not chips[0].name.startswith("Activity from Photos: Copy photos") or chips[0].description != "40 percent":

@@ -2108,6 +2108,7 @@ ShellRoot {
         function app_menu(): string {
             return JSON.stringify({ enabled: menuPreferences.appMenuEnabled, reader: appMenuReader.running,
                                     window: root.appMenuWindow, probe: root.appMenuProbe, button: appMenuTrigger.visible,
+                                    available: root.appMenuAvailable,
                                     open: root.appMenuOpen, menu_window: root.appMenu ? root.appMenu.id : null,
                                     labels: root.appMenuOpen ? root.currentAppItems().map(i => i.label) : [],
                                     error: root.appMenuError, focus_changed: root.appMenuFocusChanged,

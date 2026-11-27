@@ -19,7 +19,8 @@ What is checked, through the shell's IPC calls:
 - A snapshot of a space is taken once it has settled in the work view, and none of Desk.
 
 With the pointer (tests/pointer.py, so ``flow-pointer`` on PATH and the installed shell stopped):
-- the home indicator lights under the pointer; a tap opens Overview, a tap on Overview's goes on to Desk,
+- with a touchscreen plugged in (uinput: the home line shows only with a touch device, ADR-0014), the home
+  indicator lights under the pointer; a tap opens Overview, a tap on Overview's goes on to Desk,
   and a tap on Desk's returns to work;
 - one wheel notch over Overview's row moves the selection one space, down to the next and up to the
   previous;
@@ -40,6 +41,7 @@ import uuid
 
 from isolated_state import IsolatedState
 from pointer import Pointer, center
+from uinput import Devices
 
 
 def niri(*args):
@@ -138,6 +140,8 @@ def main():
             return wait_for(lambda: next((w for w in read("windows") if w["app_id"] == app), None), app)
 
         pointer = Pointer()
+        # The home line shows only with a touch device (ADR-0014): a touchscreen, plugged in before the shell starts.
+        touch = Devices(touchscreen=True)
         try:
             first, second, third = (open_app(s) for s in "abc")
             subprocess.Popen(["quickshell", "-p", shell], env=env, stdin=subprocess.DEVNULL,
@@ -267,6 +271,7 @@ def main():
             pointer.park()
             result = {"result": "pass", "steps": steps}
         finally:
+            touch.close()
             for pid in mine():
                 try:
                     os.kill(pid, signal.SIGTERM)

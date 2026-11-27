@@ -58,8 +58,11 @@ def ipc(*args):
 
 
 def island():
-    text = ipc("island_state")
-    return json.loads(text) if text else {}
+    """The shell's island_state, or {} while it has not answered yet."""
+    try:
+        return json.loads(ipc("island_state"))
+    except ValueError:
+        return {}
 
 
 def wait_for(test, label, timeout=5, every=0.05):
@@ -263,7 +266,8 @@ class Smoke(m.Smoke):
         before = m.read("outputs")[OUTPUT]
         mode = before["modes"][before["current_mode"]]
         mode0 = f"{mode['width']}x{mode['height']}@{mode['refresh_rate'] / 1000:.3f}"
-        page, _ = self.edges_page()
+        # A tiled window: kiosk Firefox is fullscreen, which Niri sizes to the whole output whatever the zones.
+        page = self.need_firefox(mode="upload")
         try:
             ipc("notch_panel", "air-13")
             m.niri("output", OUTPUT, "custom-mode", "1280x832@60")

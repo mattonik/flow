@@ -32,10 +32,10 @@ from isolated_state import IsolatedState, shell_config
 from pointer import Pointer, center
 from uinput import Devices
 
-# Screenshots are compared between the shell's two 44 px bands: the Island's tab above (its clock moves) and the home and
-# work indicators' band below, whose text Qt draws with grayscale antialiasing one time and subpixel the next (seen in
-# the guest: the same "03 / 04", with coloured fringes after Desk closed). The shell's surfaces are checked by Niri's layer
-# list and the shell's own state instead.
+# Screenshots are compared between two 44 px bands, top and bottom: where the opened Island hangs (its clock moves), and
+# where the home line (shown here: the test plugs a touchscreen in, ADR-0014) and the work indicator show, whose text Qt
+# draws with grayscale antialiasing one time and subpixel the next (seen in the guest: the same "03 / 04", with coloured
+# fringes after Desk closed). The shell's surfaces are checked by Niri's layer list and the shell's own state instead.
 BAND = 44  # physical rows: the guest's outputs are at scale 1
 PARTS = ("desk", "overview", "niri", "layer", "workspace", "open-close", "mid-transition", "reduced-motion", "displays")
 
@@ -82,7 +82,8 @@ class Smoke:
         self.shell_path = f"{wrappers}:{os.environ['PATH']}"
         self.shell = None
         self.apps, self.processes, self.steps = {}, [], []
-        self.devices = Devices()
+        # A touchscreen too: the home line shows only with a touch device (ADR-0014), and this test taps it.
+        self.devices = Devices(touchscreen=True)
         self.pointer = None
 
     # --- the shell -------------------------------------------------------------------------------------------------
@@ -287,6 +288,11 @@ class Smoke:
         self.pointer.click(at)
         self.pointer.park()
 
+    def island_control(self, text):
+        """The opened Island's ``text`` button: nothing rests over apps (ADR-0014), so Super+B opens it first."""
+        self.keys("super", "b")
+        return self.control("island", text)
+
     def target(self, name):
         return self.json("pointer_target", name)
 
@@ -426,9 +432,9 @@ class Smoke:
         cases = [
             ("Desk: Super+H, then Super+H", lambda: k("super", "h"), lambda: k("super", "h"), None),
             ("Desk: Super+H, then Escape", lambda: k("super", "h"), lambda: k("esc"), None),
-            ("Desk: the Island's floe., then floe. again", lambda: ui.click(ui.control("island", "floe.")),
+            ("Desk: the Island's floe., then floe. again", lambda: ui.click(ui.island_control("floe.")),
              lambda: ui.click(ui.control("desk", "floe.")), None),
-            ("Desk: floe., then Desk's home indicator", lambda: ui.click(ui.control("island", "floe.")),
+            ("Desk: floe., then Desk's home indicator", lambda: ui.click(ui.island_control("floe.")),
              lambda: ui.tap_home("desk_home"), None),
             ("Desk: Super+H, then Return to work", lambda: k("super", "h"),
              lambda: ui.click(ui.control("desk", "Return to work")), None),

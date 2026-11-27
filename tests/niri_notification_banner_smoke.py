@@ -14,10 +14,8 @@ newer notification replaces the shown one; one that replaces an earlier notifica
 again; one the app closes leaves at once; quick settings and Desk hide a banner, which shows when they
 close; one that arrives with the panel open shows no banner after; a critical one stays past 9 s, a
 normal one does not push it off, and the panel takes it for good. With the pointer (tests/pointer.py, so
-``flow-pointer`` on PATH and the installed shell stopped): resting on a banner holds it, and its 5 s start
-again when the pointer leaves (it rests there only after 2.5 s of them, so a count that merely paused
-would end too soon); a click runs the default action (``ActionInvoked``), or opens the panel when
-there is none; × dismisses it (``NotificationClosed``, reason 2).
+``flow-pointer`` on PATH and the installed shell stopped): the banner takes no clicks (ADR-0014): resting on
+it does not hold it, and a click on it runs no action (no ``ActionInvoked``) and opens no panel.
 
 ``banner`` reports the shell's state (what the banner is set to show), not what the compositor draws;
 stacking and rendering are checked by screenshots.
@@ -33,7 +31,7 @@ import sys
 import tempfile
 import time
 
-from pointer import Pointer
+from pointer import Pointer, center
 
 NAME = "org.freedesktop.Notifications"
 URGENCY = {"low": 0, "normal": 1, "critical": 2}
@@ -216,46 +214,26 @@ def main():
             steps.append("a critical banner stayed past 9 s, a normal notification did not push it off, "
                          "and it left when the panel opened and did not come back")
 
-            # The pointer.
+            # The pointer. The banner sits over an app and takes no clicks (ADR-0014): resting on it holds nothing,
+            # and a click on it runs nothing and opens nothing (it is the app's, beneath).
             pointer.park()
-            notify("Held under the pointer")
-            wait_for(lambda: ipc("banner") == "Held under the pointer", "the banner to hold", timeout=3)
-            time.sleep(2.5)  # half its time: a count that only paused would end 2.5 s after the pointer leaves
-            pointer.hover(lambda: target("banner"), "the banner", timeout=2)
-            stays("Held under the pointer", 7)
-            pointer.park()
-            left = time.monotonic()
-            wait_for(lambda: ipc("banner") == "", "the banner to go once the pointer left", timeout=8)
-            gone = time.monotonic() - left
+            notify("Not held under the pointer")
+            wait_for(lambda: ipc("banner") == "Not held under the pointer", "the banner", timeout=3)
+            shown = time.monotonic()
+            pointer.move(center(wait_for(lambda: target("banner"), "the banner's place", timeout=2)))
+            wait_for(lambda: ipc("banner") == "", "the banner to go with the pointer on it", timeout=8)
+            gone = time.monotonic() - shown
             if not 4 <= gone <= 6.5:
-                raise RuntimeError(f"The banner went {gone:.1f} s after the pointer left, not about 5 s")
-            steps.append(f"the pointer resting on a banner held it for 7 s, and it went {gone:.1f} s after the pointer left")
+                raise RuntimeError(f"With the pointer on it, the banner went after {gone:.1f} s, not about 5 s")
+            steps.append(f"the pointer resting on a banner did not hold it: it went after {gone:.1f} s")
 
             opened = notify("Open me", actions=["default", "Open"])
             wait_for(lambda: ipc("banner") == "Open me", "the banner with a default action", timeout=3)
-            pointer.click(pointer.hover(lambda: target("banner"), "the banner with a default action"))
-            wait_for(lambda: [opened, "default"] in signals("ActionInvoked"), lambda: f"ActionInvoked ({signals('ActionInvoked')})", timeout=3)
-            wait_for(lambda: ipc("banner") == "", "the clicked banner to go", timeout=2)
-            if surfaces().get("notifications"):
-                raise RuntimeError("A click on a banner with a default action opened the panel as well")
-            steps.append("a click on a banner ran the notification's default action, and opened no panel")
-
-            notify("No action here")
-            wait_for(lambda: ipc("banner") == "No action here", "the banner without actions", timeout=3)
-            pointer.click(pointer.hover(lambda: target("banner"), "the banner without actions"))
-            wait_for(lambda: surfaces().get("notifications"), "a click on a banner without actions to open the panel", timeout=3)
-            ipc("notifications")
-            wait_for(lambda: not surfaces().get("notifications"), "the panel to close", timeout=3)
-            steps.append("a click on a banner without a default action opened the panel")
-
-            dismissed = notify("Dismiss me", actions=["default", "Open"])
-            wait_for(lambda: ipc("banner") == "Dismiss me", "the banner to dismiss", timeout=3)
-            pointer.click(pointer.hover(lambda: target("banner_dismiss"), "the banner's ×"))
-            wait_for(lambda: [dismissed, 2] in signals("NotificationClosed"),
-                     lambda: f"NotificationClosed, reason 2 ({signals('NotificationClosed')})", timeout=3)
-            if ipc("banner") != "" or surfaces().get("notifications") or [dismissed, "default"] in signals("ActionInvoked"):
-                raise RuntimeError("× left the banner, opened the panel or ran the default action")
-            steps.append("× on a banner dismissed the notification (closed, reason 2) without running its action")
+            pointer.click(center(wait_for(lambda: target("banner"), "the banner's place", timeout=2)))
+            time.sleep(1)
+            if [opened, "default"] in signals("ActionInvoked") or surfaces().get("notifications") or ipc("banner") != "Open me":
+                raise RuntimeError("A click on the banner ran its default action, opened the panel or took the banner away")
+            steps.append("a click on a banner ran no action, opened no panel and left the banner as it was")
             pointer.park()
             result = {"result": "pass", "steps": steps}
         finally:

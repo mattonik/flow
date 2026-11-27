@@ -519,6 +519,8 @@ def main():
             busy = [{"id": "busy", "owner": "Smoke", "title": "Working", "progress": -1}]
             publish(busy)
             wait_for(lambda: "Working" in ipc("activity_list")[0], "the busy activity in the island")
+            ipc("island")  # nothing rests over apps (ADR-0014): open the Island, as Super+B does
+            wait_for(lambda: json.loads(ipc("island_state")[0] or "{}").get("open"), "the Island open")
             time.sleep(1)
             share = shell_cpu(10)
             check("busy activity, island showing: shell CPU", share, "< 5", share < 5, "% of a core")
