@@ -52,36 +52,69 @@ class ReadingOrderTest(unittest.TestCase):
                     control("A1", 10, 190, 90, 44, first)]
         self.assertEqual([c["name"] for c in smoke.reading_order(controls)], ["header", "A", "A1", "A2", "B"])
 
-    def test_a_control_scrolled_up_behind_a_row_is_read_where_it_shows(self):
-        # Desk with Settings open, as the guest drew it (27 November 2026): its view starts at 56, below the
-        # Island's row (0 to 44), and Search is scrolled up to 9, so only 56 to 68 of it shows. Its whole
-        # rectangle is centred at 38, in the Island's row and left of floe.; where it shows is below that row.
-        view = [0, 56, 1280, 700]
-        listed = [{"name": "floe.", "rect": [408, 0, 56, 44], "view": None},
-                  {"name": "Apps", "rect": [464, 0, 57, 44], "view": None},
-                  {"name": "Search anything", "rect": [185, 9, 590, 59], "view": view},
-                  {"name": "Pin", "rect": [185, 187, 218, 44], "view": view},
-                  {"name": "Return to work", "rect": [971, 1096, 124, 44], "view": view}]
-        self.assertEqual(smoke.shown(listed[2]), [185, 56, 590, 12])
-        self.assertEqual(smoke.shown(listed[0]), [408, 0, 56, 44])
-        order = smoke.reading_order([dict(c, start=smoke.shown(c), card=None) for c in listed])
-        self.assertEqual([c["name"] for c in order], ["floe.", "Apps", "Search anything", "Pin", "Return to work"])
 
-    def test_controls_scrolled_wholly_out_keep_their_order_at_the_views_edge(self):
-        # The notifications panel as the guest drew it: cards below the view, each an "Open folder" left of its
-        # "×". Squashed onto the edge, they would read as one row: every "Open folder", then every "×".
-        view = [0, 56, 1280, 700]
-        listed = [{"name": "floe.", "rect": [408, 0, 56, 44], "view": None},
-                  {"name": "hidden above", "rect": [185, -383, 590, 59], "view": view},
-                  {"name": "shown", "rect": [185, 300, 100, 44], "view": view}]
-        for n, y in enumerate((900, 1000, 1100)):
-            listed += [{"name": f"open {n}", "rect": [20, y, 120, 44], "view": view},
-                       {"name": f"close {n}", "rect": [300, y, 44, 44], "view": view}]
-        self.assertTrue(56 - 1e-3 < smoke.shown(listed[1])[1] < 56)
-        self.assertTrue(756 < smoke.shown(listed[3])[1] < 756 + 1e-3)
-        order = smoke.reading_order([dict(c, start=smoke.shown(c), card=None) for c in listed])
-        self.assertEqual([c["name"] for c in order], ["floe.", "hidden above", "shown", "open 0", "close 0", "open 1",
-                                                      "close 1", "open 2", "close 2"])
+
+class ScrolledReadingOrderTest(unittest.TestCase):
+    """The walk's expected order (``cycle_of``, which ``walk`` uses) with scrolling views (``controls()``'s
+    ``views``). The shell's side, and that ``walk`` uses it, are checked only in the guest."""
+
+    @staticmethod
+    def names(listed):
+        return [listed[i]["name"] for i in smoke.cycle_of(listed)]
+
+    @staticmethod
+    def c(name, rect, views=(), card=None):
+        return {"name": name, "rect": rect, "views": [list(v) for v in views], "card": card}
+
+    def test_a_button_scrolled_up_behind_the_islands_row_is_read_after_it(self):
+        # Desk with Settings open, as the guest drew it (27 November 2026): Desk's view starts at 56, below the
+        # Island's row (0 to 44), and Search is scrolled up to 9, so only 56 to 68 of it shows. Its rectangle,
+        # read with the window's, is centred in the Island's row and left of floe.
+        view = [(0, 56, 1280, 700)]
+        listed = [self.c("floe.", [408, 0, 56, 44]), self.c("Apps", [464, 0, 57, 44]),
+                  self.c("Search anything", [185, 9, 590, 59], view), self.c("Pin", [185, 187, 218, 44], view),
+                  self.c("Return to work", [971, 1096, 124, 44], view)]
+        self.assertEqual(self.names(listed), ["floe.", "Apps", "Search anything", "Pin", "Return to work"])
+
+    def test_the_order_in_a_view_does_not_depend_on_its_scroll(self):
+        # A row of a 64 px tile left of a 44 px button, top-aligned, with the view starting at 56: read with what
+        # shows of each, it came out button first while the row straddled the view's top or bottom edge.
+        view = [(0, 56, 1280, 700)]
+        for y in (300, 100, 40, 10, -20, -200, 740, 780, 1400):
+            with self.subTest(y=y):
+                listed = [self.c("above", [600, 0, 44, 44]), self.c("tile", [100, y, 300, 64], view),
+                          self.c("button", [410, y, 100, 44], view), self.c("next row", [100, y + 80, 100, 44], view)]
+                self.assertEqual(self.names(listed), ["above", "tile", "button", "next row"])
+
+    def test_cards_below_a_list_keep_their_order(self):
+        # Notification cards scrolled below their list: each card's Open folder, then its ×.
+        view = [(20, 120, 330, 500)]
+        listed = [self.c("Clear all", [250, 60, 90, 44])]
+        for n, y in enumerate((700, 800, 900)):
+            listed += [self.c(f"open {n}", [40, y, 120, 44], view), self.c(f"close {n}", [300, y, 44, 44], view)]
+        self.assertEqual(self.names(listed), ["Clear all", "open 0", "close 0", "open 1", "close 1", "open 2", "close 2"])
+
+    def test_a_view_in_a_scrolled_view_is_read_in_its_place(self):
+        # The switcher scrolled down: its header's Close is above its view's top (20), the row of space cards
+        # (a horizontal view inside) starts at 0, and a card's controls are a block in it.
+        outer, inner = (0, 20, 800, 700), (0, 0, 800, 200)
+        card = [10, 0, 200, 180]
+        listed = [self.c("space", [20, 10, 180, 44], (outer, inner), card),
+                  self.c("pin", [20, 120, 80, 44], (outer, inner), card),
+                  self.c("Close", [700, -30, 80, 44], (outer,)),
+                  self.c("next space", [220, 10, 180, 44], (outer, inner), [210, 0, 200, 180]),
+                  self.c("Layers", [20, 220, 120, 44], (outer,))]
+        self.assertEqual(self.names(listed), ["Close", "space", "pin", "next space", "Layers"])
+
+    def test_a_row_of_cards_scrolled_sideways_is_read_between_its_arrows(self):
+        # The switcher's row of cards scrolled right, between its ‹ and › in the outer view: the first card is
+        # off to the left, past ‹. Read in the outer view's terms, it would come before ‹.
+        outer, inner = (0, 20, 800, 700), (40, 20, 720, 200)
+        listed = [self.c("‹", [0, 90, 36, 44], (outer,)),
+                  self.c("first", [-150, 30, 180, 44], (outer, inner), [-160, 20, 200, 180]),
+                  self.c("second", [60, 30, 180, 44], (outer, inner), [50, 20, 200, 180]),
+                  self.c("›", [764, 90, 36, 44], (outer,))]
+        self.assertEqual(self.names(listed), ["‹", "first", "second", "›"])
 
 
 class RingTest(unittest.TestCase):
