@@ -359,9 +359,15 @@ class Smoke(m.Smoke):
             self.shot("displays-panel")
             ipc("notifications")
             wait_for(lambda: not json.loads(ipc("surfaces") or "{}").get("notifications"), "the panel to close", timeout=3)
-            # Unplugged under the open Island: it closes.
-            self.pointer.move((v2["x"] + v2["width"] // 2, v2["y"]))
-            wait_for(lambda: island().get("open") and island().get("screen") == "Virtual-2", "the Island on Virtual-2", timeout=2)
+            # Unplugged under the open Island: it closes. Super+B's on Virtual-2, which the pointer never reaches, so no
+            # leaving the pointer could close it either.
+            self.pointer.park()
+            time.sleep(1)
+            m.niri("action", "focus-monitor", "Virtual-2")
+            time.sleep(1)  # the shell's refresh: Super+B opens the Island on the focused display
+            self.shortcut()
+            wait_for(lambda: island().get("open") and island().get("screen") == "Virtual-2", "Super+B's Island on Virtual-2",
+                     timeout=3)
         finally:
             display(False)
             self.relayout()
