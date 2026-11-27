@@ -1002,6 +1002,12 @@ class Smoke:
         until it lands."""
         pages = self.need_pages()
         page = self.need_firefox(kiosk=True, mode="edges")
+
+        def bands():
+            """The installed shell's bands as it holds them (faded or not, and their input), for a missed click."""
+            out = subprocess.run(["quickshell", "ipc", "-p", "/etc/flow/shell.qml", "call", "desk", "give_way"], text=True,
+                                 capture_output=True, timeout=10)
+            return out.stdout.strip() or out.stderr.strip()[-200:]
         w = windows()[page["id"]]
         width, height = w["layout"]["window_size"]
         o = self.apps.output
@@ -1016,7 +1022,7 @@ class Smoke:
                 event = pages.wait(["clicked"], timeout=4)
                 (took if event["name"] == name else missed).append(name)
             except Failed:
-                missed.append(name)
+                missed.append(f"{name} ({bands()})")
                 # The click reached the shell instead (Overview from the home indicator, a panel from the island,
                 # the next space from the work indicator): back to the page before the next one.
                 keys("Escape", "Escape")
