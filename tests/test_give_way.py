@@ -65,7 +65,7 @@ class GiveWayTest(unittest.TestCase):
 
     def test_it_fades_only_after_a_rest_over_an_app_away_from_the_edge(self):
         rest = block_after("id: rest; interval: giveWay.restMs", GIVE_WAY)
-        self.assertIn("if (pointer.hovered && !press.active && giveWay.overApp && !giveWay.fromEdge && !giveWay.yielded) giveWay.yielded = true", rest)
+        self.assertIn("if (pointer.hovered && !press.active && giveWay.overApp && !giveWay.fromEdge && !giveWay.yielded) { giveWay.yielded = true;", rest)
         self.assertEqual(re.search(r"readonly property int restMs: (\d+)", GIVE_WAY).group(1), "600")
         over = re.search(r"readonly property bool overApp: (.*\n.*)", GIVE_WAY).group(1)
         for part in ("active", "root.workViewOnly", "root.windows.length > 0", "!root.searchOpen", "!root.quickSettingsOpen",

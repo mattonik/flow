@@ -866,8 +866,10 @@ class Smoke:
         def covered(at, label):
             """What a click that came to nothing hit: the shell's surfaces sit over the window there."""
             layers = [l for l in read("layers") if l.get("namespace") == "quickshell"]
+            out = subprocess.run(["quickshell", "ipc", "-p", "/etc/flow/shell.qml", "call", "desk", "give_way"], text=True,
+                                 capture_output=True, timeout=10)
             return (f"{label} at {at} came to nothing; the installed shell has {len(layers)} overlay surfaces and its "
-                    "work indicator sits over the window's bottom right corner (the overlap Flow fixes apart)")
+                    f"work indicator sits over the window's bottom right corner; its bands: {out.stdout.strip()}")
         try:
             secret, other = uuid.uuid4().hex, uuid.uuid4().hex
             # Named so that the chosen file is the first in the grid, as Nautilus sorts it.
@@ -1011,7 +1013,9 @@ class Smoke:
         w = windows()[page["id"]]
         width, height = w["layout"]["window_size"]
         o = self.apps.output
-        took, missed = [], []
+        took, missed, waits = [], [], []
+        # The band over each middle and right point: the Island, the home indicator, the work indicator.
+        over = {"top-middle": "island", "bottom-middle": "home", "bottom-right": "indicator"}
         for name, (x, y) in (("top-left", (30, 12)), ("top-middle", (width // 2, 12)), ("top-right", (width - 30, 12)),
                              ("bottom-left", (30, height - 12)), ("bottom-middle", (width // 2, height - 12)),
                              ("bottom-right", (width - 30, height - 12))):
@@ -1021,6 +1025,9 @@ class Smoke:
             try:
                 event = pages.wait(["clicked"], timeout=4)
                 (took if event["name"] == name else missed).append(name)
+                if name in over:
+                    # How long after the rest began the band gave the pointer back to the page (-1: it never had it).
+                    waits.append(f"{over[name]} {json.loads(bands())[over[name]]['left_after_ms']:.0f} ms")
             except Failed:
                 missed.append(f"{name} ({bands()})")
                 # The click reached the shell instead (Overview from the home indicator, a panel from the island,
@@ -1031,7 +1038,8 @@ class Smoke:
         self.shot("edges")
         check(not missed, f"The page's own {', '.join(missed)} buttons took no click (the shell's surfaces sit over "
                           f"them); {', '.join(took) or 'none'} did")
-        self.passed("edges", f"every edge button of a full-window page took its click: {', '.join(took)}")
+        self.passed("edges", f"every edge button of a full-window page took its click after a {REST_MS} ms rest: "
+                             f"{', '.join(took)}; the bands let go of the pointer after {', '.join(waits)}")
 
     # Screenshot -------------------------------------------------------------------------------------------------
 

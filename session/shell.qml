@@ -1414,6 +1414,11 @@ ShellRoot {
         readonly property int edgeRows: 2
         readonly property bool hovered: pointer.hovered
         readonly property real hoverY: pointer.point.position.y
+        // For give_way: when the pointer last moved over the band, and how long after that rest Niri took the pointer
+        // away from a band that faded (its input region applied), in ms.
+        property real lastSeen: 0
+        property real leftAfter: -1
+        property bool restFaded: false
         default property alias content: band.data
         anchors.fill: parent
         onOverAppChanged: if (!overApp) { yielded = false; probing = false }
@@ -1426,6 +1431,7 @@ ShellRoot {
             if (atTheEdge) fromEdge = true
             if (yielded && atTheEdge) { yielded = false; probing = false }
             else if (probing) probing = false
+            lastSeen = Date.now()
             rest.restart()
         }
         property Region passRegion: Region {
@@ -1441,14 +1447,18 @@ ShellRoot {
         }
         HoverHandler {
             id: pointer
-            onHoveredChanged: { if (hovered) giveWay.seen(); else { giveWay.fromEdge = false; rest.stop() } }
+            onHoveredChanged: {
+                if (hovered) { giveWay.seen(); return }
+                if (giveWay.restFaded) { giveWay.leftAfter = Date.now() - giveWay.lastSeen; giveWay.restFaded = false }
+                giveWay.fromEdge = false; rest.stop()
+            }
             onPointChanged: if (hovered) giveWay.seen()
         }
         // Passive: it sees a press that a button takes, so a press held still never fades the band.
         PointHandler { id: press; acceptedButtons: Qt.AllButtons }
         Timer {
             id: rest; interval: giveWay.restMs
-            onTriggered: if (pointer.hovered && !press.active && giveWay.overApp && !giveWay.fromEdge && !giveWay.yielded) giveWay.yielded = true
+            onTriggered: if (pointer.hovered && !press.active && giveWay.overApp && !giveWay.fromEdge && !giveWay.yielded) { giveWay.yielded = true; giveWay.restFaded = true }
         }
         Timer { interval: giveWay.probeMs; running: giveWay.yielded && !giveWay.probing; onTriggered: giveWay.probing = true }
         Timer { interval: 250; running: giveWay.probing; onTriggered: { giveWay.probing = false; giveWay.yielded = false } }
@@ -2038,7 +2048,7 @@ ShellRoot {
         // Read-only, for tests: each work-view band's way out of an app's way (GiveWay, ADR-0013).
         function give_way(): string {
             const state = way => ({ over_app: way.overApp, yielded: way.yielded, probing: way.probing, from_edge: way.fromEdge,
-                                    hovered: way.hovered, y: way.hoverY, mask: way.mask === null ? "all" : way.edge ? "edge" : "none" })
+                                    hovered: way.hovered, y: way.hoverY, left_after_ms: way.leftAfter, mask: way.mask === null ? "all" : way.edge ? "edge" : "none" })
             return JSON.stringify({ island: state(islandWay), home: state(homeWay), indicator: state(indicatorWay), app_button: state(appMenuWay) })
         }
         // The app menu as the shell holds it, for scripted checks: the focused window, its probe, whether the
