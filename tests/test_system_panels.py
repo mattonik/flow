@@ -64,7 +64,8 @@ class SystemPanelTest(unittest.TestCase):
         # Below the opened Island's card (6 px under it), else below a notched screen's band or near the top edge.
         system_panel = own(component("SystemPanel"))
         self.assertIn("margins.top: root.panelTop", system_panel)
-        self.assertIn("readonly property real panelTop: !bandFor(workScreen) && islandOpen ? workIsland.implicitHeight + 6 : topInset(workScreen)", SHELL)
+        self.assertIn("readonly property real panelTop: !bandFor(panelScreen) && islandOpen ? islandCard.height + 12 : topInset(panelScreen)", SHELL)
+        self.assertIn("screen: root.panelScreen", system_panel)
         self.assertIn("return geometry ? geometry.height + 8 : 8", SHELL)
         self.assertIn("implicitHeight: Math.min(screen.height - 80, panelBody.implicitHeight", system_panel)
         scroller = block_at(SHELL.rindex("ScrollView {", 0, SHELL.index("id: panelScroller")))

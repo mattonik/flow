@@ -1,7 +1,7 @@
 # ADR-0014: Resting chrome by device
 
 **Status:** Accepted, 27 November 2026 (the user chose it from the prototypes in
-`docs/screenshots/2026-11-27-adaptive-island-prototype`). The notched-laptop band is simulated only: unverified on a
+`docs/screenshots/2026-11-27-adaptive-island-prototype` on branch `claude/adaptive-island-prototype`). The notched-laptop band is simulated only: unverified on a
 MacBook.
 
 ## Context
@@ -37,12 +37,18 @@ an app is there because the user summoned it, or only for a moment, and then tak
     over a tab strip when the pointer only passes the edge);
   - a press on the strip, at once;
   - **Super+B**, from Flow's own Niri configuration (`session/niri.kdl`). Opened this way it takes the keyboard, and
-    Escape closes it;
+    Escape closes it. Like a menu, its surface then covers the screen, so a click anywhere else closes it and goes
+    no further: the keyboard is never left with an Island the user has stopped looking at. On a notched screen
+    Super+B shows a toast instead, since the Island is already in the band;
   - a click on the clock pill, when that is on.
 
   It closes 500 ms after the pointer has left it, the strip, the pill and the App button, once whatever it opened (a
-  panel, search, the app menu) has closed. Desk or Overview opening closes it. It holds today's controls, the space's
-  position with its arrows, and the App button beside it when the focused app has a menu. Panels hang below it.
+  panel, search, the app menu) has closed. Desk or Overview opening closes it, and so does its screen being
+  unplugged. It holds today's controls, the space's position with its arrows, and the App button beside it when the
+  focused app has a menu. Panels and the app menu hang below it, on its screen.
+- **A screen with another display directly above it** shares its top edge: the pointer pushed up goes on to the
+  other display instead of resting on row 0. There the strip still opens the Island on a press, and Super+B and the
+  pill work as anywhere.
 - **The clock pill** is a setting, off by default: *Off*, *Main screen* or *All screens*. It is small (about
   50 × 22 px), 4 px below the top edge, and takes clicks only on itself. *Main screen* is Super+number's main display:
   Main, or the lowest-numbered connected display while Main is away. Screens come and go without a restart.
@@ -61,7 +67,8 @@ an app is there because the user summoned it, or only for a moment, and then tak
   only that tall, and on a laptop without a touchscreen it is for a pointer. Text and glyphs never go below 12 and
   16 px, so a narrow logical width keeps them readable.
 - **Which screens:** a small table of known panels (13- and 15-inch Air, 14- and 16-inch Pro), matched on the
-  full-panel size an output reports, in physical pixels. The band is the panel's height less Asahi's default 16:10
+  size of the output's current mode in physical pixels, as Niri reports it (the controller passes it on with each
+  display). Qt's screen ratio cannot be used: on Wayland it is a whole number, 2 at a scale of 1.6. The band is the panel's height less Asahi's default 16:10
   height, which m1n1 crops to (64 rows on the Airs, 74 on the Pros). No Asahi source gives the cutout's width or
   corner, so those are approximate, from third-party measurements; the 15-inch's and 16-inch's are taken as the 13-
   and 14-inch's. `notchPanel` in `flow-settings.ini` overrides the match for testing: `none` makes every screen
@@ -74,11 +81,12 @@ an app is there because the user summoned it, or only for a moment, and then tak
 
 **On every device:**
 - **The work indicator** shows only while moving between spaces (for 1.2 s after the active space on a display
-  changes), and takes no clicks. It no longer shows in Niri's overview either: there it would appear a moment after
-  the overview, a frame of its own. The opened Island has the space's position and its arrows.
-- **The home line** shows only when a direct touch device is plugged in (a touchscreen or a pen display:
-  `INPUT_PROP_DIRECT` with multitouch positions, read from `/sys/class/input` at start, every 30 s and when the screens
-  change). Without one, Super+O, Super+H and the Island reach Overview and Desk.
+  changes, which the shell learns 0.15 to 0.6 s after Niri moves), and takes no clicks. So it shows no buttons, only
+  the space's position and a Group's focused app. It never shows in Niri's overview: there it would appear a moment
+  after the overview, a frame of its own. The opened Island has the position and its arrows.
+- **The home line** shows only when a touchscreen is plugged in (`INPUT_PROP_DIRECT` with multitouch positions, read
+  from `/sys/class/input` at start, every 30 s and when the screens change, so one plugged in later can take up to
+  30 s to show it). Without one, Super+O, Super+H and the Island reach Overview and Desk.
 - **A tablet** (a touchscreen and no keyboard) is meant to get a thin status margin and the home line. It is not
   built yet: today a tablet is treated as a plain screen with a touch device.
 
@@ -107,5 +115,5 @@ Three choices are waiting on the user and are not built:
 - Whether a critical notification's banner stays on screen, taking no clicks, until the notifications are opened (as
   built), or is brief like the rest.
 - Whether a Group's members and a Layer's actions, which the work indicator showed at rest, move into the opened
-  Island. Until then, a pointer reaches them only in Niri's overview; Super+Up and Super+Down still move between a
-  Group's members.
+  Island. Until then a pointer reaches them only in the switcher (Super+Tab); Super+Up and Super+Down still move
+  between a Group's members.

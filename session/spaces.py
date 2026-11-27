@@ -73,6 +73,13 @@ def full_state():
     return focused(workspaces), windows, outputs, workspaces
 
 
+def physical_mode(output):
+    """An output's current mode as [width, height] in physical pixels, or None."""
+    modes, current = (output or {}).get("modes") or [], (output or {}).get("current_mode")
+    mode = modes[current] if isinstance(current, int) and 0 <= current < len(modes) else None
+    return [mode["width"], mode["height"]] if isinstance(mode, dict) and "width" in mode and "height" in mode else None
+
+
 def session_id():
     socket_path = os.environ.get("NIRI_SOCKET", "")
     stat = os.stat(socket_path)
@@ -2006,11 +2013,13 @@ def _run_locked(state, op, arg, reshape=True):
                # The shell runs automatic Group layout when a Group does not suit this.
                "orientation": orientation_of((logical["width"], logical["height"]))
                               if logical.get("width") and logical.get("height") else "",
-               # output: the connector, for the shell's surfaces that follow a display (the clock pill on Main).
+               # output: the connector, for the shell's surfaces that follow a display (the clock pill on Main); mode:
+               # its current mode in physical pixels, which tells a notched MacBook's panel (ADR-0014) at any scale.
                "displays": [{"key": key, "label": displays[key].get("label", ""),
                              "name": pin_store.display_name(displays[key]),
                              "number": displays[key].get("number"), "current": key == display,
-                             "output": next((name for name, record in connected.items() if record["key"] == key), "")}
+                             "output": (connector := next((name for name, record in connected.items() if record["key"] == key), "")),
+                             "mode": physical_mode(outputs.get(connector))}
                             for key in screen_order],
                "notice": notice,
                "all_windows": [{"id": w["id"], "app_id": w.get("app_id") or "", "pid": w.get("pid"),

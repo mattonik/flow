@@ -491,7 +491,8 @@ ShellRoot {
     // optional clock pill opens the Island over the app, and it goes again when the pointer leaves. A notched MacBook
     // in Asahi's full-panel mode (appledrm.show_notch=1) keeps the band beside the camera for the shell, as an
     // exclusive zone, so apps get the rectangle Asahi gives them by default and the Island lives in the band.
-    // Known notched panels, matched on the full-panel size an output reports, in physical pixels. The band is the panel's
+    // Known notched panels, matched on the full-panel size an output's current mode has, in physical pixels (from Niri,
+    // through the controller's displays: Qt's screen ratio is a whole number on Wayland, 2 at a scale of 1.6). The band is the panel's
     // height less Asahi's default, the largest 16:10 area below the notch (m1n1 crops to it). No Asahi source has the
     // cutout's width or corner: those are approximate, from third-party measurements (the 15-inch Air's and 16-inch
     // Pro's taken as the 13-inch's and 14-inch's). None of this has been checked on a MacBook.
@@ -506,13 +507,13 @@ ShellRoot {
     // with the cutout drawn, since there is no hole to see).
     function bandFor(screen) {
         if (!screen || devicePreferences.notchPanel === "none") return null
-        const ratio = screen.devicePixelRatio || 1
-        const width = Math.round(screen.width * ratio), height = Math.round(screen.height * ratio)
         const forced = devicePreferences.notchPanel
+        const mode = (displays.find(d => d.output === screen.name) || {}).mode
         const panel = forced ? notchPanels.find(p => p.id === forced)
-            : notchPanels.find(p => Math.abs(p.size[0] - width) <= 1 && Math.abs(p.size[1] - height) <= 1)
+            : mode ? notchPanels.find(p => p.size[0] === mode[0] && p.size[1] === mode[1]) : null
         if (!panel) return null
-        const k = width / panel.size[0] / ratio
+        // The panel's pixels in this screen's logical pixels, whatever its scale.
+        const k = screen.width / panel.size[0]
         return { panel: panel.id, name: panel.name, simulated: !!forced, height: Math.round(panel.band * k),
                  cutout: Math.round(panel.cutout * k), radius: Math.round(panel.radius * k) }
     }
@@ -557,10 +558,14 @@ ShellRoot {
     }
     function closeIsland() { islandOpen = false; islandOpenedBy = "" }
     function toggleIsland() {
+        const name = displayOutput || (Quickshell.screens.length ? Quickshell.screens[0].name : "")
         if (islandOpen) closeIsland()
-        else openIsland(displayOutput || (Quickshell.screens.length ? Quickshell.screens[0].name : ""), "shortcut")
+        else if (bandFor(Quickshell.screens.find(s => s.name === name))) showToast("The Island is in the band beside the camera")
+        else openIsland(name, "shortcut")
     }
     onWorkCoveredChanged: if (workCovered) closeIsland()
+    // Its screen unplugged: nothing would close it.
+    onIslandScreenChanged: if (!islandScreen) closeIsland()
     // A direct touch device (a touchscreen or a pen display): INPUT_PROP_DIRECT with multitouch positions. The home line
     // shows only with one; looked for at start, every 30 s and when the screens change.
     property bool touchPresent: false
@@ -1644,6 +1649,8 @@ ShellRoot {
             else if (bottom > flick.contentY + flick.height) flick.contentY = Math.min(bottom - flick.height, Math.max(0, flick.contentHeight - flick.height))
         }
         visible: shown
+        // With the Island open, on its screen (it may be another display's); else on the focused display's.
+        screen: root.panelScreen
         anchors.top: true
         implicitWidth: Math.max(0, Math.min(370, screen.width - 24))
         // 13 above the header, 44 for it, 6 below it, and 19 under the rows (23 with their padding).
@@ -2764,92 +2771,40 @@ ShellRoot {
         HomeIndicator { id: workHome; anchors.fill: parent }
     }
     PanelWindow {
-        // Work indicator: the focused app of an active Group, and the space's place in this display's Flow. It shows
-        // only for a moment while moving between spaces, and takes no clicks (ADR-0014); the opened Island has the
-        // position and its arrows.
+        // Work indicator: the space's place in this display's Flow (and a Group's focused app), for a moment while
+        // moving between spaces (ADR-0014). It takes no clicks, so it shows no buttons: the opened Island has the
+        // position and its arrows, the switcher (Super+Tab) a Group's members and a Layer's actions.
         id: workIndicatorWindow
         screen: root.workScreen
-        visible: !root.workCovered && !root.switcherOpen && !root.appMenuOpen && !root.searchOpen && (!!root.activeSpace || !!root.activeLayer)
-            && root.spacesMoving
+        visible: !root.workCovered && !root.switcherOpen && !root.appMenuOpen && !root.searchOpen && !root.overviewOpen
+            && !!root.activeSpace && !root.activeLayer && root.spacesMoving
         mask: Region {}
         anchors { bottom: true; right: true }
-        // Where the bottom controls and this indicator cannot share a row, it rises above them: below 560 px,
-        // or below 900 px for an active Layer's wider controls.
-        readonly property bool narrow: !!screen && screen.width < (root.activeLayer ? 900 : 560)
-        margins { bottom: narrow ? 68 : 8; right: 12 }
-        implicitWidth: workIndicator.implicitWidth + 8; implicitHeight: 52
+        margins { bottom: 8; right: 12 }
+        implicitWidth: workIndicator.implicitWidth + 32; implicitHeight: 36
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
         CapsuleBar {
             anchors.fill: parent
             Row {
                 id: workIndicator
-                anchors.centerIn: parent; spacing: 0
-                Row {
-                    // Layer actions belong to the work view; in Overview the indicator is the way along the row.
-                    visible: !!root.activeLayer && !root.overviewOpen
-                    spacing: 4
-                    SectionLabel { visible: !workIndicatorWindow.narrow; anchors.verticalCenter: parent.verticalCenter; leftPadding: 14; rightPadding: 4; text: "LAYER" }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter; rightPadding: 6; leftPadding: workIndicatorWindow.narrow ? 14 : 0
-                        width: Math.min(implicitWidth, workIndicatorWindow.narrow ? 120 : 220); elide: Text.ElideRight
-                        text: root.activeLayer ? (root.activeLayer.app_name || root.activeLayer.label).slice(0, 24) : ""
-                        textFormat: Text.PlainText; color: floeTheme.textPrimary; font.weight: Font.DemiBold; font.pixelSize: 13; font.family: floeTheme.interfaceFont
-                    }
-                    IslandButton {
-                        implicitHeight: 44; text: "Make space"
-                        Accessible.name: "Make space: this Layer becomes a space of its own"
-                        onClicked: root.spaceAction("layer-to-space", String(root.activeLayer.id))
-                    }
-                    IslandButton {
-                        implicitHeight: 44; variant: "danger"; text: "Close"
-                        Accessible.name: "Close this Layer; the app is asked to close and the space under it stays as it is"
-                        onClicked: root.spaceAction("close-layer", String(root.activeLayer.id))
-                    }
-                }
-                Row {
-                    // Screens under 800 px keep only the position, so the indicator stays short.
-                    visible: !root.activeLayer && !!(root.activeSpace && root.activeSpace.group_id) && workIndicatorWindow.screen && workIndicatorWindow.screen.width >= 800
-                    spacing: 2
-                    SectionLabel { anchors.verticalCenter: parent.verticalCenter; leftPadding: 14; rightPadding: 6; text: "GROUP" }
-                    Repeater {
-                        model: workIndicatorWindow.visible && root.activeSpace && root.activeSpace.group_id ? root.activeSpace.members : []
-                        IslandButton {
-                            id: groupFocusButton
-                            required property var modelData
-                            width: Math.min(148, Math.max(64, implicitWidth)); implicitHeight: 44
-                            selected: modelData.active
-                            text: (modelData.app_name || modelData.label).slice(0, 16)
-                            Accessible.name: (modelData.active ? "Focused: " : "Focus ") + (modelData.app_name || modelData.label) + " in Group " + root.activeSpace.label
-                            onClicked: if (!modelData.active) root.spaceAction("focus-window", String(modelData.id))
-                        }
-                    }
-                    Rectangle { width: 1; height: 20; anchors.verticalCenter: parent.verticalCenter; color: Qt.alpha(floeTheme.border, 0.5) }
-                }
-                IslandButton {
-                    // From a Layer, navigation starts at the space beneath it (spaces.py), so in Overview the
-                    // arrows stay even then.
-                    visible: !root.activeLayer || root.overviewOpen
-                    width: 44; implicitHeight: 44; glyph: "left"; text: "‹"
-                    enabled: root.activeLayer ? root.displaySpaces.length > 0 : root.activeSpaceIndex > 0
-                    Accessible.name: "Previous space"
-                    onClicked: root.spaceAction("navigate", "left")
+                anchors.centerIn: parent; spacing: 10
+                Text {
+                    // A Group's focused app, on screens of 800 px and wider.
+                    readonly property var member: root.activeSpace && root.activeSpace.group_id
+                        ? root.activeSpace.members.find(m => m.active) || null : null
+                    visible: !!member && !!workIndicatorWindow.screen && workIndicatorWindow.screen.width >= 800
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: member ? (member.app_name || member.label).slice(0, 24) : ""
+                    textFormat: Text.PlainText; color: floeTheme.textSecondary; font.pixelSize: 13; font.family: floeTheme.interfaceFont
                 }
                 Text {
-                    visible: !root.activeLayer
                     anchors.verticalCenter: parent.verticalCenter
                     text: (root.activeSpaceIndex < 9 ? "0" : "") + (root.activeSpaceIndex + 1) + "  /  " + (root.displaySpaces.length < 10 ? "0" : "") + root.displaySpaces.length
                     textFormat: Text.PlainText; color: floeTheme.textPrimary; font.pixelSize: 13; font.letterSpacing: 0.5
                     font.family: floeTheme.interfaceFont; font.features: { "tnum": 1 }
                     Accessible.name: "Space " + (root.activeSpaceIndex + 1) + " of " + root.displaySpaces.length
-                }
-                IslandButton {
-                    visible: !root.activeLayer || root.overviewOpen
-                    width: 44; implicitHeight: 44; glyph: "right"; text: "›"
-                    enabled: root.activeLayer ? root.displaySpaces.length > 0
-                        : root.activeSpaceIndex >= 0 && root.activeSpaceIndex < root.displaySpaces.length - 1
-                    Accessible.name: "Next space"
-                    onClicked: root.spaceAction("navigate", "right")
                 }
             }
         }
@@ -3790,9 +3745,9 @@ ShellRoot {
         // On the opened Island's row, 8px right of the card: the button shows only for apps with a menu bar, and
         // Qt's and GTK's menu bars start at the left, so the left of the row would cover the app's own File and
         // Edit menus. Below the card on a narrow screen, where panels hang too.
-        readonly property bool narrow: !band && (!screen || screen.width < workIsland.implicitWidth + 472)
-        margins.left: band || narrow ? 8 : Math.round((screen.width + workIsland.implicitWidth) / 2) + 8
-        margins.top: band ? 0 : narrow ? workIsland.implicitHeight + 6 : 6
+        readonly property bool narrow: !band && (!screen || screen.width < islandCard.width + 472)
+        margins.left: band || narrow ? 8 : Math.round((screen.width + islandCard.width) / 2) + 8
+        margins.top: band ? 0 : narrow ? islandCard.height + 12 : 6
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         FlowButton {
@@ -3805,6 +3760,7 @@ ShellRoot {
     PanelWindow {
         id: appMenuSurface
         visible: menuPreferences.appMenuEnabled && root.appMenuOpen && !root.deskOpen && !root.overviewOpen
+        screen: appMenuTrigger.screen
         anchors { top: true; bottom: true; left: true; right: true }
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
@@ -4098,15 +4054,18 @@ ShellRoot {
     // The opened Island on a plain screen: a card floating 6 px below the top edge, round on every corner, so it never
     // fakes a camera notch (§7.4). Its surface starts at the edge, so the way down from the strip stays on it. It
     // closes 500 ms after the pointer has left it (and the strip, the pill and the App button), once whatever it
-    // opened has closed; opened by Super+B, it takes the keyboard (Escape closes it) and waits for the pointer.
+    // opened has closed. Opened by Super+B it takes the keyboard (Escape closes it), and like a menu its surface
+    // covers the screen, so a click anywhere else closes it (and goes no further): the keyboard is never left with an
+    // Island the user has stopped looking at.
     property double islandShownAt: 0
     PanelWindow {
         id: workIsland
+        readonly property bool modal: root.islandOpenedBy === "shortcut"
         screen: root.islandScreen || root.workScreen
         visible: root.islandOpen && !!root.islandScreen && !root.workCovered
-        anchors.top: true
-        implicitWidth: Math.min(islandCard.implicitWidth, (screen ? screen.width : 1280) - 16)
-        implicitHeight: islandCard.implicitHeight + 6
+        anchors { top: true; left: modal; right: modal; bottom: modal }
+        implicitWidth: islandCard.width
+        implicitHeight: islandCard.height + 6
         color: "transparent"
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
@@ -4114,17 +4073,27 @@ ShellRoot {
         WlrLayershell.keyboardFocus: visible && root.islandOpenedBy === "shortcut" ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
         onVisibleChanged: {
             root.islandShownAt = 0
-            islandAway.entered = root.islandOpenedBy !== "shortcut"
-            if (visible && root.islandOpenedBy === "shortcut") islandFocus.forceActiveFocus()
+            islandAway.entered = !modal
+            if (visible && modal) islandFocus.forceActiveFocus()
         }
         Connections {
             target: islandCard.Window.window
             function onFrameSwapped() { if (workIsland.visible && !root.islandShownAt) root.islandShownAt = Date.now() }
+            // The compositor gives the keyboard a moment after the surface maps: take focus then too.
+            function onActiveChanged() { if (islandCard.Window.window.active && workIsland.modal) islandFocus.forceActiveFocus() }
         }
-        HoverHandler { id: islandHover }
+        MouseArea {
+            // Opened by Super+B: a press beside the card closes the Island, and what it opened.
+            enabled: workIsland.modal
+            anchors.fill: parent
+            onPressed: { root.notificationsOpen = false; root.quickSettingsOpen = false; root.closeIsland() }
+        }
         Rectangle {
             id: islandCard
-            y: 6; width: parent.width; height: implicitHeight
+            x: Math.round((parent.width - width) / 2)
+            y: 6
+            width: Math.min(implicitWidth, (workIsland.screen ? workIsland.screen.width : 1280) - 16); height: implicitHeight
+            HoverHandler { id: islandHover }
             implicitWidth: islandColumn.implicitWidth + 12; implicitHeight: islandColumn.implicitHeight
             radius: 22; color: floeTheme.canvas
             border.width: 1; border.color: Qt.alpha(floeTheme.border, 0.55)
@@ -4338,7 +4307,9 @@ ShellRoot {
             }
         }
     }
-    readonly property real panelTop: !bandFor(workScreen) && islandOpen ? workIsland.implicitHeight + 6 : topInset(workScreen)
+    // Panels and the app menu go where the opened Island is, else where Niri's focus is.
+    readonly property var panelScreen: islandOpen && islandScreen ? islandScreen : workScreen
+    readonly property real panelTop: !bandFor(panelScreen) && islandOpen ? islandCard.height + 12 : topInset(panelScreen)
     // Below the band on a notched screen, else near the top: where panels and the banner hang.
     function topInset(screen) {
         const geometry = bandFor(screen)

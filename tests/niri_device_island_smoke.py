@@ -12,18 +12,22 @@ Checks (``--only NAME``, repeatable):
   line or banner, and the only shell layer surfaces over the work view are the 1 px edge strips.
 - ``row``: on a full-window page with buttons from its top edge down, a click on row 1 (and rows 2 and 3) at the
   left, middle and right reaches the page; a press on row 0, the strip, opens the Island instead.
-- ``edge``: the pointer pushed against the top edge opens the Island after its 150 ms rest, and it closes once the
-  pointer has left; the time from the push to its first frame.
-- ``shortcut``: Super+B opens it, the time from the key press to its first frame, and Escape closes it.
-- ``pill``: the clock pill is off in a configuration that has never set it; "main" with Virtual-2 on shows it on the main display
-  only, "all" on both; Virtual-2 unplugged drops it, with the main display's kept. Virtual-2 goes on and off through
-  sysfs, and is off again at the end.
+- ``edge``: the pointer resting against the top edge for less than the 150 ms rest opens nothing; resting longer opens
+  the Island, no sooner than 150 ms, and it closes once the pointer has left; the time from the push to its first frame.
+- ``shortcut``: Super+B opens it, the time from the key press to its first frame, and Escape closes it; opened again,
+  a click elsewhere closes it.
+- ``pill``: the clock pill is off in a configuration that has never set it. "main" with Virtual-2 on shows it on the
+  main display only, as the controller numbers it (``flow-spaces refresh``: display 0); with Virtual-2 unplugged, on
+  Virtual-1 alone; with Virtual-1 unplugged instead, on Virtual-2, the lowest-numbered display left. "all" shows it on
+  both, and Virtual-2 unplugged takes its pill away. Each output goes on and off through sysfs; Virtual-1 is on and
+  Virtual-2 off again at the end.
 - ``moving``: the work indicator shows only while moving between spaces, then goes.
 - ``home``: no home line without a touch device; a touchscreen plugged in (uinput) shows it, unplugged hides it.
 - ``banner``: a notification's banner takes no clicks: a click on it reaches the page beneath.
 - ``band``: a simulated 13-inch MacBook Air in Asahi's full-panel mode (the notchPanel override and a custom mode one
   32 px band taller than 1280x800): the band is drawn, windows start below it at 1280x800, the screen has no edge
-  strip; and whether a fullscreen window covers the band.
+  strip; and whether a fullscreen window covers the band. Then the panel matched, not forced: the Air's own
+  2560x1664 as a custom mode, at scale 2 and at 1.6 (a 32 and a 40 px band, apps at 1280x800 and 1600x1000).
 
 Prints one JSON line per check and a summary; exits 1 when any check fails. ``--shots DIR`` saves screenshots.
 """
@@ -48,7 +52,7 @@ from uinput import Devices  # noqa: E402
 CHECKS = ["rest", "row", "edge", "shortcut", "pill", "moving", "home", "banner", "band"]
 SHELL = os.environ.get("FLOW_SHELL", "/etc/flow/shell.qml")
 OUTPUT = "Virtual-1"
-CONNECTOR = "/sys/class/drm/card1-Virtual-2"
+CONNECTORS = {"Virtual-1": "/sys/class/drm/card1-Virtual-1", "Virtual-2": "/sys/class/drm/card1-Virtual-2"}
 Failed = m.Failed
 
 
@@ -85,20 +89,33 @@ def layers():
     return m.read("layers")
 
 
-def display(on):
-    """Virtual-2 on or off through its connector's sysfs status, as the guest's preconditions do."""
-    subprocess.run(["sudo", "-n", "tee", f"{CONNECTOR}/status"], input=("on" if on else "off") + "\n", text=True,
+def display(on, name="Virtual-2"):
+    """An output on or off through its connector's sysfs status, as the guest's preconditions do."""
+    subprocess.run(["sudo", "-n", "tee", f"{CONNECTORS[name]}/status"], input=("on" if on else "off") + "\n", text=True,
                    stdout=subprocess.DEVNULL, check=True, timeout=10)
     subprocess.run(["sudo", "-n", "udevadm", "trigger", "--action=change", "/sys/class/drm/card1"], check=True, timeout=10)
-    wait_for(lambda: ("Virtual-2" in m.read("outputs")) == on, f"Virtual-2 to turn {'on' if on else 'off'}", timeout=15)
-    time.sleep(1.5)
+    wait_for(lambda: (name in m.read("outputs")) == on, f"{name} to turn {'on' if on else 'off'}", timeout=15)
+    time.sleep(2)
 
 
 class Smoke(m.Smoke):
-    def __init__(self, tmp, shots, keys):
+    def __init__(self, tmp, shots, keys, state):
         super().__init__(tmp, shots)
-        self.keys = keys
+        self.keys, self.state = keys, state
         self.output = m.read("outputs")[OUTPUT]["logical"]
+
+    def controller_main(self):
+        """The main display's connector as the controller has it, not the shell: display 0, or with it away the
+        lowest-numbered connected one (``flow-spaces refresh`` on the shell's own state)."""
+        out = subprocess.run(["flow-spaces", "refresh"], env={**os.environ, "XDG_STATE_HOME": self.state}, text=True,
+                             capture_output=True, timeout=30, check=True).stdout
+        shown = [d for d in json.loads(out)["displays"] if d.get("output")]
+        return min(shown, key=lambda d: d["number"] if d["number"] is not None else 99)["output"]
+
+    def relayout(self):
+        """After an output came or went: the pointer's layout and the page's output."""
+        self.pointer = m.Pointer(allow_installed_shell=True)
+        self.output = m.read("outputs").get(OUTPUT, {}).get("logical") or self.output
 
     def edges_page(self):
         page = self.need_firefox(kiosk=True, mode="edges")
@@ -155,6 +172,14 @@ class Smoke(m.Smoke):
     def check_edge(self):
         self.edges_page()
         o = self.output
+        # A rest shorter than the 150 ms opens nothing.
+        for _ in range(3):
+            self.close_island()
+            time.sleep(0.4)
+            self.pointer.run(("move", o["x"] + o["width"] // 2, o["y"]), ("wait", 60),
+                             ("move", o["x"] + o["width"] // 2, o["y"] + 300))
+            time.sleep(0.5)
+            check(not island().get("open"), f"A 60 ms rest at the edge opened the Island: {island()}")
         times = []
         for _ in range(5):
             self.close_island()
@@ -164,13 +189,23 @@ class Smoke(m.Smoke):
             s = wait_for(lambda: (lambda s: s if s.get("open") and s.get("shown_at") else None)(island()),
                          "the Island to open from the edge", timeout=2)
             check(s["by"] == "edge", f"The Island opened by {s['by']!r}, not the edge")
+            check(s["asked_at"] - pushed >= 140, f"The Island was asked for {s['asked_at'] - pushed:.0f} ms after the push, "
+                                                  "sooner than its 150 ms rest")
             times.append(round(s["shown_at"] - pushed))
         self.shot("edge")
         self.pointer.park()
         wait_for(lambda: not island().get("open"), "the Island to close once the pointer left", timeout=2)
         times.sort()
-        self.passed("edge", f"pushed against the top edge, the Island opened after its rest, and closed once the pointer "
-                            f"left; push to first frame {times} ms (median {times[len(times) // 2]})")
+        self.passed("edge", f"a 60 ms rest at the top edge opened nothing; pushed against it, the Island opened after its "
+                            f"rest and closed once the pointer left; push to first frame {times} ms "
+                            f"(median {times[len(times) // 2]})")
+
+    def shortcut(self):
+        """Super+B through Niri's binding, which calls the installed shell; a development copy gets the same IPC call."""
+        if SHELL == "/etc/flow/shell.qml":
+            self.keys.keys("super", "b")
+        else:
+            ipc("island")
 
     def check_shortcut(self):
         self.edges_page()
@@ -179,39 +214,66 @@ class Smoke(m.Smoke):
         for _ in range(5):
             time.sleep(0.6)
             pressed = time.time() * 1000
-            self.keys.keys("super", "b")
+            self.shortcut()
             s = wait_for(lambda: (lambda s: s if s.get("open") and s.get("shown_at") else None)(island()),
                          "Super+B to open the Island", timeout=3)
             check(s["by"] == "shortcut", f"The Island opened by {s['by']!r}, not Super+B")
             times.append(round(s["shown_at"] - pressed))
+            time.sleep(0.3)  # a user's Escape, not one in the same frame as the Island
             self.keys.keys("esc")
             wait_for(lambda: not island().get("open"), "Escape to close the Island", timeout=2)
         times.sort()
+        # Opened again, a click on the page beside it closes it (as a menu: the click goes no further).
+        self.shortcut()
+        wait_for(lambda: island().get("open") and island().get("shown_at"), "Super+B to open the Island again", timeout=3)
+        time.sleep(0.3)
+        o = self.output
+        self.pointer.click((o["x"] + 30, o["y"] + o["height"] // 2))
+        wait_for(lambda: not island().get("open"), "a click beside the Island to close it", timeout=2)
         self.passed("shortcut", f"Super+B (a uinput key press, through Niri's binding) opened the Island and Escape closed "
-                                f"it; key press to first frame {times} ms (median {times[len(times) // 2]})")
+                                f"it, and a click beside it closed it too; key press to first frame {times} ms "
+                                f"(median {times[len(times) // 2]})")
 
     def check_pill(self):
         s = island()
-        check(s["clock_pill"] == "off" and s["pills"] == [], f"A fresh configuration shows a clock pill: {s}")
+        check(s["clock_pill"] == "off" and s["pills"] == [], f"A configuration that never set it shows a clock pill: {s}")
+
+        def pills(want, label):
+            return wait_for(lambda: (lambda s: s if sorted(s["pills"]) == sorted(want) else None)(island()),
+                            lambda: f"{label} (pills {island()['pills']}, want {want})", timeout=6)["pills"]
         try:
             display(True)
+            self.relayout()
             ipc("clock_pill", "main")
-            main = wait_for(lambda: island()["main"], "the main display")
-            s = wait_for(lambda: (lambda s: s if s["pills"] else None)(island()), "the pill on the main display")
-            check(s["pills"] == [main], f"With Main only, pills on {s['pills']}, not only {main}")
+            main = self.controller_main()
+            check(main == OUTPUT, f"The controller's main display is {main}, not {OUTPUT}")
+            pills([main], "the pill on the main display only")
             self.shot("pill-main")
+            display(False)
+            pills([OUTPUT], "Main only, with Virtual-2 unplugged")
+            display(True)
+            display(False, OUTPUT)  # Main itself goes: the lowest-numbered display left is Main now
+            self.relayout()
+            main = self.controller_main()
+            check(main == "Virtual-2", f"With Virtual-1 away the controller's main display is {main}")
+            pills(["Virtual-2"], "the pill on Virtual-2 once Virtual-1 went")
+            display(True, OUTPUT)
+            self.relayout()
+            pills([OUTPUT], "the pill back on Virtual-1")
             ipc("clock_pill", "all")
-            s = wait_for(lambda: (lambda s: s if len(s["pills"]) == 2 else None)(island()), "a pill on both displays")
-            check(sorted(s["pills"]) == sorted([OUTPUT, "Virtual-2"]), f"With All screens, pills on {s['pills']}")
+            pills([OUTPUT, "Virtual-2"], "a pill on both displays")
             self.shot("pill-all")
         finally:
+            if OUTPUT not in m.read("outputs"):
+                display(True, OUTPUT)
             display(False)
-        s = wait_for(lambda: (lambda s: s if s["pills"] == [OUTPUT] else None)(island()),
-                     lambda: f"the pill to leave the unplugged display ({island()['pills']})", timeout=5)
+            self.relayout()
+        pills([OUTPUT], "the pill to leave the unplugged display")
         ipc("clock_pill", "off")
-        wait_for(lambda: island()["pills"] == [], "the pill to go with the setting off")
-        self.passed("pill", f"off by default; Main only showed it on {main} alone with Virtual-2 on, All screens on both, and "
-                            "unplugging Virtual-2 took its pill away and kept Main's")
+        pills([], "the pill to go with the setting off")
+        self.passed("pill", "off by default; Main only showed it on the controller's main display alone with Virtual-2 on and "
+                            "off, and on Virtual-2 when Virtual-1 went; All screens on both, and unplugging Virtual-2 took "
+                            "its pill away")
 
     def check_moving(self):
         page, _ = self.edges_page()
@@ -228,9 +290,17 @@ class Smoke(m.Smoke):
         wait_for(lambda: not island()["indicator"], "the work indicator to go after the move", timeout=3)
         self.keys.keys("super", "left")
         wait_for(lambda: island()["indicator"], "the work indicator while moving back", timeout=2)
+        # It sits over the page's bottom-right button and takes no clicks: the button gets this one.
+        _, (width, height) = page, m.windows()[page["id"]]["layout"]["window_size"]
+        o = self.output
+        got = self.clicked((o["x"] + width - 40, o["y"] + height - 20))
+        shown = island()["indicator"]
         wait_for(lambda: not island()["indicator"], "the work indicator to go after moving back", timeout=3)
+        check(got == "bottom-right", f"A click on the work indicator reached {got!r}, not the page's bottom-right button"
+                                     f" (indicator shown at the click: {shown})")
         self.apps.close_window(kate)
-        self.passed("moving", "the work indicator showed while moving between spaces (Super+Right, Super+Left), and went")
+        self.passed("moving", "the work indicator showed while moving between spaces (Super+Right, Super+Left), a click on "
+                              "it reached the page's button beneath, and it went")
 
     def check_home(self):
         ipc("touch_probe")
@@ -287,12 +357,29 @@ class Smoke(m.Smoke):
             self.shot("band-fullscreen")
             m.niri("action", "fullscreen-window", "--id", page["id"])
             time.sleep(1)
+            # The panel matched on the output's physical mode, at a whole and a fractional scale.
+            ipc("notch_panel", "")
+            matched = []
+            for scale, want_band, want_window in ((2, 32, [1280, 800]), (1.6, 40, [1600, 1000])):
+                m.niri("output", OUTPUT, "custom-mode", "2560x1664@60")
+                m.niri("output", OUTPUT, "scale", scale)
+                time.sleep(2.5)
+                s = wait_for(lambda: (lambda s: s if s["bands"] else None)(island()), f"the band matched at scale {scale}", timeout=6)
+                band = s["bands"][0]
+                check(band["panel"] == "air-13" and not band["simulated"] and band["height"] == want_band,
+                      f"At scale {scale}: {band}, not the Air's {want_band} px band")
+                size = m.windows()[page["id"]]["layout"]["window_size"]
+                check(size == want_window, f"At scale {scale} the window is {size}, not {want_window} below the band")
+                matched.append(f"{band['height']} px at {scale}")
+                self.shot(f"band-matched-{scale}")
         finally:
             ipc("notch_panel", "none")
             m.niri("output", OUTPUT, "mode", mode0)
+            m.niri("output", OUTPUT, "scale", before["logical"]["scale"])
             time.sleep(1.5)
         self.passed("band", f"a 32 px band on the simulated Air, the page tiled at 1280x800 below it, no edge strip there; "
-                            f"fullscreen, the window was {full[0]}x{full[1]} (the band's surface still mapped: {covered})")
+                            f"fullscreen, the window was {full[0]}x{full[1]} (the band's surface still mapped: {covered}); "
+                            f"the Air's 2560x1664 matched without the override: {', '.join(matched)}")
 
 
 def main():
@@ -327,7 +414,7 @@ def main():
                                          start_new_session=True)
                 wait_for(lambda: island(), "the shell under test", timeout=20)
                 time.sleep(2)
-                smoke = Smoke(tmp, args.shots, keys)
+                smoke = Smoke(tmp, args.shots, keys, dev_state)
                 for name in chosen:
                     before, started = set(m.windows()), len(smoke.apps.processes)
                     try:
@@ -356,6 +443,8 @@ def main():
                     shell.wait(10)
     finally:
         keys.close()
+        if OUTPUT not in m.read("outputs"):
+            display(True, OUTPUT)
         if "Virtual-2" in m.read("outputs"):
             display(False)
         subprocess.run(["systemctl", "--user", "start", "flow-shell"])

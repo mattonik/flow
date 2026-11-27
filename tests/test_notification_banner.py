@@ -57,7 +57,7 @@ class NotificationBannerTest(unittest.TestCase):
         # Near the top edge, or below a notched screen's band, as a panel opened without the Island.
         self.assertIn("margins.top: root.topInset(screen)", own(banner()))
         self.assertIn("margins.top: root.panelTop", own(component("SystemPanel")))
-        self.assertIn(": topInset(workScreen)", SHELL[SHELL.index("readonly property real panelTop:"):][:200])
+        self.assertIn(": topInset(panelScreen)", SHELL[SHELL.index("readonly property real panelTop:"):][:200])
 
     def test_the_card_has_the_alert_role(self):
         card = own(object_with("id: bannerCard"))
