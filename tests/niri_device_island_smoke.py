@@ -140,9 +140,9 @@ class Smoke(m.Smoke):
     def make_main(self, output):
         key = next(d["key"] for d in self.controller("refresh")["displays"] if d.get("output") == output)
         self.controller("make-main", key)
-        # The shell reads the numbering on its next refresh, which a focus change brings.
-        m.niri("action", "focus-monitor", output)
-        time.sleep(0.5)
+        # The shell reads the numbering on its next refresh, which a focus change brings: over to Virtual-2 and back.
+        m.niri("action", "focus-monitor", "Virtual-2")
+        time.sleep(0.8)
         m.niri("action", "focus-monitor", OUTPUT)
 
     def relayout(self):
@@ -195,10 +195,16 @@ class Smoke(m.Smoke):
                 (took if self.clicked((o["x"] + x, o["y"] + y)) == name else missed).append(f"{name} y={y}")
                 self.close_island()
         check(not missed, f"Clicks on rows 1 to 3 that did not reach the page: {missed}")
-        got = self.clicked((o["x"] + width // 2, o["y"]))
+        # A press there opens it at once: pressed and moved away in one gesture, so the rest never could.
+        pages = self.need_pages()
+        pages.drain()
+        self.pointer.run(("move", o["x"] + width // 2, o["y"]), "click", ("move", o["x"] + width // 2, o["y"] + 300))
+        try:
+            got = pages.wait(["clicked"], timeout=2)["name"]
+        except Failed:
+            got = None
         s = island()
-        # A press there opens it at once; under load the rest may have opened it first. Either way the page gets nothing.
-        check(got is None and s["open"] and s["by"] in ("press", "edge"), f"A press on row 0 reached {got!r}, Island {s}")
+        check(got is None and s["open"] and s["by"] == "press", f"A press on row 0 reached {got!r}, Island {s}")
         self.close_island()
         self.passed("row", f"rows 1 to 3 reached the page at the left, middle and right ({len(took)} clicks); a press on "
                            "row 0 opened the Island and reached nothing")
