@@ -232,9 +232,12 @@ class Smoke(m.Smoke):
             check(s["asked_at"] - pushed >= 140, f"The Island was asked for {s['asked_at'] - pushed:.0f} ms after the push, "
                                                   "sooner than its 150 ms rest")
             times.append(round(s["shown_at"] - pushed))
-        # Resting there, it stays open.
+        # Resting there, it stays open; and on row 3, on the Island's surface above its card.
         time.sleep(1.5)
         check(island().get("open"), f"With the pointer resting at the edge, the Island closed: {island()}")
+        self.pointer.move((o["x"] + o["width"] // 2, o["y"] + 3))
+        time.sleep(1.5)
+        check(island().get("open"), f"With the pointer resting on row 3, above the card, the Island closed: {island()}")
         self.shot("edge")
         self.pointer.park()
         wait_for(lambda: not island().get("open"), "the Island to close once the pointer left", timeout=2)
@@ -360,7 +363,8 @@ class Smoke(m.Smoke):
         finally:
             display(False)
             self.relayout()
-        wait_for(lambda: not island().get("open"), "the Island to close with its display unplugged", timeout=3)
+        # Closed, not only hidden: an Island left open would hold banners back.
+        wait_for(lambda: not island().get("asked_open"), "the Island to close with its display unplugged", timeout=3)
         self.passed("displays", "Super+B's Island closed on a click on Virtual-2; the Island from Virtual-2's edge opened its "
                                 "panel there; and it closed when Virtual-2 was unplugged")
 

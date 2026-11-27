@@ -2198,7 +2198,7 @@ ShellRoot {
         // Date.now() when it was asked to open and when its first frame was drawn.
         function island_state(): string {
             const on = variants => variants.instances.filter(w => w.visible).map(w => w.screen ? w.screen.name : "")
-            return JSON.stringify({ open: workIsland.visible, screen: root.islandScreenName, by: root.islandOpenedBy,
+            return JSON.stringify({ open: workIsland.visible, asked_open: root.islandOpen, screen: root.islandScreenName, by: root.islandOpenedBy,
                                     asked_at: root.islandAskedAt, shown_at: root.islandShownAt, dwell_ms: root.islandDwell,
                                     edges: on(edgeStrips), pills: on(clockPills), clock_pill: pillPreferences.clockPill,
                                     main: root.mainDisplayName,
