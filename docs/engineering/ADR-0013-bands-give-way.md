@@ -29,61 +29,71 @@ clicks through when they would cover an app.
 
 ## Decision
 
-The Island, the home indicator, the work indicator and the App button each sit in a `GiveWay` item. It does three
-things:
+The Island, the home indicator, the work indicator and the App button each sit in a `GiveWay` item.
 
-- **Fades after a rest.** The pointer rests on a band, 600 ms without moving or pressing, while an app lies beneath
-  it: the plain work view (`workViewOnly`), a window on the focused workspace (`root.windows`), and no panel,
-  search or app menu open. Then the band fades to nothing over 120 ms (at once with Reduce motion) and is disabled.
-  Its surface's input region (Quickshell's `mask`) shrinks to the screen's outermost 2 rows along the edge the band
-  hangs from, or to nothing for the work indicator, which sits off the edge. Niri hands the pointer to the app at
-  once: in the guest the band lost the pointer 3 to 27 ms after the rest ended. The next click is the app's.
-- **Comes back.** Every 1.5 s a faded band takes its whole input region back, still unseen and disabled. If the
-  pointer is still over it, Niri gives it the pointer at once and it empties again. If not, after 250 ms the band
-  fades back in. It also comes back at once when the pointer reaches its edge rows (pushing against the top or
-  bottom edge), and whenever the work view gives way to Desk, Overview, the switcher, a panel or search.
-- **Stays usable.** A rest only starts once the pointer stops moving. A quick click, a tap and a swipe reach the band
-  as before, and so does a press held still: a `MouseArea` above the band notes the press and passes it on, and a
-  noted press keeps the band. A pointer that came in through the edge rows keeps the band while it stays. A finger
-  never hovers, so touch reaches the band unless the mouse has just faded it. The home indicator's swipe up works
-  as before when it starts at once or from the screen's bottom edge; one that starts after a rest on the faded band
-  reaches the app.
+- **Pass through from the moment the pointer comes.** The pointer moves onto a band from the app's side while an
+  app is beneath it. "An app beneath" means the plain work view (`workViewOnly`, which excludes Desk, Overview,
+  the switcher, search, the panels and the app menu) with a window on the focused workspace. The bands do not
+  compare window rectangles: Flow's columns reach the screen's edges. Then, on that first motion, the band fades
+  over 120 ms (at once with Reduce motion) and is disabled. Its surface's input region (Quickshell's `mask`)
+  shrinks to its edge rows. Niri moves the pointer to the app as soon as the region is applied: 6 to 60 ms after
+  the motion in the guest. A click after that is the app's, however quick.
+- **The shell's when reached on purpose.** There are two ways:
+  - Through its edge rows: the outermost 2 rows of the screen edge the band hangs from (top for the Island and
+    the App button, bottom for the home indicator). The work indicator's surface reaches the screen's
+    bottom-right corner, so its bottom rows and right columns count, while it takes input only on its capsule
+    and those edges.
+  - Super+B (`desk bands`): every band the pointer rests on comes back.
 
-The toast has nothing to click. Its input region is always empty (`mask: Region {}`).
+  Either way, the band stays the shell's until the pointer leaves it.
+- **Back once the pointer has left.** A surface with an empty input region gets no pointer events, and Niri's IPC
+  does not report the cursor. So every 1.5 s a faded band takes its whole input region back, still unseen and
+  disabled. If the pointer is still over it, Niri gives it the pointer at once and it fades out again. If not,
+  after 250 ms it fades back in. A band is back 1.5 to 1.75 s after the pointer leaves it (2.0 s measured in
+  `edges`). The delay is the probe's. A shorter one would make the app under a faded band get a pointer leave and
+  enter more than once a second, hiding its tooltips.
+- **Where no app is beneath** (an empty workspace, Desk, Overview), the bands take the pointer as before.
+- **Urgent states stay seen.** With an activity under way or a critical notification waiting (`islandUrgent`), a
+  faded Island keeps 40% opacity, still letting clicks through. The banner, its own surface, is unchanged.
+- The toast has nothing to click. Its input region is always empty (`mask: Region {}`).
 
-Only real motion restarts the rest. Qt hands a still pointer's position over again when something under it
-animates (the home indicator's line widening, a button's hover tint). Counting that as motion restarted the rest
-100 to 300 ms late, and a click 800 ms after arrival raced the fade. `give_way` (the shell's `desk` IPC target,
-read-only) reports each band's state and how long it took to let go, for the smoke.
+`give_way` (the shell's `desk` IPC target, read-only) reports each band's state and how long it took to let go.
 
 ## Options considered
 
 | Option | Why not |
 |---|---|
 | Exclusive zones: bands reserved for the Island and indicators | The user rejected it. It takes a strip of every screen from every app, and the spec has the Island float. |
-| Bands faded whenever an app is beneath them, back only on edge hover | The Island, the work view's way to Desk, search and the system controls, would be gone for good in the usual work view, and the space indicator with it. |
-| Fade the moment the pointer arrives from the app's side | The bands could not be clicked from where they are seen. A rest separates "this is what I want" from "something is under this". |
-| Track the pointer to bring a band back when it leaves | A surface with an empty input region gets no pointer events, and Niri's IPC does not report the cursor. A ring of input around a band would eat clicks and miss a fast move. The probe asks Niri instead, through the surface's own input region. |
-| A pointer handler on the band to notice presses | It does not see a press that a button inside the band takes (seen in the guest). The `MouseArea` above the band rejects each press, so it goes on. |
+| Fade after the pointer rests 0.6 s (this branch's first version) | It kept F-012's bug for the way people click. A click within 0.6 s of stopping on Nautilus's hidden Open still hit the Layer's *Close*, and the tests passed only because they rested 0.8 s. A user who paused to read a band lost it instead. |
+| Bands always faded over an app | The Island, the work view's way to Desk, search and the system controls, would be gone in the usual work view, and the space indicator with it. |
+| Track the pointer to bring a band back when it leaves | A ring of input around a band would eat clicks and miss a fast move. The probe asks Niri instead, through the surface's own input region. |
 
 ## Consequences
 
-- A user who stops on a band to read it sees it fade after 0.6 s. A quick click needs no rest, and the edge row or
-  a short move away brings it back.
-- A click on a faded band's spot within 250 ms of a probe, while the pointer sits still there, reaches nothing:
-  the band takes it, disabled and unseen. Its controls are disabled while faded, so the click does nothing. It
-  cannot hit *Close*.
-- While a band is faded the app gets a pointer leave and enter every 1.5 s, from the probe. A tooltip that waits
-  for the pointer to rest may start over.
-- An app's own outermost 2 rows under the Island and the home indicator still go to the shell (the edge rows).
-  None of the guest's apps put a control there.
-- The test's rest is a user's: `edges` and `chooser-pointer` move, rest 800 ms, then click. `edges` also checks that
-  a quick click on the home indicator opens Overview and does not reach the page.
+- With a mouse, a band over an app is reached through its screen edge or Super+B, not by moving straight onto it.
+  The Island and the home indicator touch their edges, and a pointer pushed against an edge stops there. A Fitts
+  throw to the top (the usual way to hit a browser's tabs) under the Island lands in its edge rows, so the Island
+  is the shell's until the pointer leaves it.
+- **Touch.** A finger does not hover, so a tap reaches a band that is shown. A tap on a band over an app's control
+  is the band's, not the app's. The coordinating session asked for taps to reach the app. On Wayland one input
+  region serves the pointer and touch, so a body that takes no touch takes no pointer either, and the fade could
+  never start. Spec §7.2's tentative "tap → compact actions" on the Island also needs taps to reach it. A finger
+  on a band the mouse has just faded reaches the app (its body has no input then). Untested: the guest has no
+  touchscreen, and a 2 px edge row is narrow for a finger's edge swipe.
+- **A pointer that jumps onto a band and clicks at once.** A tablet pen's tap in place, or a warp, may click before
+  Niri has moved the pointer off the band (up to 60 ms measured). The click then lands on the disabled band and
+  does nothing. A mouse reaches the band through its border first, so the band has let go before the pointer
+  stops. The smoke glides in over about 190 ms, slowing as a hand does, and clicks as it stops.
+- While a band is faded the app gets a pointer leave and enter every 1.5 s from the probe. A tooltip waiting for
+  the pointer to rest may start over. During an app's implicit grab (a button held), the band gets no enter, and
+  after 250 ms it shows under the still pointer. The next motion fades it again.
+- An app's own outermost 2 rows under the Island and the home indicator, and the work indicator's corner, still
+  go to the shell (the edge rows).
+- A drag and drop (not a pointer motion) over a band may be dropped on the band. Untested.
 
 ## Validation
 
-Guest (UTM, Niri 26.04, Quickshell 0.3.2), on installed code: `tests/niri_portals_smoke.py`'s 11 checks with no
-expected failures, and the shell's pointer smokes for these bands (desk and overview, prototype surfaces,
-notification banner, search, app menu, Wi-Fi). Neutralised (symbols kept), `edges` and `chooser-pointer` fail.
-`tests/test_give_way.py` checks the wiring in CI, which has no QML runner. Results: *F-012 acceptance* in
-[IMPLEMENTATION_STATUS.md](../IMPLEMENTATION_STATUS.md).
+Guest (UTM, Niri 26.04, Quickshell 0.3.2), on installed code. The results, with the build, the run and each
+neutralisation, are in *F-012 acceptance* in [IMPLEMENTATION_STATUS.md](../IMPLEMENTATION_STATUS.md).
+`tests/test_give_way.py` checks the source text in CI, which has no QML runner. It catches a band left unwired or
+a rule rewritten, not a change in behaviour that keeps the text. The behaviour rests on the guest smokes.

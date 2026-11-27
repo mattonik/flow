@@ -1103,9 +1103,36 @@ class Smoke:
                         wait_for(lambda: not opened(), f"{label} to close")
                     self.apps.focus(page)
                     self.pointer.park()
+        # Something urgent stays seen: with an activity published (the shell reads $XDG_RUNTIME_DIR/flow-activities.json,
+        # ADR-0010), the Island faded under the pointer keeps 40%. The file is put back as it was, or removed.
+        published = Path(os.environ["XDG_RUNTIME_DIR"]) / "flow-activities.json"
+        before = published.read_bytes() if published.exists() else None
+        try:
+            published.write_text(json.dumps({"version": 1, "activities": [
+                {"owner": "F-012 test", "title": "Edges", "progress": 0.5}]}))
+            wait_for(lambda: "F-012 test" in self.ipc("activity_list"), "the test's activity on the Island", 5)
+            self.pointer.move(at(*points["top-middle"]))
+            wait_for(lambda: bands()["island"]["yielded"], "the Island to fade with an activity on it", 3)
+            time.sleep(0.4)  # its 120 ms fade
+            urgent = bands()["island"]["opacity"]
+            check(0.3 <= urgent < 1, f"A faded Island with an activity showed at opacity {urgent}, not dimmed but seen")
+        finally:
+            if before is None:
+                published.unlink(missing_ok=True)
+            else:
+                published.write_bytes(before)
+            self.pointer.park()
+        wait_for(lambda: "F-012 test" not in self.ipc("activity_list"), "the test's activity gone again", 5)
+        self.pointer.move(at(*points["top-middle"]))
+        wait_for(lambda: bands()["island"]["yielded"], "the Island to fade", 3)
+        time.sleep(0.4)
+        plain = bands()["island"]["opacity"]
+        self.pointer.park()
+        check(plain == 0, f"A faded Island with nothing urgent showed at opacity {plain}")
         self.passed("edges", f"every edge button of a full-window page took a click as the pointer, gliding in, stopped: "
                              f"{', '.join(took)}; the bands let go of the pointer after {', '.join(waits)}, and were back "
-                             f"{back:.1f} s after it left; reached on purpose, {'; '.join(reached)}")
+                             f"{back:.1f} s after it left; reached on purpose, {'; '.join(reached)}; a faded Island with "
+                             f"an activity showed at {urgent:.2f}, without one at {plain:.2f}")
 
     # Screenshot -------------------------------------------------------------------------------------------------
 

@@ -78,8 +78,6 @@ class GiveWayTest(unittest.TestCase):
         self.assertIn("if (overApp) fadeOut()", moved)
         self.assertNotIn("Timer", moved)
         self.assertNotIn("restMs", GIVE_WAY)
-        # Only a motion counts: the same position handed over again (an animation under a still pointer) does not.
-        self.assertIn("if (at.x === lastAt.x && at.y === lastAt.y) return", moved)
         self.assertIn("onPointChanged: if (hovered) giveWay.moved()", GIVE_WAY)
         over = re.search(r"readonly property bool overApp: (.*\n.*)", GIVE_WAY).group(1)
         for part in ("active", "root.workViewOnly", "root.windows.length > 0", "!root.searchOpen", "!root.quickSettingsOpen",

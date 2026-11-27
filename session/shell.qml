@@ -1422,9 +1422,7 @@ ShellRoot {
         readonly property int probeMs: 1500
         readonly property int edgeRows: 2
         readonly property bool hovered: pointer.hovered
-        // Where the pointer last moved to over the band. Qt hands the band the same position again when something
-        // under a still pointer animates (the home indicator's line widening under it): that is not a motion.
-        property point lastAt: Qt.point(-1, -1)
+        readonly property real shownOpacity: band.opacity
         // For give_way: how long after the band faded Niri took the pointer away from it (its input region
         // applied), in ms; -1 until it has faded.
         property real fadedAt: 0
@@ -1448,8 +1446,6 @@ ShellRoot {
         // The pointer moved over the band, or came onto it.
         function moved(): void {
             const at = pointer.point.position
-            if (at.x === lastAt.x && at.y === lastAt.y) return
-            lastAt = Qt.point(at.x, at.y)
             if (atEdge(at)) { reached = true; yielded = false; probing = false; return }
             if (reached) return
             if (overApp) fadeOut()
@@ -1478,7 +1474,7 @@ ShellRoot {
         HoverHandler {
             id: pointer
             onHoveredChanged: {
-                if (hovered) { giveWay.lastAt = Qt.point(-1, -1); giveWay.moved(); return }
+                if (hovered) { giveWay.moved(); return }
                 if (giveWay.fadedAt) { giveWay.leftAfter = Date.now() - giveWay.fadedAt; giveWay.fadedAt = 0 }
                 giveWay.reached = false
             }
@@ -2076,7 +2072,7 @@ ShellRoot {
         // Read-only, for tests: each work-view band's way out of an app's way (GiveWay, ADR-0013).
         function give_way(): string {
             const state = way => ({ over_app: way.overApp, yielded: way.yielded, probing: way.probing, reached: way.reached,
-                                    hovered: way.hovered, left_after_ms: way.leftAfter, opacity: way.fadedOpacity,
+                                    hovered: way.hovered, left_after_ms: way.leftAfter, opacity: way.shownOpacity,
                                     mask: way.yielded && !way.probing ? "edges" : "shown" })
             return JSON.stringify({ island: state(islandWay), home: state(homeWay), indicator: state(indicatorWay), app_button: state(appMenuWay) })
         }
