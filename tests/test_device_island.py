@@ -1,9 +1,12 @@
-"""Resting chrome by device (ADR-0014), read from the shell's source and run in the controller.
+"""Resting chrome by device (ADR-0014): pins on the shell's source, and the parts that run outside it.
 
-What it does on a running shell (the strip's rows, the rest before the Island opens, Super+B, the clock pill on one
-or two displays, the moving indicator, the home line with a touchscreen, the banner's clicks, the band) is checked by
-tests/niri_device_island_smoke.py in the guest. CI has no QML runner, so these hold the pieces it rests on where CI
-can see them: each is the value or condition the smoke's checks depend on, so a change to one fails here as well.
+The behaviour (the strip's rows, the rest before the Island opens, Super+B and the click that closes it, the clock pill
+on one or two displays, the moving indicator, the home line with a touchscreen, the banner's clicks, the band) is
+tested by tests/niri_device_island_smoke.py in the guest, and each behaviour neutralised there fails it. CI has no
+QML runner: these only pin the values and conditions in the source, so that one changed by accident shows in review.
+A pin is a substring: it does not prove the behaviour, and a reflowed line breaks it. What runs here for real is the
+band arithmetic (Asahi's 16:10 crop) and the controller's physical mode (``spaces.physical_mode``, and its wiring in
+tests/test_move_display.py).
 """
 from pathlib import Path
 import re

@@ -12,11 +12,14 @@ Checks (``--only NAME``, repeatable):
   line or banner, and the only shell layer surfaces over the work view are the 1 px edge strips.
 - ``row``: on a full-window page with buttons from its top edge down, a click on row 1 (and rows 2 and 3) at the
   left, middle and right reaches the page; a press on row 0, the strip, opens the Island instead.
-- ``edge``: the pointer resting against the top edge for less than the 150 ms rest opens nothing; resting longer opens
-  the Island, no sooner than 150 ms, and it closes once the pointer has left; the time from the push to its first frame.
+- ``edge``: the pointer resting against the top edge for 60 or 120 ms opens nothing; resting longer opens the Island,
+  no sooner than 150 ms, it stays open while the pointer rests there (1.5 s), and it closes once the pointer has left;
+  the time from the push to its first frame.
 - ``shortcut``: Super+B opens it, the time from the key press to its first frame, and Escape closes it; opened again,
   a click elsewhere closes it.
 - ``work``: the opened Island's Overview and Desk buttons open Overview and Desk (there is no hot corner).
+- ``displays``: with Virtual-2 on, Super+B's Island closes on a click on Virtual-2; the Island opened from Virtual-2's
+  edge opens the notifications panel there; and it closes when Virtual-2 is unplugged.
 - ``pill``: the clock pill is off in a configuration that has never set it. "main" with Virtual-2 on shows it on the
   main display only, as the controller numbers it (``flow-spaces refresh``: display 0); with Virtual-2 unplugged, on
   Virtual-1 alone; with Virtual-2 made Main (the controller's ``make-main``, on the shell's own state), on Virtual-2.
@@ -53,7 +56,7 @@ from isolated_state import IsolatedState, shell_config  # noqa: E402
 from pointer import center  # noqa: E402
 from uinput import Devices  # noqa: E402
 
-CHECKS = ["rest", "row", "edge", "shortcut", "work", "pill", "moving", "home", "banner", "critical", "band"]
+CHECKS = ["rest", "row", "edge", "shortcut", "work", "pill", "displays", "moving", "home", "banner", "critical", "band"]
 SHELL = os.environ.get("FLOW_SHELL", "/etc/flow/shell.qml")
 OUTPUT = "Virtual-1"
 CONNECTORS = {"Virtual-1": "/sys/class/drm/card1-Virtual-1", "Virtual-2": "/sys/class/drm/card1-Virtual-2"}
@@ -204,13 +207,13 @@ class Smoke(m.Smoke):
         self.edges_page()
         o = self.output
         # A rest shorter than the 150 ms opens nothing.
-        for _ in range(3):
+        for rest in (60, 120, 60, 120):
             self.close_island()
             time.sleep(0.4)
-            self.pointer.run(("move", o["x"] + o["width"] // 2, o["y"]), ("wait", 60),
+            self.pointer.run(("move", o["x"] + o["width"] // 2, o["y"]), ("wait", rest),
                              ("move", o["x"] + o["width"] // 2, o["y"] + 300))
             time.sleep(0.5)
-            check(not island().get("open"), f"A 60 ms rest at the edge opened the Island: {island()}")
+            check(not island().get("open"), f"A {rest} ms rest at the edge opened the Island: {island()}")
         times = []
         for _ in range(5):
             self.close_island()
@@ -223,13 +226,16 @@ class Smoke(m.Smoke):
             check(s["asked_at"] - pushed >= 140, f"The Island was asked for {s['asked_at'] - pushed:.0f} ms after the push, "
                                                   "sooner than its 150 ms rest")
             times.append(round(s["shown_at"] - pushed))
+        # Resting there, it stays open.
+        time.sleep(1.5)
+        check(island().get("open"), f"With the pointer resting at the edge, the Island closed: {island()}")
         self.shot("edge")
         self.pointer.park()
         wait_for(lambda: not island().get("open"), "the Island to close once the pointer left", timeout=2)
         times.sort()
-        self.passed("edge", f"a 60 ms rest at the top edge opened nothing; pushed against it, the Island opened after its "
-                            f"rest and closed once the pointer left; push to first frame {times} ms "
-                            f"(median {times[len(times) // 2]})")
+        self.passed("edge", f"60 and 120 ms rests at the top edge opened nothing; pushed against it, the Island opened after "
+                            f"its rest, stayed open while the pointer rested there, and closed once it left; push to first "
+                            f"frame {times} ms (median {times[len(times) // 2]})")
 
     def shortcut(self):
         """Super+B through Niri's binding, which calls the installed shell; a development copy gets the same IPC call."""
@@ -288,6 +294,14 @@ class Smoke(m.Smoke):
             main = self.controller_main()
             check(main == "Virtual-2", f"Made Main, Virtual-2 is not the controller's main display ({main})")
             pills(["Virtual-2"], "the pill on Virtual-2 once it is Main")
+            # Main away: the lowest-numbered display left.
+            display(False)
+            self.relayout()
+            check(self.controller_main() == OUTPUT, f"With Main away the controller's main display is {self.controller_main()}")
+            pills([OUTPUT], "the pill on Virtual-1 with Main (Virtual-2) away")
+            display(True)
+            self.relayout()
+            pills(["Virtual-2"], "the pill back on Virtual-2, Main, once it returned")
             self.make_main(OUTPUT)
             pills([OUTPUT], "the pill back on Virtual-1 once it is Main again")
             ipc("clock_pill", "all")
@@ -303,8 +317,46 @@ class Smoke(m.Smoke):
                 self.relayout()
         pills([], "the pill to go with the setting off")
         self.passed("pill", "off by default; Main only showed it on the controller's main display alone with Virtual-2 on and "
-                            "off, and on Virtual-2 once it was made Main; All screens on both, and unplugging Virtual-2 took "
-                            "its pill away")
+                            "off, on Virtual-2 once it was made Main, on Virtual-1 while that Main was away; All screens on both, "
+                            "and unplugging Virtual-2 took its pill away")
+
+    def check_displays(self):
+        self.edges_page()
+        try:
+            display(True)
+            self.relayout()
+            v2 = m.read("outputs")["Virtual-2"]["logical"]
+            # Super+B's Island, then a click on the other display: it closes, and gives the keyboard back.
+            self.pointer.park()
+            self.shortcut()
+            wait_for(lambda: island().get("open") and island().get("shown_at"), "Super+B to open the Island", timeout=3)
+            check(island()["screen"] == OUTPUT, f"Super+B opened the Island on {island()['screen']}")
+            time.sleep(0.3)
+            self.pointer.click((v2["x"] + v2["width"] // 2, v2["y"] + v2["height"] // 2))
+            wait_for(lambda: not island().get("open"), "a click on Virtual-2 to close Super+B's Island", timeout=2)
+            # The Island from Virtual-2's edge: its panels open there.
+            self.pointer.move((v2["x"] + v2["width"] // 2, v2["y"]))
+            s = wait_for(lambda: (lambda s: s if s.get("open") and s.get("shown_at") else None)(island()),
+                         "the Island from Virtual-2's edge", timeout=2)
+            check(s["screen"] == "Virtual-2", f"Virtual-2's edge opened the Island on {s['screen']}")
+            ipc("notifications")
+            wait_for(lambda: json.loads(ipc("surfaces") or "{}").get("notifications"), "the notifications panel", timeout=3)
+            time.sleep(0.5)
+            grabs = [layer["output"] for layer in layers() if layer.get("keyboard_interactivity") == "Exclusive"]
+            check(island()["panel_screen"] == "Virtual-2" and grabs == ["Virtual-2"],
+                  f"The panel opened from Virtual-2's Island is on {grabs} ({island()['panel_screen']})")
+            self.shot("displays-panel")
+            ipc("notifications")
+            wait_for(lambda: not json.loads(ipc("surfaces") or "{}").get("notifications"), "the panel to close", timeout=3)
+            # Unplugged under the open Island: it closes.
+            self.pointer.move((v2["x"] + v2["width"] // 2, v2["y"]))
+            wait_for(lambda: island().get("open") and island().get("screen") == "Virtual-2", "the Island on Virtual-2", timeout=2)
+        finally:
+            display(False)
+            self.relayout()
+        wait_for(lambda: not island().get("open"), "the Island to close with its display unplugged", timeout=3)
+        self.passed("displays", "Super+B's Island closed on a click on Virtual-2; the Island from Virtual-2's edge opened its "
+                                "panel there; and it closed when Virtual-2 was unplugged")
 
     def check_moving(self):
         page, _ = self.edges_page()

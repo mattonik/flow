@@ -568,7 +568,7 @@ ShellRoot {
     onIslandOpenChanged: if (islandOpen) bannerNotification = null
     // Its screen unplugged: nothing would close it.
     onIslandScreenChanged: if (!islandScreen) closeIsland()
-    // A direct touch device (a touchscreen or a pen display): INPUT_PROP_DIRECT with multitouch positions. The home line
+    // A touchscreen: a direct input device (INPUT_PROP_DIRECT) with multitouch positions. The home line
     // shows only with one; looked for at start, every 30 s and when the screens change.
     property bool touchPresent: false
     Process {
@@ -2206,7 +2206,8 @@ ShellRoot {
                                         height: w.geometry.height, cutout: w.geometry.cutout, panel: w.geometry.panel, simulated: w.geometry.simulated })),
                                     indicator: workIndicatorWindow.visible, moving: root.spacesMoving,
                                     home: homeIndicator.visible, touch: root.touchPresent,
-                                    banner: notificationBanner.visible })
+                                    banner: notificationBanner.visible,
+                                    panel_screen: root.panelScreen ? root.panelScreen.name : "" })
         }
         // For tests: the clock pill's setting ("off", "main" or "all"), the notch override ("" to match, "none", or a
         // panel's id), and a fresh look for a touch device.
@@ -2777,7 +2778,7 @@ ShellRoot {
     PanelWindow {
         // Work indicator: the space's place in this display's Flow (and a Group's focused app), for a moment while
         // moving between spaces (ADR-0014). It takes no clicks, so it shows no buttons: the opened Island has the
-        // position and its arrows, the switcher (Super+Tab) a Group's members and a Layer's actions.
+        // position and its arrows, a Group's apps and a Layer's actions.
         id: workIndicatorWindow
         screen: root.workScreen
         visible: !root.workCovered && !root.switcherOpen && !root.appMenuOpen && !root.searchOpen && !root.overviewOpen
@@ -3092,6 +3093,7 @@ ShellRoot {
         // Up/Down choose, Enter opens, Escape or the shade closes.
         id: searchPanel
         visible: root.searchOpen
+        screen: root.panelScreen
         anchors { top: true; bottom: true; left: true; right: true }
         color: "transparent"
         exclusionMode: ExclusionMode.Ignore
@@ -4086,6 +4088,11 @@ ShellRoot {
             // The compositor gives the keyboard a moment after the surface maps: take focus then too.
             function onActiveChanged() { if (islandCard.Window.window.active && workIsland.modal) islandFocus.forceActiveFocus() }
         }
+        Item {
+            // The whole surface, from the top edge down: a pointer resting on rows 0 to 5, above the card, is on it.
+            anchors.fill: parent
+            HoverHandler { id: islandSurfaceHover }
+        }
         MouseArea {
             // Opened by Super+B: a press beside the card closes the Island, and what it opened.
             enabled: workIsland.modal
@@ -4158,8 +4165,7 @@ ShellRoot {
                             }
                             Rectangle { visible: islandGroup.visible || islandLayer.visible; width: 1; height: 20; anchors.verticalCenter: parent.verticalCenter; color: Qt.alpha(floeTheme.border, 0.5) }
                             Row {
-                                // A Group's apps: the focused one selected, a click focuses another (once the work
-                                // indicator's, ADR-0014).
+                                // A Group's apps: the focused one selected, a click focuses another.
                                 id: islandGroup
                                 visible: !root.activeLayer && !!(root.activeSpace && root.activeSpace.group_id)
                                 spacing: 2
@@ -4177,7 +4183,7 @@ ShellRoot {
                                 }
                             }
                             Row {
-                                // A Layer's actions (once the work indicator's).
+                                // A Layer's actions.
                                 id: islandLayer
                                 visible: !!root.activeLayer
                                 spacing: 4
@@ -4205,6 +4211,25 @@ ShellRoot {
             }
         }
     }
+    // Opened by Super+B, the Island holds the keyboard: a press on any other screen closes it too.
+    Variants {
+        id: islandCatchers
+        model: Quickshell.screens
+        PanelWindow {
+            required property var modelData
+            screen: modelData
+            visible: workIsland.visible && workIsland.modal && modelData.name !== root.islandScreenName
+            anchors { top: true; bottom: true; left: true; right: true }
+            color: "transparent"; exclusionMode: ExclusionMode.Ignore
+            WlrLayershell.layer: WlrLayer.Overlay
+            WlrLayershell.namespace: "flow-island-catcher"
+            WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+            MouseArea {
+                anchors.fill: parent
+                onPressed: { root.notificationsOpen = false; root.quickSettingsOpen = false; root.closeIsland() }
+            }
+        }
+    }
     Timer {
         id: islandAway; interval: 100; repeat: true
         running: root.islandOpen && !root.islandHeld
@@ -4212,7 +4237,8 @@ ShellRoot {
         property bool entered: true
         onRunningChanged: away = 0
         onTriggered: {
-            const here = islandHover.hovered || appMenuButton.hovered
+            // Opened by Super+B its surface is the whole screen: only the card counts then.
+            const here = (workIsland.modal ? islandHover.hovered : islandSurfaceHover.hovered) || appMenuButton.hovered
                 || (!!root.islandScreenName && (root.edgeHoveredScreen === root.islandScreenName || root.pillHoveredScreen === root.islandScreenName))
             if (here) { away = 0; entered = true; return }
             if (!entered) return

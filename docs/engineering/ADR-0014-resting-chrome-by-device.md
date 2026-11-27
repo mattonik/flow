@@ -37,8 +37,9 @@ an app is there because the user summoned it, or only for a moment, and then tak
     over a tab strip when the pointer only passes the edge);
   - a press on the strip, at once;
   - **Super+B**, from Flow's own Niri configuration (`session/niri.kdl`). Opened this way it takes the keyboard, and
-    Escape closes it. Like a menu, its surface then covers the screen, so a click anywhere else closes it and goes
-    no further: the keyboard is never left with an Island the user has stopped looking at. On a notched screen
+    Escape closes it. Like a menu, it then covers every display (its own surface on its screen, a catcher on each
+    other one), so a click anywhere else closes it and goes no further: the keyboard is never left with an Island the
+    user has stopped looking at. On a notched screen
     Super+B shows a toast instead, since the Island is already in the band;
   - a click on the clock pill, when that is on.
 
@@ -46,8 +47,9 @@ an app is there because the user summoned it, or only for a moment, and then tak
   panel, search, the app menu) has closed. Desk or Overview opening closes it, and so does its screen being
   unplugged. It holds today's controls, the space's position with its arrows, and the App button beside it when the
   focused app has a menu. Its second row holds the work: *Overview* and *Desk*, the space's position with its arrows,
-  and a Group's apps (the focused one selected) or a Layer's *Make space* and *Close*. Panels and the app menu hang
-  below it, on its screen.
+  and a Group's apps (the focused one selected) or a Layer's *Make space* and *Close*. Panels, search and the app
+  menu open below it, on its screen; Desk and Overview open where Niri's focus is, as they always have (F-007). Opened
+  from the edge, the whole surface counts as under the pointer, so it stays open while the pointer rests on row 0.
 - **A screen with another display directly above it** shares its top edge: the pointer pushed up goes on to the
   other display instead of resting on row 0. There the strip still opens the Island on a press, and Super+B and the
   pill work as anywhere.
@@ -72,7 +74,9 @@ an app is there because the user summoned it, or only for a moment, and then tak
   16 px, so a narrow logical width keeps them readable.
 - **Which screens:** a small table of known panels (13- and 15-inch Air, 14- and 16-inch Pro), matched on the
   size of the output's current mode in physical pixels, as Niri reports it (the controller passes it on with each
-  display). Qt's screen ratio cannot be used: on Wayland it is a whole number, 2 at a scale of 1.6. The band is the panel's height less Asahi's default 16:10
+  display). Qt's screen ratio cannot be used: on Wayland it is a whole number, 2 at a scale of 1.6. Until the
+  controller's first refresh after the shell starts (well under a second) a MacBook is a plain screen, and its
+  windows move down once when the band arrives. A rotated panel is not matched any differently: untested. The band is the panel's height less Asahi's default 16:10
   height, which m1n1 crops to (64 rows on the Airs, 74 on the Pros). No Asahi source gives the cutout's width or
   corner, so those are approximate, from third-party measurements; the 15-inch's and 16-inch's are taken as the 13-
   and 14-inch's. `notchPanel` in `flow-settings.ini` overrides the match for testing: `none` makes every screen
