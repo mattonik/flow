@@ -1412,6 +1412,8 @@ ShellRoot {
         readonly property int restMs: 600
         readonly property int probeMs: 1500
         readonly property int edgeRows: 2
+        readonly property bool hovered: pointer.hovered
+        readonly property real hoverY: pointer.point.position.y
         default property alias content: band.data
         anchors.fill: parent
         onOverAppChanged: if (!overApp) { yielded = false; probing = false }
@@ -2033,6 +2035,12 @@ ShellRoot {
                                     rect: [corner.x, corner.y, item.width, item.height], hovered: hovered === true })
         }
         function launcher_state(): string { return root.launcherBusy() ? "open" : "closed" }
+        // Read-only, for tests: each work-view band's way out of an app's way (GiveWay, ADR-0013).
+        function give_way(): string {
+            const state = way => ({ over_app: way.overApp, yielded: way.yielded, probing: way.probing, from_edge: way.fromEdge,
+                                    hovered: way.hovered, y: way.hoverY, mask: way.mask === null ? "all" : way.edge ? "edge" : "none" })
+            return JSON.stringify({ island: state(islandWay), home: state(homeWay), indicator: state(indicatorWay), app_button: state(appMenuWay) })
+        }
         // The app menu as the shell holds it, for scripted checks: the focused window, its probe, whether the
         // App button shows, the open menu's labels at its current level, and its error.
         function app_menu(): string {

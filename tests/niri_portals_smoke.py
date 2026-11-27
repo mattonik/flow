@@ -89,6 +89,9 @@ from pointer import Pointer  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 PROBE = "io.github.mattonik.PortalProbe"
 RUNTIME, BRANCH = "org.freedesktop.Platform", "25.08"
+# How long the pointer rests before a click on an app's control that the shell's bands may cover, as a user's does
+# while the band fades: the shell's bands get out of the way after 0.6 s without moving (GiveWay, ADR-0013).
+REST_MS = 800
 # The clipboard checks run before the drag checks. Run after dnd-text, clipboard-text found Kate on its welcome page
 # instead of the file it had just opened, every time in the guest, though each check's apps are ended and windows
 # closed in between, every Kate gets folders of its own, and the dragged file is read-only. The cause is not known;
@@ -855,8 +858,9 @@ class Smoke:
         steps = []
 
         def click(window, what):
+            # A rest, then the click: Open and Save sit under the work indicator, which fades once the pointer rests.
             at = self.chooser_places(window)[what]
-            self.pointer.click(at)
+            self.pointer.run(("move", *at), ("wait", REST_MS), "click")
             return at
 
         def covered(at, label):
@@ -1007,7 +1011,7 @@ class Smoke:
                              ("bottom-right", (width - 30, height - 12))):
             pages.drain()
             # A dwell before the click, as a user's: the shell's fix may let clicks through once the pointer rests.
-            self.pointer.run(("move", o["x"] + x, o["y"] + y), ("wait", 800), "click")
+            self.pointer.run(("move", o["x"] + x, o["y"] + y), ("wait", REST_MS), "click")
             try:
                 event = pages.wait(["clicked"], timeout=4)
                 (took if event["name"] == name else missed).append(name)
