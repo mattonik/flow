@@ -22,6 +22,7 @@ ShellRoot {
     property string state: "rest"       // rest | expanded | chip | notify | moving
     property string revealedBy: ""      // edge | press | pill | shortcut | view
     property bool clockPill: false      // the plain device's optional clock pill (a setting, off by default)
+    property string appName: "Kate"     // the focused app, for the App button (the driver sets it per shot)
     property int dwellMs: 150           // how long the pointer rests against the top edge before the Island shows
     property int stripHeight: 1         // the plain device's edge catcher, in logical pixels
     // The notch band, in logical pixels, set per size by prototype/adaptive_shots.py from the panel's geometry.
@@ -47,6 +48,7 @@ ShellRoot {
         function view(name: string): void { root.revealedBy = "view"; root.state = name; if (name === "notify") notifyTimer.restart() }
         function device(name: string): void { root.device = name; root.state = "rest" }
         function clock_pill(on: bool): void { root.clockPill = on }
+        function app(name: string): void { root.appName = name }
         function dwell(ms: int): void { root.dwellMs = ms }
         function strip(px: int): void { root.stripHeight = px }
         function geometry(band: int, width: int, radius: int): void {
@@ -121,7 +123,7 @@ ShellRoot {
             Glyph { name: "bell" }
             Glyph { name: "sliders" }
             Rule { visible: controls.appButton && !controls.narrow }
-            Cell { visible: controls.appButton && !controls.narrow; text: "Kate  ▾" }
+            Cell { visible: controls.appButton && !controls.narrow; text: root.appName + "  ▾" }
             Rule { visible: !controls.narrow }
             Glyph { visible: !controls.narrow; name: "left" }
             Cell { visible: !controls.narrow; text: "03 / 04" }
@@ -130,7 +132,7 @@ ShellRoot {
         Row {
             visible: controls.narrow
             anchors.horizontalCenter: parent.horizontalCenter
-            Cell { visible: controls.appButton; text: "Kate  ▾" }
+            Cell { visible: controls.appButton; text: root.appName + "  ▾" }
             Glyph { name: "left" }
             Cell { text: "03 / 04" }
             Glyph { name: "right" }
@@ -269,7 +271,7 @@ ShellRoot {
             anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
             Text {
                 anchors.verticalCenter: parent.verticalCenter
-                text: "Kate  ▾"; color: root.bandText
+                text: root.appName + "  ▾"; color: root.bandText
                 font.pixelSize: Math.round(root.bandHeight * 0.42); font.weight: Font.DemiBold; font.family: floeTheme.interfaceFont
             }
         }

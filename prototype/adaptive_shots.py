@@ -105,6 +105,8 @@ def main():
 
                 def views(prefix, arm=None):
                     def take(name):
+                        proto("app", "Kate" if name == "kate" else "Firefox")
+                        time.sleep(0.3)  # the label's next frame, before grim
                         if arm:
                             arm()
                             time.sleep(0.6)
@@ -132,7 +134,7 @@ def main():
                     # Mid-move: the page dots while Niri slides to the next space.
                     proto("view", "moving")
                     m.niri("action", "focus-workspace-down")
-                    time.sleep(0.12)
+                    time.sleep(0.02)
                     shot(f"{prefix}-moving")
                     time.sleep(1)
                     proto("view", "rest")
@@ -149,6 +151,7 @@ def main():
                     proto("clock_pill", "false")
                     # Revealed for real: the pointer pushed against the top edge, resting past the dwell.
                     smoke.apps.focus(firefox, "100%")
+                    proto("app", "Firefox")
                     o = smoke.apps.output
                     smoke.pointer.move((o["x"] + o["width"] // 2, o["y"]))
                     time.sleep(0.8)
@@ -171,6 +174,7 @@ def main():
                           m.windows()[firefox["id"]]["layout"].get("tile_pos_in_workspace_view"), flush=True)
                     views(f"{label}-B-rest")
                     smoke.apps.focus(firefox, "100%")
+                    proto("app", "Firefox")
                     for name in ("expanded", "chip"):
                         proto("view", name)
                         time.sleep(0.8)
@@ -185,6 +189,9 @@ def main():
                 resize("1280x800@119.997", 1)
                 results = measure(smoke)
             finally:
+                if shell and shell.poll() is None:
+                    shell.terminate()
+                    shell.wait(10)
                 smoke.stop()
     finally:
         if shell and shell.poll() is None:
