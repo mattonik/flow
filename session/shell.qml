@@ -527,10 +527,11 @@ ShellRoot {
         location: root.settingsFile
         property string clockPill: "off"
     }
-    // The main display as Super+number has it (spaces.py): Main (number 0), or with Main away the lowest-numbered one.
+    // The main display's connector, as Super+number has it (spaces.py): Main (number 0), or with Main away the
+    // lowest-numbered connected one. Before the first refresh, the first screen.
     readonly property string mainDisplayName: {
-        const ranked = displays.slice().sort((a, b) => (a.number ?? 99) - (b.number ?? 99))
-        return ranked.length ? ranked[0].name : (Quickshell.screens.length ? Quickshell.screens[0].name : "")
+        const ranked = displays.filter(d => d.output).sort((a, b) => (a.number ?? 99) - (b.number ?? 99))
+        return ranked.length ? ranked[0].output : (Quickshell.screens.length ? Quickshell.screens[0].name : "")
     }
     function pillOn(screen) {
         if (!screen || bandFor(screen)) return false
@@ -4218,9 +4219,9 @@ ShellRoot {
                     else if (root.pillHoveredScreen === clockPill.modelData.name) root.pillHoveredScreen = ""
                 }
                 onClicked: root.openIsland(clockPill.modelData.name, "pill")
+                Accessible.role: Accessible.Button
+                Accessible.name: "Time " + pillLabel.text + ": open the Island"
             }
-            Accessible.role: Accessible.Button
-            Accessible.name: "Time " + pillLabel.text + ": open the Island"
         }
     }
     // The band of a notched MacBook (ADR-0014, spec §7.3): the rows beside the camera, black like the cutout, kept from

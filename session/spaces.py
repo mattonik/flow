@@ -2006,9 +2006,11 @@ def _run_locked(state, op, arg, reshape=True):
                # The shell runs automatic Group layout when a Group does not suit this.
                "orientation": orientation_of((logical["width"], logical["height"]))
                               if logical.get("width") and logical.get("height") else "",
+               # output: the connector, for the shell's surfaces that follow a display (the clock pill on Main).
                "displays": [{"key": key, "label": displays[key].get("label", ""),
                              "name": pin_store.display_name(displays[key]),
-                             "number": displays[key].get("number"), "current": key == display}
+                             "number": displays[key].get("number"), "current": key == display,
+                             "output": next((name for name, record in connected.items() if record["key"] == key), "")}
                             for key in screen_order],
                "notice": notice,
                "all_windows": [{"id": w["id"], "app_id": w.get("app_id") or "", "pid": w.get("pid"),
