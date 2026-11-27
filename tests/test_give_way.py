@@ -1,8 +1,9 @@
-"""The work view's bands get out of an app's way (ADR-0013): source checks only, as CI has no QML runner.
+"""The work view's bands get out of an app's way (ADR-0013): source text only, as CI has no QML runner.
 
-What the bands do with a real pointer (an app's edge controls take a click, Open and Save in Nautilus's chooser
-too; each band reached by its edge and by Super+B's IPC) rests on ``edges`` and ``chooser-pointer`` in
-tests/niri_portals_smoke.py in the guest. These check that each band is wired to the mechanism.
+These catch a band left unwired (no mask from its GiveWay, no edge) or a rule rewritten; they do not run the QML, so
+a change in behaviour that keeps the text passes them. The behaviour rests on ``edges`` and ``chooser-pointer`` in
+tests/niri_portals_smoke.py in the guest: an app's edge controls take a click as a hand makes it, each band is
+reached by its edge and by Super+B's IPC call, faded bands come back, and a faded Island with an activity stays seen.
 """
 from pathlib import Path
 import re
