@@ -215,7 +215,7 @@ def main():
 
             # The pointer.
             pointer.park()
-            pointer.click(pointer.hover(lambda: target("home"), "the home indicator"))
+            pointer.click(pointer.hover(lambda: target("home"), "the home indicator", via="bottom"))
             wait_for(lambda: open_surfaces() == ["overview"], lambda: f"a tap on the home indicator to open Overview ({open_surfaces()})")
             steps.append("the home indicator lit under the pointer, and a tap opened Overview")
 
@@ -255,7 +255,7 @@ def main():
             steps.append("a tap on Overview's home indicator went on to Desk, and one on Desk's returned to work")
 
             pointer.park()
-            start = pointer.hover(lambda: target("home"), "the home indicator again")
+            start = pointer.hover(lambda: target("home"), "the home indicator again", via="bottom")
             pointer.drag(start, (start[0], start[1] - 60))
             wait_for(lambda: open_surfaces() == ["overview"], lambda: f"a swipe up to open Overview ({open_surfaces()})")
             time.sleep(1)

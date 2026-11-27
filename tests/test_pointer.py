@@ -2,7 +2,7 @@
 
 import unittest
 
-from pointer import center, layout_box, window_origin
+from pointer import screen_edge, center, layout_box, window_origin
 
 
 def target(window, anchors, margins=(0, 0, 0, 0), rect=(0, 0, 10, 10), screen=(0, 0, 1280, 800)):
@@ -54,6 +54,11 @@ class CenterTest(unittest.TestCase):
     def test_item_inside_its_window(self):
         item = target((1280, 800), (True, True, True, True), rect=(300, 200, 680, 58))
         self.assertEqual(center(item), (640, 229))
+
+    def test_screen_edge_under_an_item(self):
+        item = target((126, 24), (False, True, False, False), rect=(0, 0, 126, 24), screen=(1280, 0, 1920, 1080))
+        self.assertEqual(screen_edge(item, "bottom"), (1280 + 897 + 63, 1079))
+        self.assertEqual(screen_edge(item, "top"), (1280 + 897 + 63, 0))
 
 
 if __name__ == "__main__":

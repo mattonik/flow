@@ -204,7 +204,7 @@ def main():
             pointer.click(pointer.hover(lambda: target(f"app_item:{index}"), label))
 
         def open_menu():
-            pointer.click(pointer.hover(lambda: target("app_button"), "the App button"))
+            pointer.click(pointer.hover(lambda: target("app_button"), "the App button", via="top"))
             wait_for(lambda: state().get("open"), "the menu to open")
 
         def run_command(*path):

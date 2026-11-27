@@ -291,7 +291,7 @@ class Smoke:
         return self.json("pointer_target", name)
 
     def tap_home(self, name):
-        self.pointer.click(self.pointer.hover(lambda: self.target(name), name))
+        self.pointer.click(self.pointer.hover(lambda: self.target(name), name, via="bottom" if name == "home" else None))
         self.pointer.park()
 
     # --- the parts -------------------------------------------------------------------------------------------------
@@ -497,7 +497,7 @@ class Smoke:
             self.case(label, reveal, self.overview_open, back)  # each reveal ends in Overview
 
     def swipe_home(self):
-        start = self.pointer.hover(lambda: self.target("home"), "the home indicator")
+        start = self.pointer.hover(lambda: self.target("home"), "the home indicator", via="bottom")
         self.pointer.drag(start, (start[0], start[1] - 60))
         self.pointer.park()
 

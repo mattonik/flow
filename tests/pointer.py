@@ -51,6 +51,15 @@ def center(target):
     return round(sx + x + rx + rw / 2), round(sy + y + ry + rh / 2)
 
 
+def screen_edge(target, edge):
+    """The point on the screen's outermost row (``edge`` "top" or "bottom") under the middle of a ``pointer_target``
+    item. A work-view band over an app (the Island, the home indicator, the App button) fades and lets the pointer
+    through when it comes from the app; through its screen edge it is the shell's (ADR-0013), as a user reaches it."""
+    x, _ = center(target)
+    _, sy, _, sh = target["screen"]
+    return x, sy if edge == "top" else sy + sh - 1
+
+
 class Pointer:
     def __init__(self, env=None, allow_installed_shell=False):
         """``allow_installed_shell``: for a test that drives the installed shell itself (niri_search_installed_smoke.py);
@@ -91,9 +100,10 @@ class Pointer:
     def move(self, at):
         self.run(("move", *at))
 
-    def hover(self, read, label="the target", timeout=10):
+    def hover(self, read, label="the target", timeout=10, via=None):
         """Moves onto the item ``read()`` gives (a ``pointer_target``, or None while it is hidden) and waits until
-        it shows the pointer, so a click that follows lands on a surface that is on screen. Returns its middle."""
+        it shows the pointer, so a click that follows lands on a surface that is on screen. Returns its middle.
+        ``via``: the screen edge ("top" or "bottom") to come through first, for a work-view band over an app."""
         end, last, tries = time.monotonic() + timeout, None, 0
         while time.monotonic() < end:
             last = read()
@@ -103,6 +113,8 @@ class Pointer:
                 # Moving again to the same place is not a motion the installed shell's panel answers (measured in the
                 # guest): move a few pixels off and back instead, every time it still shows no pointer.
                 x, y = center(last)
+                if via:
+                    self.move(screen_edge(last, via))
                 self.move((x + 3 * (tries % 2), y))
                 tries += 1
             time.sleep(0.2)

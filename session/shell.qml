@@ -899,6 +899,10 @@ ShellRoot {
     property string settledSpaceId: ""
     readonly property bool workViewOnly: !deskOpen && !switcherOpen && !spacesOverviewOpen && !overviewOpen
         && !searchOpen && !appMenuOpen && !quickSettingsOpen && !notificationsOpen
+    // Something urgent on the Island: an activity under way, or a critical notification waiting. A faded Island
+    // still shows it, dimmed (GiveWay's fadedOpacity).
+    readonly property bool islandUrgent: activities.length > 0
+        || [...notificationServer.trackedNotifications.values].some(n => n.urgency === NotificationUrgency.Critical)
     // A settled space is not taken again while its picture is current: under a minute old, and of the same look
     // (what the shell knows of the space, and the display's size). Opening Overview takes the space on screen
     // afresh (openSpacesOverview).
@@ -1387,94 +1391,101 @@ ShellRoot {
     }
     // A work-view band (the Island, the home and work indicators, the App button) that gets out of an app's way
     // (ADR-0013). The bands float over apps, whose columns reach the screen's edges, so under each lies an app's
-    // own top or bottom edge. Where the pointer rests on a band over an app (restMs without moving or pressing),
-    // the band fades out and its surface's input region empties (`mask`), so the next click reaches the app.
-    // A quick click, a tap and a swipe still reach the band, as does anything in the screen's outermost `edgeRows`
-    // (the band's edge, for one hanging from it): the way back to a faded band, and a rest there never fades it.
-    // Every probeMs a faded band takes input again, still unseen and disabled: if the pointer is still over it,
-    // Niri hands it the pointer at once and it empties again; if not, it fades back in.
+    // own top or bottom edge. The moment the pointer comes onto a band over an app, the band fades and its
+    // surface's input region (`mask`) shrinks to the band's edge rows, so a click there, however quick, is the
+    // app's. A band is the shell's when reached on purpose: through its edge rows (the pointer pushed against the
+    // screen edge it touches), or with Super+B (`summon`); then it stays the shell's until the pointer leaves it.
+    // Every probeMs a faded band takes its whole input region back, still unseen and disabled: if the pointer is
+    // still over it, Niri hands it the pointer at once and it empties again; if not, it fades back in. A finger
+    // never hovers, so a tap still reaches a band that is shown.
     component GiveWay: Item {
         id: giveWay
-        // The surface's input region: the whole surface, or while faded only its edge rows (none off the edge).
-        readonly property var mask: yielded && !probing ? passRegion : null
-        // "top" or "bottom": the screen edge the band hangs from; "" for one that does not touch it.
-        property string edge: ""
+        // The surface's input region: `shownMask` (null: the whole surface), or while faded only the edge rows.
+        readonly property var mask: yielded && !probing ? passRegion : shownMask
+        property var shownMask: null
+        // The screen edges the band's surface touches, whose outermost rows (or columns) are the way back to it.
+        property bool edgeTop: false
+        property bool edgeBottom: false
+        property bool edgeRight: false
         // The surface is shown.
         property bool active: true
+        // How much of a faded band still shows: 0, or more where it carries something urgent.
+        property real fadedOpacity: 0
         // Only in the plain work view with an app under the band, and never while the shell is in use
         // (a panel, search or the app menu open).
         readonly property bool overApp: active && root.workViewOnly && root.windows.length > 0
             && !root.searchOpen && !root.quickSettingsOpen && !root.notificationsOpen && !root.appMenuOpen
         property bool yielded: false
         property bool probing: false
-        // The pointer reached this band from the screen's edge: the shell's, until it leaves.
-        property bool fromEdge: false
-        // A button went down on the band since the pointer last moved: it is in use, so no rest fades it.
-        property bool pressed: false
-        readonly property int restMs: 600
+        // Reached on purpose (from its edge, or Super+B): the shell's until the pointer leaves it.
+        property bool held: false
         readonly property int probeMs: 1500
         readonly property int edgeRows: 2
         readonly property bool hovered: pointer.hovered
         // Where the pointer last moved to over the band. Qt hands the band the same position again when something
         // under a still pointer animates (the home indicator's line widening under it): that is not a motion.
         property point lastAt: Qt.point(-1, -1)
-        // For give_way: presses the band saw, and how long after a rest faded it Niri took the pointer away (its
-        // input region applied), in ms; -1 until a rest has faded it.
-        property int presses: 0
+        // For give_way: how long after the band faded Niri took the pointer away from it (its input region
+        // applied), in ms; -1 until it has faded.
         property real fadedAt: 0
         property real leftAfter: -1
         default property alias content: band.data
         anchors.fill: parent
         onOverAppChanged: if (!overApp) { yielded = false; probing = false }
-        function atEdge(y: real): bool {
-            return edge === "top" ? y < edgeRows : edge === "bottom" ? y >= height - edgeRows : false
+        function atEdge(at: point): bool {
+            return (edgeTop && at.y < edgeRows) || (edgeBottom && at.y >= height - edgeRows) || (edgeRight && at.x >= width - edgeRows)
         }
-        // The pointer moved over the band (or came onto it): from the edge it comes back; seen by a probe it stays
-        // out of the way. Either way a rest starts again.
+        function fadeOut(): void {
+            if (!yielded) { fadedAt = Date.now(); leftAfter = -1 }
+            yielded = true; probing = false
+        }
+        // Super+B: the band is the shell's again, and stays so while the pointer is over it (which Niri reports as
+        // soon as the whole input region is back); a band the pointer is not on is shown anyway.
+        function summon(): void {
+            yielded = false; probing = false; held = true
+            summonWait.restart()
+        }
+        // The pointer moved over the band, or came onto it.
         function moved(): void {
             const at = pointer.point.position
             if (at.x === lastAt.x && at.y === lastAt.y) return
             lastAt = Qt.point(at.x, at.y)
-            pressed = false
-            const atTheEdge = atEdge(at.y)
-            if (atTheEdge) fromEdge = true
-            if (yielded && atTheEdge) { yielded = false; probing = false }
-            else if (probing) probing = false
-            rest.restart()
+            if (atEdge(at)) { held = true; yielded = false; probing = false; return }
+            if (held) return
+            if (overApp) fadeOut()
+            else probing = false
         }
         property Region passRegion: Region {
-            x: 0; y: giveWay.edge === "bottom" ? giveWay.height - giveWay.edgeRows : 0
-            width: giveWay.edge ? giveWay.width : 0; height: giveWay.edge ? giveWay.edgeRows : 0
+            Region {
+                y: 0; width: giveWay.edgeTop ? giveWay.width : 0; height: giveWay.edgeTop ? giveWay.edgeRows : 0
+            }
+            Region {
+                y: giveWay.height - giveWay.edgeRows
+                width: giveWay.edgeBottom ? giveWay.width : 0; height: giveWay.edgeBottom ? giveWay.edgeRows : 0
+            }
+            Region {
+                x: giveWay.width - giveWay.edgeRows
+                width: giveWay.edgeRight ? giveWay.edgeRows : 0; height: giveWay.edgeRight ? giveWay.height : 0
+            }
         }
         Item {
             id: band
             anchors.fill: parent
             enabled: !giveWay.yielded
-            opacity: giveWay.yielded ? 0 : 1
+            opacity: giveWay.yielded ? giveWay.fadedOpacity : 1
             Behavior on opacity { NumberAnimation { duration: root.motionQuick; easing.type: Easing.BezierSpline; easing.bezierCurve: root.standardCurve } }
-        }
-        MouseArea {
-            // Above the band, it notes a press and passes it on to the band's own controls (a pointer handler on
-            // this item would not see a press a button below has taken).
-            anchors.fill: parent
-            acceptedButtons: Qt.AllButtons
-            onPressed: mouse => { giveWay.pressed = true; giveWay.presses += 1; rest.stop(); mouse.accepted = false }
         }
         HoverHandler {
             id: pointer
             onHoveredChanged: {
                 if (hovered) { giveWay.lastAt = Qt.point(-1, -1); giveWay.moved(); return }
                 if (giveWay.fadedAt) { giveWay.leftAfter = Date.now() - giveWay.fadedAt; giveWay.fadedAt = 0 }
-                giveWay.fromEdge = false; giveWay.pressed = false; rest.stop()
+                giveWay.held = false
             }
             onPointChanged: if (hovered) giveWay.moved()
         }
-        Timer {
-            id: rest; interval: giveWay.restMs
-            onTriggered: if (pointer.hovered && !giveWay.pressed && giveWay.overApp && !giveWay.fromEdge && !giveWay.yielded) {
-                giveWay.yielded = true; giveWay.fadedAt = Date.now()
-            }
-        }
+        // A summoned band the pointer is not on lets go again: the next time the pointer comes from the app, it fades.
+        Timer { id: summonWait; interval: 1000; onTriggered: if (!pointer.hovered) giveWay.held = false }
         Timer { interval: giveWay.probeMs; running: giveWay.yielded && !giveWay.probing; onTriggered: giveWay.probing = true }
         Timer { interval: 250; running: giveWay.probing; onTriggered: { giveWay.probing = false; giveWay.yielded = false } }
     }
@@ -2060,11 +2071,13 @@ ShellRoot {
                                     rect: [corner.x, corner.y, item.width, item.height], hovered: hovered === true })
         }
         function launcher_state(): string { return root.launcherBusy() ? "open" : "closed" }
+        // Super+B: the work-view bands are the shell's again, for the pointer resting on one (GiveWay, ADR-0013).
+        function bands(): void { for (const way of [islandWay, homeWay, indicatorWay, appMenuWay]) way.summon() }
         // Read-only, for tests: each work-view band's way out of an app's way (GiveWay, ADR-0013).
         function give_way(): string {
-            const state = way => ({ over_app: way.overApp, yielded: way.yielded, probing: way.probing, from_edge: way.fromEdge,
-                                    hovered: way.hovered, pressed: way.pressed, presses: way.presses, left_after_ms: way.leftAfter,
-                                    mask: way.mask === null ? "all" : way.edge ? "edge" : "none" })
+            const state = way => ({ over_app: way.overApp, yielded: way.yielded, probing: way.probing, held: way.held,
+                                    hovered: way.hovered, left_after_ms: way.leftAfter, opacity: way.fadedOpacity,
+                                    mask: way.yielded && !way.probing ? "edges" : "shown" })
             return JSON.stringify({ island: state(islandWay), home: state(homeWay), indicator: state(indicatorWay), app_button: state(appMenuWay) })
         }
         // The app menu as the shell holds it, for scripted checks: the focused window, its probe, whether the
@@ -2672,7 +2685,7 @@ ShellRoot {
         WlrLayershell.layer: WlrLayer.Overlay
         mask: homeWay.mask
         GiveWay {
-            id: homeWay; edge: "bottom"; active: homeIndicator.visible
+            id: homeWay; edgeBottom: true; active: homeIndicator.visible
             HomeIndicator { id: workHome; anchors.fill: parent }
         }
     }
@@ -2687,17 +2700,24 @@ ShellRoot {
         // Where the bottom controls and this indicator cannot share a row, it rises above them: below 560 px,
         // or below 900 px for an active Layer's wider controls.
         readonly property bool narrow: !!screen && screen.width < (root.activeLayer ? 900 : 560)
-        margins { bottom: narrow ? 68 : 8; right: 12 }
-        implicitWidth: workIndicator.implicitWidth + 8; implicitHeight: 52
+        // The capsule sits `lift` up and 12 px in from the right, but the surface reaches the screen's corner: its
+        // bottom rows and right columns are the way back to it once it has faded (GiveWay). Shown, it takes input
+        // on the capsule and those edges only, not on the app between them.
+        readonly property int lift: narrow ? 68 : 8
+        implicitWidth: workIndicator.implicitWidth + 8 + 12; implicitHeight: 52 + lift
         color: "transparent"; exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
-        // Off the screen's edge (8 px up, or above the bottom controls): no edge rows; it comes back once the
-        // pointer has left it.
         mask: indicatorWay.mask
         GiveWay {
-        id: indicatorWay; active: workIndicatorWindow.visible
+        id: indicatorWay; active: workIndicatorWindow.visible; edgeBottom: true; edgeRight: true
+        shownMask: Region {
+            item: indicatorCapsule
+            Region { y: indicatorWay.height - indicatorWay.edgeRows; width: indicatorWay.width; height: indicatorWay.edgeRows }
+            Region { x: indicatorWay.width - indicatorWay.edgeRows; width: indicatorWay.edgeRows; height: indicatorWay.height }
+        }
         CapsuleBar {
-            anchors.fill: parent
+            id: indicatorCapsule
+            width: parent.width - 12; height: 52
             Row {
                 id: workIndicator
                 anchors.centerIn: parent; spacing: 0
@@ -3712,7 +3732,7 @@ ShellRoot {
         mask: appMenuWay.mask
         GiveWay {
             // Below the tab on a narrow screen, off the edge.
-            id: appMenuWay; edge: appMenuTrigger.narrow ? "" : "top"; active: appMenuTrigger.visible
+            id: appMenuWay; edgeTop: !appMenuTrigger.narrow; active: appMenuTrigger.visible
             FlowButton {
                 id: appMenuButton
                 anchors.fill: parent
@@ -4011,7 +4031,8 @@ ShellRoot {
         WlrLayershell.layer: WlrLayer.Overlay
         mask: islandWay.mask
         GiveWay {
-            id: islandWay; edge: "top"; active: workIsland.visible
+            id: islandWay; edgeTop: true; active: workIsland.visible
+            fadedOpacity: root.islandUrgent ? 0.4 : 0
             SystemIsland { id: workIslandContent; anchors.fill: parent; room: workIsland.screen ? workIsland.screen.width : 1280 }
         }
     }

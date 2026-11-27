@@ -64,6 +64,8 @@ binds {
     // Flow's Overview; again for Desk. Niri's live Overview is in the Spaces switcher.
     Super+O { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "overview"; }
     Super+Tab { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "switcher"; }
+    // The work view's bands (Island, indicators) are the shell's again where the pointer rests on one (ADR-0013).
+    Super+B { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "bands"; }
     Super+H { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "toggle"; }
     Super+Shift+Slash { show-hotkey-overlay; }
     Super+Shift+E { quit; }

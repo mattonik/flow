@@ -38,15 +38,16 @@ Checks, in order (names for ``--only``):
   the page's is pasted and saved in KolourPaint and read by Firefox on X11 (``MOZ_ENABLE_WAYLAND=0``); that one's is
   read by the Wayland page. Each image has the colour its copy had.
 - ``chooser-pointer``: the same, answered with the pointer where Nautilus draws its buttons (the close button, the
-  file, Open, Save), each after a rest as a user's: Open and Save sit under the shell's work indicator, which fades
-  and lets the click through once the pointer rests on it (``edges``, ADR-0013).
+  file, Open, Save), each 50 ms after the pointer arrives: Open and Save sit under the shell's work indicator, which
+  fades and lets the click through as soon as the pointer comes onto it (``edges``, ADR-0013).
 - ``backends``: every portal request above reached the backend Flow intends (from a D-Bus monitor of the
   ``org.freedesktop.impl.portal.*`` calls): FileChooser and ScreenCast the GNOME backend, Access the GTK one,
   Screenshot Flow's own (``session/screenshot_portal.py``). PipeWire and WirePlumber run.
 - ``edges``: a full-window Firefox page (kiosk) has buttons along its window's top and bottom edges: left,
-  middle and right. Each must take a click after a rest, though the island (top middle), the home indicator (bottom
-  middle) and the work indicator (bottom right) sit over the window: the shell's bands fade and let it through
-  (ADR-0013). A quick click on the home indicator must still reach it and open Overview.
+  middle and right. Each must take a click 50 ms after the pointer arrives, though the island (top middle), the home
+  indicator (bottom middle) and the work indicator (bottom right) sit over the window: the shell's bands fade and
+  let it through (ADR-0013). Each of those bands, reached on purpose by its screen edge or by Super+B's IPC call,
+  must take a click again: the island's wordmark opens Desk, the home indicator Overview.
 
 The run exits 0 when every check passes but those in ``EXPECTED_FAILURES`` (none), and fails when any other check
 fails or when one of those passes.
@@ -84,14 +85,11 @@ import uuid
 import zlib
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pointer import Pointer  # noqa: E402
+from pointer import Pointer, center  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 PROBE = "io.github.mattonik.PortalProbe"
 RUNTIME, BRANCH = "org.freedesktop.Platform", "25.08"
-# How long the pointer rests before a click on an app's control that the shell's bands may cover, as a user's does
-# while the band fades: the shell's bands get out of the way after 0.6 s without moving (GiveWay, ADR-0013).
-REST_MS = 800
 # The clipboard checks run before the drag checks. Run after dnd-text, clipboard-text found Kate on its welcome page
 # instead of the file it had just opened, every time in the guest, though each check's apps are ended and windows
 # closed in between, every Kate gets folders of its own, and the dragged file is read-only. The cause is not known;
@@ -865,9 +863,8 @@ class Smoke:
         steps = []
 
         def click(window, what):
-            # A rest, then the click: Open and Save sit under the work indicator, which fades once the pointer rests.
             at = self.chooser_places(window)[what]
-            self.pointer.run(("move", *at), ("wait", REST_MS), "click")
+            self.pointer.click(at)
             return at
 
         def covered(at, label):
@@ -1003,68 +1000,102 @@ class Smoke:
     # Overlap: the shell's surfaces over an app's edges -----------------------------------------------------------
 
     def check_edges(self):
-        """An app's own controls along its window's top and bottom edges take clicks, where the island (top middle),
-        the home indicator (bottom middle) and the work indicator (bottom right) sit over the window: after a rest
-        the bands fade and let the click through (ADR-0013). A quick click still reaches the band: the home
-        indicator's opens Overview, and Escape closes it."""
+        """An app's own controls along its window's top and bottom edges take clicks, as a user's (50 ms after the
+        pointer arrives), where the island (top middle), the home indicator (bottom middle) and the work indicator
+        (bottom right) sit over the window: the bands fade and let the click through (ADR-0013). Each band is still
+        the shell's when reached on purpose, by its edge and by Super+B (its IPC call): the island's wordmark then
+        opens Desk, the home indicator Overview, and a click on the work indicator stays the shell's."""
         pages = self.need_pages()
         page = self.need_firefox(kiosk=True, mode="edges")
 
         def bands():
-            """The installed shell's bands as it holds them (faded or not, and their input), for a missed click."""
-            return self.ipc("give_way")
+            """The installed shell's bands as it holds them (faded or not, and their input)."""
+            answer = self.ipc("give_way")
+            try:
+                return json.loads(answer)
+            except ValueError:
+                raise Failed(f"The installed shell's give_way answered {answer!r}") from None
         w = windows()[page["id"]]
         width, height = w["layout"]["window_size"]
         o = self.apps.output
+
+        def at(x, y):
+            return o["x"] + x, o["y"] + y
         took, missed, waits = [], [], []
         # The band over each middle and right point: the Island, the home indicator, the work indicator.
         over = {"top-middle": "island", "bottom-middle": "home", "bottom-right": "indicator"}
-        for name, (x, y) in (("top-left", (30, 12)), ("top-middle", (width // 2, 12)), ("top-right", (width - 30, 12)),
-                             ("bottom-left", (30, height - 12)), ("bottom-middle", (width // 2, height - 12)),
-                             ("bottom-right", (width - 30, height - 12))):
+        points = {"top-left": (30, 12), "top-middle": (width // 2, 12), "top-right": (width - 30, 12),
+                  "bottom-left": (30, height - 12), "bottom-middle": (width // 2, height - 12),
+                  "bottom-right": (width - 30, height - 12)}
+        for name, (x, y) in points.items():
             pages.drain()
-            # A dwell before the click, as a user's: the shell's fix may let clicks through once the pointer rests.
-            self.pointer.run(("move", o["x"] + x, o["y"] + y), ("wait", REST_MS), "click")
+            self.pointer.click(at(x, y))
             try:
                 event = pages.wait(["clicked"], timeout=4)
                 (took if event["name"] == name else missed).append(name)
                 if name in over:
-                    # How long after the rest began the band gave the pointer back to the page (-1: it never had it).
-                    waits.append(f"{over[name]} {json.loads(bands())[over[name]]['left_after_ms']:.0f} ms")
+                    # How long after the pointer came the band gave it back to the page. -1: it never faded on this
+                    # click (each fade starts it afresh), so the band did not cover the point and the check proves
+                    # nothing there.
+                    left = bands()[over[name]]["left_after_ms"]
+                    check(left >= 0, f"The {over[name]} band did not fade for the {name} click: {bands()}")
+                    waits.append(f"{over[name]} {left:.0f} ms")
             except Failed:
-                missed.append(f"{name} ({bands()})")
+                missed.append(f"{name} ({json.dumps(bands())})")
                 # The click reached the shell instead (Overview from the home indicator, a panel from the island,
                 # the next space from the work indicator): back to the page before the next one.
                 keys("Escape", "Escape")
                 self.apps.focus(page)
             self.pointer.park()
         self.shot("edges")
-        # A quick click (50 ms after the pointer arrives) on the band, shown again since the pointer left it (up to
-        # 1.75 s: its probe), is the band's: it opens Overview, and the page sees nothing.
-        wait_for(lambda: not json.loads(self.ipc("give_way"))["home"]["yielded"], "the home indicator to show again", 5)
-        pages.drain()
-        self.pointer.click((o["x"] + width // 2, o["y"] + height - 12))
-        try:
-            wait_for(lambda: self.ipc("overview_state") == "open", "a quick click on the home indicator to open Overview", 4)
-            quick = "a quick click on the home indicator opened Overview"
-        except Failed:
-            quick = None
-        finally:
-            if self.ipc("overview_state") == "open":
-                keys("Escape")
-                wait_for(lambda: self.ipc("overview_state") == "closed", "Overview to close")
-            self.apps.focus(page)
-            self.pointer.park()
-        try:
-            stray = pages.wait(["clicked"], timeout=0.5)
-        except Failed:
-            stray = None
-        check(quick and not stray, f"A quick click on the home indicator did not reach it (Overview stayed closed, or the "
-                                   f"page took it: {stray}): the bands must stay usable")
         check(not missed, f"The page's own {', '.join(missed)} buttons took no click (the shell's surfaces sit over "
                           f"them); {', '.join(took) or 'none'} did")
-        self.passed("edges", f"every edge button of a full-window page took its click after a {REST_MS} ms rest: "
-                             f"{', '.join(took)}; the bands let go of the pointer after {', '.join(waits)}; {quick}")
+        # Once the pointer has left them (parked), the faded bands come back: the probe, every 1.5 s, finds no pointer.
+        left_at = time.monotonic()
+        wait_for(lambda: not any(b["yielded"] for b in bands().values()), "the bands to come back once the pointer left", 4)
+        back = time.monotonic() - left_at
+
+        # Reached on purpose. The pointer comes from the app first (the band fades), then goes to the band's screen
+        # edge, or Super+B's call is made; the band must be the shell's again and take a click on its control.
+        def control(surface, text):
+            found = [c for c in json.loads(self.ipc("controls")) if c["surface"] == surface and c["text"] == text]
+            check(found, f"No {text!r} on the {surface} band")
+            return center(found[0])
+        reach = {"island": ((width // 2, 0), lambda: control("island", "floe."),
+                            lambda: json.loads(self.ipc("surfaces"))["desk"], "Desk"),
+                 "home": ((width // 2, height - 1), lambda: center(json.loads(self.ipc("pointer_target", "home"))),
+                          lambda: self.ipc("overview_state") == "open", "Overview"),
+                 "indicator": ((width - 1, height - 1), lambda: control("indicator", "‹"), None, None)}
+        reached = []
+        for name, (edge, target, opened, label) in reach.items():
+            for way in ("edge", "Super+B"):
+                self.pointer.move(at(*points[{"island": "top-middle", "home": "bottom-middle"}.get(name, "bottom-right")]))
+                wait_for(lambda: bands()[name]["yielded"], f"the {name} band to fade under the pointer", 3)
+                if way == "edge":
+                    self.pointer.move(at(*edge))
+                else:
+                    self.ipc("bands")
+                wait_for(lambda: (b := bands()[name])["held"] and not b["yielded"], f"the {name} band back by its {way}", 3)
+                pages.drain()
+                self.pointer.click(target())
+                try:
+                    if opened:
+                        wait_for(opened, f"a click on the {name} band, reached by its {way}, to open {label}", 4)
+                    try:
+                        stray = pages.wait(["clicked"], timeout=0.8)
+                    except Failed:
+                        stray = None
+                    check(not stray, f"The page took a click on the {name} band reached by its {way}: {stray}")
+                    reached.append(f"{name} by its {way}" + (f" opened {label}" if label else " kept the click"))
+                finally:
+                    if opened and opened():
+                        keys("Escape")
+                        wait_for(lambda: not opened(), f"{label} to close")
+                    self.apps.focus(page)
+                    self.pointer.park()
+        self.passed("edges", f"every edge button of a full-window page took a click 50 ms after the pointer came: "
+                             f"{', '.join(took)}; the bands let go of the pointer after {', '.join(waits)}, and were back "
+                             f"{back:.1f} s after it left; reached on purpose, {'; '.join(reached)}")
 
     # Screenshot -------------------------------------------------------------------------------------------------
 
