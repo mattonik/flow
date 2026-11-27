@@ -4093,6 +4093,12 @@ ShellRoot {
             anchors.fill: parent
             HoverHandler { id: islandSurfaceHover }
         }
+        Shortcut {
+            // Escape closes Super+B's Island whatever item inside it has focus, as long as its window has the keyboard.
+            sequence: "Escape"
+            enabled: workIsland.visible && workIsland.modal
+            onActivated: root.closeIsland()
+        }
         MouseArea {
             // Opened by Super+B: a press beside the card closes the Island, and what it opened.
             enabled: workIsland.modal

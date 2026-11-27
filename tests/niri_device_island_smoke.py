@@ -199,12 +199,14 @@ class Smoke(m.Smoke):
         pages = self.need_pages()
         pages.drain()
         self.pointer.run(("move", o["x"] + width // 2, o["y"]), "click", ("move", o["x"] + width // 2, o["y"] + 300))
+        # Read before it closes again, 500 ms after the pointer left.
+        s = wait_for(lambda: (lambda s: s if s.get("asked_open") else None)(island()), "the press to open the Island",
+                     timeout=0.45, every=0.02)
         try:
-            got = pages.wait(["clicked"], timeout=2)["name"]
+            got = pages.wait(["clicked"], timeout=1)["name"]
         except Failed:
             got = None
-        s = island()
-        check(got is None and s["open"] and s["by"] == "press", f"A press on row 0 reached {got!r}, Island {s}")
+        check(got is None and s["by"] == "press", f"A press on row 0 reached {got!r}, Island {s}")
         self.close_island()
         self.passed("row", f"rows 1 to 3 reached the page at the left, middle and right ({len(took)} clicks); a press on "
                            "row 0 opened the Island and reached nothing")
@@ -553,6 +555,9 @@ def main():
                         except RuntimeError:
                             pass
                     smoke.pointer.park()
+                    if island().get("asked_open"):  # one check's Island left open would hold the next one's keys
+                        ipc("island") if island().get("by") == "shortcut" else None
+                        time.sleep(1)
                     smoke.apps.end(smoke.apps.processes[started:])
                     for wid in set(m.windows()) - before:
                         smoke.apps.close_window({"id": wid})
