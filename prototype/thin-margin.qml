@@ -2,8 +2,8 @@
 // that stays on screen lives in the margins; anything over content is temporary, summoned or gone after a moment.
 // Run as a development shell (its own state and config), with the installed shell stopped:
 //   quickshell -p prototype/thin-margin.qml
-// and switch what it shows with:  quickshell ipc -p prototype/thin-margin.qml call proto show <state>
-// States: rest, expanded, chip, notify, moving. `quickshell ipc ... call proto touch true|false` shows or hides the
+// and switch what it shows with:  quickshell ipc -p prototype/thin-margin.qml call proto view <state>
+// States: rest, expanded, chip, notify, moving. `quickshell ipc ... call proto homeline true|false` shows or hides the
 // home line (a gesture zone, only on outputs with a touch device). Margins come from layer-shell exclusive zones.
 import QtQuick
 import QtQuick.Shapes
@@ -22,8 +22,8 @@ ShellRoot {
 
     IpcHandler {
         target: "proto"
-        function show(name: string): void { root.state = name }
-        function touch(on: bool): void { root.touch = on }
+        function view(name: string): void { root.state = name }
+        function homeline(on: bool): void { root.touch = on }
         function margins(): string { return JSON.stringify([root.topMargin, root.bottomMargin]) }
     }
 

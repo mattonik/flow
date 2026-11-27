@@ -90,27 +90,26 @@ def main():
                     subprocess.run(["systemctl", "--user", "stop", "flow-shell"], check=True)
                     env = {**os.environ, "XDG_STATE_HOME": dev_state, "XDG_CONFIG_HOME": shell_config(tmp)}
                     shell = subprocess.Popen(["quickshell", "-p", str(PROTO)], env=env, stdin=subprocess.DEVNULL,
-                                             stdout=open(Path(tmp) / "proto.log", "a"), stderr=subprocess.STDOUT,
+                                             stdout=open(OUT / "proto.log", "a"), stderr=subprocess.STDOUT,
                                              start_new_session=True)
                     time.sleep(3)
-                    proto("show", "rest")
+                    proto("view", "rest")
                     views(f"{label}-proto-rest")
                     smoke.apps.focus(firefox)
                     for name in ("expanded", "chip", "notify", "moving"):
-                        proto("show", name)
+                        proto("view", name)
                         time.sleep(0.8)
                         shot(f"{label}-proto-{name}")
-                    proto("show", "rest")
-                    proto("touch", "false")
+                    proto("view", "rest")
+                    proto("homeline", "false")
                     time.sleep(0.5)
                     shot(f"{label}-proto-rest-no-touch")
-                    proto("touch", "true")
+                    proto("homeline", "true")
                     shell.terminate()
                     shell.wait(10)
                     shell = None
                     subprocess.run(["systemctl", "--user", "start", "flow-shell"], check=True)
                     time.sleep(4)
-                print((Path(tmp) / "proto.log").read_text()[-2000:], flush=True)
             finally:
                 smoke.stop()
     finally:
