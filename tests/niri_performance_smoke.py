@@ -42,10 +42,12 @@ Checked (the limits are the PRs': docs/performance.md):
 - focus moving every 0.25 s across five spaces: the shell under 2.5% of a core (hidden surfaces rebuild nothing);
 - an activity without a known amount: while the island or Overview's island shows it, the shell drawing at most
   13 frames a second across all its windows (its dot breathing on a clock stepping every 80 ms is 12.5; something
-  animating on every frame is the display's rate), counted from Qt's render-loop log
-  (``qt.scenegraph.time.renderloop``, a line or two a frame), and the clock stepping every 80 ms; on Desk its bar
-  sweeping at 16 ms; the clock stops once the activity has a known amount, and with no activity. Frames, not CPU:
-  what a frame costs is the machine's, and it changes with the machine (docs/performance.md, 2026-11-28).
+  animating on every frame is as fast as the render loop goes, 110–130 in the guest), counted from Qt's render-loop log
+  (``qt.scenegraph.time.renderloop``, a line or two a frame), the shell's GUI thread (its bindings and JavaScript,
+  not the drawing) under 4% of a core, and the clock stepping every 80 ms; on Desk its bar sweeping at 16 ms; the
+  clock stops once the activity has a known amount, and with no activity. Frames and the GUI thread, not the whole
+  shell's CPU: what drawing a frame costs is the machine's, and it changes with the machine (docs/performance.md,
+  2026-11-28).
 
 ``FLOW_PERF_IDLE`` shortens the idle phase (seconds) while developing; the limits stay those of 60 s.
 Prints one JSON line per check and a final ``{"result": ...}``; exits 1 if any check failed.
@@ -167,6 +169,13 @@ def cpu(pid):
     """(own, reaped children's) CPU seconds of a process."""
     fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
     return (int(fields[11]) + int(fields[12])) / TICK, (int(fields[13]) + int(fields[14])) / TICK
+
+
+def main_thread_cpu(pid):
+    """CPU seconds of a process's main thread alone: for the shell, Qt's GUI thread, where QML's bindings and
+    JavaScript run (the render thread, which draws, is another)."""
+    fields = Path(f"/proc/{pid}/task/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    return (int(fields[11]) + int(fields[12])) / TICK
 
 
 def runs(log, start, end, parents=None):
@@ -539,11 +548,14 @@ def main():
                 os.replace(staged, runtime / "flow-activities.json")
 
             def drawn(seconds):
-                """Frames a second the shell drew over ``seconds``, across all its windows, and how many windows drew."""
-                begin = time.monotonic()
+                """Over ``seconds``: frames a second the shell drew across all its windows, how many windows drew,
+                and its GUI thread's CPU (% of a core)."""
+                begin, gui = time.monotonic(), main_thread_cpu(pid)
                 time.sleep(seconds)
-                frames = [entry for entry in render_log.between(begin, time.monotonic()) if entry[2] == "frame"]
-                return len(frames) / seconds, len({entry[1] for entry in frames})
+                end = time.monotonic()
+                gui = 100 * (main_thread_cpu(pid) - gui) / (end - begin)
+                frames = [entry for entry in render_log.between(begin, end) if entry[2] == "frame"]
+                return len(frames) / (end - begin), len({entry[1] for entry in frames}), gui
 
             def clock():
                 try:
@@ -564,15 +576,19 @@ def main():
             ipc("island")  # nothing rests over apps (ADR-0014): open the Island, as Super+B does
             wait_for(lambda: json.loads(ipc("island_state")[0] or "{}").get("open"), "the Island open")
             time.sleep(1)
-            rate, windows = drawn(10)
-            check("busy activity, island showing: frames drawn", rate, "<= 13", 0 < rate <= 13, f"a second, by {windows} window(s)")
+            rate, windows, gui = drawn(10)
+            # None drawn is the log not read (a basic render loop logs another format), not a good result.
+            check("busy activity, island showing: frames drawn", rate, "0 < frames <= 13", 0 < rate <= 13, f"a second, by {windows} window(s)")
+            check("busy activity, island showing: the shell's GUI thread CPU", gui, "< 4", gui < 4, "% of a core")
             moved = ticking()
             check("busy activity, island showing: the dot breathes", moved, "every 80 ms", moved == 80)
             ipc("overview_open")
             wait_for(lambda: ipc("overview_state")[0] == "open", "Overview, with its own island")
             time.sleep(1)
-            rate, windows = drawn(10)
-            check("busy activity in Overview: frames drawn", rate, "<= 13", 0 < rate <= 13, f"a second, by {windows} window(s)")
+            rate, windows, gui = drawn(10)
+            # None drawn is the log not read (a basic render loop logs another format), not a good result.
+            check("busy activity in Overview: frames drawn", rate, "0 < frames <= 13", 0 < rate <= 13, f"a second, by {windows} window(s)")
+            check("busy activity in Overview: the shell's GUI thread CPU", gui, "< 4", gui < 4, "% of a core")
             moved = ticking()
             check("busy activity in Overview: the dot breathes", moved, "every 80 ms", moved == 80)
             ipc("overview_close")

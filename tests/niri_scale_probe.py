@@ -44,7 +44,8 @@ import sys
 import time
 
 from isolated_state import IsolatedState
-from niri_performance_smoke import RenderLog, NiriSocket, controller_socket, controller_stats, cpu, niri, read, wait_for
+from niri_performance_smoke import NiriSocket, RenderLog, controller_socket, controller_stats, cpu, niri, read, wait_for
+
 
 def frames_of(entries, period, known):
     """What one opening or closing drew, across every shell window: how many windows were new (Quickshell builds a
