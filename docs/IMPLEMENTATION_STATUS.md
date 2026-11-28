@@ -106,23 +106,26 @@ With Super+number reverted to the focused display's pins, the test fails. Physic
 
 An output can report no EDID at all: no serial, and its make and model missing or "Unknown". When it has no record of its own, it is the display last seen on its connector. The match takes the record's key, name and number, and no new record is written; when the display reports its EDID again, it has the same key. Three conditions must hold:
 - Exactly one record with an identity was last seen on that connector.
-- No connected output has that record's make and model. A monitor without a serial that moved to another port leaves its old port record behind, and an identical twin can't be told apart.
+- No connected output may be that record's monitor: one with the same make and model, unless both report serials and they differ. A monitor without a serial that moved to another port leaves its old port record behind, and an identical twin without a serial, or with the same serial, can't be told apart.
 - The output has no record of its own. A display that never reports EDID, such as some KVM switches, keeps the record it has.
+
+A record already written for a display without EDID counts as its own, including one main wrote for a display that only lost its EDID. Delete such a record from `spaces.json` to let the match run; the guest's real state no longer holds the `port:Virtual-1|Unknown|Unknown` record from 2026-11-27.
 
 Otherwise it is keyed by port as before. Before this, on 2026-11-27 in the guest, Virtual-1 was plugged back through sysfs with a 0-byte EDID, and Niri reported it as *Unknown Unknown*. The controller recorded `port:Virtual-1|Unknown|Unknown` as External 2, and its pins showed as on a disconnected display. A flaky dock or KVM switch could do the same.
 
 The trade-off: any monitor without EDID, plugged into a connector whose last monitor with EDID is away, is taken for that monitor, however long ago it was last seen. Its pins can be moved with *Pin here*. A dock that renumbers its connectors (DisplayPort MST) widens this, because the match goes by connector name.
 
-`NoEdidTest` and `test_a_monitor_back_without_edid_keeps_its_number_and_pins` in `test_display_pins.py` cover this. Each of 12 neutralised behaviours fails at least one of them:
+`NoEdidTest` and `test_a_monitor_back_without_edid_keeps_its_number_and_pins` in `test_display_pins.py` cover this. Each of 14 neutralised behaviours fails at least one of them:
 - the match switched off;
 - any number of candidates accepted;
-- a connected make and model, the output's own record, or the connector ignored;
+- a connected make and model, differing serials, the output's own record, or the connector ignored;
+- an output's serial not counted as EDID;
 - records without an identity counted;
 - outputs with EDID matched;
 - the stored make, model or label replaced by the output's;
 - each of the three callers (controller, recovery, snapshot) not passing the stored records.
 
-In the guest, Virtual-2 always comes up without EDID, so its record with an identity was seeded by hand. Virtual-1 was not replugged.
+In the guest, Virtual-2 always comes up without EDID, so its record with an identity was seeded by hand. Virtual-1 was not replugged. The serial check came after this run; the guest's outputs report no serial, so it does not change these results.
 
 The development copy at `d56fc90` ran `spaces.py refresh` against isolated state seeded with a `port:Virtual-2|Dell|U2723QE` record (number 1) and one pin on it. Virtual-2 was then plugged in through sysfs: 0-byte EDID, *Unknown Unknown* in Niri. Results:
 - **Branch:** the record kept number 1, and the pin was connected.

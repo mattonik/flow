@@ -103,6 +103,25 @@ class NoEdidTest(unittest.TestCase):
         self.assertEqual(set(displays), {"port:DP-1|Dell|U2723QE", "port:DP-2|Unknown|Unknown",
                                          "port:DP-1|Unknown|Unknown", "port:DP-2|Dell|U2723QE"})
 
+    def test_a_twin_with_another_serial_or_model_connected_does_not_block_the_match(self):
+        twin = {**MONITOR, "serial": "SN2"}
+        displays = self.seen({"DP-1": MONITOR, "DP-2": twin})
+        found, _ = pin_store.identities({"DP-1": NO_EDID, "DP-2": twin}, frozenset(), displays)
+        self.assertEqual(found["DP-1"]["key"], MONITOR_KEY)
+        other = {"make": "Dell", "model": "P2419H", "serial": None, "logical": {"width": 1920, "height": 1080}}
+        found, _ = pin_store.identities({"DP-1": NO_EDID, "DP-2": other}, frozenset(), displays)
+        self.assertEqual(found["DP-1"]["key"], MONITOR_KEY)
+        # A twin without a serial, or with the same one, could be the record's monitor.
+        for unsure in ({**MONITOR, "serial": None}, MONITOR):
+            found, _ = pin_store.identities({"DP-1": NO_EDID, "DP-2": unsure}, frozenset(), displays)
+            self.assertEqual(found["DP-1"]["key"], "port:DP-1|Unknown|Unknown")
+
+    def test_an_output_with_only_a_serial_keeps_its_own_key(self):
+        displays = self.seen({"DP-1": {**MONITOR, "serial": None}}, {})
+        serial_only = {**NO_EDID, "serial": "SN9"}
+        found, _ = pin_store.identities({"DP-1": serial_only}, frozenset(), displays)
+        self.assertEqual(found["DP-1"]["key"], "edid:Unknown|Unknown|SN9")
+
     def test_two_monitors_last_seen_on_the_connector_are_not_guessed_between(self):
         dell = {**MONITOR, "serial": None}
         lg = {"make": "LG", "model": "27UK850", "serial": None, "logical": {"width": 1920, "height": 1080}}
