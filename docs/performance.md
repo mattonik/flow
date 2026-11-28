@@ -312,3 +312,25 @@ Main fails two of the 13 checks (three, counting the one its earlier pause skips
 
 The snapshot checks pass on both, as before. `tests/test_flow_controller.py` and `tests/test_restore.py` cover the controller's side: no save until a client asks, none after a refresh nothing asked for, the wait and the interval, refreshes with the stream down, a held lock tried again a second later and never in a spin, a bug reported without stopping the loop, only the asking clients told, a refusal kept back once (and afresh after asking again), Niri read once under the locks with no process, a Niri that cannot be read refused rather than paused on, an unchanged snapshot left alone, and a bug pausing recovery. `tests/test_shell_autosave.py` reads the shell's conditions for asking and its wiring from the source, as no smoke runs a Restore session. Each of those mechanisms, neutralised, fails its test. A fresh agent's NEMESIS review found the refusals on short-lived states, the save during a restore and the `niri msg` per save; its re-check found that a Niri error had become a pause at once. The first version counted a refresh only once its coalescer was due. When the 30 s safety refresh came first and answered the events, that change was never saved; the unit test with a short safety interval caught it.
 
+
+## The busy indicator counted in frames (2026-11-28)
+
+The performance smoke began to fail one check in the guest: shell CPU with a busy activity in Overview, 6.4% against a limit of 5%. No change in the shell caused it. A probe ran four shells one after the other in one hold of the guest's screen lock, each with four 10 s samples in Overview, and split the shell's CPU by thread:
+
+| Shell | Island showing a busy activity | Overview showing it | Overview, the activity with a known amount |
+|---|---|---|---|
+| `2ec0043` (2026-11-22, the run that read 4.29%) | 4.7% | 5.7–7.3% | 0–0.4% |
+| `9cab1cc` (2026-11-22, later) | 4.6% | 5.8–7.2% | 0–0.4% |
+| `0d0c2fd` (main before the device island) | 5.2% | 6.5–8.1% | 0–0.4% |
+| `280ef0e` (main, four runs) | 4.4–6.1% | 5.1–7.3% | 0–0.4% |
+
+The 2026-11-22 shell that set the limit reads like main now. Its cost is one frame for every step of the busy clock, 12.5 a second. Qt's GUI thread takes 1.3–1.8% of a core for them and stays steady; the render thread takes 2–5%, and is what moves from run to run. What a frame costs is the guest's (virgl, and whatever else the host is doing), and it has risen since the limit was set with 0.1–0.7 points to spare.
+
+What the limit was for is the clock that advanced on every frame, 20–26% of a core. The smoke now counts frames instead: the shell runs with Qt's render-loop timing on (`qt.scenegraph.time.renderloop`, as `tests/niri_scale_probe.py` does, whose log reader moved into the smoke), and the two checks count the frames all the shell's windows drew over 10 s. The limit is 13 a second: the clock's 12.5, with room for a stray frame or two. The log costs nothing measurable: the other CPU checks read the same with it (idle 0.05%, title every 0.3 s 0.19%, focus every 0.25 s 1.51%).
+
+| Check | Limit | Main's smoke | This change, two runs | An every-frame animation on the dot |
+|---|---|---|---|---|
+| busy activity, island showing | < 5 % of a core / <= 13 frames a second | 4.3% | 12.6, 12.3 | 125.7 ✗ |
+| busy activity in Overview | < 5 % of a core / <= 13 frames a second | 6.4% ✗ | 12.5, 12.6 | 103.2 ✗ |
+
+In each run a single window drew them. The last column is this change's smoke on a shell whose dot also ran a `NumberAnimation` on its rotation while it breathed, with the clock left as it is: only these two checks failed, and the clock's own checks (every 80 ms) passed, since the clock had not changed. The smoke passes all 31 checks on this change in both runs.
