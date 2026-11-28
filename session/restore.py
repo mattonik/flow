@@ -915,14 +915,14 @@ def restore(data, workspace, windows, dirs, launch, get_snapshot, action, wait=t
 def focused_display(workspace, state=None):
     """The focused workspace's display key and every connected display key, keyed as pins are."""
     displays = pin_store.read(state / "spaces.json")[1] if state else {}
-    identities, _ = pin_store.identities(spaces.query("Outputs")[0], pin_store.shared_serials(displays))
+    identities, _ = pin_store.identities(spaces.query("Outputs")[0], pin_store.shared_serials(displays), displays)
     record = identities.get(workspace.get("output"))
     return (record["key"] if record else None), {r["key"] for r in identities.values()}
 
 
 def snapshot_display(workspace, outputs, displays, pins):
     """The focused display, for a snapshot's plan: its key and label, its pin count, how many are connected."""
-    identities, _ = pin_store.identities(outputs, pin_store.shared_serials(displays))
+    identities, _ = pin_store.identities(outputs, pin_store.shared_serials(displays), displays)
     record = identities.get(workspace.get("output"))
     key = record["key"] if record else None
     return {"key": key, "label": record["label"] if record else workspace.get("output") or "this display",

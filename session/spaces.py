@@ -1834,7 +1834,7 @@ def _run_locked(state, op, arg, reshape=True):
         pins, displays, version = pin_store.read(path)
         before = json.dumps([pins, displays, version], sort_keys=True)
         workspace, windows, outputs, workspaces = full_state()
-        connected, ambiguous = pin_store.identities(outputs, pin_store.shared_serials(displays))
+        connected, ambiguous = pin_store.identities(outputs, pin_store.shared_serials(displays), displays)
         socket = session_id()
         global SESSION, STATE
         SESSION, STATE = socket, state
