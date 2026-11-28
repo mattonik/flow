@@ -40,9 +40,14 @@ Checked (the limits are the PRs': docs/performance.md):
   active space it takes first), under 200 ms, Desk showing a fresh refresh under 150 ms and search showing its
   rows under 300 ms (medians of 5);
 - focus moving every 0.25 s across five spaces: the shell under 2.5% of a core (hidden surfaces rebuild nothing);
-- an activity without a known amount: the shell under 5% of a core while the island or Overview's island shows
-  it, its dot breathing on a clock stepping every 80 ms, and on Desk its bar sweeping at 16 ms; the clock stops
-  once the activity has a known amount, and with no activity.
+- an activity without a known amount: while the island or Overview's island shows it, the shell drawing at most
+  13 frames a second across all its windows (its dot breathing on a clock stepping every 80 ms is 12.5; something
+  animating on every frame is as fast as the render loop goes, 110–130 in the guest), counted from Qt's render-loop log
+  (``qt.scenegraph.time.renderloop``, a line or two a frame), the shell's GUI thread (its bindings and JavaScript,
+  not the drawing) under 4% of a core, and the clock stepping every 80 ms; on Desk its bar sweeping at 16 ms; the
+  clock stops once the activity has a known amount, and with no activity. Frames and the GUI thread, not the whole
+  shell's CPU: what drawing a frame costs is the machine's, and it changes with the machine (docs/performance.md,
+  2026-11-28).
 
 ``FLOW_PERF_IDLE`` shortens the idle phase (seconds) while developing; the limits stay those of 60 s.
 Prints one JSON line per check and a final ``{"result": ...}``; exits 1 if any check failed.
@@ -52,12 +57,14 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import socket
 import statistics
 import subprocess
 import sys
+import threading
 import time
 
 from isolated_state import IsolatedState, started_with
@@ -75,6 +82,38 @@ STORM = r"""d={dir}; while :; do
     while [ "$i" -le "$n" ]; do printf '\033]2;storm %d\007' "$i"; sleep "$p"; i=$((i+1)); done
     echo "$n" > "$d/done"; fi
   sleep 0.1; done"""
+
+FRAME = re.compile(r"\[window (0x[0-9a-f]+)\]\[render thread [^\]]*\] syncAndRender: frame rendered in (\d+)ms, "
+                   r"sync=(\d+), render=(\d+), swap=(\d+)")
+STARTED = re.compile(r"\[window (0x[0-9a-f]+)\]\[render thread [^\]]*\] syncAndRender: start, elapsed since last call: (\d+) ms")
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+class RenderLog:
+    """The shell's render-loop log, read as it is written: (arrival, window, kind, numbers) per frame line."""
+
+    def __init__(self, stream):
+        self.lines = []
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self.read, args=(stream,), daemon=True)
+        self.thread.start()
+
+    def read(self, stream):
+        for raw in stream:
+            line = ANSI.sub("", raw.decode(errors="replace"))
+            now = time.monotonic()
+            if (found := FRAME.search(line)):
+                entry = (now, found[1], "frame", tuple(int(n) for n in found.groups()[1:]))
+            elif (found := STARTED.search(line)):
+                entry = (now, found[1], "start", (int(found[2]),))
+            else:
+                continue
+            with self.lock:
+                self.lines.append(entry)
+
+    def between(self, start, end):
+        with self.lock:
+            return [entry for entry in self.lines if start <= entry[0] <= end]
 
 
 def niri(*args):
@@ -130,6 +169,13 @@ def cpu(pid):
     """(own, reaped children's) CPU seconds of a process."""
     fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
     return (int(fields[11]) + int(fields[12])) / TICK, (int(fields[13]) + int(fields[14])) / TICK
+
+
+def main_thread_cpu(pid):
+    """CPU seconds of a process's main thread alone: for the shell, Qt's GUI thread, where QML's bindings and
+    JavaScript run (the render thread, which draws, is another)."""
+    fields = Path(f"/proc/{pid}/task/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    return (int(fields[11]) + int(fields[12])) / TICK
 
 
 def runs(log, start, end, parents=None):
@@ -292,9 +338,12 @@ def main():
             subprocess.run([real["flow-spaces"], "make-layer", str(layer)], env=env, check=True,
                            stdout=subprocess.DEVNULL, timeout=30)
             shell_started = time.time()
-            shell_process = subprocess.Popen(["quickshell", "-p", shell], env=env, stdin=subprocess.DEVNULL,
-                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # With Qt's render-loop timing on, so what the shell draws can be counted (a line or two a frame).
+            shell_process = subprocess.Popen(["quickshell", "-p", shell], stdin=subprocess.DEVNULL,
+                                             env=dict(env, QT_LOGGING_RULES="qt.scenegraph.time.renderloop=true"),
+                                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             pid = shell_process.pid
+            render_log = RenderLog(shell_process.stdout)
             wait_for(lambda: ipc("desk_state")[0] == "closed", "the development shell")
             observed = json.loads(subprocess.check_output([real["flow-spaces"], "observe"], env=env, text=True))
             if not any(item.get("shaped") for item in observed.get("layers", [])):
@@ -498,10 +547,15 @@ def main():
                 staged.write_text(json.dumps({"version": 1, "activities": activities}))
                 os.replace(staged, runtime / "flow-activities.json")
 
-            def shell_cpu(seconds):
-                own, begin = cpu(pid)[0], time.time()
+            def drawn(seconds):
+                """Over ``seconds``: frames a second the shell drew across all its windows, how many windows drew,
+                and its GUI thread's CPU (% of a core)."""
+                begin, gui = time.monotonic(), main_thread_cpu(pid)
                 time.sleep(seconds)
-                return 100 * (cpu(pid)[0] - own) / (time.time() - begin)
+                end = time.monotonic()
+                gui = 100 * (main_thread_cpu(pid) - gui) / (end - begin)
+                frames = [entry for entry in render_log.between(begin, end) if entry[2] == "frame"]
+                return len(frames) / (end - begin), len({entry[1] for entry in frames}), gui
 
             def clock():
                 try:
@@ -522,15 +576,19 @@ def main():
             ipc("island")  # nothing rests over apps (ADR-0014): open the Island, as Super+B does
             wait_for(lambda: json.loads(ipc("island_state")[0] or "{}").get("open"), "the Island open")
             time.sleep(1)
-            share = shell_cpu(10)
-            check("busy activity, island showing: shell CPU", share, "< 5", share < 5, "% of a core")
+            rate, windows, gui = drawn(10)
+            # None drawn is the log not read (a basic render loop logs another format), not a good result.
+            check("busy activity, island showing: frames drawn", rate, "0 < frames <= 13", 0 < rate <= 13, f"a second, by {windows} window(s)")
+            check("busy activity, island showing: the shell's GUI thread CPU", gui, "< 4", gui < 4, "% of a core")
             moved = ticking()
             check("busy activity, island showing: the dot breathes", moved, "every 80 ms", moved == 80)
             ipc("overview_open")
             wait_for(lambda: ipc("overview_state")[0] == "open", "Overview, with its own island")
             time.sleep(1)
-            share = shell_cpu(10)
-            check("busy activity in Overview: shell CPU", share, "< 5", share < 5, "% of a core")
+            rate, windows, gui = drawn(10)
+            # None drawn is the log not read (a basic render loop logs another format), not a good result.
+            check("busy activity in Overview: frames drawn", rate, "0 < frames <= 13", 0 < rate <= 13, f"a second, by {windows} window(s)")
+            check("busy activity in Overview: the shell's GUI thread CPU", gui, "< 4", gui < 4, "% of a core")
             moved = ticking()
             check("busy activity in Overview: the dot breathes", moved, "every 80 ms", moved == 80)
             ipc("overview_close")

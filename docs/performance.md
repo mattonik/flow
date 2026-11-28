@@ -312,3 +312,42 @@ Main fails two of the 13 checks (three, counting the one its earlier pause skips
 
 The snapshot checks pass on both, as before. `tests/test_flow_controller.py` and `tests/test_restore.py` cover the controller's side: no save until a client asks, none after a refresh nothing asked for, the wait and the interval, refreshes with the stream down, a held lock tried again a second later and never in a spin, a bug reported without stopping the loop, only the asking clients told, a refusal kept back once (and afresh after asking again), Niri read once under the locks with no process, a Niri that cannot be read refused rather than paused on, an unchanged snapshot left alone, and a bug pausing recovery. `tests/test_shell_autosave.py` reads the shell's conditions for asking and its wiring from the source, as no smoke runs a Restore session. Each of those mechanisms, neutralised, fails its test. A fresh agent's NEMESIS review found the refusals on short-lived states, the save during a restore and the `niri msg` per save; its re-check found that a Niri error had become a pause at once. The first version counted a refresh only once its coalescer was due. When the 30 s safety refresh came first and answered the events, that change was never saved; the unit test with a short safety interval caught it.
 
+
+## The busy indicator counted in frames (2026-11-28)
+
+The performance smoke began to fail one check in the guest: shell CPU with a busy activity in Overview, 6.4% against a limit of 5%. No change in the shell caused it. A probe (a copy of the smoke, not committed, that also reads each thread's CPU from `/proc/PID/task/*/stat`) ran four shells one after the other in one hold of the guest's screen lock, each with four 10 s samples in Overview:
+
+| Shell | Island showing a busy activity | Overview showing it | Overview, the activity with a known amount |
+|---|---|---|---|
+| `2ec0043` (2026-11-22, the run that read 4.29%) | 4.7% | 5.7–7.3% | 0–0.4% |
+| `9cab1cc` (2026-11-22, later) | 4.6% | 5.8–7.2% | 0–0.4% |
+| `0d0c2fd` (main before the device island) | 5.2% | 6.5–8.1% | 0–0.4% |
+| `280ef0e` (main, four runs) | 4.4–6.1% | 5.1–7.3% | 0–0.4% |
+
+The 2026-11-22 shell that set the limit reads like main now. Its cost is one frame for every step of the busy clock, 12.5 a second. Qt's GUI thread, where the bindings and JavaScript run, takes 1.3–2.2% of a core for them and stays steady; the render thread takes 2–5%, and is what moves from run to run. What drawing a frame costs is the guest's (virgl, and whatever else the host is doing), and it has risen since the limit was set with 0.1–0.7 points to spare.
+
+What the limit was for is the clock that advanced on every frame, about 20% of a core (19.4–20.9% above; a clock stepping every 8 ms read 21.8–25.8%). The busy checks now measure two things the shell controls instead of the whole shell's CPU:
+
+- **Frames drawn**, across all the shell's windows over 10 s, at most 13 a second: the clock's 12.5, with room for a stray frame or two (a minute ticking over). The shell runs with Qt's render-loop timing on (`qt.scenegraph.time.renderloop`, as `tests/niri_scale_probe.py` does; its log reader moved into the smoke) and the smoke counts the lines. None counted fails too: that is the log not being read, not a shell that draws nothing.
+- **The GUI thread's CPU**, under 4% of a core: work on every step that draws nothing (JavaScript in the clock, a binding in a hidden window) shows there and not in the frames.
+
+The log's lines arrive as they are written: in this change's runs, 80 ms apart (the median; none closer than 61 ms), and the render loop's own times between frames give the same rate. With the log off, the other checks read the same within their run-to-run spread, the focus check perhaps 0.2 points lower (each focus move draws, and each frame logs two lines). One hold, alternating:
+
+| Check | Limit | Log on (two runs) | Log off (two runs) |
+|---|---|---|---|
+| idle: shell CPU | < 1 % of a core | 0.02%, 0.05% | 0.05%, 0.2% |
+| Overview's first frame | < 200 ms | 105, 102 ms | 107, 95 ms |
+| title every 0.3 s: shell CPU | < 5 % of a core | 0.28%, 0.18% | 0.28%, 0.28% |
+| title every 0.05 s: shell CPU | < 10 % of a core | 0.38%, 0.49% | 0.5%, 0.38% |
+| focus every 0.25 s: shell CPU | < 2.5 % of a core | 1.51%, 1.52% | 1.22%, 1.36% |
+
+The new checks, in the same hold, on this change and on two mutants, each with the clock left as it is (so its own checks, every 80 ms, pass on both):
+
+| Check | Limit | This change (two runs) | Every-frame animation on the dot | Heavy JavaScript on each clock step |
+|---|---|---|---|---|
+| island showing: frames drawn | 0 < frames <= 13 a second | 12.5, 12.6 | 128.1 ✗ | 12.5 |
+| island showing: GUI thread CPU | < 4 % of a core | 2.0%, 2.3% | 4.0% | 32.4% ✗ |
+| in Overview: frames drawn | 0 < frames <= 13 a second | 12.5, 12.5 | 111.0 ✗ | 12.5 |
+| in Overview: GUI thread CPU | < 4 % of a core | 1.4%, 1.4% | 6.3% ✗ | 32.9% ✗ |
+
+The first mutant's dot runs a `NumberAnimation` on its rotation while it breathes; the second adds a million-step loop to the clock's step. A single window drew in every run. The every-frame animation drew more than the display's 120 Hz because the guest's render loop started frames every 7.5–9 ms: virgl does not hold a swap to the display's rate. The smoke passes all 31 checks on this change in both runs with the log on (and fails only the two frame checks with it off).

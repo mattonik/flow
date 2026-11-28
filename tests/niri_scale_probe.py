@@ -36,49 +36,15 @@ search under 300 ms, at most two frames at idle); the rest is reported. Prints o
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import socket
 import statistics
 import subprocess
 import sys
-import threading
 import time
 
 from isolated_state import IsolatedState
-from niri_performance_smoke import NiriSocket, controller_socket, controller_stats, cpu, niri, read, wait_for
-
-FRAME = re.compile(r"\[window (0x[0-9a-f]+)\]\[render thread [^\]]*\] syncAndRender: frame rendered in (\d+)ms, "
-                   r"sync=(\d+), render=(\d+), swap=(\d+)")
-STARTED = re.compile(r"\[window (0x[0-9a-f]+)\]\[render thread [^\]]*\] syncAndRender: start, elapsed since last call: (\d+) ms")
-ANSI = re.compile(r"\x1b\[[0-9;]*m")
-
-
-class RenderLog:
-    """The shell's render-loop log, read as it is written: (arrival, window, kind, numbers) per frame line."""
-
-    def __init__(self, stream):
-        self.lines = []
-        self.lock = threading.Lock()
-        self.thread = threading.Thread(target=self.read, args=(stream,), daemon=True)
-        self.thread.start()
-
-    def read(self, stream):
-        for raw in stream:
-            line = ANSI.sub("", raw.decode(errors="replace"))
-            now = time.monotonic()
-            if (found := FRAME.search(line)):
-                entry = (now, found[1], "frame", tuple(int(n) for n in found.groups()[1:]))
-            elif (found := STARTED.search(line)):
-                entry = (now, found[1], "start", (int(found[2]),))
-            else:
-                continue
-            with self.lock:
-                self.lines.append(entry)
-
-    def between(self, start, end):
-        with self.lock:
-            return [entry for entry in self.lines if start <= entry[0] <= end]
+from niri_performance_smoke import NiriSocket, RenderLog, controller_socket, controller_stats, cpu, niri, read, wait_for
 
 
 def frames_of(entries, period, known):
