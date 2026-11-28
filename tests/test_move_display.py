@@ -235,10 +235,16 @@ class MoveToDisplayTest(unittest.TestCase):
 
     def test_lists_connected_displays_in_screen_order(self):
         self.setup({"DP-1": [[8]], "eDP-1": [[7]]}, focused=7)
+        # Each display's current mode in physical pixels, from Niri's outputs (the shell matches notched panels on it).
+        self.niri.outputs = {"eDP-1": {**LAPTOP, "modes": [{"width": 1280, "height": 800}, {"width": 2560, "height": 1664}],
+                                       "current_mode": 1},
+                             "DP-1": {**OUTPUTS["DP-1"], "modes": [{"width": 1920, "height": 1080}], "current_mode": 0}}
         result = self.invoke("refresh")
         self.assertEqual(result["displays"], [
-            {"key": LAPTOP_KEY, "label": "BOE Panel", "name": "Main", "number": 0, "current": True},
-            {"key": MONITOR_KEY, "label": "Dell U2723QE", "name": "External 1", "number": 1, "current": False}])
+            {"key": LAPTOP_KEY, "label": "BOE Panel", "name": "Main", "number": 0, "current": True, "output": "eDP-1",
+             "mode": [2560, 1664]},
+            {"key": MONITOR_KEY, "label": "Dell U2723QE", "name": "External 1", "number": 1, "current": False,
+             "output": "DP-1", "mode": [1920, 1080]}])
 
 
 if __name__ == "__main__":

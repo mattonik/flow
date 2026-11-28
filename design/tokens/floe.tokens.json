@@ -242,6 +242,45 @@
       }
     }
   },
+  "band": {
+    "$description": "A notched MacBook's band (ADR-0014): black like the camera's cutout in either appearance, so the band and the cutout read as one. Its text and glyphs, hover and pressed fills, focus ring and dot, and the edge and lens of a simulated cutout (a test guest has no hole to see).",
+    "fill": {
+      "$type": "color",
+      "$value": "#000000"
+    },
+    "text": {
+      "$type": "color",
+      "$value": "#E8ECEA"
+    },
+    "muted": {
+      "$type": "color",
+      "$value": "#C9D1D0"
+    },
+    "hover": {
+      "$type": "color",
+      "$value": "#1B2226"
+    },
+    "pressed": {
+      "$type": "color",
+      "$value": "#2A3236"
+    },
+    "focus": {
+      "$type": "color",
+      "$value": "#BDDAD1"
+    },
+    "cutout-edge": {
+      "$type": "color",
+      "$value": "#2A2F33"
+    },
+    "lens": {
+      "$type": "color",
+      "$value": "#0E1418"
+    },
+    "lens-edge": {
+      "$type": "color",
+      "$value": "#1F2A30"
+    }
+  },
   "typography": {
     "family": {
       "brand": {

@@ -231,9 +231,11 @@ No news/weather feed, productivity stats, or complex home widgets by default. Av
 
 Notifications, Home, search/launcher, settings, quick controls, ongoing activities and reliable lock access must work irrespective of the active space/app. System is above the work and not a regular Flow space. Apps must not hide essential recovery actions in a permanent fullscreen trap.
 
+Each kind of screen decides how the Island appears (ADR-0014): nothing of the shell rests over an app. What is over an app is there because the user summoned it, or only for a moment, and then takes no clicks. On every device the work indicator shows only while moving between spaces, and the home line only when a touch device is present.
+
 ### 7.2 Tablet island
 
-- Small top-centered **floating** capsule **over** app content, not a bar with reserved height. Accommodate display safe areas, camera holes and corners.
+- A thin status margin and the home line (not built yet; until then a tablet is a plain screen with a touch device, §7.4). When summoned, a small top-centered **floating** capsule **over** app content, not a bar with reserved height. Accommodate display safe areas, camera holes and corners.
 - Tentative gestures: left → notifications, right → quick settings, down → Desk/Home; tap → compact actions. Validate against application gestures.
 - Middle section holds a brief contextual activity: progress, call, timer, music, sync/build task, battery/charging. Expand only for relevant information.
 
@@ -242,11 +244,13 @@ Notifications, Home, search/launcher, settings, quick controls, ongoing activiti
 - Do **not** create an oversized duplicate island beneath a notch.
 - Visually absorb the physical black cutout; small actions on **left/right of it** and concise activity when needed. Maintain hit targets and accessible actions.
 - Actual cutout geometry needs device data/configuration. Simulator presets do not prove native cutout handling.
+- In Asahi's full-panel mode (`appledrm.show_notch=1`) the band beside the camera is the shell's, kept from windows by an exclusive zone, so apps get the rectangle Asahi gives them by default. The Island lives in the band and does not expand below it. Known panels are matched on the full-panel size the output reports; a setting overrides the match for testing. A fullscreen window covers the band (ADR-0014).
 
 ### 7.4 Conventional desktop/external monitor
 
-- Approximately three compact system controls or equivalently unobtrusive status/command affordance. No fake camera notch on unnotched monitors.
+- At rest, nothing over apps: the Island opens when the pointer is pushed against the top edge (a 1 px strip, after a short rest), by Super+B, or from the optional clock pill (a setting: off, the main screen or all screens). Opened, it is a floating card, round on every corner: approximately three compact system controls, then Overview and Desk, the space's position, and a Group's apps or a Layer's actions. No hot corner. No fake camera notch on unnotched monitors.
 - Do not let UI permanently consume a large vertical strip.
+- A notification's banner shows briefly (a critical one until the Island or the notifications panel opens) and takes no clicks; to act on it, open the Island (its bell) or the notifications panel.
 - Notifications have history, do-not-disturb, priority/action semantics, privacy/redaction and normal focus behavior.
 
 ---

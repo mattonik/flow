@@ -38,18 +38,15 @@ Checks, in order (names for ``--only``):
   the page's is pasted and saved in KolourPaint and read by Firefox on X11 (``MOZ_ENABLE_WAYLAND=0``); that one's is
   read by the Wayland page. Each image has the colour its copy had.
 - ``chooser-pointer``: the same, answered with the pointer where Nautilus draws its buttons (the close button, the
-  file, Open, Save). It fails today where the shell's work indicator covers the chooser's Open and Save (see
-  ``edges``), and says so.
+  file, Open, Save), none of them under the shell's surfaces (ADR-0014: nothing rests over apps).
 - ``backends``: every portal request above reached the backend Flow intends (from a D-Bus monitor of the
   ``org.freedesktop.impl.portal.*`` calls): FileChooser and ScreenCast the GNOME backend, Access the GTK one,
   Screenshot Flow's own (``session/screenshot_portal.py``). PipeWire and WirePlumber run.
 - ``edges``: a full-window Firefox page (kiosk) has buttons along its window's top and bottom edges: left,
-  middle and right. Each must take a click. Today the island (top middle), the home indicator (bottom middle) and
-  the work indicator (bottom right) sit over the window and take them instead: this is the acceptance test for the
-  shell's fix, indicators that get out of the way, and it fails until that lands.
+  middle and right. Each must take a click, with no rest before it: on a plain screen nothing of the shell rests
+  over an app (ADR-0014; the Island, the home line and the work indicator once did, F-012).
 
-The run exits 0 when every check passes but ``chooser-pointer`` and ``edges``, which are expected to fail until the
-shell's fix lands, and fails when any other check fails or when one of those two passes.
+The run exits 0 when every check passes.
 
 X11 windows get no keys: xwayland-satellite does not take wtype's virtual keymap, so xterm and Firefox on X11 are
 driven by the pointer only (a middle click pastes, a double click copies, page buttons copy and read).
@@ -95,9 +92,9 @@ RUNTIME, BRANCH = "org.freedesktop.Platform", "25.08"
 # each check passes alone and in this order.
 CHECKS = ["chooser", "screenshot", "screenshot-gimp", "screencast", "clipboard-text", "clipboard-image", "dnd-file",
           "dnd-text", "chooser-pointer", "backends", "edges"]
-# Expected to fail until the shell's surfaces stop covering apps' edges (fixed apart): they are its acceptance tests.
-# The run fails if any other check fails, or if one of these passes (update this list and the status document).
-EXPECTED_FAILURES = {"chooser-pointer", "edges"}
+# Checks expected to fail, if any (none since ADR-0014). The run fails if any other check fails, or if one of these
+# passes (update this list and the status document).
+EXPECTED_FAILURES = set()
 # The backend Flow intends for each interface the checks use (modules/flow.nix, ADR-0005).
 INTENDED = {"FileChooser": "gnome", "Access": "gtk", "Screenshot": "flow", "ScreenCast": "gnome"}
 PERMISSIONS = ("org.freedesktop.impl.portal.PermissionStore", "/org/freedesktop/impl/portal/PermissionStore",
@@ -992,10 +989,9 @@ class Smoke:
     # Overlap: the shell's surfaces over an app's edges -----------------------------------------------------------
 
     def check_edges(self):
-        """An app's own controls along its window's top and bottom edges take clicks. Today they do not where the
-        island (top middle), the home indicator (bottom middle) and the work indicator (bottom right) sit over the
-        window: this check is the acceptance test for the fix (indicators that get out of the way) and fails
-        until it lands."""
+        """An app's own controls along its window's top and bottom edges take clicks: nothing of the shell rests over the
+        window (ADR-0014). Once the island (top middle), the home indicator (bottom middle) and the work indicator
+        (bottom right) did, and took them (F-012)."""
         pages = self.need_pages()
         page = self.need_firefox(kiosk=True, mode="edges")
         w = windows()[page["id"]]
@@ -1006,8 +1002,7 @@ class Smoke:
                              ("bottom-left", (30, height - 12)), ("bottom-middle", (width // 2, height - 12)),
                              ("bottom-right", (width - 30, height - 12))):
             pages.drain()
-            # A dwell before the click, as a user's: the shell's fix may let clicks through once the pointer rests.
-            self.pointer.run(("move", o["x"] + x, o["y"] + y), ("wait", 800), "click")
+            self.pointer.click((o["x"] + x, o["y"] + y))
             try:
                 event = pages.wait(["clicked"], timeout=4)
                 (took if event["name"] == name else missed).append(name)

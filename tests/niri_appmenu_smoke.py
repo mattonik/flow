@@ -203,7 +203,24 @@ def main():
             index = next(i for i, l in enumerate(labels) if re.search(pattern, l))
             pointer.click(pointer.hover(lambda: target(f"app_item:{index}"), label))
 
+        def to_edge():
+            outputs = json.loads(subprocess.check_output(["niri", "msg", "-j", "outputs"], text=True, timeout=10))
+            o = next(v["logical"] for v in outputs.values() if v.get("logical"))
+            pointer.move((o["x"] + o["width"] // 2, o["y"]))
+            time.sleep(0.6)
+
+        def shown_button():
+            """The App button's state once it shows: on the opened Island (ADR-0014: nothing rests over apps, so a
+            focused app with a menu makes it available, and the Island, opened from the top edge, shows it). The
+            pointer is pushed against the top edge, as a user reaching for the button would, and rests there."""
+            s = state()
+            if s.get("available"):
+                to_edge()
+                s = state()
+            return s.get("button") and s
+
         def open_menu():
+            wait_for(shown_button, "the App button on the opened Island")
             pointer.click(pointer.hover(lambda: target("app_button"), "the App button"))
             wait_for(lambda: state().get("open"), "the menu to open")
 
@@ -232,7 +249,7 @@ def main():
             # Kate and foot.
             kate, kate_a = launch([f"{roots['kate']}/bin/kate", "-n"])
             focus(kate_a)
-            shown = wait_for(lambda: (s := state()).get("button") and s, "the App button for Kate", timeout=15)
+            shown = wait_for(shown_button, "the App button for Kate", timeout=15)
             check("Kate focused: the App button shows", shown["button"], probe=shown["probe"])
             shot("1-button-shown-kate.png")
             button, ends, width = target("app_button"), kate_menu_ends(kate.pid), windows()[kate_a]["layout"]["window_size"][0]
@@ -243,7 +260,8 @@ def main():
             focus(foot_window)
             time.sleep(1)
             hidden = state()
-            check("foot focused: no App button", hidden.get("probe") and not hidden["button"], probe=hidden.get("probe"))
+            check("foot focused: no App button", hidden.get("probe") and not hidden["available"] and not hidden["button"],
+                  probe=hidden.get("probe"))
             shot("2-button-hidden-foot.png")
             ipc("menu")  # what Super+M runs
             toast = wait_for(lambda: ipc("toast") or None, "a toast", timeout=3)
@@ -252,7 +270,7 @@ def main():
 
             # Help > About Kate, from the button.
             focus(kate_a)
-            wait_for(lambda: state().get("button"), "the App button for Kate")
+            wait_for(shown_button, "the App button for Kate")
             known = set(windows())
             wait_for(lambda: not ipc("toast"), "the toast to go", timeout=5)  # out of the screenshot
             open_menu()
@@ -275,7 +293,7 @@ def main():
             focus(kate_b)
             for chosen, other in ((kate_a, kate_b), (kate_b, kate_a)):
                 focus(chosen)
-                wait_for(lambda: state().get("button"), "the App button for Kate")
+                wait_for(shown_button, "the App button for Kate")
                 titles = {i: windows()[i]["title"] for i in (kate_a, kate_b)}
                 run_command("^File$", "^New$")
                 try:
@@ -294,7 +312,7 @@ def main():
             # DB Browser's modal About.
             dbb, dbb_window = launch([f"{roots['dbb']}/bin/sqlitebrowser"])
             focus(dbb_window)
-            wait_for(lambda: state().get("button"), "the App button for DB Browser", timeout=15)
+            wait_for(shown_button, "the App button for DB Browser", timeout=15)
             known = set(windows())
             open_menu()
             choose("^Help$", "Help")

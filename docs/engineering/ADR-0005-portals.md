@@ -111,3 +111,13 @@ buffers only), Access and Notification (GTK), Secret (GNOME Keyring).
 - [Niri upstream: Gestures](https://github.com/niri-wm/niri/wiki/Gestures)
 - [XDG Desktop Portal documentation](https://flatpak.github.io/xdg-desktop-portal/docs/)
 - Local context: `docs/engineering/REUSE_FIRST_REFERENCE_ATLAS.md`, `modules/flow.nix`, `docs/Flow_MASTER_SPEC_v1.1.md` (F-012, F-016).
+
+## Amendment: the overlap fixed by resting chrome by device (2026-11-27)
+
+The fix the amendment above names, bands that fade and let clicks through, was built and left: a click within 2 to
+208 ms of the pointer's arrival was still lost, and taps conflict with fading. ADR-0014 replaces it. On a plain
+screen nothing of the shell rests over an app: a 1 px strip along the top edge, Super+B or an optional clock pill
+opens the Island, the work indicator shows only while moving between spaces, the home line only with a touch device,
+and a notification's banner takes no clicks. So Nautilus's Open and Save take clicks, and GNOME's chooser stays the
+FileChooser backend. On a notched MacBook in Asahi's full-panel mode the band beside the camera is the shell's, as an
+exclusive zone, and no window is under it.

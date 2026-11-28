@@ -1,4 +1,5 @@
-"""Real input devices for the guest tests: a keyboard and a touchpad made with the kernel's uinput.
+"""Real input devices for the guest tests: a keyboard and a touchpad made with the kernel's uinput, and on request
+a touchscreen (only its presence is used: the shell shows the home line when one is plugged in, ADR-0014).
 
 Niri reads them through libinput as it reads a laptop's own, so a key press reaches Niri's bindings (keys sent
 through Niri's virtual keyboard, as ``wtype`` sends them, never do) and a four-finger swipe goes through
@@ -26,7 +27,7 @@ EV_SYN, EV_KEY, EV_ABS = 0, 1, 3
 ABS_X, ABS_Y, ABS_MT_SLOT, ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_TRACKING_ID = 0x00, 0x01, 0x2F, 0x35, 0x36, 0x39
 BTN_LEFT, BTN_TOOL_FINGER, BTN_TOUCH = 0x110, 0x145, 0x14A
 BTN_TOOL_DOUBLETAP, BTN_TOOL_TRIPLETAP, BTN_TOOL_QUADTAP, BTN_TOOL_QUINTTAP = 0x14D, 0x14E, 0x14F, 0x148
-INPUT_PROP_POINTER, INPUT_PROP_BUTTONPAD = 0x00, 0x02
+INPUT_PROP_POINTER, INPUT_PROP_DIRECT, INPUT_PROP_BUTTONPAD = 0x00, 0x01, 0x02
 TOOLS = {1: BTN_TOOL_FINGER, 2: BTN_TOOL_DOUBLETAP, 3: BTN_TOOL_TRIPLETAP, 4: BTN_TOOL_QUADTAP, 5: BTN_TOOL_QUINTTAP}
 
 KEYS = {"esc": 1, "tab": 15, "enter": 28, "leftctrl": 29, "leftshift": 42, "leftalt": 56, "home": 102, "up": 103,
@@ -38,6 +39,8 @@ KEYS.update({c: code for c, code in zip("zxcvbnm", range(44, 51))})
 
 # A 100 × 62 mm touchpad: libinput reads sizes from the resolution, in units per millimetre.
 PAD_W, PAD_H, PAD_RES = 4000, 2480, 40
+# A 290 × 181 mm touchscreen (a 13-inch panel's size).
+SCREEN_W, SCREEN_H, SCREEN_RES = 2900, 1810, 10
 
 
 class Device:
@@ -81,6 +84,22 @@ class Server:
                           props=[INPUT_PROP_POINTER, INPUT_PROP_BUTTONPAD])
         self.held = []
         self.tracking = 0
+        self.touchscreen = None
+
+    def set_touchscreen(self, on):
+        """Plug a touchscreen in (a direct multitouch device), or take it out."""
+        if on and not self.touchscreen:
+            self.touchscreen = Device("Flow test touchscreen", keys=[BTN_TOUCH],
+                                      absolute=[(ABS_X, 0, SCREEN_W, SCREEN_RES), (ABS_Y, 0, SCREEN_H, SCREEN_RES),
+                                                (ABS_MT_SLOT, 0, 9, 0), (ABS_MT_POSITION_X, 0, SCREEN_W, SCREEN_RES),
+                                                (ABS_MT_POSITION_Y, 0, SCREEN_H, SCREEN_RES),
+                                                (ABS_MT_TRACKING_ID, 0, 65535, 0)],
+                                      props=[INPUT_PROP_DIRECT])
+            time.sleep(1)  # udev and libinput add it
+        elif not on and self.touchscreen:
+            self.touchscreen.close()
+            self.touchscreen = None
+            time.sleep(0.5)
 
     def keys(self, names, hold_ms=40):
         """Press the keys in order and release them in reverse, as a chord."""
@@ -131,11 +150,14 @@ class Server:
         finally:
             self.keyboard.close()
             self.pad.close()
+            if self.touchscreen:
+                self.touchscreen.close()
 
 
-def serve():
+def serve(touchscreen=False):
     server = Server()
     try:
+        server.set_touchscreen(touchscreen)
         time.sleep(1.5)  # udev and libinput add the devices; events before that are lost
         print("ready", flush=True)
         for line in sys.stdin:
@@ -144,16 +166,20 @@ def serve():
                 server.keys(request["keys"], request.get("hold_ms", 40))
             elif "swipe" in request:
                 server.swipe(**request["swipe"])
+            elif "touchscreen" in request:
+                server.set_touchscreen(request["touchscreen"])
             print("ok", flush=True)
     finally:
         server.close()
 
 
 class Devices:
-    """The test's side: a keyboard and a touchpad, alive until ``close()`` or exit."""
+    """The test's side: a keyboard and a touchpad, and a touchscreen with ``touchscreen=True``, alive until
+    ``close()`` or exit."""
 
-    def __init__(self):
-        self.process = subprocess.Popen(["sudo", "-n", sys.executable, "-I", str(Path(__file__).resolve()), "serve"],
+    def __init__(self, touchscreen=False):
+        self.process = subprocess.Popen(["sudo", "-n", sys.executable, "-I", str(Path(__file__).resolve()), "serve",
+                                         *(["touchscreen"] if touchscreen else [])],
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         atexit.register(self.close)
         if self.process.stdout.readline().strip() != "ready":
@@ -169,6 +195,10 @@ class Devices:
         """``keys("super", "h")``: Super+H, pressed and released on the test keyboard."""
         self.ask({"keys": list(names), "hold_ms": hold_ms})
 
+    def touchscreen(self, on):
+        """Plug the touchscreen in, or take it out."""
+        self.ask({"touchscreen": bool(on)})
+
     def swipe(self, fingers, dx, dy, steps=24, pause_ms=10):
         self.ask({"swipe": {"fingers": fingers, "dx": dx, "dy": dy, "steps": steps, "pause_ms": pause_ms}})
 
@@ -181,5 +211,5 @@ class Devices:
                 self.process.kill()
 
 
-if __name__ == "__main__" and sys.argv[1:] == ["serve"]:
-    serve()
+if __name__ == "__main__" and sys.argv[1:2] == ["serve"]:
+    serve(touchscreen=sys.argv[2:] == ["touchscreen"])

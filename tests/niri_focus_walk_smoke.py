@@ -196,13 +196,33 @@ def rows_of(items, box):
     return [i for row in rows for i in sorted(row["items"], key=lambda i: box(i)[0])]
 
 
-def reading_order(controls):
-    """Controls in reading order; a card's controls are one block, read in the card's place."""
+def reading_order(controls, depth=0):
+    """Controls in reading order. A card's controls are one block, read in the card's place, and so are a scrolling
+    view's (``views``, outermost first): the view is read where it is, its controls where they are in it. Their
+    positions all move together as it scrolls, so the order does not depend on the scroll, as Qt's Tab order does
+    not. A control's whole rectangle, read with the window's, put a Desk button scrolled up behind the Island's row
+    into that row. Not handled: a card that holds a scrolling view (none does today) would be read as two blocks, its
+    view's and the rest of its own."""
     blocks = {}
     for c in controls:
-        blocks.setdefault(tuple(c["card"]) if c["card"] else ("alone", id(c)), []).append(c)
-    units = [(key if key[0] != "alone" else tuple(members[0]["start"]), members) for key, members in blocks.items()]
-    return [c for _, members in rows_of(units, lambda u: u[0]) for c in rows_of(members, lambda c: c["start"])]
+        views = c.get("views") or []
+        key = (("view",) + tuple(views[depth]) if len(views) > depth else ("card",) + tuple(c["card"]) if c["card"]
+               else ("alone", id(c)))
+        blocks.setdefault(key, []).append(c)
+    units = []
+    for key, members in blocks.items():
+        if key[0] == "view":
+            units.append((key[1:], reading_order(members, depth + 1)))
+        elif key[0] == "card":
+            units.append((key[1:], rows_of(members, lambda c: c["start"])))
+        else:
+            units.append((tuple(members[0]["start"]), members))
+    return [c for _, members in rows_of(units, lambda u: u[0]) for c in members]
+
+
+def cycle_of(listed):
+    """The walk's expected order: indices into the shell's controls (``controls()``), in reading order."""
+    return [c["at"] for c in reading_order([dict(c, start=c["rect"], at=i) for i, c in enumerate(listed)])]
 
 
 def normal(text):
@@ -295,7 +315,12 @@ def run(shell, bus, steps, problems):
                     if frame.getState().contains(pyatspi.STATE_SHOWING) and [extents.width, extents.height] == [round(v) for v in size]:
                         return frame
                 return None
-            return wait_for(find, f"a showing AT-SPI window of size {size}", timeout=5)
+            def seen():
+                app = shell_app()
+                return [(app.getChildAtIndex(i).queryComponent().getExtents(pyatspi.WINDOW_COORDS).width,
+                         app.getChildAtIndex(i).queryComponent().getExtents(pyatspi.WINDOW_COORDS).height,
+                         app.getChildAtIndex(i).getState().contains(pyatspi.STATE_SHOWING)) for i in range(app.childCount)] if app else []
+            return wait_for(find, lambda: f"a showing AT-SPI window of size {size} (windows: {seen()})", timeout=5)
 
         def nodes(node):
             """Visible descendants. Qt exposes only controls in view: one scrolled away has no object."""
@@ -423,7 +448,7 @@ def run(shell, bus, steps, problems):
             """Tab round the surface and Shift+Tab back. Each step must land on the next control in reading
             order that is enabled at that moment: a scrolled row of cards enables its "‹" button on the way."""
             frame, listed = matched(surface)
-            cycle = [c["at"] for c in reading_order([dict(c, start=c["rect"], at=i) for i, c in enumerate(listed)])]
+            cycle = cycle_of(listed)
             # The test's own rule, not the shell's focus policy: every enabled control is reached but the
             # pointer-only ones, which must not be.
             reachable = lambda c: c["enabled"] and (surface, c["text"]) not in POINTER_ONLY
@@ -565,7 +590,15 @@ def run(shell, bus, steps, problems):
             # when an earlier run stopped right after that same first call.
             subprocess.run(["wtype", "-k", "Hyper_L"], check=True, timeout=10)
             wait_for(shell_app, "the shell on the AT-SPI bus")
-            island = wait_for(lambda: controls("island"), "the island")
+            ipc("island")  # nothing rests over apps (ADR-0014): open the Island, as Super+B does
+
+            def settled_island():
+                # Its size once laid out: its row grows as its parts appear (the position, an activity).
+                first = controls("island")
+                time.sleep(0.4)
+                second = controls("island")
+                return second if second and first and second[0]["window"] == first[0]["window"] else None
+            island = wait_for(settled_island, "the island, laid out")
             chips = progress_bars(island[0]["window"])
             if len(chips) != 1 or not chips[0].name.startswith("Activity from Photos: Copy photos") or chips[0].description != "40 percent":
                 raise RuntimeError(f"The island's activity chip is not one progress bar: {[(c.name, c.description) for c in chips]}")

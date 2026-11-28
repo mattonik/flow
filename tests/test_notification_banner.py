@@ -3,10 +3,10 @@
 When it shows, for how long, what replaces it and what closes it are tested on a running shell by
 tests/niri_notification_banner_smoke.py in the guest. These checks of the source text cover what that
 smoke cannot see or reach:
-- The banner never takes the keyboard, and Super+N opens the panel instead.
-- Exactly which surfaces hide it (the visibility terms, in any order).
-- Its dismiss button is a full 44 px target that calls dismiss(); the card carries the alert role.
-- New and replaced notifications both reach showBanner, and a click runs the default action.
+- The banner never takes the keyboard or a click (ADR-0014: it sits over an app), and Super+N opens the panel.
+- Exactly which surfaces hide it (the visibility terms, in any order), the opened Island among them.
+- The card carries the alert role.
+- New and replaced notifications both reach showBanner.
 """
 from pathlib import Path
 import re
@@ -37,28 +37,27 @@ def visible_terms():
 class NotificationBannerTest(unittest.TestCase):
     def test_it_never_takes_the_keyboard_and_super_n_opens_the_panel(self):
         self.assertIn("WlrLayershell.keyboardFocus: WlrKeyboardFocus.None", own(banner()))
-        self.assertIn("focusPolicy: Qt.NoFocus", own(object_with("id: bannerDismiss")))
         self.assertIn('Super+N { spawn "@shell@" "ipc" "-p" "@shellConfig@" "call" "desk" "notifications"; }', NIRI)
+
+    def test_it_takes_no_clicks(self):
+        # An empty input region: a click on the banner reaches the app beneath it.
+        self.assertIn("mask: Region {}", banner())
+        self.assertNotRegex(banner(), r"\b(MouseArea|FlowButton|Button|TapHandler)\s*\{")
 
     def test_exactly_the_plain_work_view_without_a_panel_shows_it(self):
         self.assertEqual(visible_terms(), ["!!notification", "root.workViewOnly"])
-        definition = re.search(r"readonly property bool workViewOnly: (.+?)\n {4}\S", SHELL, re.S).group(1)
-        self.assertEqual(sorted(term.strip() for term in definition.replace("\n", " ").split("&&")), sorted([
+        terms = lambda name: sorted(term.strip() for term in re.search(
+            rf"readonly property bool {name}: (.+?)\n {{4}}\S", SHELL, re.S).group(1).replace("\n", " ").split("&&"))
+        self.assertEqual(terms("workViewOnly"), ["!islandOpen", "restingView"])
+        self.assertEqual(terms("restingView"), sorted([
             "!deskOpen", "!switcherOpen", "!spacesOverviewOpen", "!overviewOpen", "!searchOpen", "!appMenuOpen",
             "!quickSettingsOpen", "!notificationsOpen"]))
 
     def test_it_sits_where_the_panels_sit(self):
-        top = lambda block: int(re.search(r"margins\.top: (\d+)", own(block)).group(1))
-        self.assertEqual(top(banner()), top(component("SystemPanel")))
-
-    def test_dismiss_is_a_full_target_that_calls_dismiss(self):
-        dismiss = own(object_with("id: bannerDismiss"))
-        self.assertIn("width: 44; implicitHeight: 44", dismiss)
-        self.assertNotRegex(dismiss, r"\b(scale|opacity|visible):")
-        self.assertIn('Accessible.name: "Dismiss notification"', dismiss)
-        handler = object_with("id: bannerDismiss")
-        self.assertIn("onClicked: { const notification = root.bannerNotification; root.bannerNotification = null; "
-                      "if (notification) notification.dismiss() }", handler)
+        # Near the top edge, or below a notched screen's band, as a panel opened without the Island.
+        self.assertIn("margins.top: root.topInset(screen)", own(banner()))
+        self.assertIn("margins.top: root.panelTop", own(component("SystemPanel")))
+        self.assertIn(": topInset(panelScreen)", SHELL[SHELL.index("readonly property real panelTop:"):][:200])
 
     def test_the_card_has_the_alert_role(self):
         card = own(object_with("id: bannerCard"))
@@ -71,11 +70,6 @@ class NotificationBannerTest(unittest.TestCase):
         self.assertRegex(handler, r"\n {12}root\.showBanner\(notification\)\n")  # its own call, not only the lambda's
         self.assertIn("notification.summaryChanged.connect(changed)", handler)
         self.assertIn("notification.bodyChanged.connect(changed)", handler)
-
-    def test_a_click_runs_the_default_action_or_opens_the_panel(self):
-        area = object_with("id: bannerArea")
-        self.assertIn('notification.actions.find(a => a.identifier === "default")', area)
-        self.assertIn("if (action) action.invoke()\n                    else if (!root.notificationsOpen) root.toggleNotifications()", area)
 
     def test_its_text_is_plain_and_bounded(self):
         texts = re.findall(r"text: notificationBanner\.notification \? notificationBanner\.notification\.(summary|body) "
