@@ -134,6 +134,13 @@ The development copy at `d56fc90` ran `spaces.py refresh` against isolated state
 
 The real `spaces.json` was unchanged.
 
+The check was then re-run after main `280ef0e` was installed in the guest, with each case on its own isolated state. That install put a `git archive` of `280ef0e` in `/etc/floe-test/flow` and ran `nixos-rebuild switch`, which produced system `4x8z0ryy…`. Its `flow-spaces` (`/nix/store/b182l6hr…`) runs a `pin_store.py` whose sha256 matches main's. The build includes the serial check, but the guest's outputs report no serial, so the check is not exercised here.
+- **Installed `flow-spaces`, Dell record:** the record kept number 1, the pin was connected, and no record was added.
+- **Installed `flow-spaces`, seeded with Virtual-1's make and model:** no match. `port:Virtual-2|Unknown|Unknown` was added as number 2, and the pin showed as disconnected.
+- **Control, `dc99add`'s source tree:** the tree that install replaced, moved to the guest's `/tmp` and run with `python3`, not an installed build. With the Dell record, `port:Virtual-2|Unknown|Unknown` was added as number 2, and the pin showed as disconnected.
+
+Virtual-1 stayed connected and was not replugged. The real `spaces.json` had the same sha256 before and after.
+
 ### Resizing Group members
 
 In the switcher, each app in a side-by-side Group shows its share of the display's width with *−* and *+* controls. A step moves 10% of the display's width to or from the next app (the previous one, for the last app) and never leaves an app below 15%; a step that would is disabled and refused. Requested widths are checked against what the apps commit: if an app's size limits refuse, both apps go back to their widths before the step, the Group keeps its proportions, and Flow says so. Proportions are saved with the Group and reapplied when it returns to side-by-side. Stack heights are not adjustable yet.
