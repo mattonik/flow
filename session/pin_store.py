@@ -9,6 +9,11 @@ A display key comes from the monitor's make, model and serial when the serial is
 unique among connected outputs, so a monitor keeps its pins when it moves to another connector.
 Without a usable serial, the connector is part of the key: such a monitor on a new connector
 is a new display, and its old pins stay with the disconnected record until the user moves them.
+An output that reports no EDID at all (no serial, make and model missing or "Unknown") and has no record
+of its own is the display last seen on its connector, when exactly one record with an identity was last
+seen there and no connected output may be that record's monitor (same make and model, and serials that
+do not differ); a flaky dock, KVM switch or virtual
+GPU can return a known monitor that way. Otherwise it is keyed by port like any other output without a serial.
 Legacy pins stored a connector name; they keep it under a ``legacy:`` key until an output with
 that connector is seen. Version 1 files are copied to ``spaces.v1.json`` before conversion.
 """
@@ -20,12 +25,26 @@ def _text(value):
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-def identities(outputs, shared=frozenset()):
+def _known(value):
+    text = _text(value)
+    return text if text and text.lower() != "unknown" else None
+
+
+def _has_edid(record):
+    return bool(_text(record.get("serial")) or _known(record.get("make")) or _known(record.get("model")))
+
+
+def identities(outputs, shared=frozenset(), displays=None):
     """Map each active connector to its display record; ambiguous serials fall back to the port.
 
     ``shared`` holds serial keys once seen on two connected monitors at the same time. They stay keyed
     by port even when only one of the monitors is connected, so unplugging a twin never turns the
     remaining one into a different display.
+
+    ``displays`` are the stored records. An output without EDID and without a record of its own takes the
+    key and names of the one record with an identity last seen on its connector whose monitor cannot be
+    connected elsewhere, so the display keeps its number and pins and no placeholder record is written. With none, or
+    more than one, it keeps its port key.
     """
     active = {name: out for name, out in (outputs or {}).items()
               if isinstance(out, dict) and out.get("logical") is not None}
@@ -49,6 +68,24 @@ def identities(outputs, shared=frozenset()):
                         "serial": serial, "label": label}
         if twin:
             result[name]["shared_serial"] = twin
+    live = [record for record in result.values() if _has_edid(record)]
+
+    def maybe_connected(stored):
+        # The record's monitor may be connected on another port: same make and model, and no serials that differ.
+        serial = _text(stored.get("serial"))
+        return any((r["make"], r["model"]) == (_text(stored.get("make")), _text(stored.get("model")))
+                   and (not serial or not r["serial"] or r["serial"] == serial) for r in live)
+
+    for name, record in result.items():
+        if _has_edid(record) or record["key"] in (displays or {}):
+            continue
+        last_here = [key for key, stored in (displays or {}).items()
+                     if stored.get("connector") == name and _has_edid(stored) and not maybe_connected(stored)]
+        if len(last_here) == 1:
+            stored = displays[last_here[0]]
+            result[name] = {"key": last_here[0], "connector": name,
+                            **{k: stored.get(k) for k in ("make", "model", "serial")},
+                            "label": stored.get("label") or name}
     return result, ambiguous
 
 

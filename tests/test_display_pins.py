@@ -16,6 +16,10 @@ LAPTOP = {"make": "BOE", "model": "Panel", "serial": None, "logical": {"width": 
 MONITOR = {"make": "Dell", "model": "U2723QE", "serial": "SN1", "logical": {"width": 1920, "height": 1080}}
 LAPTOP_KEY = "port:eDP-1|BOE|Panel"
 MONITOR_KEY = "edid:Dell|U2723QE|SN1"
+# What Niri reports for an output whose EDID read came back empty (virtio-gpu after a sysfs replug, a flaky dock).
+NO_EDID = {"make": "Unknown", "model": "Unknown", "serial": None, "logical": {"width": 1280, "height": 800}}
+QEMU = {"make": "Red Hat, Inc.", "model": "QEMU Monitor", "serial": None, "logical": {"width": 1280, "height": 800}}
+QEMU_KEY = "port:Virtual-1|Red Hat, Inc.|QEMU Monitor"
 
 
 def window(ident, app, column, workspace):
@@ -49,6 +53,114 @@ class IdentityTest(unittest.TestCase):
         # A different monitor of the same model with its own serial is still identified by it.
         other, _ = pin_store.identities({"DP-3": {**MONITOR, "serial": "SN2"}}, pin_store.shared_serials(displays))
         self.assertEqual(other["DP-3"]["key"], "edid:Dell|U2723QE|SN2")
+
+
+class NoEdidTest(unittest.TestCase):
+    """An output that comes back without EDID is the display last seen on its connector, if that is unambiguous."""
+
+    def seen(self, *outputs):
+        displays = {}
+        for connected in outputs:
+            found, _ = pin_store.identities(connected, pin_store.shared_serials(displays), displays)
+            pin_store.migrate([], displays, 2, found, lambda pin: None)
+            pin_store.assign_numbers(displays, [found[name]["key"] for name in sorted(found)])
+        return displays
+
+    def test_a_port_keyed_display_back_without_edid_keeps_its_record(self):
+        # The guest's Virtual-1 on 2026-11-27: unplugged through sysfs, plugged back with a 0-byte EDID.
+        displays = self.seen({"eDP-1": LAPTOP, "Virtual-1": QEMU}, {"eDP-1": LAPTOP})
+        before = json.dumps(displays, sort_keys=True)
+        found, _ = pin_store.identities({"eDP-1": LAPTOP, "Virtual-1": NO_EDID}, frozenset(), displays)
+        self.assertEqual(found["Virtual-1"]["key"], QEMU_KEY)
+        self.assertEqual(found["Virtual-1"]["label"], "Red Hat, Inc. QEMU Monitor")
+        pin_store.migrate([], displays, 2, found, lambda pin: None)
+        pin_store.assign_numbers(displays, [LAPTOP_KEY, QEMU_KEY])
+        # No placeholder record, and the stored make, model and number are not overwritten by "Unknown".
+        self.assertEqual(json.dumps(displays, sort_keys=True), before)
+
+    def test_a_serial_keyed_monitor_back_without_edid_on_its_last_connector_keeps_its_key(self):
+        displays = self.seen({"eDP-1": LAPTOP, "DP-1": MONITOR}, {"eDP-1": LAPTOP})
+        found, _ = pin_store.identities({"eDP-1": LAPTOP, "DP-1": NO_EDID}, frozenset(), displays)
+        self.assertEqual((found["DP-1"]["key"], found["DP-1"]["serial"]), (MONITOR_KEY, "SN1"))
+        # On another connector nothing ties it to the monitor.
+        found, _ = pin_store.identities({"eDP-1": LAPTOP, "DP-2": NO_EDID}, frozenset(), displays)
+        self.assertEqual(found["DP-2"]["key"], "port:DP-2|Unknown|Unknown")
+
+    def test_the_record_is_not_taken_while_its_monitor_is_connected_elsewhere(self):
+        displays = self.seen({"DP-1": MONITOR})
+        found, _ = pin_store.identities({"DP-2": MONITOR, "DP-1": NO_EDID}, frozenset(), displays)
+        self.assertEqual((found["DP-2"]["key"], found["DP-1"]["key"]), (MONITOR_KEY, "port:DP-1|Unknown|Unknown"))
+
+    def test_a_monitor_without_a_serial_that_moved_ports_keeps_its_old_record_from_others(self):
+        # Its old port record is free once it is keyed on the new port, but its make and model are connected.
+        dell = {**MONITOR, "serial": None}
+        displays = self.seen({"eDP-1": LAPTOP, "DP-1": dell}, {"eDP-1": LAPTOP, "DP-2": dell})
+        found, _ = pin_store.identities({"eDP-1": LAPTOP, "DP-2": dell, "DP-1": NO_EDID}, frozenset(), displays)
+        self.assertEqual((found["DP-2"]["key"], found["DP-1"]["key"]),
+                         ("port:DP-2|Dell|U2723QE", "port:DP-1|Unknown|Unknown"))
+        # A monitor without EDID and that Dell swapping ports is not a match either.
+        displays = self.seen({"DP-1": dell, "DP-2": NO_EDID}, {"DP-1": NO_EDID, "DP-2": dell})
+        self.assertEqual(set(displays), {"port:DP-1|Dell|U2723QE", "port:DP-2|Unknown|Unknown",
+                                         "port:DP-1|Unknown|Unknown", "port:DP-2|Dell|U2723QE"})
+
+    def test_a_twin_with_another_serial_or_model_connected_does_not_block_the_match(self):
+        twin = {**MONITOR, "serial": "SN2"}
+        displays = self.seen({"DP-1": MONITOR, "DP-2": twin})
+        found, _ = pin_store.identities({"DP-1": NO_EDID, "DP-2": twin}, frozenset(), displays)
+        self.assertEqual(found["DP-1"]["key"], MONITOR_KEY)
+        other = {"make": "Dell", "model": "P2419H", "serial": None, "logical": {"width": 1920, "height": 1080}}
+        found, _ = pin_store.identities({"DP-1": NO_EDID, "DP-2": other}, frozenset(), displays)
+        self.assertEqual(found["DP-1"]["key"], MONITOR_KEY)
+        # A twin without a serial, or with the same one, could be the record's monitor.
+        for unsure in ({**MONITOR, "serial": None}, MONITOR):
+            found, _ = pin_store.identities({"DP-1": NO_EDID, "DP-2": unsure}, frozenset(), displays)
+            self.assertEqual(found["DP-1"]["key"], "port:DP-1|Unknown|Unknown")
+
+    def test_an_output_with_only_a_serial_keeps_its_own_key(self):
+        displays = self.seen({"DP-1": {**MONITOR, "serial": None}}, {})
+        serial_only = {**NO_EDID, "serial": "SN9"}
+        found, _ = pin_store.identities({"DP-1": serial_only}, frozenset(), displays)
+        self.assertEqual(found["DP-1"]["key"], "edid:Unknown|Unknown|SN9")
+
+    def test_two_monitors_last_seen_on_the_connector_are_not_guessed_between(self):
+        dell = {**MONITOR, "serial": None}
+        lg = {"make": "LG", "model": "27UK850", "serial": None, "logical": {"width": 1920, "height": 1080}}
+        # Two monitors without serials swapped ports: each is a new display on its new port, and two away
+        # records were last seen on DP-1 (the Dell's original and the LG's new one).
+        displays = self.seen({"DP-1": dell, "DP-2": lg}, {"DP-1": lg, "DP-2": dell}, {})
+        self.assertEqual(len(displays), 4)
+        found, _ = pin_store.identities({"DP-1": NO_EDID}, frozenset(), displays)
+        self.assertEqual(found["DP-1"]["key"], "port:DP-1|Unknown|Unknown")
+        # With EDID, the swap never merges them either.
+        found, _ = pin_store.identities({"DP-1": dell, "DP-2": lg}, frozenset(), displays)
+        self.assertEqual((found["DP-1"]["key"], found["DP-2"]["key"]), ("port:DP-1|Dell|U2723QE", "port:DP-2|LG|27UK850"))
+
+    def test_a_new_monitor_with_edid_is_never_matched_by_port(self):
+        displays = self.seen({"DP-1": {**MONITOR, "serial": None}}, {})
+        lg = {"make": "LG", "model": "27UK850", "serial": None, "logical": {"width": 1920, "height": 1080}}
+        found, _ = pin_store.identities({"DP-1": lg}, frozenset(), displays)
+        self.assertEqual(found["DP-1"]["key"], "port:DP-1|LG|27UK850")
+
+    def test_a_record_without_an_identity_is_not_a_candidate(self):
+        # An output without make and model was keyed with them empty; that record is not the QEMU monitor's rival.
+        displays = self.seen({"Virtual-1": QEMU}, {})
+        displays["port:Virtual-1||"] = {"connector": "Virtual-1", "make": None, "model": None, "serial": None,
+                                        "label": "Virtual-1"}
+        found, _ = pin_store.identities({"Virtual-1": NO_EDID}, frozenset(), displays)
+        self.assertEqual(found["Virtual-1"]["key"], QEMU_KEY)
+
+    def test_a_display_without_edid_keeps_its_own_record(self):
+        # A KVM without EDID used on DP-1, a monitor plugged there once, then the KVM again: it stays itself.
+        displays = self.seen({"DP-1": NO_EDID}, {"DP-1": MONITOR}, {"DP-1": NO_EDID})
+        self.assertEqual(set(displays), {"port:DP-1|Unknown|Unknown", MONITOR_KEY})
+        found, _ = pin_store.identities({"DP-1": NO_EDID}, frozenset(), displays)
+        self.assertEqual(found["DP-1"]["key"], "port:DP-1|Unknown|Unknown")
+
+    def test_a_display_that_never_had_edid_keeps_its_port_key(self):
+        displays = self.seen({"Virtual-2": NO_EDID}, {})
+        found, _ = pin_store.identities({"Virtual-2": NO_EDID}, frozenset(), displays)
+        self.assertEqual(found["Virtual-2"]["key"], "port:Virtual-2|Unknown|Unknown")
+        self.assertEqual(set(displays), {"port:Virtual-2|Unknown|Unknown"})
 
 
 class MigrationTest(unittest.TestCase):
@@ -231,6 +343,26 @@ class RoutingTest(unittest.TestCase):
         result = self.invoke("move-pin-here", "t")
         self.assertEqual([p["id"] for p in result["pins"]], ["t"])
         self.assertEqual(pin_store.read(self.state / "spaces.json")[0][0]["display"], LAPTOP_KEY)
+
+    def test_a_monitor_back_without_edid_keeps_its_number_and_pins(self):
+        self.pins([{"id": "t", "label": "Terminal", "app_id": "terminal", "display": MONITOR_KEY}])
+        self.invoke("refresh")
+        number = pin_store.read(self.state / "spaces.json")[1][MONITOR_KEY]["number"]
+        self.invoke("refresh", outputs={"eDP-1": LAPTOP})
+        returned = {"eDP-1": LAPTOP, "DP-1": NO_EDID}
+        result = self.invoke("refresh", outputs=returned)
+        self.assertEqual([(p["id"], p["display_state"], p["display_label"]) for p in result["other_pins"]],
+                         [("t", "connected", "Dell U2723QE")])
+        displays = pin_store.read(self.state / "spaces.json")[1]
+        self.assertEqual(set(displays), {LAPTOP_KEY, MONITOR_KEY})
+        self.assertEqual(displays[MONITOR_KEY]["number"], number)
+        self.invoke("focus", "t", outputs=returned)
+        self.assertIn(("action", "focus-monitor", "DP-1"), self.actions)
+        with patch.object(restore.spaces, "query", return_value=[returned]):
+            self.assertEqual(restore.focused_display({"output": "DP-1"}, self.state),
+                             (MONITOR_KEY, {LAPTOP_KEY, MONITOR_KEY}))
+        plan = restore.snapshot_display({"output": "DP-1"}, returned, displays, pin_store.read(self.state / "spaces.json")[0])
+        self.assertEqual((plan["key"], plan["label"], plan["pins"]), (MONITOR_KEY, "Dell U2723QE", 1))
 
     def test_the_remaining_twin_monitor_keeps_its_pins_after_the_other_is_unplugged(self):
         twin = "port:DP-1|Dell|U2723QE"
